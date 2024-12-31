@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <script>
+      function updateMessages() {
+        google.script.run.withSuccessHandler(function(messages) {
+          var ul = document.getElementById("appended-messages");
+          ul.innerHTML = ""; // Clear previous messages
+          messages.forEach(function(message) {
+            var li = document.createElement("li");
+            li.textContent = message;
+            ul.appendChild(li);
+          });
+        }).getMessages();
+        setTimeout(updateMessages, 500); // Repeat every 0.5 seconds
+      }
+
+      // Start updating messages when the sidebar loads
+      window.onload = updateMessages;
+    </script>
+  </head>
+  <body>
+    <p>xThis sidebar dynamically updates with messages from cell B2 on the Status sheet.</p>
+    <ul id="appended-messages"></ul>
+  </body>
+</html>

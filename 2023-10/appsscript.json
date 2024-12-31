@@ -1,0 +1,18 @@
+{
+  "timeZone": "America/Los_Angeles",
+  "dependencies": {
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "sheets": {
+    "macros": [{
+      "menuName": "Sort_PAX",
+      "functionName": "Sort_PAX"
+    }, {
+      "menuName": "Sort_PAX 1",
+      "functionName": "Sort_PAX1"
+    }, {
+      "menuName": "Auto Fill",
+      "functionName": "AutoFill"
+    }]
+  }
+}
