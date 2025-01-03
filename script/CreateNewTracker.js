@@ -64,7 +64,7 @@ function copyAndInit() {
 
   NoticeLog('Next steps:');
   NoticeLog('1. Open the new spreadsheet');
-  NoticeLog('2. F30 Menu > Initialize Triggers');
+  NoticeLog('2. F3 Go30 Menu > Initialize Triggers');
   NoticeLog('3. Shorten and Share Form URL');
   NoticeLog('4. Shorten and share new Spreadsheet URL');
   
