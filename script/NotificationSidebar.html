@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <script>
+      function updateMessages() {
+        console.log("***** Fetching messages from the server...");
+        google.script.run.withSuccessHandler(function(messages) {
+          console.log("***** Messages received:", messages);
+          if (!messages) {
+            console.log("***** No messages received.");
+            return;
+          }
+          var titleDiv = document.getElementById("sb-title");
+          var descriptionDiv = document.getElementById("sb-description");
+          var promptDiv = document.getElementById("sb-prompt");
+          var statusDiv = document.getElementById("sb-status");
+          var logDiv = document.getElementById("sb-log");
+
+          messages.forEach(function(message) {
+            console.log("***** Processing message:", message);
+            if (!message) {
+              return; // Skip to the next iteration of the loop
+            }
+            if (message.title) {
+              updateTitle(message.title);
+            }
+            if (message.desc) {
+              updateDescription(message.desc);
+            }
+            if (message.prompt) {
+              updatePrompt(message.prompt);
+            }
+            if (message.status) {
+              updateStatus(message.status);
+            }
+            if (message.log) {
+              updateLog(message.log);
+            }
+          });
+        }).getMessages();
+      }
+
+      function updateTitle(title) {
+        console.log("***** Updating title:", title);
+        var titleDiv = document.getElementById("sb-title");
+        titleDiv.innerHTML = title;
+      }
+
+      function updateDescription(description) {
+        console.log("***** Updating description:", description);
+        var descriptionDiv = document.getElementById("sb-description");
+        descriptionDiv.innerHTML = description;
+      }
+
+      function updatePrompt(promptText) {
+        console.log("***** Updating prompt:", promptText);
+        var promptDiv = document.getElementById("sb-prompt");
+        promptDiv.innerHTML = ""; // Clear previous prompt
+
+        var form = document.createElement("form");
+        form.onsubmit = function(event) {
+          event.preventDefault();
+          var input = document.getElementById("sb-prompt-input").value;
+          console.log("***** Prompt response submitted:", input);
+          promptDiv.innerHTML = ""; // Clear the prompt div after response is sent
+          google.script.run.handlePromptResponse(input);
+        };
+
+        var label = document.createElement("label");
+        label.textContent = promptText;
+        form.appendChild(label);
+
+        var input = document.createElement("input");
+        input.type = "text";
+        input.id = "sb-prompt-input";
+        form.appendChild(input);
+
+        var submitButton = document.createElement("button");
+        submitButton.type = "submit";
+        submitButton.textContent = "Submit";
+        form.appendChild(submitButton);
+
+        promptDiv.appendChild(form);
+      }
+
+      function updateStatus(status) {
+        console.log("***** Updating status:", status);
+        var statusDiv = document.getElementById("sb-status");
+        statusDiv.innerHTML = status;
+      }
+
+      function updateLog(logMessages) {
+        console.log("***** Updating log messages:", logMessages);
+        var logDiv = document.getElementById("sb-log");
+        logMessages.forEach(function(logMessage) {
+          var p = document.createElement("p");
+          p.innerHTML = logMessage;
+          logDiv.appendChild(p);
+        });
+      }
+
+      // Start updating messages when the sidebar loads
+      window.onload = function() {
+        console.log("***** Starting message updates...");
+        setInterval(updateMessages, 2000); // Repeat every 0.5 seconds
+      };
+    </script>
+  </head>
+  <body style="font-family: Arial, sans-serif; margin: 20px; color: #333;">
+    <style>
+      .sidebar-section {
+        margin-bottom: 10px;
+      }
+      .sidebar-title {
+        font-size: 1.5em;
+        font-weight: bold;
+      }
+      .sidebar-description {
+        font-size: 1.2em;
+      }
+      .sidebar-status {
+        font-size: 1em;
+        color: #007BFF;
+      }
+      .sidebar-log {
+        list-style-type: none;
+        padding-left: 0;
+        font-size: 0.9em;
+        color: #555;
+      }
+      .sidebar-log p::before {
+        content: "• ";
+        margin-right: 5px;
+      }
+      .sidebar-log p {
+        margin: 0;
+      }
+      #sb-prompt {
+        min-height: 2em; /* Set minimum height to two lines */
+      }
+    </style>
+
+<div id="sb-title" class="sidebar-section sidebar-title">Notifications</div>
+    <div id="sb-description" class="sidebar-section sidebar-description"></div>
+    <div id="sb-prompt" class="sidebar-section"></div>
+    <div id="sb-status" class="sidebar-section sidebar-status"></div>
+    <div id="sb-log" class="sidebar-section sidebar-log"></div>
+  </body>
+</html>
