@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    
+    {
+      "name": "Push to Google Apps Script",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/dummy.js", // Dummy script
+      "preLaunchTask": "Clasp Push"
+    }
+  ]
+}
