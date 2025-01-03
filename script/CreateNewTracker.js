@@ -1,63 +1,100 @@
-function copyAndInit() {
-  const ui = SpreadsheetApp.getUi();
-  console.log("Switch back to the spreadsheet to answer the prompts!");
-  const response = ui.prompt('New Spreadsheet', 'Please enter the name for the new spreadsheet:', ui.ButtonSet.OK_CANCEL);
 
-  if (response.getSelectedButton() == ui.Button.OK) {
-    const newSpreadsheetName = response.getResponseText();
-    ui.alert('Creating new spreadsheet: ' + newSpreadsheetName + '. Please wait...');
+
+function copyAndInit() {
+  NoticeLogInit("Create New Tracker", "This script will create a new spreadsheet with the same structure as the current spreadsheet. Please enter the name for the new spreadsheet.");
+
+  const newSpreadsheetName = NoticePrompt("Enter the name of the new spreadsheet");
+  if (!newSpreadsheetName) {
+    NoticeLog('Operation canceled.');
+    return;
+  }
+  var response = NoticePrompt("Enter start date YYYY-MM-DD");
+  if (!response) {
+      NoticeLog('Operation canceled.');
+      return;
+  }
+  const startDate = new Date(response + 'T00:00:00'); // Ensures the date is treated as local time
+  
+  if (isNaN(startDate.getTime())) {
+    NoticeLog('Invalid date format. Please use YYYY-MM-DD format.');
+    NoticeLog('Operation canceled.');
+    return;
+  }
+
+  NoticeLog('Creating ' + newSpreadsheetName + '. Please wait...');
 
     // Copy the entire current spreadsheet to a new spreadsheet with the specified name
     const currentSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    NoticeLog('Copying spreadsheet...');
     const newSpreadsheet = currentSpreadsheet.copy(newSpreadsheetName);
 
-    // Move the new spreadsheet to the same folder as the current spreadsheet
-    const currentSpreadsheetFile = DriveApp.getFileById(currentSpreadsheet.getId());
-    const newSpreadsheetFile = DriveApp.getFileById(newSpreadsheet.getId());
-    const folder = currentSpreadsheetFile.getParents().next();
-    newSpreadsheetFile.moveTo(folder);
+      // Move the new spreadsheet to the same folder as the current spreadsheet
+      const currentSpreadsheetFile = DriveApp.getFileById(currentSpreadsheet.getId());
+      const newSpreadsheetFile = DriveApp.getFileById(newSpreadsheet.getId());
+      const folder = currentSpreadsheetFile.getParents().next();
+      newSpreadsheetFile.moveTo(folder);
+
+      // adjust permissions so anyone with the link can edit the new spreadsheet file
+      newSpreadsheetFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT);
+
+    NoticeLog('New spreadsheet Link: ' + blf(newSpreadsheetName, newSpreadsheet.getUrl()));
+
+
+    // Update the form name and title, and  move to the new folder
+    NoticeLog('Updating form...');
+
+      const formUrl = newSpreadsheet.getFormUrl();
+      const form = FormApp.openByUrl(formUrl);
+      const formName = newSpreadsheetName + " HC";
+      // set form title to the name "YYYY-MM-DD HC Form"
+      const ftitle = startDate.getFullYear() + '-' 
+                    + (startDate.getMonth() + 1) + '-' + startDate.getDate() 
+                    + ' HC Form';
+      form.setTitle(ftitle);
+      
+      // change the filename of the form to formName
+      const formFile = DriveApp.getFileById(form.getId());
+      formFile.setName(formName);
+      formFile.moveTo(folder);
+
+    NoticeLog('New HC Form: ' + blf(formName, formUrl));
 
     // Modify sheets in the new spreadsheet
-    initSheets(newSpreadsheet);
+    initSheets(newSpreadsheet, startDate);
 
-    // Finalize and provide links
-    const newSpreadsheetUrl = newSpreadsheet.getUrl();
-    const formUrl = currentSpreadsheet.getFormUrl();
-
-    ui.alert('All steps completed successfully. \n\n' +
-      'New Spreadsheet: ' + newSpreadsheetUrl + '\n' +
-      'Associated Form: ' + (formUrl ? formUrl : 'No associated form.') + '\n\n' +
-      'You can now close this message.');
-  }
+  NoticeLog('Next steps:');
+  NoticeLog('1. Open the new spreadsheet');
+  NoticeLog('2. F30 Menu > Initialize Triggers');
+  NoticeLog('3. Shorten and Share Form URL');
+  NoticeLog('4. Shorten and share new Spreadsheet URL');
+  
+  NoticeLog('You can now close this message.');
 }
 
 function initializeTriggers() {
   setupDailyMinusOneTrigger();
   setupFormSubmitTrigger();
 }
-function initSheets(newSpreadsheet) {
-  if (!newSpreadsheet) {
-    newSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-  }
-  const ui = SpreadsheetApp.getUi();
+function initSheets(newSpreadsheet, startDate) {
 
   const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
   const bonusTrackerSheet = newSpreadsheet.getSheetByName('Bonus Tracker');
   const responsesSheet = newSpreadsheet.getSheetByName('Responses');
 
-  ui.alert('Modifying Tracker sheet...');
-  if (trackerSheet.getLastRow() > 4) {
-    trackerSheet.deleteRows(5, trackerSheet.getLastRow() - 4);
-  }
-  clearNonFormulaCells(trackerSheet.getRange('A4:AR4'));
-  populateTrackerSheet(trackerSheet)
+  NoticeLog('Resetting Tracker sheet...');
+    if (trackerSheet.getLastRow() > 4) {
+      trackerSheet.deleteRows(5, trackerSheet.getLastRow() - 4);
+    }
+    clearNonFormulaCells(trackerSheet.getRange('A4:AR4'));
 
-  ui.alert('Clearing Bonus Tracker sheet...');
-  if (bonusTrackerSheet.getLastRow() > 1) {
-    bonusTrackerSheet.getRange('A2:Z' + bonusTrackerSheet.getLastRow()).clearContent();  // Adjust 'Z' according to your last column
-  }
+    populateTrackerSheet(trackerSheet, startDate)
 
-  ui.alert('Modifying Responses sheet...');
+  NoticeLog('Resetting Bonus Tracker sheet...');
+    if (bonusTrackerSheet.getLastRow() > 1) {
+      bonusTrackerSheet.getRange('A2:Z' + bonusTrackerSheet.getLastRow()).clearContent();  // Adjust 'Z' according to your last column
+    }
+
+  NoticeLog('Resetting Responses sheet...');
   if (responsesSheet.getLastRow() > 1) {
     responsesSheet.deleteRows(2, responsesSheet.getLastRow() - 1);
   }
@@ -75,29 +112,7 @@ function clearNonFormulaCells(range) {
   }
 }
 
-function populateTrackerSheet(sheet) {
-  const ui = SpreadsheetApp.getUi();
-
-  // Check if 'sheet' is undefined and only then get the active spreadsheet's 'Tracker' sheet
-  if (!sheet) {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    sheet = ss.getSheetByName('Tracker');
-  }
-
-  // Prompt the user for the start date
-  const response = ui.prompt('Start Date', 'Please enter the start date (YYYY-MM-DD):', ui.ButtonSet.OK_CANCEL);
-  if (response.getSelectedButton() == ui.Button.CANCEL) {
-    ui.alert('Operation canceled.');
-    return;
-  }
-
-  const startDateInput = response.getResponseText();
-  const startDate = new Date(startDateInput + 'T00:00:00'); // Ensures the date is treated as local time
-
-  if (isNaN(startDate.getTime())) {
-    ui.alert('Invalid date format. Please use YYYY-MM-DD format.');
-    return;
-  }
+function populateTrackerSheet(sheet, startDate) {
 
   const endDate = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0); // Last day of the start month
 
@@ -132,7 +147,7 @@ function populateTrackerSheet(sheet) {
                                 + ',UBonus_Complete,TRUE)');
 
       // Set background color to green for Bonus columns
-      var c2 = sheet.getRange(2, bonusColumn, 3, 1)
+      var c2 = sheet.getRange(2, bonusColumn, 3, 1);
       sheet.getRange(2, bonusColumn, 3, 1).setBackground('#00ff00');
 
       bonusCount++;
@@ -155,7 +170,7 @@ function populateTrackerSheet(sheet) {
     sheet.showColumns(columnStart, currentColumn - columnStart);
   }
 
-  ui.alert('The Tracker sheet has been updated successfully.');
+  NoticeLog('The Tracker sheet has been updated successfully.');
 }
 
 
