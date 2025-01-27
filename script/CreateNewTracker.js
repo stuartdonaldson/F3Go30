@@ -1,4 +1,15 @@
-
+/**
+ * This script handles the creation of a new tracker spreadsheet for the Go30 program.
+ * It performs the following tasks:
+ * - Prompts the user for the new spreadsheet name and start date.
+ * - Copies the current spreadsheet to a new spreadsheet with the specified name.
+ * - Moves the new spreadsheet to the same folder as the current spreadsheet.
+ * - Adjusts permissions so anyone with the link can edit the new spreadsheet.
+ * - Logs the new spreadsheet and tracker sheet URLs.
+ * - Updates the associated HC form's title and filename.
+ * - Modifies the sheets in the new spreadsheet.
+ * - Provides next steps for the user to complete the setup.
+ */
 
 function copyAndInit() {
   NoticeLogInit("Create New Tracker", "This script will create a new spreadsheet with the same structure as the current spreadsheet. Please enter the name for the new spreadsheet.");
@@ -34,13 +45,16 @@ function copyAndInit() {
       const folder = currentSpreadsheetFile.getParents().next();
       newSpreadsheetFile.moveTo(folder);
 
-      // adjust permissions so anyone with the link can edit the new spreadsheet file
+      // Adjust permissions so anyone with the link can edit the new spreadsheet file
       newSpreadsheetFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT);
 
-    NoticeLog('New spreadsheet Link: ' + blf(newSpreadsheetName, newSpreadsheet.getUrl()));
+    // Get the URL to the "Tracker" sheet
+    const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
+    const trackerSheetUrl = newSpreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
 
+    NoticeLog('New spreadsheet tracker sheet link: ' + blf(newSpreadsheetName, trackerSheetUrl));
 
-    // Update the form name and title, and  move to the new folder
+    // Update the form name and title, and move to the new folder
     NoticeLog('Updating form...');
 
       const formUrl = newSpreadsheet.getFormUrl();

@@ -30,7 +30,7 @@
   // blf( text, link ) - create a link in the sidebar
   function blf( text, link ) { 
     // construct an html hyperlink
-    return '<a href="' + link + '">' + text + '</a>';
+    return '<a href="' + link + '" target="_blank">' + text + '</a>';
   }
 
   // Test function to populate the sidebar with different types of messages

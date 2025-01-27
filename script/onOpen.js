@@ -12,8 +12,11 @@ function onOpen()
 { 
   var ui = SpreadsheetApp.getUi(); 
   var email = Session.getActiveUser().getEmail(); 
-  if (email === 'f3go30@gmail.com') 
-  { 
+
+  // Only add the F3Go30 menu for spreadsheet management if the owner of the spreadsheet has opened it.
+  var owneremail = SpreadsheetApp.getActiveSpreadsheet().getOwner().getEmail();
+
+  if (email === owneremail ) {
     ui.createMenu('F3 Go30')
      .addItem('Copy and Initialize', 'copyAndInit')
      .addItem('Initialize Triggers', 'initializeTriggers')
@@ -21,6 +24,7 @@ function onOpen()
      .addItem('Run test function (DEV)', 'testFunction')
      .addToUi(); 
   }
+  if (email === 'f3go30@gmail.com') 
   logActivity('onOpen','');
 }
 
