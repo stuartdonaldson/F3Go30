@@ -12,7 +12,11 @@ The "F3 Go30" menu appears only if the user is f3go30@gmail.com for the site Q.
 
 ## Overview of the Google Apps Script Behavior
 
-The Google Apps Script associated with the F3Go30 project automates various tasks related to managing and tracking progress in the Go30 Google Sheet. The script provides several features accessible through a custom menu, "F3 Go30," which appears only for the site Q (f3go30@gmail.com). The main functionalities include copying and initializing new tracker spreadsheets, setting up triggers, and managing forms.
+The Google Apps Script associated with the F3Go30 project automates various tasks related to managing and tracking progress in the Go30 Google Sheet. The script provides several features accessible through a custom menu, "F3 Go30," which appears only for the owner of the spreadsheet which is typically the site Q for Go30. The main functionalities include copying and initializing new tracker spreadsheets, setting up triggers, and managing forms.
+
+### Important Notice
+
+The spreadsheet should be a copy of or derived from the [Go 30 Template spreadsheet](https://docs.google.com/spreadsheets/d/1XLAYCSSeNBLvA2JTfhFWoZkKgsmizoUvsNk6CJtot7U/edit?usp=sharing). This template contains the expected sheets and formulas used by Go30.
 
 ### Key Features
 
@@ -83,8 +87,6 @@ The script sets up several triggers to automate tasks:
 4. **Bonus Tracker**:
    - PAX can also fill out the Bonus Tracker sheet to get points for key activities such as EHing an FNG, Fellowship, Inspiration, and Qing.
 
-For more information, see the explainer video: https://www.youtube.com/watch?v=cjn2qCLiHZY
-
 ### Next Steps (Not Automated)
 
 1. **Open the New Spreadsheet**:
@@ -94,7 +96,7 @@ For more information, see the explainer video: https://www.youtube.com/watch?v=c
    - Run the "Initialize Triggers" option from the "F3 Go30" menu to set up automation.
 
 3. **Shorten and Share Form URL**:
-   - Use a URL shortening service (e.g., Bitly or TinyURL) to shorten the form URL for easier sharing.
+   - Use a URL shortening service (e.g., Bitly or TinyURL) to shorten the form URL for easier sharing.  urlShortener.js has prototype code for this to be integrated.  It uses Bitly where the free version limits you to 5 per month.  TinyURL may be a better choice.
 
 4. **Shorten and Share Spreadsheet URL**:
    - Similarly, shorten the new tracker spreadsheet URL for easier sharing.
