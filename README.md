@@ -18,6 +18,8 @@ The Google Apps Script associated with the F3Go30 project automates various task
 
 The spreadsheet should be a copy of or derived from the [Go 30 Template spreadsheet](https://docs.google.com/spreadsheets/d/1XLAYCSSeNBLvA2JTfhFWoZkKgsmizoUvsNk6CJtot7U/edit?usp=sharing). This template contains the expected sheets and formulas used by Go30.
 
+When copying the go30 Template for a new region or changing the site Q, make sure and edit the HC Form to change the site Q name.
+
 ### Key Features
 
 1. **Copy and Initialize**:

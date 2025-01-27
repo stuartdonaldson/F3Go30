@@ -6,6 +6,7 @@
 function setupFormSubmitTrigger() {
   clearFormSubmitTrigger();
 
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
   // Create a new form submit trigger for the 'onFormSubmit' function.
   ScriptApp.newTrigger('onFormSubmit')
     .forSpreadsheet(ss)
