@@ -1,3 +1,6 @@
+# CAUTION - The CopyAndInit script has a race condition that may cause it to hang.
+# Working on it!
+
 # F3Go30
 Automation, Scripts, and HTML for Go30.
 To learn more about Go30, see the explainer video: https://www.youtube.com/watch?v=cjn2qCLiHZY
