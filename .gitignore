@@ -1,0 +1,32 @@
+# Ignore node_modules directory
+node_modules/
+
+# Ignore .clasp.json file
+.clasp.json
+
+# Ignore all files ending with ~ (temporary files)
+*~
+
+# Ignore all files ending with .swp (swap files)
+*.swp
+
+# Ignore all files ending with .log (log files)
+*.log
+
+# Ignore all files ending with .tmp (temporary files)
+*.tmp
+
+# Ignore all files ending with .bak (backup files)
+*.bak
+
+# Ignore all files ending with .DS_Store (macOS metadata files)
+.DS_Store
+
+# Ignore all files ending with Thumbs.db (Windows thumbnail cache files)
+Thumbs.db
+
+# Ignore all folders ending with "- Copy"
+*- Copy/
+
+# Ignore all folders ending with "- Copy" (case insensitive)
+*- copy/
