@@ -1,6 +1,3 @@
-# CAUTION - The CopyAndInit script has a race condition that may cause it to hang.
-# Working on it!
-
 # F3Go30
 Automation, Scripts, and HTML for Go30.
 To learn more about Go30, see the explainer video: https://www.youtube.com/watch?v=cjn2qCLiHZY
@@ -19,7 +16,9 @@ The Google Apps Script associated with the F3Go30 project automates various task
 
 ### Important Notice
 
-The spreadsheet should be a copy of or derived from the [Go 30 Template spreadsheet](https://docs.google.com/spreadsheets/d/1XLAYCSSeNBLvA2JTfhFWoZkKgsmizoUvsNk6CJtot7U/edit?usp=sharing). This template contains the expected sheets and formulas used by Go30.
+The spreadsheet should be a copy of or derived from the [Go 30 Template](https://docs.google.com/spreadsheets/d/1XLAYCSSeNBLvA2JTfhFWoZkKgsmizoUvsNk6CJtot7U/edit?usp=sharing) spreadsheet. This template contains the expected sheets and formulas used by Go30. Unfortunately, opening that sheet and copying it to My Drive, does not copy the template for the HC form.
+
+You can copy the sheet and link up your own HC form.
 
 When copying the go30 Template for a new region or changing the site Q, make sure and edit the HC Form to change the site Q name.
 

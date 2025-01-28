@@ -76,11 +76,13 @@ function copyAndInit() {
     // Modify sheets in the new spreadsheet
     initSheets(newSpreadsheet, startDate);
 
-  NoticeLog('Next steps:');
+  NoticeLog("-");
+  NoticeLog('<b>Next steps:</b>');
   NoticeLog('1. Open the new spreadsheet');
   NoticeLog('2. F3 Go30 Menu > Initialize Triggers');
   NoticeLog('3. Shorten and Share Form URL');
   NoticeLog('4. Shorten and share new Spreadsheet URL');
+  NoticeLog("-");
   
   NoticeLog('You can now close this message.');
 }

@@ -3,58 +3,53 @@
   <head>
     <base target="_top">
     <script>
-      function updateMessages() {
-        console.log("***** Fetching messages from the server...");
-        google.script.run.withSuccessHandler(function(messages) {
-          console.log("***** Messages received:", messages);
-          if (!messages) {
-            console.log("***** No messages received.");
-            return;
-          }
-          var titleDiv = document.getElementById("sb-title");
-          var descriptionDiv = document.getElementById("sb-description");
-          var promptDiv = document.getElementById("sb-prompt");
-          var statusDiv = document.getElementById("sb-status");
-          var logDiv = document.getElementById("sb-log");
-
-          messages.forEach(function(message) {
-            console.log("***** Processing message:", message);
-            if (!message) {
-              return; // Skip to the next iteration of the loop
-            }
-            if (message.title) {
-              updateTitle(message.title);
-            }
-            if (message.desc) {
-              updateDescription(message.desc);
-            }
-            if (message.prompt) {
-              updatePrompt(message.prompt);
-            }
-            if (message.status) {
-              updateStatus(message.status);
-            }
-            if (message.log) {
-              updateLog(message.log);
-            }
-          });
-        }).getMessages();
+      function handleMessage(message) {
+        console.log("***** Messages received:", JSON.stringify(message));
+        if (!message) {
+          console.log("***** Queue was empty.");
+          return;
+        }
+        if (message.title) {
+          updateTitle(message.title);
+        }
+        if (message.desc) {
+          updateDescription(message.desc);
+        }
+        if (message.prompt) {
+          updatePrompt(message.prompt);
+        }
+        if (message.status) {
+          updateStatus(message.status);
+        }
+        if (message.log) {
+          updateLog(message.log);
+        }
+        checkMessages(); // Continue updating messages
       }
 
+      function checkMessages() {
+        console.log("***** checking messages...");
+        google.script.run
+          .withSuccessHandler(handleMessage) 
+          .withFailureHandler(function(error) {
+            console.error("***** Error occurred:", error);
+          }).getClientMessage();
+      } 
+  
       function updateTitle(title) {
-        console.log("***** Updating title:", title);
+        console.log("** Updating title:", title);
         var titleDiv = document.getElementById("sb-title");
         titleDiv.innerHTML = title;
       }
 
       function updateDescription(description) {
-        console.log("***** Updating description:", description);
+        console.log("** Updating description:", description);
         var descriptionDiv = document.getElementById("sb-description");
         descriptionDiv.innerHTML = description;
       }
 
       function updatePrompt(promptText) {
-        console.log("***** Updating prompt:", promptText);
+        console.log("** Updating prompt:", promptText);
         var promptDiv = document.getElementById("sb-prompt");
         promptDiv.innerHTML = ""; // Clear previous prompt
 
@@ -62,9 +57,9 @@
         form.onsubmit = function(event) {
           event.preventDefault();
           var input = document.getElementById("sb-prompt-input").value;
-          console.log("***** Prompt response submitted:", input);
+          console.log("** Prompt response submitted:", input);
           promptDiv.innerHTML = ""; // Clear the prompt div after response is sent
-          google.script.run.handlePromptResponse(input);
+          google.script.run.sendToServer(input);
         };
 
         var label = document.createElement("label");
@@ -81,29 +76,34 @@
         submitButton.textContent = "Submit";
         form.appendChild(submitButton);
 
+        promptDiv.appendChild( document.createElement("hr") );
         promptDiv.appendChild(form);
+        promptDiv.appendChild( document.createElement("hr") );
       }
 
       function updateStatus(status) {
-        console.log("***** Updating status:", status);
+        console.log("** Updating status:", status);
         var statusDiv = document.getElementById("sb-status");
         statusDiv.innerHTML = status;
       }
 
-      function updateLog(logMessages) {
-        console.log("***** Updating log messages:", logMessages);
+      function updateLog(logMessage) {
+        console.log("** Updating log messages:", logMessage);
         var logDiv = document.getElementById("sb-log");
-        logMessages.forEach(function(logMessage) {
-          var p = document.createElement("p");
+        var p;
+        if (logMessage === "-") {
+          p = document.createElement("hr");
+        } else {
+          p = document.createElement("p");
           p.innerHTML = logMessage;
-          logDiv.appendChild(p);
-        });
+        }
+        logDiv.appendChild(p);
       }
 
       // Start updating messages when the sidebar loads
       window.onload = function() {
         console.log("***** Starting message updates...");
-        setInterval(updateMessages, 2000); // Repeat every 0.5 seconds
+        setInterval(checkMessages, 2000); // Repeat every 0.5 seconds
       };
     </script>
   </head>
@@ -141,7 +141,7 @@
       }
     </style>
 
-<div id="sb-title" class="sidebar-section sidebar-title">Notifications</div>
+    <div id="sb-title" class="sidebar-section sidebar-title">Notifications</div>
     <div id="sb-description" class="sidebar-section sidebar-description"></div>
     <div id="sb-prompt" class="sidebar-section"></div>
     <div id="sb-status" class="sidebar-section sidebar-status"></div>
