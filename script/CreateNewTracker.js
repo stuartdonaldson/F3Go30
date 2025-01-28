@@ -84,8 +84,34 @@ function copyAndInit() {
   NoticeLog('4. Shorten and share new Spreadsheet URL');
   NoticeLog("-");
   
+  NoticeLog('You can now close this sidebar.');
+}
+
+function reinitializeSheets() {
+  NoticeLogInit("Reinitialize Sheets", "This script will reinitialize the sheets in the current spreadsheet. Please enter the start date for the new month.");
+
+  var response = NoticePrompt("Enter start date YYYY-MM-DD");
+  if (!response) {
+    NoticeLog('Operation canceled.');
+    return;
+  }
+  const startDate = new Date(response + 'T00:00:00'); // Ensures the date is treated as local time
+  
+  if (isNaN(startDate.getTime())) {
+    NoticeLog('Invalid date format. Please use YYYY-MM-DD format.');
+    NoticeLog('Operation canceled.');
+    return;
+  }
+
+  NoticeLog('Reinitializing sheets. Please wait...');
+
+  initSheets(SpreadsheetApp.getActiveSpreadsheet(), startDate);
+  SpreadsheetApp.flush();
+
+  NoticeLog('The sheets have been reinitialized successfully.');
   NoticeLog('You can now close this message.');
 }
+
 
 function initializeTriggers() {
   setupDailyMinusOneTrigger();
@@ -102,17 +128,19 @@ function initSheets(newSpreadsheet, startDate) {
       trackerSheet.deleteRows(5, trackerSheet.getLastRow() - 4);
     }
     clearNonFormulaCells(trackerSheet.getRange('A4:AR4'));
-
     populateTrackerSheet(trackerSheet, startDate)
+    SpreadsheetApp.flush();
 
   NoticeLog('Resetting Bonus Tracker sheet...');
     if (bonusTrackerSheet.getLastRow() > 1) {
       bonusTrackerSheet.getRange('A2:Z' + bonusTrackerSheet.getLastRow()).clearContent();  // Adjust 'Z' according to your last column
+      SpreadsheetApp.flush();
     }
 
   NoticeLog('Resetting Responses sheet...');
   if (responsesSheet.getLastRow() > 1) {
     responsesSheet.deleteRows(2, responsesSheet.getLastRow() - 1);
+    SpreadsheetApp.flush();
   }
 }
 

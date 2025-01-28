@@ -20,11 +20,10 @@ function onOpen()
     ui.createMenu('F3 Go30')
      .addItem('Copy and Initialize', 'copyAndInit')
      .addItem('Initialize Triggers', 'initializeTriggers')
-     .addItem('Initialize Sheets (DEV)', 'initSheets')
+     .addItem('Reinitialize this spreadsheet', 'reinitializeSheets')
      .addItem('Run test function (DEV)', 'testFunction')
      .addToUi(); 
   }
-  if (email === 'f3go30@gmail.com') 
   logActivity('onOpen','');
 }
 
