@@ -1,12 +1,12 @@
 /**
  * The onOpen function is triggered when the Google Sheets document is opened.
- * It creates a custom menu in the Google Sheets UI for a specific user.
+ * It creates a custom menu in the Google Sheets UI for the owner of the spreadsheet.
  * 
  * Menu Options:
  * - 'Copy and Initialize': Calls the `copyAndInit` function to copy and initialize data.
  * - 'Initialize Triggers': Calls the `initializeTriggers` function to set up necessary triggers.
- * - 'Initialize Sheets': Calls the `initSheets` function to initialize sheets.
- * - 'Run test function': Calls the `testFunction` to run a test function.
+ * - 'Reinitialize this spreadsheet': Calls the `reinitializeSheets` function to reinitialize the spreadsheet.
+ * - 'Run test function (DEV)': Calls the `testFunction` to run a test function for development purposes.
  */
 function onOpen()
 { 
