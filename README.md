@@ -11,7 +11,7 @@ The Google Apps Script associated with the F3Go30 project automates various task
 The "F3 Go30" menu appears only if the person opening the Google spreadsheet is the owner of the spreadsheet.
  * Copy and Initialize: Copies the current spreadsheet to a new one and initializes all sheets and forms.
  * Initialize Triggers: Run on the new sheet to initialize all trigger automations.
- * Initialize Sheets (DEV): Initializes all sheets again as part of development.
+ * Reinitialize this spreadsheet: Initializes all sheets in this spreadsheet again.  Ueful in development, or to start a sheet over again.
  * Run test function (DEV): Run a test function, only for developers.
 
 ### Template and Form Copying Instructions

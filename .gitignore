@@ -30,3 +30,5 @@ Thumbs.db
 
 # Ignore all folders ending with "- Copy" (case insensitive)
 *- copy/
+
+.README-DEV.md
