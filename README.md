@@ -30,6 +30,10 @@ Unfortunately, if you are not the owner of the spreadsheet and signup HC form, t
 
 From that point on, when you use the "Copy and Initialize" menu item to create a new month, the form should get copied and permissions set properly. It is just this initial setup that requires the manual and somewhat cumbersome method.
 
+### Experimental: Form Copy/Generation (Work in Progress)
+
+There is experimental, untested code in [script/FORMCONFIRMATIONMESSAGE.js](script/FORMCONFIRMATIONMESSAGE.js) and [script/formManager.js](script/formManager.js) that explores ways to update or recreate Google Forms programmatically. This work is intended to simplify bootstrapping a new Go30 region from a read-only copy of the spreadsheet (ideally letting "Copy and Initialize" build everything). Google Forms permissions and ownership restrictions currently require manual steps, so these functions are not used in production and should be considered dead code for now.
+
 ### Key Features
 
 1. **Copy and Initialize**:
@@ -38,6 +42,7 @@ From that point on, when you use the "Copy and Initialize" menu item to create a
    - Resets all worksheets in the new tracker.
    - Sets the title on the HC form.
    - Sets up sharing permissions on the spreadsheet for anyone with the link to edit.
+   - Shortens the tracker sheet URL and HC form URL using the built-in URL shortener (TinyURL by default).
 
 2. **Initialize Triggers**:
    - Sets up daily and form submit triggers for the new tracker.
@@ -54,6 +59,15 @@ From that point on, when you use the "Copy and Initialize" menu item to create a
 2. Go to `Extensions` > `Apps Script`.
 3. Copy and paste the script files into the Apps Script editor.
 4. Save the project.
+
+## URL Shortener Setup
+
+The project includes a URL shortener utility that is used during "Copy and Initialize" to shorten the tracker sheet and HC form links. By default it uses TinyURL. To enable it:
+
+1. In Apps Script, open **Project Settings**.
+2. Add script properties:
+   - `TINYURL_ACCESS_TOKEN` (required for TinyURL)
+   - `BITLY_ACCESS_TOKEN` (optional, only if you switch to Bitly)
 
 ## Usage
 
