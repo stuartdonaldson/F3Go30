@@ -14,7 +14,7 @@ function testNotificationSidebar() {
   NoticeLog( "progress step 3" );
   Utilities.sleep(2000);
 
-  NoticeLog(`Click ${blf("here", "https://example.com")} to access the link`);
+  NoticeLog(`Click ${createHtmlLink("here", "https://example.com")} to access the link`);
   Utilities.sleep(2000);
 
   var x = NoticePrompt( "Enter your name", "Please enter your name:" );
@@ -24,8 +24,8 @@ function testNotificationSidebar() {
 }
 
   
-// blf( text, link ) - create a link in the sidebar
-function blf( text, link ) { 
+// createHtmlLink( text, link ) - create a link in the sidebar
+function createHtmlLink( text, link ) { 
   // construct an html hyperlink
   return '<a href="' + link + '" target="_blank">' + text + '</a>';
 }

@@ -1,16 +1,19 @@
-/**
- * This script handles the creation of a new tracker spreadsheet for the Go30 program.
- * It performs the following tasks:
- * - Prompts the user for the new spreadsheet name and start date.
- * - Copies the current spreadsheet to a new spreadsheet with the specified name.
- * - Moves the new spreadsheet to the same folder as the current spreadsheet.
- * - Adjusts permissions so anyone with the link can edit the new spreadsheet.
- * - Logs the new spreadsheet and tracker sheet URLs.
- * - Updates the associated HC form's title and filename.
- * - Modifies the sheets in the new spreadsheet.
- * - Provides next steps for the user to complete the setup.
- */
 
+/**
+ * Creates a new spreadsheet with the same structure as the current spreadsheet, 
+ * initializes it with a specified start date, and updates associated form details.
+ * 
+ * The function performs the following steps:
+ * 1. Prompts the user for the name of the new spreadsheet and a start date.
+ * 2. Copies the current spreadsheet to a new one with the specified name.
+ * 3. Moves the new spreadsheet to the same folder as the current spreadsheet.
+ * 4. Updates sharing permissions for the new spreadsheet to allow anyone with the link to edit.
+ * 5. Updates the associated Google Form's title and filename based on the start date.
+ * 6. Initializes the sheets in the new spreadsheet with the provided start date.
+ * 7. Logs instructions for the user to complete additional setup steps.
+ * 
+ * @throws {Error} If the user cancels any of the prompts or provides invalid input.
+ */
 function copyAndInit() {
   NoticeLogInit("Create New Tracker", "This script will create a new spreadsheet with the same structure as the current spreadsheet. Please enter the name for the new spreadsheet.");
 
@@ -51,8 +54,15 @@ function copyAndInit() {
     // Get the URL to the "Tracker" sheet
     const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
     const trackerSheetUrl = newSpreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
+    const trackerAlias = newSpreadsheetName.replace(/\s+/g, "");
+    let trackerSheetShortUrl = trackerSheetUrl;
+    try {
+      trackerSheetShortUrl = shortenUrl(trackerSheetUrl, trackerAlias, 5, "tinyurl");
+    } catch (error) {
+      NoticeLog('Shorten URL failed for tracker sheet: ' + error.message);
+    }
 
-    NoticeLog('New spreadsheet tracker sheet link: ' + blf(newSpreadsheetName, trackerSheetUrl));
+    NoticeLog('New spreadsheet tracker sheet link: ' + createHtmlLink(newSpreadsheetName, trackerSheetShortUrl));
 
     // Update the form name and title, and move to the new folder
     NoticeLog('Updating form...');
@@ -71,7 +81,15 @@ function copyAndInit() {
       formFile.setName(formName);
       formFile.moveTo(folder);
 
-    NoticeLog('New HC Form: ' + blf(formName, formUrl));
+    const formAlias = formName.replace(/\s+/g, "");
+    let formShortUrl = formUrl;
+    try {
+      formShortUrl = shortenUrl(formUrl, formAlias, 5, "tinyurl");
+    } catch (error) {
+      NoticeLog('Shorten URL failed for form: ' + error.message);
+    }
+
+    NoticeLog('New HC Form: ' + createHtmlLink(formName, formShortUrl));
 
     // Modify sheets in the new spreadsheet
     initSheets(newSpreadsheet, startDate);
@@ -87,6 +105,15 @@ function copyAndInit() {
   NoticeLog('You can now close this sidebar.');
 }
 
+/**
+ * Reinitializes the sheets in the current spreadsheet for a new month.
+ * Prompts the user to enter a start date in the format "YYYY-MM-DD".
+ * Validates the input date and initializes the sheets accordingly.
+ * Logs messages to notify the user of the operation's progress and outcome.
+ *
+ * @function
+ * @throws {Error} If the entered date is invalid or the operation is canceled.
+ */
 function reinitializeSheets() {
   NoticeLogInit("Reinitialize Sheets", "This script will reinitialize the sheets in the current spreadsheet. Please enter the start date for the new month.");
 
@@ -113,10 +140,18 @@ function reinitializeSheets() {
 }
 
 
-function initializeTriggers() {
-  setupDailyMinusOneTrigger();
-  setupFormSubmitTrigger();
-}
+/**
+ * Initializes and resets the sheets in the given spreadsheet.
+ * 
+ * This function performs the following actions:
+ * - Resets the "Tracker" sheet by deleting rows beyond the fourth row,
+ *   clearing non-formula cells in a specific range, and populating it with data.
+ * - Resets the "Bonus Tracker" sheet by clearing content from the second row onward.
+ * - Resets the "Responses" sheet by deleting rows beyond the first row.
+ * 
+ * @param {Spreadsheet} newSpreadsheet - The Google Spreadsheet object containing the sheets to initialize.
+ * @param {Date} startDate - The start date used to populate the "Tracker" sheet.
+ */
 function initSheets(newSpreadsheet, startDate) {
 
   const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
@@ -127,7 +162,7 @@ function initSheets(newSpreadsheet, startDate) {
     if (trackerSheet.getLastRow() > 4) {
       trackerSheet.deleteRows(5, trackerSheet.getLastRow() - 4);
     }
-    clearNonFormulaCells(trackerSheet.getRange('A4:AR4'));
+    clearNonFormulaCells(trackerSheet.getRange('A4:AS4'));
     populateTrackerSheet(trackerSheet, startDate)
     SpreadsheetApp.flush();
 
@@ -161,8 +196,8 @@ function populateTrackerSheet(sheet, startDate) {
   const endDate = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0); // Last day of the start month
 
   // Clear necessary cells
-  sheet.getRange('I2:AR4').clearContent();
-  sheet.getRange('I2:AR4').setBackground(null); // Clear previous background colors
+  sheet.getRange('I2:AS4').clearContent();
+  sheet.getRange('I2:AS4').setBackground(null); // Clear previous background colors
 
   // Populate the dates and identify bonus weeks
   let currentDate = new Date(startDate); // Copy startDate to avoid altering it
