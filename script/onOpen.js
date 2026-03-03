@@ -1,30 +1,54 @@
 /**
  * The onOpen function is triggered when the Google Sheets document is opened.
- * It creates a custom menu in the Google Sheets UI for a specific user.
- * 
- * Menu Options:
- * - 'Copy and Initialize': Calls the `copyAndInit` function to copy and initialize data.
- * - 'Initialize Triggers': Calls the `initializeTriggers` function to set up necessary triggers.
- * - 'Initialize Sheets': Calls the `initSheets` function to initialize sheets.
- * - 'Run test function': Calls the `testFunction` to run a test function.
+ * Builds the F3 Go30 custom menu. Management items (Copy and Initialize, triggers,
+ * reinitialize) are shown only to the spreadsheet owner. About is shown to all users.
  */
 function onOpen()
 { 
   var ui = SpreadsheetApp.getUi(); 
-  var email = Session.getActiveUser().getEmail(); 
-
-  // Only add the F3Go30 menu for spreadsheet management if the owner of the spreadsheet has opened it.
+  var email = Session.getActiveUser().getEmail();
   var owneremail = SpreadsheetApp.getActiveSpreadsheet().getOwner().getEmail();
 
-  if (email === owneremail ) {
-    ui.createMenu('F3 Go30')
-     .addItem('Copy and Initialize', 'copyAndInit')
-     .addItem('Initialize Triggers', 'initializeTriggers')
-     .addItem('Reinitialize this spreadsheet', 'reinitializeSheets')
-     .addItem('Run test function (DEV)', 'testFunction')
-     .addToUi(); 
+  var menu = ui.createMenu('F3 Go30');
+
+  if (email === owneremail) {
+    menu.addItem('Copy and Initialize', 'copyAndInit')
+        .addItem('Initialize Triggers', 'initializeTriggers')
+        .addItem('Reinitialize this spreadsheet', 'reinitializeSheets')
+        .addSeparator()
+        .addItem('Run test function (DEV)', 'testFunction')
+        .addSeparator();
   }
+
+  menu.addItem('About', 'showAbout')
+      .addToUi();
+
   logActivity('onOpen','');
+}
+
+/**
+ * Displays an About dialog with version info and author contact.
+ */
+function showAbout() {
+  const html = HtmlService.createHtmlOutput(
+    '<style>' +
+    '  body { font-family: Arial, sans-serif; padding: 16px; font-size: 13px; color: #333; }' +
+    '  h2 { margin-top: 0; }' +
+    '  p { margin: 6px 0; }' +
+    '  .label { font-weight: bold; }' +
+    '  hr { border: none; border-top: 1px solid #ddd; margin: 12px 0; }' +
+    '</style>' +
+    '<h2>F3 Go30 Tracker</h2>' +
+    '<p>Automates the monthly lifecycle of Go30 fitness challenge trackers — ' +
+    'copying the template, linking the HC sign-up form, initializing sheets, ' +
+    'setting up triggers, and nightly miss-marking.</p>' +
+    '<hr>' +
+    '<p><span class="label">Version:</span> ' + APP_VERSION + ' (' + APP_VERSION_DATE + ')</p>' +
+    '<p><span class="label">Author:</span> ' + APP_AUTHOR + '</p>' +
+    '<p><span class="label">Contact:</span> <a href="mailto:' + APP_CONTACT + '">' + APP_CONTACT + '</a></p>'
+  ).setWidth(420).setHeight(230);
+
+  SpreadsheetApp.getUi().showModalDialog(html, 'About F3 Go30');
 }
 
 function initializeTriggers() {

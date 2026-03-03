@@ -1,15 +1,14 @@
 # Plan
 
 ## Status
-Documentation framework (Minimal tier) scaffold complete. Migrating content and authoring ADRs.
+Documentation framework (Minimal tier) migration complete. Active development — adding version/About menu, Slack message generation, and scheduled auto-creation.
 
 ## In Progress
-- Phase 3 content migration: README.md sections authored from README-OLD.md and TODO-OLD.md
-- ADR authoring (001–005)
+- Version constant and About menu item (Backlog #10 prep)
 
 ## Next
-- Review README.md word count against 800-word target
-- Verify all `-OLD` files have been fully drained before deletion
+- Backlog #9: add `setConfirmationMessage()` in `copyAndInit()`
+- Backlog #10: Slack copy-paste message generation after Copy and Initialize
 - Update docs/references/go30-q-tutorial-script.md to reflect current workflow
 
 ## Blocked
