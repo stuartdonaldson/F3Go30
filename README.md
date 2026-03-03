@@ -1,81 +1,276 @@
-# F3Go30 Google Apps Script
+# F3Go30
 
-## Description
+> **Scale note:** This project uses a condensed single-file documentation structure.
+> See CLAUDE.md §Scaling Threshold for when and how to expand to the Standard tier.
 
-The F3Go30 Google Apps Script automates various tasks related to managing and tracking progress in the Go30 Google Sheet. It provides features for copying and initializing new tracker spreadsheets, setting up triggers, and managing forms.
+Google Apps Script automation for managing monthly Go30 fitness challenge trackers in Google Sheets.
 
-## Overview of the Google Apps Script Behavior
+---
 
-The Google Apps Script associated with the F3Go30 project automates various tasks related to managing and tracking progress in the Go30 Google Sheet. The script provides several features accessible through a custom menu, "F3 Go30," which appears only for the owner of the spreadsheet, typically the site Q for Go30. The main functionalities include copying and initializing new tracker spreadsheets, setting up triggers, and managing forms.
+## CONTEXT — Why + What
 
-The "F3 Go30" menu appears only if the person opening the Google spreadsheet is the owner of the spreadsheet.
- * Copy and Initialize: Copies the current spreadsheet to a new one and initializes all sheets and forms.
- * Initialize Triggers: Run on the new sheet to initialize all trigger automations.
- * Reinitialize this spreadsheet: Initializes all sheets in this spreadsheet again.  Useful in development, or to start a sheet over again.
- * Run test function (DEV): Run a test function, only for developers.
+### Introduction & Goals
 
-### Template and Form Copying Instructions
+**Purpose**
+F3Go30 automates the monthly lifecycle of a Go30 fitness challenge tracker: copying a template spreadsheet, linking a Google Form for sign-ups, initializing sheets, setting up time and form-submit triggers, and marking missed check-ins nightly. It allows a single Q (site leader) to stand up a new month's tracker in minutes without manual sheet or trigger configuration.
 
-The practice we are following in the Puget Sound region is to do development and updates in the [Go 30 Template](https://docs.google.com/spreadsheets/d/1XLAYCSSeNBLvA2JTfhFWoZkKgsmizoUvsNk6CJtot7U/edit?usp=sharing) spreadsheet. , and we copy and initialize new sheets from there. However, any of the derived monthly sheets, such as the current month, could also be used. The owner of the current sheet, f3go30@gmail.com in the Puget Sound region, will have the menu option to initialize and run the automation.  The copy process will include creating a new signup form.
+**Quality Goals**
 
-### Creating Your Own Go30 for Another Region
+| Priority | Quality Goal | Scenario |
+|----------|-------------|----------|
+| 1 | Operability | A non-technical site Q can create a new monthly tracker using only the custom menu, without touching Apps Script |
+| 2 | Correctness | No PAX entry is duplicated, dropped, or incorrectly marked −1 due to a race condition or range error |
+| 3 | Recoverability | If a step in Copy and Initialize fails, the sidebar log surfaces the failure with enough context to recover manually |
 
-Unfortunately, if you are not the owner of the spreadsheet and signup HC form, the copy process does not copy the signup form. You will need to manually copy the signup form and then link it to your copy of the spreadsheet. To create your own Go30 for another region:
+**Stakeholders**
 
-1. Go to a recent or current Go30 sheet in the Puget Sound region. The link is available in the Go30 channel of the Puget Sound Slack. Alternatively, you can contact f3go30@gmail.com or me to get a link.
-2. Select the `File` menu, then choose `Make a Copy`, and select a destination folder for your Go30 initiative.
-3. To copy the form, go to the `Tools` menu and select `Manage Form`. Then, using the three dots in the upper right corner, select `Make a Copy` and copy the form to your Go30 folder.
-4. Use the menu options in your Google Sheet and your copy of the form to manage and link your form to your Google Sheet and save the responses in the Responses sheet.
-5. Update your signup form to add information specific to your region, including your Go30 Q info for more information.
+| Stakeholder | Expectation |
+|-------------|-------------|
+| Site Q | Menu-driven workflow; no scripting required |
+| PAX (participants) | HC form always linked and accessible; Tracker sheet reflects accurate daily status |
+| Developer | Fast context reload; clear module boundaries; known dead code is labeled |
 
-From that point on, when you use the "Copy and Initialize" menu item to create a new month, the form should get copied and permissions set properly. It is just this initial setup that requires the manual and somewhat cumbersome method.
+---
 
-### Experimental: Form Copy/Generation (Work in Progress)
+### Constraints
 
-There is experimental, untested code in [script/FORMCONFIRMATIONMESSAGE.js](script/FORMCONFIRMATIONMESSAGE.js) and [script/formManager.js](script/formManager.js) that explores ways to update or recreate Google Forms programmatically. This work is intended to simplify bootstrapping a new Go30 region from a read-only copy of the spreadsheet (ideally letting "Copy and Initialize" build everything). Google Forms permissions and ownership restrictions currently require manual steps, so these functions are not used in production and should be considered dead code for now.
+**Technical Constraints**
+- Runs exclusively in Google Apps Script (V8 runtime); no local execution
+- Bound to a specific Google Sheets spreadsheet; cannot run standalone
+- Menu access restricted to the spreadsheet owner's Google account
+- Google Forms permissions prevent programmatic form ownership transfer across accounts; initial form linking requires a one-time manual step for new regions
+- URL shortening requires a TinyURL API token stored as a Script Property; Bitly is supported as an alternative
 
-### Key Features
+**Organizational Constraints**
+- Single developer; no external CI/CD pipeline
+- Deployed by copying files via `clasp` from the `script/` folder
 
-1. **Copy and Initialize**:
-   - Prompts for a new tracker name and start date.
-   - Copies the current spreadsheet and associated HC form to a new tracker spreadsheet.
-   - Resets all worksheets in the new tracker.
-   - Sets the title on the HC form.
-   - Sets up sharing permissions on the spreadsheet for anyone with the link to edit.
-   - Shortens the tracker sheet URL and HC form URL using the built-in URL shortener (TinyURL by default).
+---
 
-2. **Initialize Triggers**:
-   - Sets up daily and form submit triggers for the new tracker.
+### Capabilities
+- Copy the active tracker spreadsheet to a new named spreadsheet in the same Drive folder
+- Initialize all sheets in a new tracker for the target month and start date
+- Link and title the associated Google Form HC sign-up
+- Shorten tracker and form URLs via TinyURL (or Bitly) and surface them in a notification sidebar
+- Set sharing permissions on new tracker to anyone-with-link/edit
+- Set up a daily 1 AM trigger to mark empty check-in cells as −1 after a 24-hour grace period
+- Set up a form-submit trigger to populate the Tracker sheet when a PAX submits the HC form
+- Log all menu-initiated activity to a hidden Activity sheet
 
-3. **Reinitialize Spreadsheet**:
-   - Reinitializes all sheets in the current spreadsheet, useful for development.
-   
-4. **Run test function (DEV)**:
-   - Runs a test function for developers.
+---
 
-## Installation
+### Use Cases
 
-1. Open the Google Sheets document where you want to use the script.
-2. Go to `Extensions` > `Apps Script`.
-3. Copy and paste the script files into the Apps Script editor.
-4. Save the project.
+### UC-1: Q Creates a New Monthly Tracker
 
-## URL Shortener Setup
+Actor: Site Q (spreadsheet owner)
 
-The project includes a URL shortener utility that is used during "Copy and Initialize" to shorten the tracker sheet and HC form links. By default it uses TinyURL. To enable it:
+Preconditions:
+- Q is logged in as the Google account that owns the current tracker spreadsheet
+- A valid template or current tracker is open
 
-1. In Apps Script, open **Project Settings**.
-2. Add script properties:
-   - `TINYURL_ACCESS_TOKEN` (required for TinyURL)
-   - `BITLY_ACCESS_TOKEN` (optional, only if you switch to Bitly)
+Primary Flow:
+1. Q opens the spreadsheet; the F3 Go30 menu appears
+2. Q selects "Copy and Initialize"
+3. Q enters the new tracker name and start date when prompted
+4. Script copies the spreadsheet and HC form to the same Drive folder
+5. Script initializes all sheets, sets form title, sets sharing permissions, and shortens URLs
+6. Sidebar displays links to the new spreadsheet and form
 
-## Usage
+Alternate Flows:
+A1: Q cancels a prompt → script exits cleanly with a sidebar log message
+A2: URL shortening fails → script logs the failure and continues with the full URL
 
-1. Open the Google Sheets document.
-2. Ensure you are logged in as the owner.
-3. Access the "F3 Go30" menu from the menu bar.
-4. Select the desired option (e.g., "Copy and Initialize").
+Postconditions:
+- New tracker spreadsheet exists in Drive with initialized sheets and correct sharing
+- Sidebar contains clickable links to the new tracker and HC form
 
-## Contact
+Constraints:
+- Only the spreadsheet owner sees the F3 Go30 menu
 
-For support or contributions, please contact `stuart.donaldson@gmail.com`
+---
+
+### UC-2: PAX Submits HC Sign-Up Form
+
+Actor: PAX (participant)
+
+Preconditions:
+- The HC form is linked to the tracker spreadsheet
+- The form-submit trigger has been initialized on the tracker
+
+Primary Flow:
+1. PAX opens the HC form link and submits their goal and F3 name
+2. Form response lands in the Responses sheet
+3. Form-submit trigger fires `onFormSubmit`
+4. Script checks for a duplicate F3 name in the Tracker sheet
+5. If not a duplicate, adds a new row with the PAX's data, copies formulas from the prior row, and sorts
+
+Alternate Flows:
+A1: F3 name already exists in Tracker → submission is ignored; no duplicate row added
+A2: Fewer than 4 form fields present → function exits without writing
+
+Postconditions:
+- PAX row exists in the Tracker sheet, sorted and formula-populated
+
+Constraints:
+- Deduplication is by F3 name only; name collisions between distinct PAX are possible
+
+---
+
+### UC-3: Nightly Miss Marking
+
+Actor: Time-based trigger (1 AM daily)
+
+Preconditions:
+- Daily trigger has been initialized on the tracker
+- Tracker sheet has date columns in row 3
+
+Primary Flow:
+1. Trigger fires `markEmptyCellsAsMinusOne` at 1 AM
+2. Script finds the column for two days prior (grace period)
+3. For each PAX row, if the cell is empty, writes −1
+
+Postconditions:
+- All PAX who did not record a value within the grace period have −1 in the appropriate column
+
+Constraints:
+- Only cells in the two-day-prior column are evaluated; current and yesterday columns are not touched
+
+---
+
+### Non-Goals
+- Not a multi-region coordination platform; each region operates its own independent spreadsheet
+- Not a public SaaS; no web app, API, or external hosting
+- Does not automate the initial one-time form linking step when bootstrapping a new region
+- Does not send email or push notifications directly; notification sidebar is in-session only
+- No automated testing or CI/CD pipeline
+
+---
+
+### Glossary
+
+| Term | Definition |
+|------|------------|
+| PAX | Participant in an F3 workout or Go30 challenge |
+| HC | Hard Commit — a formal commitment by a PAX to participate; submitted via Google Form |
+| Q | Leader of an F3 workout or challenge session; in this context the site Q manages the Go30 tracker |
+| Site Q | The Q responsible for a specific F3 region's Go30 instance; typically the spreadsheet owner |
+| Go30 | A 30-day F3 fitness challenge tracked in Google Sheets |
+| FNG | Friendly New Guy — a first-time F3 participant |
+| Tracker sheet | The primary worksheet in the Go30 spreadsheet; one row per PAX, one column per day |
+| Bonus Tracker | A secondary sheet where PAX log bonus-point activities (EH, Fellowship, Inspiration, Q) |
+| Responses sheet | Google Form response destination sheet; source data for `onFormSubmit` |
+| Help sheet | Sheet containing operational URLs (e.g., Next Month HC Signup link) |
+| Activity sheet | Hidden sheet logging all script-initiated actions with timestamp and user |
+| Template | The canonical Go30 spreadsheet from which new monthly trackers are copied |
+
+---
+
+## DESIGN — How
+
+### Solution Strategy
+
+The tool follows a **copy-from-template** pattern: a working spreadsheet (and its bound form) is duplicated rather than built from scratch each month. This avoids the complexity of programmatically creating Google Forms with correct ownership — a restriction Google Apps Script does not fully support across accounts. The owner-only menu gate enforces that only the authorized Q can trigger destructive or structural operations. A sidebar notification panel (rather than `alert()` dialogs) allows the script to stream progress updates during long-running copy operations without blocking execution.
+
+Programmatic form generation was explored but deferred — the Google Forms API does not support ownership transfer, making full automation impossible for cross-account regional bootstrapping. See ADR-004.
+
+---
+
+### Runtime Architecture
+
+```mermaid
+graph LR
+    A[Q opens spreadsheet] --> B[onOpen — owner check]
+    B --> C{Owner?}
+    C -- Yes --> D[F3 Go30 menu shown]
+    C -- No --> E[No menu]
+    D --> F[Copy and Initialize]
+    F --> G[Copies spreadsheet + form]
+    G --> H[initSheets — resets all sheets]
+    H --> I[URL shortening]
+    I --> J[Sidebar: links to new tracker]
+    D --> K[Initialize Triggers]
+    K --> L[Daily 1 AM trigger]
+    K --> M[Form-submit trigger]
+    N[PAX submits HC form] --> M
+    M --> O[onFormSubmit — adds PAX row to Tracker]
+    L --> P[markEmptyCellsAsMinusOne — writes −1 for missed days]
+```
+
+---
+
+### Building Block View
+
+| Module | Files | Responsibility |
+|--------|-------|---------------|
+| Entry Points | `onOpen.js`, `macros.js` | Custom menu, trigger initialization, legacy macro entry points |
+| Tracker Lifecycle | `CreateNewTracker.js`, `addResponseOnSubmit.js`, `markMinusOne.js` | Copy-and-init workflow, form-submit handler, nightly miss marking |
+| UI / Notifications | `NotificationSBCode.js`, `NotificationSidebar.html` | Sidebar panel: log streaming, prompts, HTML link generation |
+| Utilities | `logActivity.js`, `urlShortener.js`, `Utilities.js` | Activity logging, URL shortening (TinyURL/Bitly), cell utilities |
+| Experimental (dead code) | `FORMCONFIRMATIONMESSAGE.js`, `formManager.js` | Incomplete programmatic form creation/copy — not called in production; see ADR-004 |
+
+**Note — macros.js:** Contains `startNewMonth()` / `initTriggers()` entry points that partially overlap with `onOpen.js` and `addResponseOnSubmit.js`. This is a legacy layer flagged for cleanup. See PLAN.md §Backlog.
+
+---
+
+### Runtime View
+
+Key edge cases and known risks:
+
+| Scenario | Risk | Status |
+|----------|------|--------|
+| `initSheets()` called without arguments from `macros.js` | Signature mismatch — will throw at runtime if `startNewMonth()` is used | Known bug — see PLAN.md |
+| Tracker has fewer than 4 rows when `onFormSubmit` runs | `getRange` throws on negative row count | Known risk — guard needed |
+| URL shortener returns non-200 | Error is caught but not surfaced with actionable message | Known gap |
+| `NoticePrompt` receives empty string | `while (!response)` loop treats empty string as no response | Known quirk |
+
+---
+
+### Data Model
+
+| Sheet | Purpose | Key Columns |
+|-------|---------|-------------|
+| Tracker | One row per PAX; daily check-in grid | A: F3 Name, Row 3: dates (MM/dd/yyyy), data rows 4+ |
+| Responses | Raw Google Form submission data | Col 4 (index 3): F3 Name, Col 6: Team |
+| Help | Operational links and config values | A: Label, B: URL |
+| Bonus Tracker | PAX bonus-point activity log | PAX-entered; not script-managed |
+| Activity | Hidden audit log of script actions | A: Datetime, B: User email, C: Message, D: Sheet name |
+
+---
+
+## OPERATIONS — Run + Recover
+
+### Deployment
+
+Script files live in `script/` and are pushed to Google Apps Script via `clasp push` run from the `script/` folder. The script is bound to a specific Google Sheets spreadsheet; there is no standalone deployment.
+
+### Configuration
+
+**Script Properties** (set in Apps Script Project Settings → Script Properties)
+
+| Property | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `TINYURL_ACCESS_TOKEN` | Yes (for URL shortening) | None | TinyURL API token |
+| `BITLY_ACCESS_TOKEN` | No | None | Bitly API token; only needed if switching from TinyURL |
+
+### Running
+
+All operations are initiated from the **F3 Go30** custom menu in Google Sheets. The menu is visible only when the spreadsheet is opened by the owner account.
+
+| Menu Item | Function | When to Use |
+|-----------|----------|------------|
+| Copy and Initialize | `copyAndInit()` | Start of each new month |
+| Initialize Triggers | `initializeTriggers()` | After opening the new tracker for the first time |
+| Reinitialize this spreadsheet | `reinitializeSheets()` | Development or reset |
+| Run test function (DEV) | `testFunction()` | Developer use only |
+
+### Failure Modes
+
+| Failure | Symptom | Recovery |
+|---------|---------|---------|
+| Menu does not appear | User is not the spreadsheet owner | Open with the owner account |
+| URL shortening fails | Sidebar shows full URL instead of short URL | Check `TINYURL_ACCESS_TOKEN` in Script Properties; use full URL manually |
+| Copy and Initialize stops mid-run | Sidebar log shows last completed step | Note the step; complete remaining steps manually using Apps Script editor |
+| Tracker not populated after HC form submit | Row missing after form submit | Verify form-submit trigger exists in Apps Script Triggers panel; re-run "Initialize Triggers" |
+| −1 not appearing for missed days | Nightly trigger not firing | Verify daily trigger for `markEmptyCellsAsMinusOne` in Triggers panel; re-run "Initialize Triggers" |
+| `initSheets` throws on new month | Error from `macros.js` `startNewMonth()` path | Do not use `startNewMonth()`; use "Reinitialize this spreadsheet" from the menu instead |

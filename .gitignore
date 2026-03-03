@@ -28,6 +28,9 @@ Thumbs.db
 # Ignore all folders ending with "- Copy"
 *- Copy/
 
+# Historical archive — not active code
+2023-10/
+
 # Ignore all folders ending with "- Copy" (case insensitive)
 *- copy/
 
