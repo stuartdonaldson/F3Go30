@@ -35,3 +35,11 @@ Thumbs.db
 *- copy/
 
 .README-DEV.md
+
+# Generated beads report (never commit)
+bdreport.md
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

@@ -1,17 +1,15 @@
 # CLAUDE.md — F3Go30
 
-## Framework Reference
 **Tier:** Minimal
-**Standards:** /docs/framework/doc-bootstrap-standards.md
-**Tier prompt:** /docs/framework/doc-bootstrap-minimal.md
-Framework files are read-only. Do not edit in place.
-Central source: `C:\Users\stuar\OneDrive\Proj\DevStandard\docs\framework\`
+**Standards:** /docs/framework/doc-standard.md _(read-only — do not edit)_
 
 ## Reading Order
-1. PLAN.md — current state, what is in flight
-2. README.md — purpose, capabilities, architecture, operations
-3. /adr/ — why key decisions were made
-4. /docs/references/ — external document summaries and the Go30 Q tutorial script
+1. Current state — `bd prime` (auto-loaded when bd in use)
+2. README.md §CONTEXT — purpose, capabilities, use cases
+3. README.md §DESIGN — architecture, modules
+4. README.md §OPERATIONS — how to run it
+5. /adr/ — why key decisions were made
+6. /docs/references/ — external document summaries
 
 ## Document Map
 
@@ -19,51 +17,56 @@ Central source: `C:\Users\stuar\OneDrive\Proj\DevStandard\docs\framework\`
 |---------|---------|
 | Purpose, capabilities, use cases, glossary | README.md §CONTEXT |
 | Architecture, modules, data model, runtime risks | README.md §DESIGN |
-| Installation, configuration, failure modes | README.md §OPERATIONS |
-| Current state, backlog | PLAN.md |
+| Deployment, configuration, failure modes | README.md §OPERATIONS |
+| Current state | `bd ready` |
+| Identified work | bd issues |
 | Technical decisions | /adr/ |
+| Strategic themes | docs/VISION.md _(when created)_ |
+| Roadmap, funnel | docs/ROADMAP.md |
 | Go30 Q tutorial narration script | /docs/references/go30-q-tutorial-script.md |
 
 ## Placement Rules
-- All new capabilities → README.md §CONTEXT §Capabilities + use case if actor-driven
-- All architecture changes → README.md §DESIGN
-- All operational changes → README.md §OPERATIONS
-- All resolved decisions → /adr/
-- All new terms → README.md §CONTEXT §Glossary
-- Do not create new top-level document types without reviewing scaling threshold
-
-## Scaling Threshold
-Expand to Standard tier when any of these are true:
-- README.md exceeds ~800 words
-- More than two contributors
-- More than one runtime boundary
-- Deployment becomes non-trivial
-- A subproject relationship emerges
+- New capabilities → README.md §CONTEXT §Capabilities + use case if actor-driven
+- Architecture changes → README.md §DESIGN + affected diagrams
+- Operational changes → README.md §OPERATIONS
+- Resolved decisions → /adr/
+- New terms → README.md §CONTEXT §Glossary
+- New risk identified → `bd remember`
+- New initiative → docs/ROADMAP.md §Funnel
+- Do not create new top-level document types — review tier escalation signals first (doc-standard.md §Tier Overview)
 
 To expand:
-1. Create /docs/ with CONTEXT.md, DESIGN.md, OPERATIONS.md, PLAN.md, BACKLOG.md
+1. Create /docs/ with CONTEXT.md, DESIGN.md, OPERATIONS.md
 2. Migrate each README.md section to its corresponding document
 3. README.md becomes a brief project intro with pointers to /docs/
-4. Run the Standard tier bootstrap prompt to normalize the new structure
+4. Run the bootstrap prompt to normalize the new structure
 
 ## Maintenance Protocol
 
-### Session Start
-When asked to review project state, before beginning any work:
-1. Read PLAN.md — flag content that appears resolved and should graduate
-2. Check README.md size — flag if approaching 800 words
-3. Identify open decisions in PLAN.md ready to become ADRs
-4. Report findings before proceeding
+Claude does not monitor documents between sessions, detect drift, or update documents
+without explicit instruction.
 
-### Trigger Rules
-See /docs/framework/doc-bootstrap-standards.md §Trigger Rules
+- At session start or phase transition: run `/session-start-check`
+- After any code or architecture change: run `/doc-trigger-check`
+- To trigger a state review: "review project state before we start"
 
-### What Claude Will Not Do Automatically
-- Monitor documents between sessions
-- Detect drift without being asked
-- Update documents without explicit instruction
+## Memory System
+| System | Scope | Use for |
+|--------|-------|---------|
+| `bd remember` / `bd memories` | Project-scoped | Project rationale, design decisions, process insights — travels with the repo |
+| MEMORY.md (auto-memory) | User-scoped | User preferences, cross-project style conventions |
 
-To trigger a state review: "review project state before we start"
+Do not use MEMORY.md for project rationale. Do not use `bd remember` for user preferences.
+
+## Working
+```
+bd ready              # available work (unblocked, prioritized)
+bd list               # all open issues
+bd show <id>          # full issue detail with deps
+bd update <id> --claim  # claim and start work (atomic: sets assignee + in_progress)
+bd close <id>         # mark complete
+/bd-report            # generate bdreport.md (snapshot with graph + narrative)
+```
 
 ## Reference Summaries
 

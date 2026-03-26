@@ -179,7 +179,8 @@ Programmatic form generation was explored but deferred — the Google Forms API 
 ### Runtime Architecture
 
 ```mermaid
-graph LR
+%%{init: {'theme': 'neo-dark', 'theme': 'architecture-beta'}}%%
+graph TD
     A[Q opens spreadsheet] --> B[onOpen — owner check]
     B --> C{Owner?}
     C -- Yes --> D[F3 Go30 menu shown]
@@ -189,12 +190,20 @@ graph LR
     G --> H[initSheets — resets all sheets]
     H --> I[URL shortening]
     I --> J[Sidebar: links to new tracker]
+    %% Q background tasks (manual, in-background)
+    J --> BG1[Verify Tracker sheet]
+    J --> BG2[Init the Triggers in new Tracker]
+    J --> BG3[Update Go30 Links and Slack]
     D --> K[Initialize Triggers]
     K --> L[Daily 1 AM trigger]
     K --> M[Form-submit trigger]
     N[PAX submits HC form] --> M
     M --> O[onFormSubmit — adds PAX row to Tracker]
     L --> P[markEmptyCellsAsMinusOne — writes −1 for missed days]
+classDef lightblue fill:#ADD8E6,stroke:#333,stroke-width:1px,color:#000
+class A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P lightblue
+classDef lightgreen fill:#90EE90,stroke:#333,stroke-width:1px,color:#000
+class BG1,BG2,BG3 lightgreen
 ```
 
 ---
