@@ -38,7 +38,7 @@ Tier: Minimal
 | 26 | ADR: V8 runtime | appsscript.json | Author ADR — V8 over Rhino | /adr/005-v8-runtime.md | #21 | |
 | 27 | ADR: 24-hour grace period for −1 marking | markMinusOne.js comment | Author ADR — daily cron runs at 1 AM, checks 2 days prior | /adr/006-daily-minus-one-grace-period.md | #21 | |
 | 28 | script/FORMCONFIRMATIONMESSAGE.js | script/ | Keep file; document as experimental/dead code in README.md §DESIGN §Building Block View | README.md §DESIGN | #13 | |
-| 29 | script/formManager.js | script/ | Keep file; document as experimental/dead code in README.md §DESIGN §Building Block View | README.md §DESIGN | #13 | |
+| 29 | script/formManager.js | script/ | ~~Deleted 2026-03-30 (F3Go30-40a)~~ | — | — | ✓ |
 | 30 | script/macros.js legacy overlap | script/macros.js | Document in Building Block View as legacy entry-point layer; flag relationship to onOpen.js | README.md §DESIGN | #13 | |
 | 31 | /docs/framework/ files | DevStandard repo | Copy doc-bootstrap-standards.md + doc-bootstrap-minimal.md into /docs/framework/; create /docs/framework/README.md | /docs/framework/ | None | |
 

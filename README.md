@@ -216,7 +216,6 @@ class BG1,BG2,BG3 lightgreen
 | Tracker Lifecycle | `CreateNewTracker.js`, `addResponseOnSubmit.js`, `markMinusOne.js` | Copy-and-init workflow, form-submit handler, nightly miss marking |
 | UI / Notifications | `NotificationSBCode.js`, `NotificationSidebar.html` | Sidebar panel: log streaming, prompts, HTML link generation |
 | Utilities | `logActivity.js`, `urlShortener.js`, `Utilities.js` | Activity logging, URL shortening (TinyURL/Bitly), cell utilities |
-| Experimental (dead code) | `formManager.js` | Incomplete programmatic form import/export — not called in production; see ADR-004 |
 
 **Note — macros.js:** Contains `startNewMonth()` / `initTriggers()` entry points that partially overlap with `onOpen.js` and `addResponseOnSubmit.js`. This is a legacy layer flagged for cleanup. See PLAN.md §Backlog.
 
