@@ -35,9 +35,16 @@ function copyAndInit() {
     return;
   }
 
-  NoticeLog('Creating ' + newSpreadsheetName + '. Please wait...');
-
   const currentSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+  const siteQConfig = getConfigValue_(currentSpreadsheet, 'Site Q');
+  if (!siteQConfig || !siteQConfig.secondary) {
+    NoticeLog('Error: Site Q email not found in Config sheet — add a "Site Q" row with the email address in the secondary column.');
+    return;
+  }
+  const siteQEmail = siteQConfig.secondary;
+
+  NoticeLog('Creating ' + newSpreadsheetName + '. Please wait...');
   let newSpreadsheet;
   let newSpreadsheetId = null;
   try {

@@ -68,6 +68,7 @@ Actor: Site Q (spreadsheet owner)
 Preconditions:
 - Q is logged in as the Google account that owns the current tracker spreadsheet
 - A valid template or current tracker is open
+- Config sheet contains a `Site Q` row with the email address in the secondary column (column C)
 
 Primary Flow:
 1. Q opens the spreadsheet; the F3 Go30 menu appears
@@ -80,6 +81,7 @@ Primary Flow:
 Alternate Flows:
 A1: Q cancels a prompt → script exits cleanly with a sidebar log message
 A2: URL shortening fails → script logs the failure and continues with the full URL
+A3: Site Q email missing from Config sheet → script exits with an actionable error before any copy is made
 
 Postconditions:
 - New tracker spreadsheet exists in Drive with initialized sheets and correct sharing
@@ -215,7 +217,7 @@ class BG1,BG2,BG3 lightgreen
 | Entry Points | `onOpen.js`, `macros.js` | Custom menu, trigger initialization, legacy macro entry points |
 | Tracker Lifecycle | `CreateNewTracker.js`, `addResponseOnSubmit.js`, `markMinusOne.js` | Copy-and-init workflow, form-submit handler, nightly miss marking |
 | UI / Notifications | `NotificationSBCode.js`, `NotificationSidebar.html` | Sidebar panel: log streaming, prompts, HTML link generation |
-| Utilities | `logActivity.js`, `urlShortener.js`, `Utilities.js` | Activity logging, URL shortening (TinyURL/Bitly), cell utilities |
+| Utilities | `logActivity.js`, `urlShortener.js`, `Utilities.js` | Activity logging, URL shortening (TinyURL/Bitly), cell utilities, Config sheet reads |
 
 **Note — macros.js:** Contains `startNewMonth()` / `initTriggers()` entry points that partially overlap with `onOpen.js` and `addResponseOnSubmit.js`. This is a legacy layer flagged for cleanup. See PLAN.md §Backlog.
 
@@ -242,6 +244,7 @@ Key edge cases and known risks:
 |-------|---------|-------------|
 | Tracker | One row per PAX; daily check-in grid | A: F3 Name, Row 3: dates (MM/dd/yyyy), data rows 4+ |
 | Responses | Raw Google Form submission data | Col 4 (index 3): F3 Name, Col 6: Team |
+| Config | Runtime configuration read by the script | A: variable name, B: primary value, C: secondary value |
 | Help | Operational links and config values | A: Label, B: URL |
 | Bonus Tracker | PAX bonus-point activity log | PAX-entered; not script-managed |
 | Activity | Hidden audit log of script actions | A: Datetime, B: User email, C: Message, D: Sheet name |

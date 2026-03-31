@@ -19,6 +19,25 @@ function logCellColor(cellReference) {
   Logger.log('The background color of cell ' + cellReference + ' is: ' + color);
 }
 
+/**
+ * Reads a variable from the Config sheet of the given spreadsheet.
+ * Config sheet schema: column A = variable name, column B = primary value, column C = secondary value.
+ * @param {Spreadsheet} spreadsheet
+ * @param {string} variableName - Value to match in column A.
+ * @returns {{primary: *, secondary: *}|null} Matched row values, or null if not found or Config sheet absent.
+ */
+function getConfigValue_(spreadsheet, variableName) {
+  const configSheet = spreadsheet.getSheetByName('Config');
+  if (!configSheet) return null;
+  const data = configSheet.getDataRange().getValues();
+  for (let i = 0; i < data.length; i++) {
+    if (data[i][0] === variableName) {
+      return { primary: data[i][1], secondary: data[i][2] };
+    }
+  }
+  return null;
+}
+
 function getLockedRowA1Notation(sheet, row, column) {
   var cellNotation = sheet.getRange(row, column).getA1Notation();
   
