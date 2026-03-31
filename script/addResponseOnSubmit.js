@@ -1,14 +1,15 @@
+// Named with trailing underscore so GAS does not auto-register it as a simple trigger.
+var FORM_SUBMIT_HANDLER_ = 'handleFormSubmit_';
+
 /**
- * Manages triggers for a Google Sheets project by removing any existing 'onFormSubmit' triggers to avoid duplicates,
- * then creates a new trigger that executes the 'onFormSubmit' function whenever a form is submitted.
- * This setup ensures the spreadsheet has only one active trigger for form submission processing.
+ * Manages triggers for a Google Sheets project by removing any existing form-submit triggers to avoid duplicates,
+ * then creates a new installable trigger for form submission processing.
  */
 function setupFormSubmitTrigger() {
   clearFormSubmitTrigger();
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  // Create a new form submit trigger for the 'onFormSubmit' function.
-  ScriptApp.newTrigger('onFormSubmit')
+  ScriptApp.newTrigger(FORM_SUBMIT_HANDLER_)
     .forSpreadsheet(ss)
     .onFormSubmit()
     .create();
@@ -17,7 +18,7 @@ function setupFormSubmitTrigger() {
 function clearFormSubmitTrigger() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   ScriptApp.getProjectTriggers().forEach(function(trigger) {
-    if (trigger.getHandlerFunction() == 'onFormSubmit') {
+    if (trigger.getHandlerFunction() == FORM_SUBMIT_HANDLER_) {
       ScriptApp.deleteTrigger(trigger);
     }
   });
@@ -31,9 +32,9 @@ function clearFormSubmitTrigger() {
  * 4. Copies formulas and formatting from the previous row to the new row to maintain consistency.
  * 5. Sorts the "Tracker" sheet based on a specified column to organize the data efficiently.
  */
-function onFormSubmit(e) {
+function handleFormSubmit_(e) {
   if (!runWithLock(function() { onFormSubmitLocked_(e); })) {
-    Logger.log('onFormSubmit: lock timeout — event: ' + JSON.stringify(e));
+    Logger.log('handleFormSubmit_: lock timeout — event: ' + JSON.stringify(e));
   }
 }
 
@@ -43,7 +44,7 @@ function onFormSubmitLocked_(e) {
   var destinationSheet = sheet.getSheetByName("Tracker");
 
   if (!responsesSheet || !destinationSheet) {
-    Logger.log('onFormSubmit: required sheet not found — Responses: ' + !!responsesSheet + ', Tracker: ' + !!destinationSheet);
+    Logger.log('handleFormSubmit_: required sheet not found — Responses: ' + !!responsesSheet + ', Tracker: ' + !!destinationSheet);
     return;
   }
 
@@ -100,8 +101,9 @@ function onFormSubmitLocked_(e) {
 
     // Clear the PAX entered numbers.  These should be numeric values that are not formulas.
     // Batch the clears into a single RangeList call instead of one API call per cell.
-    var rowValues = destinationSheet.getRange(nextRow, 1, 1, lastColumn).getValues()[0];
-    var rowFormulas = destinationSheet.getRange(nextRow, 1, 1, lastColumn).getFormulas()[0];
+    var rowRange = destinationSheet.getRange(nextRow, 1, 1, lastColumn);
+    var rowValues = rowRange.getValues()[0];
+    var rowFormulas = rowRange.getFormulas()[0];
     var clearRanges = [];
     for (var i = 0; i < lastColumn; i++) {
       if (!rowFormulas[i] && typeof rowValues[i] === 'number') {
@@ -111,10 +113,9 @@ function onFormSubmitLocked_(e) {
     if (clearRanges.length > 0) {
       destinationSheet.getRangeList(clearRanges).clearContent();
     }
+    // Re-read last row so the newly inserted PAX row is included in the sort range
+    trackerLastRow = destinationSheet.getLastRow();
   }
-
-    // Re-read last row so a newly inserted PAX row is included in the sort range
-  trackerLastRow = destinationSheet.getLastRow();
   var rangeToSort = destinationSheet.getRange(4, 1, trackerLastRow - 3, lastColumn);
   rangeToSort.sort([{column: 2, ascending: true}, {column: 1, ascending: true}]);
 
