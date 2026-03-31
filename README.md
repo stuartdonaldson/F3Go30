@@ -290,4 +290,4 @@ All operations are initiated from the **F3 Go30** custom menu in Google Sheets. 
 | Copy and Initialize stops mid-run | Sidebar log shows last completed step | Note the step; complete remaining steps manually using Apps Script editor |
 | Tracker not populated after HC form submit | Row missing after form submit | Verify form-submit trigger exists in Apps Script Triggers panel; re-run "Initialize Triggers" |
 | −1 not appearing for missed days | Nightly trigger not firing | Verify daily trigger for `markEmptyCellsAsMinusOne` in Triggers panel; re-run "Initialize Triggers" |
-| `initSheets` throws on new month | Error from `macros.js` `startNewMonth()` path | Do not use `startNewMonth()`; use "Reinitialize this spreadsheet" from the menu instead |
+| `onFormSubmit` throws when Tracker is empty | Range error if Tracker has fewer than 4 rows | Script now exits early with a log message; verify Tracker has at least one data row |
