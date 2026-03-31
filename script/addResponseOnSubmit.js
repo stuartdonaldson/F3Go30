@@ -32,6 +32,22 @@ function clearFormSubmitTrigger() {
  * 5. Sorts the "Tracker" sheet based on a specified column to organize the data efficiently.
  */
 function onFormSubmit(e) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+  } catch (err) {
+    Logger.log('onFormSubmit: could not acquire lock — ' + err.message);
+    return;
+  }
+
+  try {
+    onFormSubmitLocked_(e);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function onFormSubmitLocked_(e) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet(); // Get the active spreadsheet
   var responsesSheet = sheet.getSheetByName("Responses"); // Adjust based on actual use-case
   var destinationSheet = sheet.getSheetByName("Tracker");
@@ -39,7 +55,7 @@ function onFormSubmit(e) {
   // Check if there are enough responses
   var lastRow = responsesSheet.getLastRow();
   var formResponses = responsesSheet.getRange(lastRow, 1, 1, responsesSheet.getLastColumn()).getValues()[0];
-  if (formResponses.length < 4) { // Check if there are at least 4 responses
+  if (formResponses.length < 7) { // Check if there are at least 7 responses (indices 0-6 required)
     Logger.log("Not enough responses.");
     return; // Exit the function if not enough responses
   }

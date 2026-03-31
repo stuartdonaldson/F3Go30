@@ -100,10 +100,13 @@
         logDiv.appendChild(p);
       }
 
-      // Start updating messages when the sidebar loads
+      // Start updating messages when the sidebar loads.
+      // checkMessages() is called once immediately to drain any queued messages
+      // (including stale messages from a previous session) before polling begins.
       window.onload = function() {
         console.log("***** Starting message updates...");
-        setInterval(checkMessages, 2000); // Repeat every 0.5 seconds
+        checkMessages();
+        setInterval(checkMessages, 2000);
       };
     </script>
   </head>

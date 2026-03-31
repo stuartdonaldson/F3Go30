@@ -260,9 +260,3 @@ function populateTrackerSheet(sheet, startDate) {
   NoticeLog('The Tracker sheet has been updated successfully.');
 }
 
-
-function decodeDate( msg, date ) {
-    var sY = date.getFullYear();
-    var sM = date.getMonth();
-    console.log(`${msg}: ${date} -- ${sY}, ${sM}`);
-  }

@@ -54,7 +54,10 @@ function markEmptyCellsAsMinusOne() {
       }
     }
 
-    if (thresholddayColumnIndex > 1 && ok2run) {
+    if (thresholddayColumnIndex <= 0) {
+      Logger.log('markEmptyCellsAsMinusOne: threshold day column not found for ' + thresholddayString);
+    }
+    if (thresholddayColumnIndex > 0 && ok2run) {
       var dataRange = sheet.getRange(4, thresholddayColumnIndex, sheet.getLastRow() - 3, 1); 
       var values = dataRange.getValues();
 
