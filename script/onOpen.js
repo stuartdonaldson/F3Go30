@@ -86,7 +86,11 @@ But right now we should just manually do that part.
 
 function openNextMonthSignup() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Help");
-  const data = sheet.getRange("A:B").getValues();  // Read columns A and B
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert('Help sheet not found.');
+    return;
+  }
+  const data = sheet.getRange("A:B").getValues();
 
   let targetUrl = null;
   

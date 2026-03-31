@@ -19,6 +19,13 @@ function copyAndInit() {
     NoticeLog('Operation canceled.');
     return;
   }
+  // Catch JS date rollover (e.g. 2025-02-30 → March 2): parse month from input and compare
+  const inputMonth = parseInt(response.split('-')[1], 10);
+  if (startDate.getMonth() + 1 !== inputMonth) {
+    NoticeLog('Invalid date: ' + response + ' does not exist. Please enter a valid calendar date.');
+    NoticeLog('Operation canceled.');
+    return;
+  }
 
   const currentSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -174,10 +181,16 @@ function reinitializeSheets() {
     NoticeLog('Operation canceled.');
     return;
   }
-  const startDate = new Date(response + 'T00:00:00'); // Ensures the date is treated as local time
-  
+  const startDate = new Date(response + 'T00:00:00'); // local time to avoid UTC offset shifting the date
+
   if (isNaN(startDate.getTime())) {
     NoticeLog('Invalid date format. Please use YYYY-MM-DD format.');
+    NoticeLog('Operation canceled.');
+    return;
+  }
+  const inputMonth = parseInt(response.split('-')[1], 10);
+  if (startDate.getMonth() + 1 !== inputMonth) {
+    NoticeLog('Invalid date: ' + response + ' does not exist. Please enter a valid calendar date.');
     NoticeLog('Operation canceled.');
     return;
   }
@@ -225,7 +238,7 @@ function initSheets(newSpreadsheet, startDate) {
 
   NoticeLog('Resetting Bonus Tracker sheet...');
     if (bonusTrackerSheet.getLastRow() > 1) {
-      bonusTrackerSheet.getRange('A2:Z' + bonusTrackerSheet.getLastRow()).clearContent();  // Adjust 'Z' according to your last column
+      bonusTrackerSheet.getRange(2, 1, bonusTrackerSheet.getLastRow() - 1, bonusTrackerSheet.getLastColumn()).clearContent();
       SpreadsheetApp.flush();
     }
 
@@ -237,14 +250,15 @@ function initSheets(newSpreadsheet, startDate) {
 }
 
 function clearNonFormulaCells(range) {
-  const values = range.getValues()[0];
   const formulas = range.getFormulas()[0];
-
-  // Clear content of cells that do not contain formulas
-  for (let i = 0; i < values.length; i++) {
-    if (!formulas[i]) {  // If the cell does not contain a formula
-      range.getCell(1, i + 1).clearContent();  // Clear content of the cell
+  const a1Notations = [];
+  for (let i = 0; i < formulas.length; i++) {
+    if (!formulas[i]) {
+      a1Notations.push(range.getCell(1, i + 1).getA1Notation());
     }
+  }
+  if (a1Notations.length > 0) {
+    range.getSheet().getRangeList(a1Notations).clearContent();
   }
 }
 

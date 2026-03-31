@@ -143,9 +143,8 @@ function runWithLock(func) {
 // Function to handle submit form response callback from client.  
 // Enqueues the response to the script properties.
 function sendToServer(message) {
-  // run the following code with a lock to prevent concurrent access to the script properties
   Enqueue('TO_SERVER', message);
-  setScriptProperty('LastClientAction', new Date().getTime());
+  updateClientActivityTime();
 }
 function getServerMessage() {
   var msg;

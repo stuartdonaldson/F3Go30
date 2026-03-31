@@ -72,16 +72,10 @@ function shortenUrlWithBitly(longUrl, customAlias) {
     throw new Error("Bitly API access token is missing. Please set it in the script properties.");
   }
 
+  // /v4/shorten does not support custom aliases — use /v4/bitlinks + PATCH for that.
+  // We shorten first, then apply the alias via /v4/custom_bitlinks if one is requested.
   const apiUrl = "https://api-ssl.bitly.com/v4/shorten";
-  const payload = {
-    "long_url": longUrl
-  };
-
-  // Add custom alias if provided
-  if (customAlias) {
-    payload.domain = "bit.ly"; // Specify the domain (e.g., "bit.ly" or "j.mp")
-    payload.custom_bitlink = `https://bit.ly/${customAlias}`; // Full custom URL
-  }
+  const payload = { "long_url": longUrl };
 
   const options = {
     "method": "POST",
@@ -99,11 +93,31 @@ function shortenUrlWithBitly(longUrl, customAlias) {
     throw new Error('Bitly API returned HTTP ' + statusCode + ': ' + response.getContentText());
   }
   const json = JSON.parse(response.getContentText());
-  if (json.link) {
-    return json.link;
-  } else {
+  if (!json.link) {
     throw new Error('Bitly API response did not include a shortened URL: ' + response.getContentText());
   }
+  const shortUrl = json.link;
+
+  // Apply custom alias via the correct endpoint if requested
+  if (customAlias) {
+    const customPayload = { "custom_bitlink": 'bit.ly/' + customAlias, "bitlink_id": json.id };
+    const customOptions = {
+      "method": "POST",
+      "contentType": "application/json",
+      "headers": { "Authorization": "Bearer " + accessToken },
+      "payload": JSON.stringify(customPayload),
+      "muteHttpExceptions": true
+    };
+    const customResponse = UrlFetchApp.fetch("https://api-ssl.bitly.com/v4/custom_bitlinks", customOptions);
+    if (customResponse.getResponseCode() === 200 || customResponse.getResponseCode() === 201) {
+      return 'https://bit.ly/' + customAlias;
+    }
+    // Alias unavailable or quota error — return the random short URL and let caller retry
+    Logger.log('Bitly custom alias failed (HTTP ' + customResponse.getResponseCode() + '): ' + customResponse.getContentText());
+    throw new Error('alias ' + customAlias + ' already used');
+  }
+
+  return shortUrl;
 }
 
 function shortenUrlWithTinyUrl(longUrl, customAlias) {
