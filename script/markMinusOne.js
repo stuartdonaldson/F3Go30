@@ -57,13 +57,15 @@ function markEmptyCellsAsMinusOne() {
       Logger.log('markEmptyCellsAsMinusOne: threshold day column not found for ' + thresholddayString);
     }
     if (thresholddayColumnIndex > 0 && ok2run) {
-      var dataRange = sheet.getRange(4, thresholddayColumnIndex, sheet.getLastRow() - 3, 1); 
+      var dataRange = sheet.getRange(4, thresholddayColumnIndex, sheet.getLastRow() - 3, 1);
       var values = dataRange.getValues();
+      var formulas = dataRange.getFormulas();
 
       // Iterate through the data in thresholdday's column and mark empty cells as -1 for rows with F3 Name
+      // Skip formula cells — they may evaluate to '' for future dates but must not be overwritten
       var columnAValues = sheet.getRange(4, 1, values.length, 1).getValues();
       for (var j = 0; j < values.length; j++) {
-        if (values[j][0] === '' && columnAValues[j][0] !== '') {
+        if (values[j][0] === '' && formulas[j][0] === '' && columnAValues[j][0] !== '') {
           values[j][0] = -1;
         }
       }

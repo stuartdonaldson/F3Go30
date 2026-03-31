@@ -33,7 +33,7 @@ function clearFormSubmitTrigger() {
  */
 function onFormSubmit(e) {
   if (!runWithLock(function() { onFormSubmitLocked_(e); })) {
-    Logger.log('onFormSubmit: could not acquire lock — skipping submission');
+    Logger.log('onFormSubmit: lock timeout — event: ' + JSON.stringify(e));
   }
 }
 
@@ -42,9 +42,13 @@ function onFormSubmitLocked_(e) {
   var responsesSheet = sheet.getSheetByName("Responses"); // Adjust based on actual use-case
   var destinationSheet = sheet.getSheetByName("Tracker");
 
-  // Check if there are enough responses
-  var lastRow = responsesSheet.getLastRow();
-  var formResponses = responsesSheet.getRange(lastRow, 1, 1, responsesSheet.getLastColumn()).getValues()[0];
+  if (!responsesSheet || !destinationSheet) {
+    Logger.log('onFormSubmit: required sheet not found — Responses: ' + !!responsesSheet + ', Tracker: ' + !!destinationSheet);
+    return;
+  }
+
+  // Use e.range to identify the exact submitted row, avoiding getLastRow() race with concurrent submissions
+  var formResponses = e.range.getValues()[0];
   if (formResponses.length < 7) { // Check if there are at least 7 responses (indices 0-6 required)
     Logger.log("Not enough responses.");
     return; // Exit the function if not enough responses

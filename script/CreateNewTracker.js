@@ -42,6 +42,7 @@ function copyAndInit() {
     NoticeLog('Copying spreadsheet...');
     const newSpreadsheet = currentSpreadsheet.copy(newSpreadsheetName);
 
+  try {
       // Move the new spreadsheet to the same folder as the current spreadsheet
       const currentSpreadsheetFile = DriveApp.getFileById(currentSpreadsheet.getId());
       const newSpreadsheetFile = DriveApp.getFileById(newSpreadsheet.getId());
@@ -88,7 +89,7 @@ function copyAndInit() {
       const paddedDay = String(startDate.getDate()).padStart(2, '0');
       const ftitle = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay + ' HC Form';
       form.setTitle(ftitle);
-      
+
       // change the filename of the form to formName
       const formFile = DriveApp.getFileById(form.getId());
       formFile.setName(formName);
@@ -124,6 +125,13 @@ function copyAndInit() {
   NoticeLog("-");
 
   NoticeLog('You can now close this sidebar.');
+
+  } catch (err) {
+    Logger.log('copyAndInit: error after copy — spreadsheet ID: ' + newSpreadsheet.getId() + ' — ' + err.message);
+    NoticeLog('Error during initialization: ' + err.message);
+    NoticeLog('Orphaned spreadsheet ID: ' + newSpreadsheet.getId() + ' — please delete it from Drive.');
+    throw err;
+  }
 }
 
 /**
