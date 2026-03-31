@@ -83,13 +83,13 @@ function NoticePrompt(prompt) {
   var response = null;
   var maxIterations = 120; // 120 × 1s = 2 min max; prevents exhausting the 6-min GAS limit
   var iterations = 0;
-  while (!response) {
+  while (response === null) {
     if (iterations >= maxIterations) {
       Logger.log('NoticePrompt: max wait time exceeded (' + maxIterations + 's) — returning null');
       return null;
     }
     response = getServerMessage(); // check for a response from the server queue
-    if (!response) {
+    if (response === null) {
       // if the client has not made a callback in 10 seconds then we will timeout
       if (getLastClientActivityTime() + 10000 < new Date().getTime()) {
         Logger.log('NoticePrompt: client inactive for 10s — timed out');

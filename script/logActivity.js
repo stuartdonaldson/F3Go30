@@ -8,6 +8,7 @@ function logActivity(message, sheetName) {
     sheet = ss.insertSheet('Activity');
     sheet.getRange('A1:D1').setValues([['Datetime', 'User', 'Message', 'Sheetname']]);
     sheet.getRange('A1:D1').setFontWeight('bold').setBackground('#ADD8E6');
+    sheet.autoResizeColumns(1, 4);
     sheet.hideSheet();
   } else if (!sheet.isSheetHidden()) {
     // Only hide when visible — avoids a redundant API call on every invocation
@@ -28,5 +29,4 @@ function logActivity(message, sheetName) {
   var userEmail = Session.getActiveUser().getEmail() || '(trigger)';
 
   sheet.getRange('A2:D2').setValues([[datetime, userEmail, message, sheetName]]);
-  sheet.autoResizeColumns(1, 4);
 }

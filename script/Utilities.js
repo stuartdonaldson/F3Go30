@@ -1,24 +1,3 @@
-function test() {
-  logCellColor("M2");
-  logCellColor("M3");
-  logCellColor("N2");
-  logCellColor("N3");
-}
-
-function logCellColor(cellReference) {
-  // Get the active sheet from the active spreadsheet
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  
-  // Get the range from the passed-in cell reference
-  var cell = sheet.getRange(cellReference);
-  
-  // Get the background color of the cell
-  var color = cell.getBackground();
-  
-  // Log the color to the Google Apps Script console
-  Logger.log('The background color of cell ' + cellReference + ' is: ' + color);
-}
-
 /**
  * Escapes HTML special characters in a string to prevent XSS when embedding
  * user-controlled values in innerHTML or HTML attribute values.

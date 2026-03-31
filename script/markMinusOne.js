@@ -27,19 +27,15 @@ function markEmptyCellsAsMinusOne() {
 
   if (sheet) {
     var currentDate = new Date();
-    var currentDateString = Utilities.formatDate(currentDate, sheet.getParent().getSpreadsheetTimeZone(), "MM/dd/yyyy");
 
     // Calculate the date for thresholdday - Day before yesterday.
     var thresholdday = new Date(currentDate);
     thresholdday.setDate(thresholdday.getDate() - 2);
     var thresholddayString = Utilities.formatDate(thresholdday, sheet.getParent().getSpreadsheetTimeZone(), "MM/dd/yyyy");
     
-    // Check if the time is it's past 10:00 AM today
-    var ok2run = true; // use time based at 2am to run at night.  Was currentDate.getHours() >= 10;
-
     // Find the column index with thresholdday's date
     var lastColumnIndex = sheet.getLastColumn();
-    var thresholddayColumnIndex = -2;
+    var thresholddayColumnIndex = -1;
 
     var row3Values = sheet.getRange(3, 1, 1, lastColumnIndex).getValues()[0];
     for (var i = 0; i < row3Values.length; i++) {
@@ -56,7 +52,7 @@ function markEmptyCellsAsMinusOne() {
     if (thresholddayColumnIndex <= 0) {
       Logger.log('markEmptyCellsAsMinusOne: threshold day column not found for ' + thresholddayString);
     }
-    if (thresholddayColumnIndex > 0 && ok2run) {
+    if (thresholddayColumnIndex > 0) {
       var dataRange = sheet.getRange(4, thresholddayColumnIndex, sheet.getLastRow() - 3, 1);
       var values = dataRange.getValues();
       var formulas = dataRange.getFormulas();

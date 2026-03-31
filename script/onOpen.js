@@ -136,7 +136,12 @@ function InspireNow() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName("Inspiration");
   const trackerSheet = ss.getSheetByName("Tracker");
-  
+
+  if (!sheet || !trackerSheet) {
+    Logger.log('InspireNow: Inspiration or Tracker sheet not found');
+    return;
+  }
+
   const data = sheet.getDataRange().getValues();
   if (data.length < 2) {
     Logger.log('InspireNow: no inspiration rows found');
