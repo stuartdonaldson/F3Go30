@@ -115,11 +115,11 @@ function copyAndInit() {
       const paddedDay = String(startDate.getDate()).padStart(2, '0');
       const ftitle = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay + ' HC Form';
       form.setTitle(ftitle);
-      form.setConfirmationMessage(
+      const confirmationMessage =
         'Thank you for your Hard Commit!\n\n' +
         'View the Go30 tracker here: ' + trackerSheetShortUrl + '\n\n' +
-        'Questions? Contact ' + siteQConfig.primary + ' (' + siteQEmail + ').'
-      );
+        'Questions? Contact ' + siteQConfig.primary + ' (' + siteQEmail + ').';
+      form.setConfirmationMessage(confirmationMessage);
 
       // change the filename of the form to formName
       const formFile = DriveApp.getFileById(form.getId());
@@ -155,6 +155,21 @@ function copyAndInit() {
   NoticeLog("-");
 
   NoticeLog('You can now close this sidebar.');
+
+  try {
+    const logFileId = getOrCreateLogFile_();
+    appendToLogFile_(logFileId, 'copyAndInit', {
+      spreadsheetName: newSpreadsheetName,
+      trackerUrl: trackerSheetShortUrl,
+      formUrl: formShortUrl,
+      siteQName: siteQConfig.primary,
+      siteQEmail: siteQEmail,
+      confirmationMessage: confirmationMessage
+    });
+  } catch (logErr) {
+    Logger.log('copyAndInit: LogFile write failed — ' + logErr.message);
+  }
+
   noticeLogDone_();
 
   } catch (err) {
@@ -165,6 +180,16 @@ function copyAndInit() {
     } else {
       Logger.log('copyAndInit: copy() failed — ' + err.message);
       NoticeLog('Error: failed to copy spreadsheet — ' + err.message);
+    }
+    try {
+      const logFileId = getOrCreateLogFile_();
+      appendToLogFile_(logFileId, 'copyAndInit', {
+        error: err.message,
+        spreadsheetName: newSpreadsheetName,
+        orphanedSpreadsheetId: newSpreadsheetId || null
+      });
+    } catch (logErr) {
+      Logger.log('copyAndInit: LogFile error-write also failed — ' + logErr.message);
     }
     throw err;
   }

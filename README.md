@@ -19,7 +19,7 @@ F3Go30 automates the monthly lifecycle of a Go30 fitness challenge tracker: copy
 | Priority | Quality Goal | Scenario |
 |----------|-------------|----------|
 | 1 | Operability | A non-technical site Q can create a new monthly tracker using only the custom menu, without touching Apps Script |
-| 2 | Correctness | No PAX entry is duplicated, dropped, or incorrectly marked −1 due to a race condition or range error |
+| 2 | Correctness | No PAX entry is duplicated, dropped, or incorrectly marked −1 due to a race condition or range error. Copy and Initialized spreadsheet does not require manual setup other than initializing triggers. |
 | 3 | Recoverability | If a step in Copy and Initialize fails, the sidebar log surfaces the failure with enough context to recover manually |
 
 **Stakeholders**
@@ -170,6 +170,35 @@ Constraints:
 
 ---
 
+### UC-5: Developer Verifies GAS Behavior via LogFile
+
+Actor: Developer
+
+Preconditions:
+- Config sheet contains a `LogFile` row (Column A = `LogFile`); Column B may be empty on first use
+- Developer has saved the LogFile URL from a prior run, or is prepared to record it after first use
+
+Primary Flow:
+1. Developer triggers a GAS action (e.g., Copy and Initialize, form submit simulation)
+2. GAS checks Config sheet for `LogFile` URL; if absent, creates a Drive file with "anyone with the link" read permissions and writes the URL to Column B
+3. GAS appends a structured log entry (timestamp, trigger name, JSON payload including sidebar HTML, URLs, Config values read)
+4. Developer reports the action is complete
+5. Developer downloads the log file via the saved URL; asserts on expected keys, values, and HTML content
+
+Alternate Flows:
+A1: Drive file creation fails → GAS logs error to Logger and continues without crashing
+A2: LogFile URL is stale (file deleted) → GAS creates a new file and updates Config sheet
+
+Postconditions:
+- Log entry exists in Drive file confirming the triggered operation and its outputs
+- Assertions pass without manual UI inspection
+
+Constraints:
+- Log file is readable by anyone with the link; do not share publicly (contains Site Q email, URLs)
+- Verification covers content correctness only; visual rendering and button behavior require manual inspection
+
+---
+
 ### Non-Goals
 - Not a multi-region coordination platform; each region operates its own independent spreadsheet
 - Not a public SaaS; no web app, API, or external hosting
@@ -301,6 +330,7 @@ Stores runtime values read by the script at execution time. Column A is the vari
 |----------|----------|----------|---------|
 | `Site Q` | Site Q display name | Site Q email address | `copyAndInit()`, `autoGenerateNextMonthTracker()` — form confirmation message and email notifications |
 | `NameSpace` | Region identifier (e.g. `F3Waxhaw`) | — | `copyAndInit()`, `autoGenerateNextMonthTracker()` — drives spreadsheet name (`YYYY-MM-NameSpace`) and URL aliases |
+| `LogFile` | Drive file URL (written automatically on first use) | — | `copyAndInit()` — appends structured JSON log entries for UC-5 developer verification |
 
 **Script Properties** (set in Apps Script Project Settings → Script Properties)
 
@@ -320,6 +350,47 @@ All operations are initiated from the **F3 Go30** custom menu in Google Sheets. 
 | Initialize Monthly Trigger | `initializeMonthlyTrigger()` | Once on the template spreadsheet to schedule auto-generate |
 | Reinitialize this spreadsheet | `reinitializeSheets()` | Development or reset |
 | Run test function (DEV) | `testFunction()` | Developer use only |
+
+### UC-5 Automation — LogFile Verification
+
+After running **Copy and Initialize**, the script appends a JSON log entry to a Drive file. Use `test/log_channel.py` to download and assert on its contents.
+
+**Setup (first run only):**
+1. Run "Copy and Initialize" on the template spreadsheet.
+2. Open the Config sheet — note the URL written to the `LogFile` row (Column B).
+3. Save this URL; it is reused across all subsequent log reads.
+
+**Asserting on log output:**
+```bash
+pip install requests
+python test/log_channel.py "https://drive.google.com/file/d/FILE_ID/view?usp=sharing"
+```
+
+Or in a test script:
+```python
+from test.log_channel import fetch_log_entries
+
+entries = fetch_log_entries(log_file_url)
+latest = entries[-1]
+assert latest["trigger"] == "copyAndInit"
+assert "trackerUrl" in latest["payload"]
+assert "formUrl" in latest["payload"]
+assert "confirmationMessage" in latest["payload"]
+```
+
+**Log entry payload keys (copyAndInit):**
+
+| Key | Value |
+|-----|-------|
+| `spreadsheetName` | New spreadsheet name (e.g. `2026-04-F3Waxhaw`) |
+| `trackerUrl` | Short URL to the Tracker sheet |
+| `formUrl` | Short URL to the HC form |
+| `siteQName` | Site Q display name from Config |
+| `siteQEmail` | Site Q email from Config |
+| `confirmationMessage` | Text set on the HC form confirmation |
+| `error` | Present only on failure; contains error message |
+
+**Security:** The LogFile URL grants read access to anyone with the link. It contains Site Q email and spreadsheet/form URLs. Do not share publicly or commit the URL to version control.
 
 ### Failure Modes
 
