@@ -15,6 +15,7 @@ function onOpen()
   if (owneremail && email === owneremail) {
     menu.addItem('Copy and Initialize', 'copyAndInit')
         .addItem('Initialize Triggers', 'initializeTriggers')
+        .addItem('Initialize Monthly Trigger', 'initializeMonthlyTrigger')
         .addItem('Reinitialize this spreadsheet', 'reinitializeSheets')
         .addSeparator()
         .addItem('Run test function (DEV)', 'testFunction')

@@ -1,4 +1,6 @@
 
+var MONTH_NAMES_ = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
 /**
  * Creates a new monthly tracker spreadsheet from the current template.
  * Spreadsheet name is auto-generated as YYYY-MM-NameSpace using the NameSpace
@@ -145,9 +147,8 @@ function copyAndInit() {
   NoticeLog('4. Shorten and share new Spreadsheet URL');
   NoticeLog("-");
 
-  const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const slackYear = startDate.getFullYear();
-  const slackMonth = MONTH_NAMES[startDate.getMonth()];
+  const slackMonth = MONTH_NAMES_[startDate.getMonth()];
   const slackMsg = slackYear + ' ' + slackMonth + ' Hard Commit form is up:\n' + formShortUrl + '\n\n' + slackYear + ' ' + slackMonth + ' Tracker:\n' + trackerSheetShortUrl;
   NoticeLog('<b>Slack channel message:</b>');
   NoticeLog('<textarea rows="5" style="width:100%;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;" readonly onclick="this.select()">' + escapeHtml_(slackMsg) + '</textarea>');
@@ -325,5 +326,159 @@ function populateTrackerSheet(sheet, startDate) {
   }
 
   NoticeLog('The Tracker sheet has been updated successfully.');
+}
+
+var MONTHLY_AUTO_GENERATE_HANDLER_ = 'autoGenerateNextMonthTracker';
+
+/**
+ * Installs a time-based trigger that fires on the 20th of each month at 2 AM to auto-generate
+ * the next month's tracker and HC form. Intended for the template spreadsheet only.
+ * Clears any existing monthly auto-generate trigger before registering.
+ */
+function initializeMonthlyTrigger() {
+  clearMonthlyAutoGenerateTrigger_();
+  ScriptApp.newTrigger(MONTHLY_AUTO_GENERATE_HANDLER_)
+    .timeBased()
+    .onMonthDay(20)
+    .inTimezone(Session.getScriptTimeZone())
+    .atHour(2)
+    .nearMinute(0)
+    .create();
+  SpreadsheetApp.getUi().alert('Monthly auto-generate trigger set for the 20th of each month at 2 AM.');
+}
+
+function clearMonthlyAutoGenerateTrigger_() {
+  const triggers = ScriptApp.getProjectTriggers();
+  for (let i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === MONTHLY_AUTO_GENERATE_HANDLER_) {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+}
+
+/**
+ * Headless auto-generate: creates next month's tracker spreadsheet and HC form without
+ * any UI interaction. Intended to be run by a time-based trigger installed via
+ * initializeMonthlyTrigger(). Emails the Site Q on success or failure.
+ */
+function autoGenerateNextMonthTracker() {
+  const today = new Date();
+  const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+  const paddedMonth = String(nextMonthStart.getMonth() + 1).padStart(2, '0');
+
+  const currentSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const configSheet = currentSpreadsheet.getSheetByName('Config');
+  const configData = configSheet ? configSheet.getDataRange().getValues() : null;
+
+  const siteQConfig = getConfigValue_(null, 'Site Q', configData);
+  if (!siteQConfig || !siteQConfig.secondary) {
+    Logger.log('autoGenerateNextMonthTracker: Site Q email not found in Config sheet — aborting');
+    return;
+  }
+  const siteQEmail = siteQConfig.secondary;
+  const siteQName = siteQConfig.primary || 'Site Q';
+
+  const nameSpaceConfig = getConfigValue_(null, 'NameSpace', configData);
+  if (!nameSpaceConfig || !nameSpaceConfig.primary) {
+    Logger.log('autoGenerateNextMonthTracker: NameSpace not found in Config sheet — aborting');
+    MailApp.sendEmail(siteQEmail, 'F3 Go30: Auto-generate failed',
+      'autoGenerateNextMonthTracker failed: NameSpace not found in Config sheet.');
+    return;
+  }
+  const nameSpace = nameSpaceConfig.primary;
+  const newSpreadsheetName = nextMonthStart.getFullYear() + '-' + paddedMonth + '-' + nameSpace;
+
+  Logger.log('autoGenerateNextMonthTracker: creating ' + newSpreadsheetName);
+
+  let newSpreadsheetId = null;
+  try {
+    const newSpreadsheet = currentSpreadsheet.copy(newSpreadsheetName);
+    newSpreadsheetId = newSpreadsheet.getId();
+
+    const currentFile = DriveApp.getFileById(currentSpreadsheet.getId());
+    const newFile = DriveApp.getFileById(newSpreadsheetId);
+    const parents = currentFile.getParents();
+    if (!parents.hasNext()) {
+      throw new Error('Spreadsheet must be in a Drive folder, not in My Drive root.');
+    }
+    const folder = parents.next();
+    newFile.moveTo(folder);
+    newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+    const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
+    if (!trackerSheet) {
+      throw new Error('Tracker sheet not found in new spreadsheet.');
+    }
+    const trackerSheetUrl = newSpreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
+
+    let trackerSheetShortUrl = trackerSheetUrl;
+    try {
+      trackerSheetShortUrl = shortenUrl(trackerSheetUrl, nameSpace, 5, 'tinyurl');
+    } catch (e) {
+      Logger.log('autoGenerateNextMonthTracker: shorten URL failed for tracker: ' + e.message);
+    }
+
+    const formUrl = newSpreadsheet.getFormUrl();
+    if (!formUrl) {
+      throw new Error('No form linked to new spreadsheet — ensure template has an associated form.');
+    }
+    const form = FormApp.openByUrl(formUrl);
+    const formName = newSpreadsheetName + ' HC';
+    const ftitle = nextMonthStart.getFullYear() + '-' + paddedMonth + '-01 HC Form';
+    form.setTitle(ftitle);
+    form.setConfirmationMessage(
+      'Thank you for your Hard Commit!\n\n' +
+      'View the Go30 tracker here: ' + trackerSheetShortUrl + '\n\n' +
+      'Questions? Contact ' + siteQName + ' (' + siteQEmail + ').'
+    );
+
+    const formFile = DriveApp.getFileById(form.getId());
+    formFile.setName(formName);
+    formFile.moveTo(folder);
+
+    let formShortUrl = formUrl;
+    try {
+      formShortUrl = shortenUrl(formUrl, nameSpace + 'HC', 5, 'tinyurl');
+    } catch (e) {
+      Logger.log('autoGenerateNextMonthTracker: shorten URL failed for form: ' + e.message);
+    }
+
+    initSheets(newSpreadsheet, nextMonthStart);
+
+    const slackMonth = MONTH_NAMES_[nextMonthStart.getMonth()];
+    const slackYear = nextMonthStart.getFullYear();
+    const slackMsg = slackYear + ' ' + slackMonth + ' Hard Commit form is up:\n' + formShortUrl +
+      '\n\n' + slackYear + ' ' + slackMonth + ' Tracker:\n' + trackerSheetShortUrl;
+
+    MailApp.sendEmail(
+      siteQEmail,
+      'F3 Go30: ' + newSpreadsheetName + ' is ready',
+      newSpreadsheetName + ' has been created.\n\n' +
+      'Tracker: ' + trackerSheetShortUrl + '\n' +
+      'HC Form: ' + formShortUrl + '\n\n' +
+      'Next step: open the new spreadsheet and select F3 Go30 > Initialize Triggers.\n\n' +
+      'Slack message:\n' + slackMsg
+    );
+
+    Logger.log('autoGenerateNextMonthTracker: done — ' + newSpreadsheetName);
+
+  } catch (err) {
+    Logger.log('autoGenerateNextMonthTracker: error' +
+      (newSpreadsheetId ? ' — spreadsheet ID: ' + newSpreadsheetId : '') +
+      ' — ' + err.message);
+    try {
+      MailApp.sendEmail(
+        siteQEmail,
+        'F3 Go30: Auto-generate failed for ' + newSpreadsheetName,
+        'autoGenerateNextMonthTracker failed.\n\n' +
+        'Error: ' + err.message + '\n\n' +
+        (err.stack ? 'Stack:\n' + err.stack + '\n\n' : '') +
+        (newSpreadsheetId ? 'Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.' : '')
+      );
+    } catch (mailErr) {
+      Logger.log('autoGenerateNextMonthTracker: also failed to send error email — ' + mailErr.message);
+    }
+    throw err;
+  }
 }
 
