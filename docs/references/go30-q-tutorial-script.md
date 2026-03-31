@@ -17,33 +17,33 @@ Bonus points for key activities
 Easy sharing and collaboration
 Slide 4: Accessing the F3 Go30 Menu
 
-To get started, make sure you are logged in as f3go30@gmail.com. This will give you access to the "F3 Go30" menu in the Google Sheet.
+The "F3 Go30" menu is only visible to the spreadsheet owner. Open the template spreadsheet and you will see the "F3 Go30" menu in the menu bar.
 
-Animation: Show logging into Google and accessing the "F3 Go30" menu.
+Animation: Show opening the template spreadsheet and accessing the "F3 Go30" menu.
 
 Slide 5: Copy and Initialize
 
-The first step is to create a new tracker for the month. Select "Copy and Initialize" from the "F3 Go30" menu. Enter the new tracker name and start date when prompted.
+The first step is to create a new tracker for the month. Select "Copy and Initialize" from the "F3 Go30" menu. A sidebar will open. Enter the start date (YYYY-MM-DD format) when prompted. The spreadsheet name is auto-generated as YYYY-MM-NameSpace using the NameSpace value from the Config sheet — no name entry is needed.
 
-Animation: Demonstrate selecting "Copy and Initialize" and entering the tracker name and start date.
+Animation: Demonstrate selecting "Copy and Initialize" and entering only the start date.
 
-Slide 6: Notification Pane Updates
+Slide 6: Notification Sidebar Updates
 
-The script will create a new tracker spreadsheet, copy the current HC form, and reset all worksheets. The notification pane will be populated with updates during this process, including links to the new spreadsheet and HC form.
+The script will copy the template spreadsheet, rename and move the bound HC form to the same Drive folder, reset all worksheets for the new month, and set the HC form's confirmation message to include the tracker link and Site Q contact. The sidebar will show progress updates and, when complete, display shortened links to the new tracker sheet and HC form, plus a ready-to-paste Slack message.
 
-Animation: Show the notification pane being populated with updates and links.
+Animation: Show the sidebar being populated with progress updates, shortened links, and the Slack message.
 
 Slide 7: Initialize Triggers
 
-Next, open the new tracker sheet by clicking the link in the notification pane. Open the "F3 Go30" menu and select "Initialize Triggers". This will set up the necessary triggers to populate the spreadsheet when a PAX fills out the HC form and flag missed check-ins with a -1 every night.
+Open the new tracker sheet by clicking the link in the sidebar. Open the "F3 Go30" menu and select "Initialize Triggers". This sets up two triggers: a form-submit trigger that populates the Tracker sheet when a PAX fills out the HC form, and a nightly trigger that marks missed check-ins with a -1.
 
 Animation: Demonstrate opening the new tracker sheet and selecting "Initialize Triggers".
 
 Slide 8: Sharing Links
 
-Open the new tracker sheet and navigate to the Tracker sheet. Save the current URL and share it with the PAX. It is best practice to shorten the URL using a service like tinyurl.com or bitly.com.
+The shortened URLs for the HC form and Tracker sheet are shown in the sidebar at the end of Copy and Initialize. Copy the pre-formatted Slack message from the sidebar and post it to your region's channel. No manual URL shortening is needed.
 
-Animation: Show saving and shortening the URL, then sharing it.
+Animation: Show copying the Slack message from the sidebar and posting it.
 
 Slide 9: PAX Usage Instructions
 
@@ -67,10 +67,11 @@ Slide 12: Next Steps
 
 To get started with a new month:
 
-Access the F3 Go30 Menu.
-Copy and Initialize the new tracker.
-Initialize Triggers.
-Share the HC form and Tracker sheet links.
+1. Open the template spreadsheet and access the F3 Go30 Menu.
+2. Select "Copy and Initialize" and enter the start date.
+3. Wait for the sidebar to complete; copy the Slack message and share the links.
+4. Open the new tracker spreadsheet and select "Initialize Triggers".
+
 Animation: Recap the steps with visual highlights.
 
 Slide 13: Conclusion
@@ -82,10 +83,10 @@ Animation: Show the link to the explainer video.
 Summary
 Introduction: Overview of the Go30 Tracker and its key features.
 Accessing the F3 Go30 Menu: Instructions on logging in and accessing the menu.
-Copy and Initialize: Steps to create a new tracker for the month.
-Notification Pane Updates: Explanation of the updates and links provided.
+Copy and Initialize: Steps to create a new tracker for the month (start date only; name is auto-generated).
+Notification Sidebar Updates: Explanation of the progress updates, shortened links, and Slack message.
 Initialize Triggers: Setting up triggers for automation.
-Sharing Links: How to share the HC form and Tracker sheet links.
+Sharing Links: How to copy shortened links and the Slack message from the sidebar.
 PAX Usage Instructions: How PAX should use the HC form and Tracker sheet.
 Daily Tracking: Instructions for daily goal tracking and automation.
 Bonus Tracker: Explanation of the Bonus Tracker sheet.
