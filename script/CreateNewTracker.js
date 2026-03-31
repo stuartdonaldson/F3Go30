@@ -101,7 +101,15 @@ function copyAndInit() {
   NoticeLog('3. Shorten and Share Form URL');
   NoticeLog('4. Shorten and share new Spreadsheet URL');
   NoticeLog("-");
-  
+
+  const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const slackYear = startDate.getFullYear();
+  const slackMonth = MONTH_NAMES[startDate.getMonth()];
+  const slackMsg = slackYear + ' ' + slackMonth + ' Hard Commit form is up:\n' + formShortUrl + '\n\n' + slackYear + ' ' + slackMonth + ' Tracker:\n' + trackerSheetShortUrl;
+  NoticeLog('<b>Slack channel message:</b>');
+  NoticeLog('<textarea rows="5" style="width:100%;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;" readonly onclick="this.select()">' + slackMsg + '</textarea>');
+  NoticeLog("-");
+
   NoticeLog('You can now close this sidebar.');
 }
 
