@@ -37,18 +37,21 @@ function copyAndInit() {
 
   NoticeLog('Creating ' + newSpreadsheetName + '. Please wait...');
 
-    // Copy the entire current spreadsheet to a new spreadsheet with the specified name
-    const currentSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-    NoticeLog('Copying spreadsheet...');
-    const newSpreadsheet = currentSpreadsheet.copy(newSpreadsheetName);
-
+  const currentSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  let newSpreadsheet;
+  let newSpreadsheetId = null;
   try {
+      NoticeLog('Copying spreadsheet...');
+      newSpreadsheet = currentSpreadsheet.copy(newSpreadsheetName);
+      newSpreadsheetId = newSpreadsheet.getId();
+
       // Move the new spreadsheet to the same folder as the current spreadsheet
       const currentSpreadsheetFile = DriveApp.getFileById(currentSpreadsheet.getId());
-      const newSpreadsheetFile = DriveApp.getFileById(newSpreadsheet.getId());
+      const newSpreadsheetFile = DriveApp.getFileById(newSpreadsheetId);
       const parents = currentSpreadsheetFile.getParents();
       if (!parents.hasNext()) {
         NoticeLog('Error: cannot determine folder — spreadsheet must be in a Drive folder, not in My Drive root.');
+        NoticeLog('Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.');
         return;
       }
       const folder = parents.next();
@@ -61,6 +64,7 @@ function copyAndInit() {
     const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
     if (!trackerSheet) {
       NoticeLog('Error: Tracker sheet not found in new spreadsheet.');
+      NoticeLog('Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.');
       return;
     }
     const trackerSheetUrl = newSpreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
@@ -80,6 +84,7 @@ function copyAndInit() {
       const formUrl = newSpreadsheet.getFormUrl();
       if (!formUrl) {
         NoticeLog('Error: no form linked to the new spreadsheet — ensure the template has an associated form.');
+        NoticeLog('Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.');
         return;
       }
       const form = FormApp.openByUrl(formUrl);
@@ -127,9 +132,14 @@ function copyAndInit() {
   NoticeLog('You can now close this sidebar.');
 
   } catch (err) {
-    Logger.log('copyAndInit: error after copy — spreadsheet ID: ' + newSpreadsheet.getId() + ' — ' + err.message);
-    NoticeLog('Error during initialization: ' + err.message);
-    NoticeLog('Orphaned spreadsheet ID: ' + newSpreadsheet.getId() + ' — please delete it from Drive.');
+    if (newSpreadsheetId) {
+      Logger.log('copyAndInit: error — spreadsheet ID: ' + newSpreadsheetId + ' — ' + err.message);
+      NoticeLog('Error during initialization: ' + err.message);
+      NoticeLog('Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.');
+    } else {
+      Logger.log('copyAndInit: copy() failed — ' + err.message);
+      NoticeLog('Error: failed to copy spreadsheet — ' + err.message);
+    }
     throw err;
   }
 }
