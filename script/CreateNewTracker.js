@@ -45,7 +45,12 @@ function copyAndInit() {
       // Move the new spreadsheet to the same folder as the current spreadsheet
       const currentSpreadsheetFile = DriveApp.getFileById(currentSpreadsheet.getId());
       const newSpreadsheetFile = DriveApp.getFileById(newSpreadsheet.getId());
-      const folder = currentSpreadsheetFile.getParents().next();
+      const parents = currentSpreadsheetFile.getParents();
+      if (!parents.hasNext()) {
+        NoticeLog('Error: cannot determine folder — spreadsheet must be in a Drive folder, not in My Drive root.');
+        return;
+      }
+      const folder = parents.next();
       newSpreadsheetFile.moveTo(folder);
 
       // Adjust permissions so anyone with the link can edit the new spreadsheet file
@@ -72,6 +77,10 @@ function copyAndInit() {
     NoticeLog('Updating form...');
 
       const formUrl = newSpreadsheet.getFormUrl();
+      if (!formUrl) {
+        NoticeLog('Error: no form linked to the new spreadsheet — ensure the template has an associated form.');
+        return;
+      }
       const form = FormApp.openByUrl(formUrl);
       const formName = newSpreadsheetName + " HC";
       // set form title to the name "YYYY-MM-DD HC Form"

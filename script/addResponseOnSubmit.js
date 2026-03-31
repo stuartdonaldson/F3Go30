@@ -52,10 +52,9 @@ function onFormSubmitLocked_(e) {
 
   var f3Name = formResponses[3]; // Get the fourth response
     
-  // Check if Column F (index 5) is empty and place the value of Column G (index 6) into Column F if so
-  if (!formResponses[5]) { // If Column F is empty
+  // If Column F (team) is empty, log the assumed value from Column G — do not mutate the Responses sheet
+  if (!formResponses[5]) {
     Logger.log("Assuming team is " + formResponses[6]);
-    responsesSheet.getRange(lastRow, 6).setValue(formResponses[6]); // Update the sheet with the new value in Column F
   }
 
   // Guard: Tracker must have at least 4 rows before range operations are safe
@@ -75,11 +74,9 @@ function onFormSubmitLocked_(e) {
   if (f3NameExists) {
     Logger.log("f3Name already exists in the Tracker sheet.");
   } else {
-    // Find the first empty row in column A, starting from row 4 (row 3 is the date header)
-    var nextRow = 4;
-    while (destinationSheet.getRange(nextRow, 1).getValue() !== "") {
-      nextRow++;
-    }
+    // Find the first empty row in column A using the already-fetched dataValues — no extra API calls
+    var emptyIdx = dataValues.findIndex(function(row) { return row[0] === ""; });
+    var nextRow = emptyIdx === -1 ? trackerLastRow + 1 : 4 + emptyIdx;
 
 
     // Set the F3 Name in the found row

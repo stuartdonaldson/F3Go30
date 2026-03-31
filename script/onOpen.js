@@ -133,6 +133,10 @@ function InspireNow() {
   const trackerSheet = ss.getSheetByName("Tracker");
   
   const data = sheet.getDataRange().getValues();
+  if (data.length < 2) {
+    Logger.log('InspireNow: no inspiration rows found');
+    return;
+  }
   const randomIndex = Math.floor(Math.random() * (data.length - 1)) + 1; // Exclude header row
   const randomQuote = data[randomIndex][0];
   const randomAuthor = data[randomIndex][1];
