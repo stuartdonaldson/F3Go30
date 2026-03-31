@@ -53,6 +53,10 @@ function copyAndInit() {
 
     // Get the URL to the "Tracker" sheet
     const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
+    if (!trackerSheet) {
+      NoticeLog('Error: Tracker sheet not found in new spreadsheet.');
+      return;
+    }
     const trackerSheetUrl = newSpreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
     const trackerAlias = newSpreadsheetName.replace(/\s+/g, "");
     let trackerSheetShortUrl = trackerSheetUrl;
@@ -71,9 +75,9 @@ function copyAndInit() {
       const form = FormApp.openByUrl(formUrl);
       const formName = newSpreadsheetName + " HC";
       // set form title to the name "YYYY-MM-DD HC Form"
-      const ftitle = startDate.getFullYear() + '-' 
-                    + (startDate.getMonth() + 1) + '-' + startDate.getDate() 
-                    + ' HC Form';
+      const paddedMonth = String(startDate.getMonth() + 1).padStart(2, '0');
+      const paddedDay = String(startDate.getDate()).padStart(2, '0');
+      const ftitle = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay + ' HC Form';
       form.setTitle(ftitle);
       
       // change the filename of the form to formName
@@ -165,6 +169,10 @@ function initSheets(newSpreadsheet, startDate) {
   const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
   const bonusTrackerSheet = newSpreadsheet.getSheetByName('Bonus Tracker');
   const responsesSheet = newSpreadsheet.getSheetByName('Responses');
+  if (!trackerSheet || !bonusTrackerSheet || !responsesSheet) {
+    NoticeLog('Error: Required sheet(s) not found — Tracker, Bonus Tracker, and Responses must all exist.');
+    return;
+  }
 
   NoticeLog('Resetting Tracker sheet...');
     if (trackerSheet.getLastRow() > 4) {

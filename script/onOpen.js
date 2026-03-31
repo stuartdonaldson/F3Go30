@@ -23,7 +23,11 @@ function onOpen()
   menu.addItem('About', 'showAbout')
       .addToUi();
 
-  logActivity('onOpen','');
+  try {
+    logActivity('onOpen','');
+  } catch (e) {
+    Logger.log('onOpen: logActivity failed — ' + e.message);
+  }
 }
 
 /**
@@ -94,6 +98,10 @@ function openNextMonthSignup() {
   }
 
   if (targetUrl) {
+    if (!targetUrl.startsWith('https://')) {
+      SpreadsheetApp.getUi().alert("Invalid URL for 'Next Month HC Signup'. Must start with https://.");
+      return;
+    }
     const htmlContent = `
       <div style="font-family: Arial, sans-serif; text-align: center; margin-top: 20px;">
         <h2>Next Month's HC Signup</h2>

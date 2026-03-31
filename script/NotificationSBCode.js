@@ -89,9 +89,9 @@ function NoticePrompt(prompt) {
       if (getLastClientActivityTime() + 10000 < new Date().getTime()) {
         Logger.log('Timed out waiting for response');
         return null;
-      } 
+      }
+      Utilities.sleep(1000);
     }
-    Utilities.sleep(1000);
   }
   return response;
 }
