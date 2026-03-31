@@ -73,7 +73,7 @@ Preconditions:
 Primary Flow:
 1. Q opens the spreadsheet; the F3 Go30 menu appears
 2. Q selects "Copy and Initialize"
-3. Q enters the new tracker name and start date when prompted
+3. Q enters the start date when prompted; tracker name is auto-generated as `YYYY-MM-NameSpace`
 4. Script copies the spreadsheet and HC form to the same Drive folder
 5. Script initializes all sheets, sets form title, sets sharing permissions, and shortens URLs
 6. Sidebar displays links to the new spreadsheet and form
@@ -172,7 +172,7 @@ Constraints:
 
 ### Solution Strategy
 
-The tool follows a **copy-from-template** pattern: a working spreadsheet (and its bound form) is duplicated rather than built from scratch each month. This avoids the complexity of programmatically creating Google Forms with correct ownership — a restriction Google Apps Script does not fully support across accounts. The owner-only menu gate enforces that only the authorized Q can trigger destructive or structural operations. A sidebar notification panel (rather than `alert()` dialogs) allows the script to stream progress updates during long-running copy operations without blocking execution.
+The tool follows a **copy-from-template** pattern: a working spreadsheet (and its bound form) is duplicated rather than built from scratch each month. New tracker names are auto-generated as `YYYY-MM-NameSpace` (e.g. `2026-04-F3Waxhaw`) using the start date and the `NameSpace` value from the Config sheet; operators are not prompted for a name. This avoids the complexity of programmatically creating Google Forms with correct ownership — a restriction Google Apps Script does not fully support across accounts. The owner-only menu gate enforces that only the authorized Q can trigger destructive or structural operations. A sidebar notification panel (rather than `alert()` dialogs) allows the script to stream progress updates during long-running copy operations without blocking execution.
 
 Programmatic form generation was explored but deferred — the Google Forms API does not support ownership transfer, making full automation impossible for cross-account regional bootstrapping. See ADR-004.
 

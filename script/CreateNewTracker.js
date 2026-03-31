@@ -1,34 +1,19 @@
 
 /**
- * Creates a new spreadsheet with the same structure as the current spreadsheet, 
- * initializes it with a specified start date, and updates associated form details.
- * 
- * The function performs the following steps:
- * 1. Prompts the user for the name of the new spreadsheet and a start date.
- * 2. Copies the current spreadsheet to a new one with the specified name.
- * 3. Moves the new spreadsheet to the same folder as the current spreadsheet.
- * 4. Updates sharing permissions for the new spreadsheet to allow anyone with the link to edit.
- * 5. Updates the associated Google Form's title and filename based on the start date.
- * 6. Initializes the sheets in the new spreadsheet with the provided start date.
- * 7. Logs instructions for the user to complete additional setup steps.
- * 
- * @throws {Error} If the user cancels any of the prompts or provides invalid input.
+ * Creates a new monthly tracker spreadsheet from the current template.
+ * Spreadsheet name is auto-generated as YYYY-MM-NameSpace using the NameSpace
+ * value from the Config sheet and the operator-supplied start date.
  */
 function copyAndInit() {
-  NoticeLogInit("Create New Tracker", "This script will create a new spreadsheet with the same structure as the current spreadsheet. Please enter the name for the new spreadsheet.");
+  NoticeLogInit("Create New Tracker", "This script will create a new monthly tracker. Enter the start date when prompted.");
 
-  const newSpreadsheetName = NoticePrompt("Enter the name of the new spreadsheet");
-  if (!newSpreadsheetName) {
-    NoticeLog('Operation canceled.');
-    return;
-  }
-  var response = NoticePrompt("Enter start date YYYY-MM-DD");
+  const response = NoticePrompt("Enter start date YYYY-MM-DD");
   if (!response) {
       NoticeLog('Operation canceled.');
       return;
   }
-  const startDate = new Date(response + 'T00:00:00'); // Ensures the date is treated as local time
-  
+  const startDate = new Date(response + 'T00:00:00'); // local time to avoid UTC offset shifting the date
+
   if (isNaN(startDate.getTime())) {
     NoticeLog('Invalid date format. Please use YYYY-MM-DD format.');
     NoticeLog('Operation canceled.');
@@ -37,12 +22,34 @@ function copyAndInit() {
 
   const currentSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 
-  const siteQConfig = getConfigValue_(currentSpreadsheet, 'Site Q');
+  const configSheet = currentSpreadsheet.getSheetByName('Config');
+  const configData = configSheet ? configSheet.getDataRange().getValues() : null;
+
+  const siteQConfig = getConfigValue_(null, 'Site Q', configData);
   if (!siteQConfig || !siteQConfig.secondary) {
     NoticeLog('Error: Site Q email not found in Config sheet — add a "Site Q" row with the email address in the secondary column.');
     return;
   }
   const siteQEmail = siteQConfig.secondary;
+
+  let nameSpaceConfig = getConfigValue_(null, 'NameSpace', configData);
+  if (!nameSpaceConfig || !nameSpaceConfig.primary) {
+    const DEFAULT_NAMESPACE = 'F3 Go30';
+    if (configSheet) {
+      configSheet.appendRow(['NameSpace', DEFAULT_NAMESPACE]);
+      SpreadsheetApp.flush();
+      nameSpaceConfig = getConfigValue_(null, 'NameSpace', configSheet.getDataRange().getValues());
+    }
+    if (!nameSpaceConfig || !nameSpaceConfig.primary) {
+      NoticeLog('Error: NameSpace not found in Config sheet — add a "NameSpace" row with the region identifier in the primary column.');
+      return;
+    }
+    NoticeLog('Config: NameSpace was not set — wrote default "' + DEFAULT_NAMESPACE + '". Update the Config sheet NameSpace row to change the region identifier.');
+  }
+  const nameSpace = nameSpaceConfig.primary;
+
+  const paddedMonth = String(startDate.getMonth() + 1).padStart(2, '0');
+  const newSpreadsheetName = startDate.getFullYear() + '-' + paddedMonth + '-' + nameSpace;
 
   NoticeLog('Creating ' + newSpreadsheetName + '. Please wait...');
   let newSpreadsheet;
@@ -75,7 +82,7 @@ function copyAndInit() {
       return;
     }
     const trackerSheetUrl = newSpreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
-    const trackerAlias = newSpreadsheetName.replace(/\s+/g, "");
+    const trackerAlias = nameSpace;
     let trackerSheetShortUrl = trackerSheetUrl;
     try {
       trackerSheetShortUrl = shortenUrl(trackerSheetUrl, trackerAlias, 5, "tinyurl");
@@ -96,8 +103,6 @@ function copyAndInit() {
       }
       const form = FormApp.openByUrl(formUrl);
       const formName = newSpreadsheetName + " HC";
-      // set form title to the name "YYYY-MM-DD HC Form"
-      const paddedMonth = String(startDate.getMonth() + 1).padStart(2, '0');
       const paddedDay = String(startDate.getDate()).padStart(2, '0');
       const ftitle = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay + ' HC Form';
       form.setTitle(ftitle);
@@ -107,7 +112,7 @@ function copyAndInit() {
       formFile.setName(formName);
       formFile.moveTo(folder);
 
-    const formAlias = formName.replace(/\s+/g, "");
+    const formAlias = nameSpace + 'HC';
     let formShortUrl = formUrl;
     try {
       formShortUrl = shortenUrl(formUrl, formAlias, 5, "tinyurl");
@@ -163,7 +168,7 @@ function copyAndInit() {
 function reinitializeSheets() {
   NoticeLogInit("Reinitialize Sheets", "This script will reinitialize the sheets in the current spreadsheet. Please enter the start date for the new month.");
 
-  var response = NoticePrompt("Enter start date YYYY-MM-DD");
+  const response = NoticePrompt("Enter start date YYYY-MM-DD");
   if (!response) {
     NoticeLog('Operation canceled.');
     return;

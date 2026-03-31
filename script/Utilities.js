@@ -22,17 +22,21 @@ function logCellColor(cellReference) {
 /**
  * Reads a variable from the Config sheet of the given spreadsheet.
  * Config sheet schema: column A = variable name, column B = primary value, column C = secondary value.
- * @param {Spreadsheet} spreadsheet
+ * @param {Spreadsheet} spreadsheet - Required when data is not provided.
  * @param {string} variableName - Value to match in column A.
- * @returns {{primary: *, secondary: *}|null} Matched row values, or null if not found or Config sheet absent.
+ * @param {Array[][]=} data - Optional pre-fetched Config sheet values (avoids a sheet read when
+ *   doing multiple lookups; pass the result of configSheet.getDataRange().getValues()).
+ * @returns {{primary: *, secondary: *}|null} Matched row values, or null if not found.
  */
-function getConfigValue_(spreadsheet, variableName) {
-  const configSheet = spreadsheet.getSheetByName('Config');
-  if (!configSheet) return null;
-  const data = configSheet.getDataRange().getValues();
-  for (let i = 0; i < data.length; i++) {
-    if (data[i][0] === variableName) {
-      return { primary: data[i][1], secondary: data[i][2] };
+function getConfigValue_(spreadsheet, variableName, data) {
+  const rows = data || (() => {
+    const sheet = spreadsheet.getSheetByName('Config');
+    return sheet ? sheet.getDataRange().getValues() : null;
+  })();
+  if (!rows) return null;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][0] === variableName) {
+      return { primary: rows[i][1], secondary: rows[i][2] };
     }
   }
   return null;
