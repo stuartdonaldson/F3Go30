@@ -113,13 +113,18 @@ function getScriptProperty(prop) {
 }
 
 // run a function guaranteed to prevent concurrent access to the script properties
+// returns true if the lock was acquired and func ran, false if lock timed out
 function runWithLock(func) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(30000);  // wait 30 seconds before conceding an error
-    func();
   } catch (e) {
-    Logger.log('Error: ' + e.message);
+    Logger.log('runWithLock: lock acquisition failed — ' + e.message);
+    return false;
+  }
+  try {
+    func();
+    return true;
   } finally {
     lock.releaseLock();
   }
@@ -161,7 +166,7 @@ function getLastClientActivityTime() {
   return getScriptProperty('LastClientAction');
 }
 function Enqueue( type, response ) {
-  runWithLock(function() {
+  if (!runWithLock(function() {
     var queue = getScriptProperty(type);
     if (!queue) {
       queue = [response];
@@ -169,18 +174,22 @@ function Enqueue( type, response ) {
       queue.push(response);
     }
     setScriptProperty(type, queue);
-  });
+  })) {
+    Logger.log('Enqueue: lock acquisition failed — message dropped for queue: ' + type);
+  }
 }
   
 function Dequeue( type ) {
   var response = null;
-  runWithLock(function() {
+  if (!runWithLock(function() {
     var queue = getScriptProperty(type);
     if (queue && queue.length > 0) {
       response = queue.shift();
       setScriptProperty(type, queue);
     }
-  });
+  })) {
+    Logger.log('Dequeue: lock acquisition failed — returning null for queue: ' + type);
+  }
   return response;
 }
 

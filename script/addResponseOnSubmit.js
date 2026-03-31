@@ -32,18 +32,8 @@ function clearFormSubmitTrigger() {
  * 5. Sorts the "Tracker" sheet based on a specified column to organize the data efficiently.
  */
 function onFormSubmit(e) {
-  var lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(30000);
-  } catch (err) {
-    Logger.log('onFormSubmit: could not acquire lock — ' + err.message);
-    return;
-  }
-
-  try {
-    onFormSubmitLocked_(e);
-  } finally {
-    lock.releaseLock();
+  if (!runWithLock(function() { onFormSubmitLocked_(e); })) {
+    Logger.log('onFormSubmit: could not acquire lock — skipping submission');
   }
 }
 
@@ -85,8 +75,8 @@ function onFormSubmitLocked_(e) {
   if (f3NameExists) {
     Logger.log("f3Name already exists in the Tracker sheet.");
   } else {
-    // Find the first empty row in column A, starting from row 3
-    var nextRow = 3; // Start searching from row 3
+    // Find the first empty row in column A, starting from row 4 (row 3 is the date header)
+    var nextRow = 4;
     while (destinationSheet.getRange(nextRow, 1).getValue() !== "") {
       nextRow++;
     }
@@ -117,8 +107,9 @@ function onFormSubmitLocked_(e) {
     }
   }
 
-    // Sort the table by the AO in column B, considering the header is in row 3
-  var rangeToSort = destinationSheet.getRange(4, 1, trackerLastRow - 3, lastColumn); // Adjust range to exclude header row
+    // Re-read last row so a newly inserted PAX row is included in the sort range
+  trackerLastRow = destinationSheet.getLastRow();
+  var rangeToSort = destinationSheet.getRange(4, 1, trackerLastRow - 3, lastColumn);
   rangeToSort.sort([{column: 2, ascending: true}, {column: 1, ascending: true}]);
 
   logActivity('Response',f3Name);
