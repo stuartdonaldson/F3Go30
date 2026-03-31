@@ -97,13 +97,18 @@ function onFormSubmitLocked_(e) {
         // rangeToCopy.copyFormatToRange(destinationSheet, 2, lastColumn, nextRow, nextRow);
     }
 
-    // Clear the PAX entered numbers.  These should be numeric values that are not formulas. 
+    // Clear the PAX entered numbers.  These should be numeric values that are not formulas.
+    // Batch the clears into a single RangeList call instead of one API call per cell.
     var rowValues = destinationSheet.getRange(nextRow, 1, 1, lastColumn).getValues()[0];
     var rowFormulas = destinationSheet.getRange(nextRow, 1, 1, lastColumn).getFormulas()[0];
+    var clearRanges = [];
     for (var i = 0; i < lastColumn; i++) {
       if (!rowFormulas[i] && typeof rowValues[i] === 'number') {
-        destinationSheet.getRange(nextRow, i + 1).clearContent();
+        clearRanges.push(destinationSheet.getRange(nextRow, i + 1).getA1Notation());
       }
+    }
+    if (clearRanges.length > 0) {
+      destinationSheet.getRangeList(clearRanges).clearContent();
     }
   }
 

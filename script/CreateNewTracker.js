@@ -207,6 +207,20 @@ function clearNonFormulaCells(range) {
   }
 }
 
+// setBonusColumn - populates a Saturday bonus column (header, formula, background).
+// Returns the next bonusCount value.
+function setBonusColumn(sheet, currentCell, bonusCount, bonusColumn) {
+  currentCell.offset(0, 1).setValue('Bonus');
+  currentCell.offset(-1, 1).setValue(bonusCount);
+  sheet.getRange(4, bonusColumn).setFormula(
+    'SUMIFS(UBonus_Multiplier,UBonus_Name,$A4,UBonus_Period,'
+    + getLockedRowA1Notation(sheet, 2, bonusColumn)
+    + ',UBonus_Complete,TRUE)'
+  );
+  sheet.getRange(2, bonusColumn, 3, 1).setBackground('#00ff00');
+  return bonusCount + 1;
+}
+
 function populateTrackerSheet(sheet, startDate) {
 
   const endDate = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0); // Last day of the start month
@@ -222,7 +236,6 @@ function populateTrackerSheet(sheet, startDate) {
   let currentColumn = columnStart;
 
   while (currentDate <= endDate) {
-    SpreadsheetApp.flush();
     const currentCell = sheet.getRange(3, currentColumn);
     currentCell.setValue(currentDate);
     currentCell.setNumberFormat("MM/dd");
@@ -230,32 +243,16 @@ function populateTrackerSheet(sheet, startDate) {
     // Set color for date columns
     sheet.getRange(3, currentColumn).setBackground('#ff9900');
 
-    function setBonusColumn( bonusColumn ) {
-      // Set Bonus value and week number
-      currentCell.offset(0, 1).setValue('Bonus');
-      currentCell.offset(-1, 1).setValue(bonusCount);
-
-      // Set formula in row 4 for Bonus column
-      const bonusCellRow4 = sheet.getRange(4, bonusColumn);
-      bonusCellRow4.setFormula('SUMIFS(UBonus_Multiplier,UBonus_Name,$A4,UBonus_Period,'
-                                + getLockedRowA1Notation( sheet, 2, bonusColumn)
-                                + ',UBonus_Complete,TRUE)');
-
-      // Set background color to green for Bonus columns
-      var c2 = sheet.getRange(2, bonusColumn, 3, 1);
-      sheet.getRange(2, bonusColumn, 3, 1).setBackground('#00ff00');
-
-      bonusCount++;
-    }
     // Check if it's a Saturday
     if (currentDate.getDay() === 6) { // 6 represents Saturday
-      setBonusColumn( currentColumn + 1 );
+      bonusCount = setBonusColumn(sheet, currentCell, bonusCount, currentColumn + 1);
       currentColumn++; // Increment to skip the bonus label column
     }
 
     currentDate.setDate(currentDate.getDate() + 1); // Increment the date by one day
     currentColumn++; // Move to the next column
   }
+  SpreadsheetApp.flush();
 
   // Adjust column visibility based on the month's end
   if (currentColumn <= 44) { // Column 'AR' is the 44th column

@@ -41,14 +41,13 @@ function markEmptyCellsAsMinusOne() {
     var lastColumnIndex = sheet.getLastColumn();
     var thresholddayColumnIndex = -2;
 
-    for (var i = 1; i <= lastColumnIndex; i++) {
-      var cellValue = sheet.getRange(3, i).getValue();
-
+    var row3Values = sheet.getRange(3, 1, 1, lastColumnIndex).getValues()[0];
+    for (var i = 0; i < row3Values.length; i++) {
+      var cellValue = row3Values[i];
       if (cellValue instanceof Date) {
         var cellDateString = Utilities.formatDate(cellValue, sheet.getParent().getSpreadsheetTimeZone(), "MM/dd/yyyy");
-
         if (cellDateString === thresholddayString) {
-          thresholddayColumnIndex = i;
+          thresholddayColumnIndex = i + 1; // convert 0-based array index to 1-based column number
           break;
         }
       }
@@ -62,12 +61,10 @@ function markEmptyCellsAsMinusOne() {
       var values = dataRange.getValues();
 
       // Iterate through the data in thresholdday's column and mark empty cells as -1 for rows with F3 Name
+      var columnAValues = sheet.getRange(4, 1, values.length, 1).getValues();
       for (var j = 0; j < values.length; j++) {
-        if (values[j][0] === '') {
-          var f3NameValue = sheet.getRange(j + 4, 1).getValue();
-          if (f3NameValue !== '') {
-            values[j][0] = -1;
-          }
+        if (values[j][0] === '' && columnAValues[j][0] !== '') {
+          values[j][0] = -1;
         }
       }
 

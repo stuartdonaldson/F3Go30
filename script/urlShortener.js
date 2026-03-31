@@ -89,21 +89,20 @@ function shortenUrlWithBitly(longUrl, customAlias) {
     "headers": {
       "Authorization": "Bearer " + accessToken
     },
-    "payload": JSON.stringify(payload)
+    "payload": JSON.stringify(payload),
+    "muteHttpExceptions": true
   };
 
-  try {
-    const response = UrlFetchApp.fetch(apiUrl, options);
-    const json = JSON.parse(response.getContentText());
-
-    if (json.link) {
-      return json.link; // Return the shortened URL
-    } else {
-      throw new Error("Bitly API response did not include a shortened URL.");
-    }
-  } catch (error) {
-    Logger.log("Error while shortening URL with Bitly: " + error.message);
-    throw new Error("Failed to shorten URL with Bitly. Please check the API token, input URL, and custom alias.");
+  const response = UrlFetchApp.fetch(apiUrl, options);
+  const statusCode = response.getResponseCode();
+  if (statusCode !== 200) {
+    throw new Error('Bitly API returned HTTP ' + statusCode + ': ' + response.getContentText());
+  }
+  const json = JSON.parse(response.getContentText());
+  if (json.link) {
+    return json.link;
+  } else {
+    throw new Error('Bitly API response did not include a shortened URL: ' + response.getContentText());
   }
 }
 
@@ -132,21 +131,20 @@ function shortenUrlWithTinyUrl(longUrl, customAlias) {
     "headers": {
       "Authorization": "Bearer " + accessToken
     },
-    "payload": JSON.stringify(payload)
+    "payload": JSON.stringify(payload),
+    "muteHttpExceptions": true
   };
 
-  try {
-    const response = UrlFetchApp.fetch(apiUrl, options);
-    const json = JSON.parse(response.getContentText());
-
-    if (json.data && json.data.tiny_url) {
-      return json.data.tiny_url; // Return the shortened URL
-    } else {
-      throw new Error("TinyURL API response did not include a shortened URL.");
-    }
-  } catch (error) {
-    Logger.log("Error while shortening URL with TinyURL: " + error.message);
-    throw new Error("Failed to shorten URL with TinyURL. Please check the API token, input URL, and custom alias.");
+  const response = UrlFetchApp.fetch(apiUrl, options);
+  const statusCode = response.getResponseCode();
+  if (statusCode !== 200) {
+    throw new Error('TinyURL API returned HTTP ' + statusCode + ': ' + response.getContentText());
+  }
+  const json = JSON.parse(response.getContentText());
+  if (json.data && json.data.tiny_url) {
+    return json.data.tiny_url;
+  } else {
+    throw new Error('TinyURL API response did not include a shortened URL: ' + response.getContentText());
   }
 }
 
