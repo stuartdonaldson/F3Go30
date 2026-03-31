@@ -113,6 +113,11 @@ function copyAndInit() {
       const paddedDay = String(startDate.getDate()).padStart(2, '0');
       const ftitle = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay + ' HC Form';
       form.setTitle(ftitle);
+      form.setConfirmationMessage(
+        'Thank you for your Hard Commit!\n\n' +
+        'View the Go30 tracker here: ' + trackerSheetShortUrl + '\n\n' +
+        'Questions? Contact ' + siteQConfig.primary + ' (' + siteQEmail + ').'
+      );
 
       // change the filename of the form to formName
       const formFile = DriveApp.getFileById(form.getId());
