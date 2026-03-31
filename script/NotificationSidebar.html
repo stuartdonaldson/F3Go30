@@ -3,10 +3,17 @@
   <head>
     <base target="_top">
     <script>
+      var pollId;
+
       function handleMessage(message) {
         console.log("***** Messages received:", JSON.stringify(message));
         if (!message) {
           console.log("***** Queue was empty.");
+          return;
+        }
+        if (message.done) {
+          clearInterval(pollId);
+          console.log("***** Workflow complete — polling stopped.");
           return;
         }
         if (message.title) {
@@ -106,7 +113,7 @@
       window.onload = function() {
         console.log("***** Starting message updates...");
         checkMessages();
-        setInterval(checkMessages, 2000);
+        pollId = setInterval(checkMessages, 2000);
       };
     </script>
   </head>

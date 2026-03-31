@@ -142,6 +142,7 @@ function copyAndInit() {
   NoticeLog("-");
 
   NoticeLog('You can now close this sidebar.');
+  noticeLogDone_();
 
   } catch (err) {
     if (newSpreadsheetId) {
@@ -188,6 +189,7 @@ function reinitializeSheets() {
 
   NoticeLog('The sheets have been reinitialized successfully.');
   NoticeLog('You can now close this message.');
+  noticeLogDone_();
 }
 
 
@@ -294,8 +296,10 @@ function populateTrackerSheet(sheet, startDate) {
   SpreadsheetApp.flush();
 
   // Adjust column visibility based on the month's end
-  if (currentColumn <= 44) { // Column 'AR' is the 44th column
-    sheet.hideColumns(currentColumn, 44 - currentColumn + 1);
+  const LAST_TRACKER_COLUMN = 44; // Column AR
+  const hideCount = LAST_TRACKER_COLUMN - currentColumn + 1;
+  if (hideCount > 0) {
+    sheet.hideColumns(currentColumn, hideCount);
   }
   if (columnStart < currentColumn) {
     sheet.showColumns(columnStart, currentColumn - columnStart);

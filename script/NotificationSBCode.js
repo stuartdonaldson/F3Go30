@@ -157,6 +157,11 @@ function sendToClient(message) {
   Enqueue('TO_CLIENT', message);
 }
 
+// Signals the sidebar to stop polling. Call once at the end of any workflow that uses NoticeLog.
+function noticeLogDone_() {
+  sendToClient({done: true});
+}
+
 // getMessages - sidebar callback to retrieve the messages property safely ensuring concurrency is handled.
 function getClientMessage() {
   var msg;
@@ -172,6 +177,8 @@ function updateClientActivityTime() {
 function getLastClientActivityTime() {
   return getScriptProperty('LastClientAction');
 }
+var QUEUE_MAX_BYTES_ = 8000; // PropertiesService limit is 9KB; 8KB leaves headroom
+
 function Enqueue( type, response ) {
   if (!runWithLock(function() {
     var queue = getScriptProperty(type);
@@ -179,6 +186,13 @@ function Enqueue( type, response ) {
       queue = [response];
     } else {
       queue.push(response);
+    }
+    // Guard against PropertiesService 9KB per-property limit
+    if (JSON.stringify(queue).length > QUEUE_MAX_BYTES_) {
+      while (JSON.stringify(queue).length > QUEUE_MAX_BYTES_ && queue.length > 1) {
+        queue.shift();
+      }
+      queue.unshift({log: '[Warning: queue overflow — earlier messages were dropped]'});
     }
     setScriptProperty(type, queue);
   })) {

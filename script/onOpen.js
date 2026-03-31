@@ -7,11 +7,12 @@ function onOpen()
 { 
   var ui = SpreadsheetApp.getUi(); 
   var email = Session.getActiveUser().getEmail();
-  var owneremail = SpreadsheetApp.getActiveSpreadsheet().getOwner().getEmail();
+  var owner = SpreadsheetApp.getActiveSpreadsheet().getOwner(); // null on Team Drives
+  var owneremail = owner ? owner.getEmail() : null;
 
   var menu = ui.createMenu('F3 Go30');
 
-  if (email === owneremail) {
+  if (owneremail && email === owneremail) {
     menu.addItem('Copy and Initialize', 'copyAndInit')
         .addItem('Initialize Triggers', 'initializeTriggers')
         .addItem('Reinitialize this spreadsheet', 'reinitializeSheets')
