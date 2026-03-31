@@ -50,11 +50,12 @@ F3Go30 automates the monthly lifecycle of a Go30 fitness challenge tracker: copy
 ### Capabilities
 - Copy the active tracker spreadsheet to a new named spreadsheet in the same Drive folder
 - Initialize all sheets in a new tracker for the target month and start date
-- Link and title the associated Google Form HC sign-up
+- Link, title, and set the confirmation message on the associated Google Form HC sign-up
 - Shorten tracker and form URLs via TinyURL (or Bitly) and surface them in a notification sidebar
-- Set sharing permissions on new tracker to anyone-with-link/edit
+- Set sharing permissions on new tracker to anyone-with-link/view
 - Set up a daily 1 AM trigger to mark empty check-in cells as −1 after a 24-hour grace period
 - Set up a form-submit trigger to populate the Tracker sheet when a PAX submits the HC form
+- Auto-generate next month's tracker and HC form via a scheduled trigger on the 20th of each month; emails Site Q with links and a ready-to-paste Slack message on success or failure
 - Log all menu-initiated activity to a hidden Activity sheet
 
 ---
@@ -119,6 +120,35 @@ Constraints:
 
 ---
 
+### UC-4: Scheduled Monthly Auto-Generate
+
+Actor: Time-based trigger (20th of each month, 2 AM) — template spreadsheet only
+
+Preconditions:
+- Monthly trigger has been installed via "Initialize Monthly Trigger" on the template spreadsheet
+- Config sheet contains `NameSpace` (column B) and `Site Q` rows (name in column B, email in column C)
+- Template spreadsheet has a bound HC form
+
+Primary Flow:
+1. Trigger fires `autoGenerateNextMonthTracker` on the 20th of the month
+2. Script derives next month's start date and reads NameSpace and Site Q config
+3. Script copies template, renames and moves the HC form, initializes sheets, shortens URLs
+4. Script emails Site Q with tracker link, HC form link, and a ready-to-paste Slack message
+
+Alternate Flows:
+A1: Site Q email or NameSpace missing from Config → script logs error and sends email to Site Q if possible; exits without copying
+A2: URL shortening fails → script logs the failure and uses the full URL in the email
+A3: Any step throws after copy → Site Q is emailed with error details and the orphaned spreadsheet ID
+
+Postconditions:
+- New tracker spreadsheet exists in Drive with initialized sheets and correct sharing
+- Site Q has received an email with links and Slack message copy-paste
+
+Constraints:
+- Trigger runs in the template spreadsheet context; the new tracker's own triggers must still be initialized manually via "Initialize Triggers" in the new spreadsheet
+
+---
+
 ### UC-3: Nightly Miss Marking
 
 Actor: Time-based trigger (1 AM daily)
@@ -144,7 +174,7 @@ Constraints:
 - Not a multi-region coordination platform; each region operates its own independent spreadsheet
 - Not a public SaaS; no web app, API, or external hosting
 - Does not automate the initial one-time form linking step when bootstrapping a new region
-- Does not send email or push notifications directly; notification sidebar is in-session only
+- Does not send proactive PAX-facing email; Site Q email is only used for auto-generate success/failure notification
 - No automated testing or CI/CD pipeline
 
 ---
@@ -202,8 +232,12 @@ graph TD
     N[PAX submits HC form] --> M
     M --> O[onFormSubmit — adds PAX row to Tracker]
     L --> P[markEmptyCellsAsMinusOne — writes −1 for missed days]
+    D --> MT[Initialize Monthly Trigger]
+    MT --> MTrig[Monthly trigger — 20th of month]
+    MTrig --> AGS[autoGenerateNextMonthTracker]
+    AGS --> EmailQ[Emails Site Q with links + Slack message]
 classDef lightblue fill:#ADD8E6,stroke:#333,stroke-width:1px,color:#000
-class A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P lightblue
+class A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,MT,MTrig,AGS,EmailQ lightblue
 classDef lightgreen fill:#90EE90,stroke:#333,stroke-width:1px,color:#000
 class BG1,BG2,BG3 lightgreen
 ```
@@ -221,7 +255,7 @@ class BG1,BG2,BG3 lightgreen
 
 **Note — macros.js:** Contains `startNewMonth()` / `initTriggers()` entry points that partially overlap with `onOpen.js` and `addResponseOnSubmit.js`. This is a legacy layer flagged for cleanup. See PLAN.md §Backlog.
 
-**NoticeLog contract:** `NoticeLog()`, `NoticeLogInit()`, and `NoticePrompt()` are sidebar-only. They are only active after `NoticeLogInit()` has opened the sidebar (inside `copyAndInit()` and `reinitializeSheets()`). Outside that context, sidebar messages are silently discarded. `NoticeLog()` always mirrors to `Logger.log()` (HTML-stripped) regardless of sidebar state. Trigger-fired and background functions (`onFormSubmit`, `markEmptyCellsAsMinusOne`, etc.) must use `Logger.log()` directly.
+**NoticeLog contract:** `NoticeLog()`, `NoticeLogInit()`, and `NoticePrompt()` are sidebar-only. They are only active after `NoticeLogInit()` has opened the sidebar (inside `copyAndInit()` and `reinitializeSheets()`). Outside that context, sidebar messages are silently discarded. `NoticeLog()` always mirrors to `Logger.log()` (HTML-stripped) regardless of sidebar state. Trigger-fired and background functions (`onFormSubmit`, `markEmptyCellsAsMinusOne`, `autoGenerateNextMonthTracker`, etc.) must use `Logger.log()` directly.
 
 ---
 
@@ -234,7 +268,7 @@ Key edge cases and known risks:
 | `initSheets()` called without arguments from `macros.js` | Signature mismatch — will throw at runtime if `startNewMonth()` is used | Known bug — see PLAN.md |
 | Tracker has fewer than 4 rows when `onFormSubmit` runs | `getRange` throws on negative row count | Known risk — guard needed |
 | URL shortener returns non-200 | Error is caught but not surfaced with actionable message | Known gap |
-| `NoticePrompt` receives empty string | `while (!response)` loop treats empty string as no response | Known quirk |
+| `autoGenerateNextMonthTracker` runs in wrong spreadsheet | If installed on a monthly tracker instead of the template, copies from that tracker not the template | Install monthly trigger only on the template spreadsheet |
 
 ---
 
@@ -265,8 +299,8 @@ Stores runtime values read by the script at execution time. Column A is the vari
 
 | Variable | Column B | Column C | Used by |
 |----------|----------|----------|---------|
-| `Site Q` | Site Q display name | Site Q email address | `copyAndInit()` — onboarding email recipient |
-| `NameSpace` | Region identifier (e.g. `F3Waxhaw`) | — | `copyAndInit()` — drives spreadsheet name (`YYYY-MM-NameSpace`) and URL aliases |
+| `Site Q` | Site Q display name | Site Q email address | `copyAndInit()`, `autoGenerateNextMonthTracker()` — form confirmation message and email notifications |
+| `NameSpace` | Region identifier (e.g. `F3Waxhaw`) | — | `copyAndInit()`, `autoGenerateNextMonthTracker()` — drives spreadsheet name (`YYYY-MM-NameSpace`) and URL aliases |
 
 **Script Properties** (set in Apps Script Project Settings → Script Properties)
 
@@ -281,8 +315,9 @@ All operations are initiated from the **F3 Go30** custom menu in Google Sheets. 
 
 | Menu Item | Function | When to Use |
 |-----------|----------|------------|
-| Copy and Initialize | `copyAndInit()` | Start of each new month |
+| Copy and Initialize | `copyAndInit()` | Start of each new month (manual) |
 | Initialize Triggers | `initializeTriggers()` | After opening the new tracker for the first time |
+| Initialize Monthly Trigger | `initializeMonthlyTrigger()` | Once on the template spreadsheet to schedule auto-generate |
 | Reinitialize this spreadsheet | `reinitializeSheets()` | Development or reset |
 | Run test function (DEV) | `testFunction()` | Developer use only |
 
@@ -296,3 +331,4 @@ All operations are initiated from the **F3 Go30** custom menu in Google Sheets. 
 | Tracker not populated after HC form submit | Row missing after form submit | Verify form-submit trigger exists in Apps Script Triggers panel; re-run "Initialize Triggers" |
 | −1 not appearing for missed days | Nightly trigger not firing | Verify daily trigger for `markEmptyCellsAsMinusOne` in Triggers panel; re-run "Initialize Triggers" |
 | `onFormSubmit` throws when Tracker is empty | Range error if Tracker has fewer than 4 rows | Script now exits early with a log message; verify Tracker has at least one data row |
+| Auto-generate fails | Site Q receives failure email with error details and orphaned spreadsheet ID | Delete orphaned spreadsheet from Drive; run "Copy and Initialize" manually; check Config sheet for missing NameSpace or Site Q rows |
