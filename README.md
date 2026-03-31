@@ -219,6 +219,8 @@ class BG1,BG2,BG3 lightgreen
 
 **Note — macros.js:** Contains `startNewMonth()` / `initTriggers()` entry points that partially overlap with `onOpen.js` and `addResponseOnSubmit.js`. This is a legacy layer flagged for cleanup. See PLAN.md §Backlog.
 
+**NoticeLog contract:** `NoticeLog()`, `NoticeLogInit()`, and `NoticePrompt()` are sidebar-only. They are only active after `NoticeLogInit()` has opened the sidebar (inside `copyAndInit()` and `reinitializeSheets()`). Outside that context, sidebar messages are silently discarded. `NoticeLog()` always mirrors to `Logger.log()` (HTML-stripped) regardless of sidebar state. Trigger-fired and background functions (`onFormSubmit`, `markEmptyCellsAsMinusOne`, etc.) must use `Logger.log()` directly.
+
 ---
 
 ### Runtime View

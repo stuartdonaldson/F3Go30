@@ -1,5 +1,12 @@
 // Description: Code for the Notification Sidebar
-  
+//
+// SIDEBAR-ONLY CONTRACT
+// NoticeLogInit(), NoticeLog(), and NoticePrompt() are sidebar UI functions.
+// They are only active after NoticeLogInit() has opened the sidebar (i.e. inside
+// copyAndInit() and reinitializeSheets()). Outside that context, NoticeLog() silently
+// discards messages; NoticePrompt() will block indefinitely. Trigger-fired and
+// background functions MUST use Logger.log() directly instead.
+
 // Test function to populate the sidebar with different types of messages
 function testNotificationSidebar() {
   NoticeLogInit( `Testing Notification Sidebar`, 
@@ -30,7 +37,12 @@ function createHtmlLink( text, link ) {
   return '<a href="' + link + '" target="_blank">' + text + '</a>';
 }
 
-  // NoticeLogInit - creates a new sidebar, initializing the log and creating a description area
+/**
+ * NoticeLogInit - Opens the notification sidebar and initializes the message queues.
+ * SIDEBAR-ONLY (see file header). Must be called before NoticeLog() or NoticePrompt().
+ * @param {string} title - Sidebar title
+ * @param {string} desc  - HTML description shown below the title
+ */
 function NoticeLogInit( title, desc ) {
   var messages = {
     title: title,
@@ -47,17 +59,23 @@ function NoticeLogInit( title, desc ) {
   sendToClient(messages);
 }
 
-  function NoticeLog( log ) {
-    var message = { log: log };
-    Enqueue('TO_CLIENT', message);
-  }
+/**
+ * NoticeLog - Enqueues a message to the sidebar log and mirrors it to Logger.log().
+ * SIDEBAR-ONLY (see file header). Logger.log() always fires regardless of sidebar state.
+ * @param {string} log - Message text (may include HTML; HTML tags are stripped for Logger)
+ */
+function NoticeLog( log ) {
+  Logger.log(log.replace(/<[^>]*>/g, ''));
+  var message = { log: log };
+  Enqueue('TO_CLIENT', message);
+}
   
-//********************************************************************************************************************
-// NoticePrompt - send a prompt to the sidebar and wait for a response
-//   prompt - the prompt to display in the sidebar
-//   returns the user's response
-//   Note: this function will block until a response is received
-//         or the user closes the sidebar
+/**
+ * NoticePrompt - Sends a prompt to the sidebar and blocks until the user responds.
+ * SIDEBAR-ONLY (see file header). Returns null if the sidebar closes or times out.
+ * @param {string} prompt - Prompt text displayed in the sidebar
+ * @returns {string|null} User's response, or null on timeout/close
+ */
 function NoticePrompt(prompt) {
   var message = { prompt: prompt }; 
   sendToClient(message);
