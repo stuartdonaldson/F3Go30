@@ -254,6 +254,15 @@ Script files live in `script/` and are pushed to Google Apps Script via `clasp p
 
 ### Configuration
 
+**Config Sheet** (spreadsheet tab named `Config`)
+
+Stores runtime values read by the script at execution time. Column A is the variable name, column B is the primary value, column C is the secondary value.
+
+| Variable | Column B | Column C | Used by |
+|----------|----------|----------|---------|
+| `Site Q` | Site Q display name | Site Q email address | `copyAndInit()` — onboarding email recipient |
+| `NameSpace` | Region identifier (e.g. `F3Waxhaw`) | — | `copyAndInit()` — drives spreadsheet name (`YYYY-MM-NameSpace`) and URL aliases |
+
 **Script Properties** (set in Apps Script Project Settings → Script Properties)
 
 | Property | Required | Default | Description |
