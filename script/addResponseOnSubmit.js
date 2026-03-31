@@ -52,8 +52,15 @@ function onFormSubmit(e) {
     responsesSheet.getRange(lastRow, 6).setValue(formResponses[6]); // Update the sheet with the new value in Column F
   }
 
+  // Guard: Tracker must have at least 4 rows before range operations are safe
+  var trackerLastRow = destinationSheet.getLastRow();
+  if (trackerLastRow < 4) {
+    Logger.log("onFormSubmit: Tracker has " + trackerLastRow + " rows — need at least 4 to process. Skipping.");
+    return;
+  }
+
   // Search for f3Name in the Tracker sheet to avoid duplicates
-  var dataRange = destinationSheet.getRange(4, 1, destinationSheet.getLastRow() - 3, 1); // Adjust range to search in column A, starting from row 4
+  var dataRange = destinationSheet.getRange(4, 1, trackerLastRow - 3, 1); // Adjust range to search in column A, starting from row 4
   var lastColumn = destinationSheet.getLastColumn();
 
   var dataValues = dataRange.getValues();
@@ -95,7 +102,7 @@ function onFormSubmit(e) {
   }
 
     // Sort the table by the AO in column B, considering the header is in row 3
-  var rangeToSort = destinationSheet.getRange(4, 1, destinationSheet.getLastRow() - 3, lastColumn); // Adjust range to exclude header row
+  var rangeToSort = destinationSheet.getRange(4, 1, trackerLastRow - 3, lastColumn); // Adjust range to exclude header row
   rangeToSort.sort([{column: 2, ascending: true}, {column: 1, ascending: true}]);
 
   logActivity('Response',f3Name);
