@@ -25,8 +25,8 @@ function clearFormSubmitTrigger() {
 
 /**
  * Triggered by form submissions, this adds the most recent PAX entry to the Tracker sheet following these steps:
- * 1. Verifies there are at least four responses to proceed.
- * 2. Checks for duplicates by ensuring the specific response (the fourth one) doesn't already exist in the "Tracker" sheet.
+ * 1. Verifies there are at least seven form response fields to proceed.
+ * 2. Checks for duplicates by ensuring the F3 Name (field index 3) doesn't already exist in the "Tracker" sheet.
  * 3. Records the unique response in the first empty row of the "Tracker" sheet.
  * 4. Copies formulas and formatting from the previous row to the new row to maintain consistency.
  * 5. Sorts the "Tracker" sheet based on a specified column to organize the data efficiently.

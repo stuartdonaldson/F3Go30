@@ -24,7 +24,7 @@ function testNotificationSidebar() {
   NoticeLog(`Click ${createHtmlLink("here", "https://example.com")} to access the link`);
   Utilities.sleep(2000);
 
-  var x = NoticePrompt( "Enter your name", "Please enter your name:" );
+  var x = NoticePrompt( "Enter your name" );
   NoticeLog( "You entered " + x );
   Utilities.sleep(2000);
   NoticeLog( "Test complete" ); 
@@ -136,9 +136,6 @@ function sendToServer(message) {
   // run the following code with a lock to prevent concurrent access to the script properties
   Enqueue('TO_SERVER', message);
   setScriptProperty('LastClientAction', new Date().getTime());
-}
-function dbg(prop,val) {
-  setScriptProperty(prop,val);
 }
 function getServerMessage() {
   var msg;
