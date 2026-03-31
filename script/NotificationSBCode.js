@@ -32,9 +32,8 @@ function testNotificationSidebar() {
 
   
 // createHtmlLink( text, link ) - create a link in the sidebar
-function createHtmlLink( text, link ) { 
-  // construct an html hyperlink
-  return '<a href="' + link + '" target="_blank">' + text + '</a>';
+function createHtmlLink( text, link ) {
+  return '<a href="' + link + '" target="_blank">' + escapeHtml_(text) + '</a>';
 }
 
 /**

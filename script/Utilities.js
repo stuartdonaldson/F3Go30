@@ -20,6 +20,19 @@ function logCellColor(cellReference) {
 }
 
 /**
+ * Escapes HTML special characters in a string to prevent XSS when embedding
+ * user-controlled values in innerHTML or HTML attribute values.
+ */
+function escapeHtml_(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
  * Reads a variable from the Config sheet of the given spreadsheet.
  * Config sheet schema: column A = variable name, column B = primary value, column C = secondary value.
  * @param {Spreadsheet} spreadsheet - Required when data is not provided.

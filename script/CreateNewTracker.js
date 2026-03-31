@@ -71,8 +71,8 @@ function copyAndInit() {
       const folder = parents.next();
       newSpreadsheetFile.moveTo(folder);
 
-      // Adjust permissions so anyone with the link can edit the new spreadsheet file
-      newSpreadsheetFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT);
+      // PAX interact via the Form only — VIEW permission is sufficient and prevents data corruption
+      newSpreadsheetFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
     // Get the URL to the "Tracker" sheet
     const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
@@ -138,7 +138,7 @@ function copyAndInit() {
   const slackMonth = MONTH_NAMES[startDate.getMonth()];
   const slackMsg = slackYear + ' ' + slackMonth + ' Hard Commit form is up:\n' + formShortUrl + '\n\n' + slackYear + ' ' + slackMonth + ' Tracker:\n' + trackerSheetShortUrl;
   NoticeLog('<b>Slack channel message:</b>');
-  NoticeLog('<textarea rows="5" style="width:100%;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;" readonly onclick="this.select()">' + slackMsg + '</textarea>');
+  NoticeLog('<textarea rows="5" style="width:100%;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;" readonly onclick="this.select()">' + escapeHtml_(slackMsg) + '</textarea>');
   NoticeLog("-");
 
   NoticeLog('You can now close this sidebar.');
