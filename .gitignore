@@ -43,3 +43,6 @@ bdreport.md
 .dolt/
 *.db
 .beads-credential-key
+
+# Claude Code local settings (machine-specific permissions)
+.claude/settings.local.json
