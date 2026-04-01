@@ -33,7 +33,7 @@ function getOrCreateLogFile_() {
   // Create plain-text file with a creation header; Drive places it in root by default
   const header = '# F3Go30-LogFile created: ' + new Date().toISOString() + '\n\n';
   const file = DriveApp.createFile('F3Go30-LogFile', header, MimeType.PLAIN_TEXT);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.READ);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   const fileUrl = file.getUrl();
   const fileId = file.getId();
 
