@@ -77,7 +77,7 @@ Primary Flow:
 3. Q enters the start date when prompted; tracker name is auto-generated as `YYYY-MM-NameSpace`
 4. Script copies the spreadsheet and HC form to the same Drive folder
 5. Script initializes all sheets, sets form title, sets sharing permissions, and shortens URLs
-6. Sidebar displays links to the new spreadsheet and form
+6. Sidebar displays links to the new spreadsheet and form, plus a ready-to-paste Slack message block
 
 Alternate Flows:
 A1: Q cancels a prompt → script exits cleanly with a sidebar log message
@@ -86,7 +86,7 @@ A3: Site Q email missing from Config sheet → script exits with an actionable e
 
 Postconditions:
 - New tracker spreadsheet exists in Drive with initialized sheets and correct sharing
-- Sidebar contains clickable links to the new tracker and HC form
+- Sidebar contains clickable links to the new tracker and HC form, and a ready-to-paste Slack message
 
 Constraints:
 - Only the spreadsheet owner sees the F3 Go30 menu
@@ -385,6 +385,7 @@ assert "confirmationMessage" in latest["payload"]
 | `spreadsheetName` | New spreadsheet name (e.g. `2026-04-F3Waxhaw`) |
 | `trackerUrl` | Short URL to the Tracker sheet |
 | `formUrl` | Short URL to the HC form |
+| `slackMessage` | Ready-to-paste Slack message text (form URL + tracker URL) |
 | `siteQName` | Site Q display name from Config |
 | `siteQEmail` | Site Q email from Config |
 | `confirmationMessage` | Text set on the HC form confirmation |

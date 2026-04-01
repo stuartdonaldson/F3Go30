@@ -378,6 +378,26 @@ def check_activity(wb):
           f"rows with data: {non_empty}" if non_empty else "")
 
 
+def check_log_payload(payload: dict):
+    """Assert LogFile payload contains expected Slack message fields."""
+    print("\n--- LogFile payload ---")
+    slack_msg = payload.get("slackMessage")
+    if not check("LogFile payload contains slackMessage", slack_msg is not None):
+        return
+    check("slackMessage contains 'Hard Commit Signup form is up:'",
+          "Hard Commit Signup form is up:" in slack_msg,
+          f"actual: {slack_msg!r}")
+    check("slackMessage contains 'Tracker:'",
+          "Tracker:" in slack_msg,
+          f"actual: {slack_msg!r}")
+    check("slackMessage contains trackerUrl",
+          payload["trackerUrl"] in slack_msg,
+          f"trackerUrl={payload['trackerUrl']!r}")
+    check("slackMessage contains formUrl",
+          payload["formUrl"] in slack_msg,
+          f"formUrl={payload['formUrl']!r}")
+
+
 def check_config(wb):
     print("\n--- Config sheet ---")
     sheet_name = next((s for s in wb.sheetnames if s.lower() == "config"), None)
@@ -479,6 +499,8 @@ def main():
     check_responses(wb)
     check_activity(wb)
     check_config(wb)
+    if log_entry_payload is not None:
+        check_log_payload(log_entry_payload)
 
     print(f"\nResults: {RESULT['pass']} passed, {RESULT['fail']} failed")
     sys.exit(0 if RESULT["fail"] == 0 else 1)

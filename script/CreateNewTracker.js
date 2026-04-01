@@ -98,6 +98,14 @@ function copyAndInit() {
     } catch (error) {
       NoticeLog('Shorten URL failed for tracker sheet: ' + error.message);
     }
+    if (!trackerSheetShortUrl.startsWith('https://tinyurl.com')) {
+      try {
+        const logFileId = getOrCreateLogFile_();
+        appendToLogFile_(logFileId, 'copyAndInit', { warning: 'urlShortener failed for tracker sheet', alias: trackerAlias, rawUrl: trackerSheetShortUrl });
+      } catch (logErr) {
+        Logger.log('copyAndInit: LogFile warning-write failed — ' + logErr.message);
+      }
+    }
 
     NoticeLog('New spreadsheet tracker sheet link: ' + createHtmlLink(newSpreadsheetName, trackerSheetShortUrl));
 
@@ -139,6 +147,10 @@ function copyAndInit() {
     // Modify sheets in the new spreadsheet
     initSheets(newSpreadsheet, startDate);
 
+    // Hide Config sheet — contains sensitive data (Site Q email)
+    const newConfigSheet = newSpreadsheet.getSheetByName('Config');
+    if (newConfigSheet) newConfigSheet.hideSheet();
+
   NoticeLog("-");
   NoticeLog('<b>Next steps:</b>');
   NoticeLog('1. Open the new spreadsheet');
@@ -147,9 +159,7 @@ function copyAndInit() {
   NoticeLog('4. Shorten and share new Spreadsheet URL');
   NoticeLog("-");
 
-  const slackYear = startDate.getFullYear();
-  const slackMonth = MONTH_NAMES_[startDate.getMonth()];
-  const slackMsg = slackYear + ' ' + slackMonth + ' Hard Commit form is up:\n' + formShortUrl + '\n\n' + slackYear + ' ' + slackMonth + ' Tracker:\n' + trackerSheetShortUrl;
+  const slackMsg = buildSlackMessage_(startDate.getFullYear(), MONTH_NAMES_[startDate.getMonth()], formShortUrl, trackerSheetShortUrl);
   NoticeLog('<b>Slack channel message:</b>');
   NoticeLog('<textarea rows="5" style="width:100%;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;" readonly onclick="this.select()">' + escapeHtml_(slackMsg) + '</textarea>');
   NoticeLog("-");
@@ -162,6 +172,7 @@ function copyAndInit() {
       spreadsheetName: newSpreadsheetName,
       trackerUrl: trackerSheetShortUrl,
       formUrl: formShortUrl,
+      slackMessage: slackMsg,
       siteQName: siteQConfig.primary,
       siteQEmail: siteQEmail,
       confirmationMessage: confirmationMessage
@@ -254,6 +265,7 @@ function initSheets(newSpreadsheet, startDate) {
   const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
   const bonusTrackerSheet = newSpreadsheet.getSheetByName('Bonus Tracker');
   const responsesSheet = newSpreadsheet.getSheetByName('Responses');
+  const activitySheet = newSpreadsheet.getSheetByName('Activity');
   if (!trackerSheet || !bonusTrackerSheet || !responsesSheet) {
     NoticeLog('Error: Required sheet(s) not found — Tracker, Bonus Tracker, and Responses must all exist.');
     return;
@@ -276,6 +288,12 @@ function initSheets(newSpreadsheet, startDate) {
   NoticeLog('Resetting Responses sheet...');
   if (responsesSheet.getLastRow() > 1) {
     responsesSheet.deleteRows(2, responsesSheet.getLastRow() - 1);
+    SpreadsheetApp.flush();
+  }
+
+  NoticeLog('Resetting Activity sheet...');
+  if (activitySheet && activitySheet.getLastRow() > 1) {
+    activitySheet.getRange(2, 1, activitySheet.getLastRow() - 1, activitySheet.getLastColumn()).clearContent();
     SpreadsheetApp.flush();
   }
 }
@@ -338,6 +356,13 @@ function populateTrackerSheet(sheet, startDate) {
     currentDate.setDate(currentDate.getDate() + 1); // Increment the date by one day
     currentColumn++; // Move to the next column
   }
+
+  // Always add a trailing Bonus column after the last day (if last day wasn't Saturday, no bonus was added in the loop)
+  if (endDate.getDay() !== 6) {
+    setBonusColumn(sheet, sheet.getRange(3, currentColumn - 1), bonusCount, currentColumn);
+    currentColumn++;
+  }
+
   SpreadsheetApp.flush();
 
   // Adjust column visibility based on the month's end
@@ -470,10 +495,7 @@ function autoGenerateNextMonthTracker() {
 
     initSheets(newSpreadsheet, nextMonthStart);
 
-    const slackMonth = MONTH_NAMES_[nextMonthStart.getMonth()];
-    const slackYear = nextMonthStart.getFullYear();
-    const slackMsg = slackYear + ' ' + slackMonth + ' Hard Commit form is up:\n' + formShortUrl +
-      '\n\n' + slackYear + ' ' + slackMonth + ' Tracker:\n' + trackerSheetShortUrl;
+    const slackMsg = buildSlackMessage_(nextMonthStart.getFullYear(), MONTH_NAMES_[nextMonthStart.getMonth()], formShortUrl, trackerSheetShortUrl);
 
     MailApp.sendEmail(
       siteQEmail,

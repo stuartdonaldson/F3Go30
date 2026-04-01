@@ -34,6 +34,19 @@ function getConfigValue_(spreadsheet, variableName, data) {
   return null;
 }
 
+/**
+ * Builds the standard Slack copy-paste message for a new monthly tracker.
+ * @param {number} year - Full year (e.g. 2026).
+ * @param {string} month - Long month name (e.g. 'April').
+ * @param {string} formUrl - HC form URL (TinyURL preferred).
+ * @param {string} trackerUrl - Tracker sheet URL (TinyURL preferred).
+ * @returns {string} Slack message text.
+ */
+function buildSlackMessage_(year, month, formUrl, trackerUrl) {
+  const prefix = year + ' ' + month;
+  return prefix + ' Hard Commit Signup form is up:\n' + formUrl + '\n\n' + prefix + ' Tracker:\n' + trackerUrl;
+}
+
 function getLockedRowA1Notation(sheet, row, column) {
   var cellNotation = sheet.getRange(row, column).getA1Notation();
   
