@@ -34,3 +34,9 @@ See [OPERATIONS.md](docs/OPERATIONS.md) for full configuration and failure mode 
 | [OPERATIONS.md](docs/OPERATIONS.md) | Configuration, deployment, failure modes |
 | [ADRs](adr/) | Architecture decision records |
 | [Sheet reference](docs/sheet-reference.md) | Per-sheet descriptions, column layout, formulas, and operational notes |
+
+## Project Management
+
+- Recommended: use the Beads issue tracker for backlog and task management. Beads is optional but recommended for AI-assisted workflows and issue tracking that lives with the repository. See the included `.beads/README.md` for usage and local installation instructions, or learn more at https://github.com/steveyegge/beads.
+- The repository includes a local Beads database (`.beads/`) so you can run `bd` commands locally without an external service. Using Beads is an optional prerequisite for following the project's documented bead-based workflows.
+
