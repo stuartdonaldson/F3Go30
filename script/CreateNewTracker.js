@@ -91,8 +91,7 @@ function copyAndInit() {
       return;
     }
     const trackerSheetUrl = newSpreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
-    const monthYearPrefix = MONTH_NAMES_[startDate.getMonth()] + String(startDate.getFullYear()).slice(-2) + '-';
-    const trackerAlias = monthYearPrefix + nameSpace;
+    const trackerAlias = newSpreadsheetName;
     let trackerSheetShortUrl = trackerSheetUrl;
     try {
       trackerSheetShortUrl = shortenUrl(trackerSheetUrl, trackerAlias, 5, "tinyurl");
@@ -127,7 +126,7 @@ function copyAndInit() {
       formFile.setName(formName);
       formFile.moveTo(folder);
 
-    const formAlias = monthYearPrefix + nameSpace + 'HC';
+    const formAlias = newSpreadsheetName + 'HC';
     let formShortUrl = formUrl;
     try {
       formShortUrl = shortenUrl(formUrl, formAlias, 5, "tinyurl");
@@ -437,10 +436,9 @@ function autoGenerateNextMonthTracker() {
     }
     const trackerSheetUrl = newSpreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
 
-    const autoMonthYearPrefix = MONTH_NAMES_[nextMonthStart.getMonth()] + String(nextMonthStart.getFullYear()).slice(-2) + '-';
     let trackerSheetShortUrl = trackerSheetUrl;
     try {
-      trackerSheetShortUrl = shortenUrl(trackerSheetUrl, autoMonthYearPrefix + nameSpace, 5, 'tinyurl');
+      trackerSheetShortUrl = shortenUrl(trackerSheetUrl, newSpreadsheetName, 5, 'tinyurl');
     } catch (e) {
       Logger.log('autoGenerateNextMonthTracker: shorten URL failed for tracker: ' + e.message);
     }
@@ -465,7 +463,7 @@ function autoGenerateNextMonthTracker() {
 
     let formShortUrl = formUrl;
     try {
-      formShortUrl = shortenUrl(formUrl, autoMonthYearPrefix + nameSpace + 'HC', 5, 'tinyurl');
+      formShortUrl = shortenUrl(formUrl, newSpreadsheetName + 'HC', 5, 'tinyurl');
     } catch (e) {
       Logger.log('autoGenerateNextMonthTracker: shorten URL failed for form: ' + e.message);
     }
