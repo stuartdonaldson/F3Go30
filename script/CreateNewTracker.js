@@ -153,16 +153,35 @@ function copyAndInit() {
 
   NoticeLog("-");
   NoticeLog('<b>Next steps:</b>');
-  NoticeLog('1. Open the new spreadsheet');
+  NoticeLog('1. Open the new spreadsheet (link above) and verify it looks correct');
   NoticeLog('2. F3 Go30 Menu > Initialize Triggers');
-  NoticeLog('3. Shorten and Share Form URL');
-  NoticeLog('4. Shorten and share new Spreadsheet URL');
+  NoticeLog('3. Open the HC form (link above) and verify it looks correct');
+  NoticeLog('4. Wait for Site Q to confirm receipt of the onboarding email');
   NoticeLog("-");
 
   const slackMsg = buildSlackMessage_(startDate.getFullYear(), MONTH_NAMES_[startDate.getMonth()], formShortUrl, trackerSheetShortUrl);
   NoticeLog('<b>Slack channel message:</b>');
   NoticeLog('<textarea rows="5" style="width:100%;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;" readonly onclick="this.select()">' + escapeHtml_(slackMsg) + '</textarea>');
   NoticeLog("-");
+
+  let emailSent = false;
+  try {
+    MailApp.sendEmail(
+      siteQEmail,
+      'F3 Go30: ' + newSpreadsheetName + ' is ready — please verify',
+      newSpreadsheetName + ' has been created.\n\n' +
+      'Please verify before sharing:\n' +
+      '1. Open the tracker: ' + trackerSheetShortUrl + '\n' +
+      '2. F3 Go30 Menu > Initialize Triggers\n' +
+      '3. Open the HC form and verify: ' + formShortUrl + '\n\n' +
+      'Once verified, post this to Slack:\n\n' + slackMsg
+    );
+    emailSent = true;
+    NoticeLog('Onboarding email sent to ' + siteQEmail + '.');
+  } catch (emailErr) {
+    NoticeLog('Warning: could not send onboarding email — ' + emailErr.message);
+    Logger.log('copyAndInit: email send failed — ' + emailErr.message);
+  }
 
   NoticeLog('You can now close this sidebar.');
 
@@ -173,6 +192,7 @@ function copyAndInit() {
       trackerUrl: trackerSheetShortUrl,
       formUrl: formShortUrl,
       slackMessage: slackMsg,
+      emailSent: emailSent,
       siteQName: siteQConfig.primary,
       siteQEmail: siteQEmail,
       confirmationMessage: confirmationMessage

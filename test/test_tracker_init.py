@@ -396,6 +396,9 @@ def check_log_payload(payload: dict):
     check("slackMessage contains formUrl",
           payload["formUrl"] in slack_msg,
           f"formUrl={payload['formUrl']!r}")
+    check("LogFile payload contains emailSent=true",
+          payload.get("emailSent") is True,
+          f"emailSent={payload.get('emailSent')!r}")
 
 
 def check_config(wb):

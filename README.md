@@ -78,6 +78,7 @@ Primary Flow:
 4. Script copies the spreadsheet and HC form to the same Drive folder
 5. Script initializes all sheets, sets form title, sets sharing permissions, and shortens URLs
 6. Sidebar displays links to the new spreadsheet and form, plus a ready-to-paste Slack message block
+7. Script emails Site Q with a verification checklist and the Slack message
 
 Alternate Flows:
 A1: Q cancels a prompt → script exits cleanly with a sidebar log message
@@ -87,6 +88,7 @@ A3: Site Q email missing from Config sheet → script exits with an actionable e
 Postconditions:
 - New tracker spreadsheet exists in Drive with initialized sheets and correct sharing
 - Sidebar contains clickable links to the new tracker and HC form, and a ready-to-paste Slack message
+- Site Q has received an onboarding email with verification checklist and Slack message
 
 Constraints:
 - Only the spreadsheet owner sees the F3 Go30 menu
@@ -203,7 +205,7 @@ Constraints:
 - Not a multi-region coordination platform; each region operates its own independent spreadsheet
 - Not a public SaaS; no web app, API, or external hosting
 - Does not automate the initial one-time form linking step when bootstrapping a new region
-- Does not send proactive PAX-facing email; Site Q email is only used for auto-generate success/failure notification
+- Does not send proactive PAX-facing email; Site Q email is used for onboarding confirmation (copyAndInit) and auto-generate success/failure notification
 - No automated testing or CI/CD pipeline
 
 ---
@@ -386,6 +388,7 @@ assert "confirmationMessage" in latest["payload"]
 | `trackerUrl` | Short URL to the Tracker sheet |
 | `formUrl` | Short URL to the HC form |
 | `slackMessage` | Ready-to-paste Slack message text (form URL + tracker URL) |
+| `emailSent` | `true` if onboarding email was sent to Site Q; `false` if send failed |
 | `siteQName` | Site Q display name from Config |
 | `siteQEmail` | Site Q email from Config |
 | `confirmationMessage` | Text set on the HC form confirmation |
