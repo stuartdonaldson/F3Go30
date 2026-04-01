@@ -319,9 +319,9 @@ def check_tracker(ws):
         check_from = last_date_col + 1
         while check_from in bonus_cols or argb_matches(ws.cell(row=3, column=check_from).fill, GREEN):
             check_from += 1
-        if check_from > LAST_TRACKER_COLUMN:
+        if check_from > ws.max_column:
             check("First column after date area is hidden", True,
-                  "month fills tracker width — no columns to hide")
+                  "month fills tracker width — no columns beyond spreadsheet max")
         else:
             col_letter = get_column_letter(check_from)
             dim = ws.column_dimensions.get(col_letter)

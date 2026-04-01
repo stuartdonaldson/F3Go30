@@ -373,9 +373,10 @@ function populateTrackerSheet(sheet, startDate) {
 
   SpreadsheetApp.flush();
 
-  // Adjust column visibility based on the month's end
+  // Adjust column visibility based on the month's end.
+  // Extend past LAST_TRACKER_COLUMN when the month fills completely, to hide the next template column.
   const LAST_TRACKER_COLUMN = 44; // Column AR
-  const hideCount = LAST_TRACKER_COLUMN - currentColumn + 1;
+  const hideCount = Math.max(LAST_TRACKER_COLUMN, currentColumn) - currentColumn + 1;
   if (hideCount > 0) {
     sheet.hideColumns(currentColumn, hideCount);
   }
