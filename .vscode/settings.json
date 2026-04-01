@@ -1,5 +1,10 @@
 {
+  // Windows-specific terminal profile
   "terminal.integrated.defaultProfile.windows": "Command Prompt",
+  // Linux/WSL-specific terminal profile
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "terminal.integrated.defaultProfile.wsl": "bash",
+  // clasp settings
   "clasp.scriptId": "<scriptId>",
   "clasp.rootDir": "script"
 }

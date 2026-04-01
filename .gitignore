@@ -46,3 +46,7 @@ bdreport.md
 
 # Claude Code local settings (machine-specific permissions)
 .claude/settings.local.json
+
+# python caches
+__pycache__
+
