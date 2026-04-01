@@ -393,6 +393,12 @@ function initializeMonthlyTrigger() {
     .atHour(2)
     .nearMinute(0)
     .create();
+  try {
+    const logFileId = getOrCreateLogFile_();
+    appendToLogFile_(logFileId, 'initializeMonthlyTrigger', { triggerDay: 20, triggerHour: 2 });
+  } catch (logErr) {
+    Logger.log('initializeMonthlyTrigger: LogFile write failed — ' + logErr.message);
+  }
   SpreadsheetApp.getUi().alert('Monthly auto-generate trigger set for the 20th of each month at 2 AM.');
 }
 
@@ -507,11 +513,33 @@ function autoGenerateNextMonthTracker() {
     );
 
     Logger.log('autoGenerateNextMonthTracker: done — ' + newSpreadsheetName);
+    try {
+      const logFileId = getOrCreateLogFile_();
+      appendToLogFile_(logFileId, 'autoGenerateNextMonthTracker', {
+        spreadsheetName: newSpreadsheetName,
+        trackerUrl: trackerSheetShortUrl,
+        formUrl: formShortUrl,
+        slackMessage: slackMsg,
+        emailSent: true
+      });
+    } catch (logErr) {
+      Logger.log('autoGenerateNextMonthTracker: LogFile write failed — ' + logErr.message);
+    }
 
   } catch (err) {
     Logger.log('autoGenerateNextMonthTracker: error' +
       (newSpreadsheetId ? ' — spreadsheet ID: ' + newSpreadsheetId : '') +
       ' — ' + err.message);
+    try {
+      const logFileId = getOrCreateLogFile_();
+      appendToLogFile_(logFileId, 'autoGenerateNextMonthTracker', {
+        error: err.message,
+        spreadsheetName: newSpreadsheetName || '(unknown)',
+        spreadsheetId: newSpreadsheetId || null
+      });
+    } catch (logErr) {
+      Logger.log('autoGenerateNextMonthTracker: LogFile error-write also failed — ' + logErr.message);
+    }
     try {
       MailApp.sendEmail(
         siteQEmail,

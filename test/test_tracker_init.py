@@ -403,6 +403,19 @@ def check_log_payload(payload: dict):
           payload["formUrl"] in slack_msg,
           f"formUrl={payload['formUrl']!r}")
 
+    conf_msg = payload.get("confirmationMessage")
+    if not check("LogFile payload contains confirmationMessage", conf_msg is not None):
+        return
+    check("confirmationMessage contains 'Thank you for your Hard Commit!'",
+          "Thank you for your Hard Commit!" in conf_msg,
+          f"actual: {conf_msg!r}")
+    check("confirmationMessage contains trackerUrl",
+          payload["trackerUrl"] in conf_msg,
+          f"trackerUrl={payload['trackerUrl']!r}")
+    check("confirmationMessage contains siteQEmail",
+          payload["siteQEmail"] in conf_msg,
+          f"siteQEmail={payload['siteQEmail']!r}")
+
 
 def check_config(wb):
     print("\n--- Config sheet ---")
