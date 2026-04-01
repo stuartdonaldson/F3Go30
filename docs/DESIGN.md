@@ -112,3 +112,10 @@ that cannot guarantee a sidebar context must call `Logger.log()` directly.
 | Bonus Tracker | PAX bonus-point activity log | PAX-entered; not script-managed |
 | Activity | Hidden audit log of script actions | A: Datetime, B: User email, C: Message, D: Sheet name |
 | Links | Record of every tracker created | Date, start date, name, tracker URL, form URL, spreadsheet ID, form ID |
+
+## References
+
+- [Sheet reference](docs/sheet-reference.md) — per-sheet layout, formulas, and operational notes referenced by runtime modules
+- ADR-004 (form ownership decision)
+- README.md (in-repo single-file canonical documentation)
+- docs/framework/doc-standard.md (documentation standards and templates)

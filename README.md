@@ -33,3 +33,4 @@ See [OPERATIONS.md](docs/OPERATIONS.md) for full configuration and failure mode 
 | [DESIGN.md](docs/DESIGN.md) | Architecture, modules, data model, runtime risks |
 | [OPERATIONS.md](docs/OPERATIONS.md) | Configuration, deployment, failure modes |
 | [ADRs](adr/) | Architecture decision records |
+| [Sheet reference](docs/sheet-reference.md) | Per-sheet descriptions, column layout, formulas, and operational notes |

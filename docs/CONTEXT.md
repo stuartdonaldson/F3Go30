@@ -233,3 +233,8 @@ Constraints:
 | Activity sheet | Hidden sheet logging all script-initiated actions with timestamp and user |
 | Template | The canonical Go30 spreadsheet from which new monthly trackers are copied |
 | NameSpace | Region identifier read from Config (e.g., `F3Waxhaw`); drives spreadsheet naming |
+
+## References
+
+- [Sheet reference](docs/sheet-reference.md) — per-sheet descriptions, column layout, formulas, and operational notes
+
