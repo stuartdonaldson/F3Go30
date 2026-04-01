@@ -51,7 +51,7 @@ function shortenUrl(longUrl, customAlias, tries = 5, service = "tinyurl") {
       return shortUrl; // Return the shortened URL if successful
     } catch (error) {
       // Check if the error is related to alias unavailability
-      if (error.message.includes("alias") || error.message.includes("already used")) {
+      if (error.message.toLowerCase().includes("alias") || error.message.toLowerCase().includes("already used")) {
         Logger.log(`Alias "${customAlias}" unavailable. Retrying with a new alias...`);
       } else {
         // If the error is unrelated to alias, rethrow it

@@ -416,6 +416,68 @@ def check_log_payload(payload: dict):
           payload["siteQEmail"] in conf_msg,
           f"siteQEmail={payload['siteQEmail']!r}")
 
+    check("LogFile payload contains templateSpreadsheetId",
+          "templateSpreadsheetId" in payload,
+          "key missing from payload")
+
+
+def check_links_sheet(payload: dict):
+    """Download the template spreadsheet and verify the Links sheet row."""
+    print("\n--- Links sheet (template) ---")
+    template_id = payload.get("templateSpreadsheetId")
+    if not check("templateSpreadsheetId present in payload", template_id is not None,
+                 "key missing — cannot verify Links sheet"):
+        return
+
+    export_url = build_export_url(template_id)
+    print(f"  Downloading template: {export_url}")
+    try:
+        xlsx_bytes = download_xlsx(export_url)
+    except requests.HTTPError as e:
+        check("Template spreadsheet downloadable", False, str(e))
+        return
+
+    wb = load_workbook(io.BytesIO(xlsx_bytes))
+    if not check("Links sheet exists in template", "Links" in wb.sheetnames):
+        return
+
+    ws = wb["Links"]
+    target_name = str(payload.get("spreadsheetName") or "").strip()
+    target_month = str(payload.get("startDateIso") or "").strip()
+    target_tracker = str(payload.get("trackerUrl") or "").strip()
+    target_form = str(payload.get("formUrl") or "").strip()
+
+    found_row = None
+    for row in range(2, ws.max_row + 1):
+        if str(ws.cell(row=row, column=3).value or "").strip() == target_name:
+            found_row = row
+            break
+
+    if not check("Links sheet has row for this tracker",
+                 found_row is not None,
+                 f"no row with spreadsheetName={target_name!r}"):
+        return
+
+    row_date = ws.cell(row=found_row, column=1).value
+    row_month_raw = ws.cell(row=found_row, column=2).value
+    if isinstance(row_month_raw, (dt, date)):
+        row_month = row_month_raw.strftime('%Y-%m-%d')
+    else:
+        row_month = str(row_month_raw or "").strip()
+    row_name = str(ws.cell(row=found_row, column=3).value or "").strip()
+    row_tracker = str(ws.cell(row=found_row, column=4).value or "").strip()
+    row_form = str(ws.cell(row=found_row, column=5).value or "").strip()
+
+    check("Links row has non-empty date", row_date not in (None, ""), f"date={row_date!r}")
+    check("Links row month matches startDateIso", row_month == target_month,
+          f"got={row_month!r} expected={target_month!r}")
+    check("Links row spreadsheetName matches payload", row_name == target_name,
+          f"got={row_name!r}")
+    check("Links row trackerUrl matches payload", row_tracker == target_tracker,
+          f"got={row_tracker!r} expected={target_tracker!r}")
+    check("Links row formUrl matches payload", row_form == target_form,
+          f"got={row_form!r} expected={target_form!r}")
+
 
 def check_config(wb):
     print("\n--- Config sheet ---")
@@ -520,6 +582,7 @@ def main():
     check_config(wb)
     if log_entry_payload is not None:
         check_log_payload(log_entry_payload)
+        check_links_sheet(log_entry_payload)
 
     print(f"\nResults: {RESULT['pass']} passed, {RESULT['fail']} failed")
     sys.exit(0 if RESULT["fail"] == 0 else 1)

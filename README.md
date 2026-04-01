@@ -57,6 +57,7 @@ F3Go30 automates the monthly lifecycle of a Go30 fitness challenge tracker: copy
 - Set up a form-submit trigger to populate the Tracker sheet when a PAX submits the HC form
 - Auto-generate next month's tracker and HC form via a scheduled trigger on the 20th of each month; emails Site Q with links and a ready-to-paste Slack message on success or failure
 - Log all menu-initiated activity to a hidden Activity sheet
+- Append a record (date, start date, name, tracker URL, form URL) to a Links sheet in the template spreadsheet each time a new tracker is created
 
 ---
 
@@ -87,6 +88,7 @@ A3: Site Q email missing from Config sheet → script exits with an actionable e
 Postconditions:
 - New tracker spreadsheet exists in Drive with initialized sheets and correct sharing
 - Sidebar contains clickable links to the new tracker and HC form, and a ready-to-paste Slack message
+- Links sheet in the template spreadsheet has a new row: date, start date (YYYY-MM-DD), spreadsheet name, tracker URL, form URL
 
 Constraints:
 - Only the spreadsheet owner sees the F3 Go30 menu
@@ -383,12 +385,14 @@ assert "confirmationMessage" in latest["payload"]
 | Key | Value |
 |-----|-------|
 | `spreadsheetName` | New spreadsheet name (e.g. `2026-04-F3Waxhaw`) |
+| `startDateIso` | Start date entered by Q in `YYYY-MM-DD` format; written to the Links sheet Month column |
 | `trackerUrl` | Short URL to the Tracker sheet |
 | `formUrl` | Short URL to the HC form |
 | `slackMessage` | Ready-to-paste Slack message text (form URL + tracker URL) |
 | `siteQName` | Site Q display name from Config |
 | `siteQEmail` | Site Q email from Config |
 | `confirmationMessage` | Text set on the HC form confirmation |
+| `templateSpreadsheetId` | File ID of the template spreadsheet (same ID as in the spreadsheet URL); used by test scripts to download and verify the Links sheet |
 | `error` | Present only on failure; contains error message |
 | `warning` | Present in a separate entry when URL shortening falls back to raw URL; also includes `alias` (attempted TinyURL alias) and `rawUrl` (raw URL returned) |
 

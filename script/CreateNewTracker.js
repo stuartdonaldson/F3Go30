@@ -160,6 +160,15 @@ function copyAndInit() {
     const newConfigSheet = newSpreadsheet.getSheetByName('Config');
     if (newConfigSheet) newConfigSheet.hideSheet();
 
+    // Track all trackers created from this template — create sheet on first use
+    const startDateIso = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay;
+    let linksSheet = currentSpreadsheet.getSheetByName('Links');
+    if (!linksSheet) {
+      linksSheet = currentSpreadsheet.insertSheet('Links');
+      linksSheet.appendRow(['Date', 'Month', 'Spreadsheet Name', 'Tracker URL', 'Form URL']);
+    }
+    linksSheet.appendRow([new Date(), startDateIso, newSpreadsheetName, trackerSheetShortUrl, formShortUrl]);
+
   NoticeLog("-");
   NoticeLog('<b>Next steps:</b>');
   NoticeLog('1. Open the new spreadsheet (link above) and verify it looks correct');
@@ -178,12 +187,14 @@ function copyAndInit() {
     const logFileId = getOrCreateLogFile_();
     appendToLogFile_(logFileId, 'copyAndInit', {
       spreadsheetName: newSpreadsheetName,
+      startDateIso: startDateIso,
       trackerUrl: trackerSheetShortUrl,
       formUrl: formShortUrl,
       slackMessage: slackMsg,
       siteQName: siteQConfig.primary,
       siteQEmail: siteQEmail,
-      confirmationMessage: confirmationMessage
+      confirmationMessage: confirmationMessage,
+      templateSpreadsheetId: currentSpreadsheet.getId()
     });
   } catch (logErr) {
     Logger.log('copyAndInit: LogFile write failed — ' + logErr.message);
