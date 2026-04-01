@@ -57,7 +57,7 @@ F3Go30 automates the monthly lifecycle of a Go30 fitness challenge tracker: copy
 - Set up a form-submit trigger to populate the Tracker sheet when a PAX submits the HC form
 - Auto-generate next month's tracker and HC form via a scheduled trigger on the 20th of each month; emails Site Q with links and a ready-to-paste Slack message on success or failure
 - Log all menu-initiated activity to a hidden Activity sheet
-- Append a record (date, start date, name, tracker URL, form URL) to a Links sheet in the template spreadsheet each time a new tracker is created
+- Append a record (date, start date, name, tracker URL, form URL, spreadsheet ID, form ID) to a Links sheet in the template spreadsheet each time a new tracker is created
 
 ---
 
@@ -88,7 +88,7 @@ A3: Site Q email missing from Config sheet → script exits with an actionable e
 Postconditions:
 - New tracker spreadsheet exists in Drive with initialized sheets and correct sharing
 - Sidebar contains clickable links to the new tracker and HC form, and a ready-to-paste Slack message
-- Links sheet in the template spreadsheet has a new row: date, start date (YYYY-MM-DD), spreadsheet name, tracker URL, form URL
+- Links sheet in the template spreadsheet has a new row: date, start date (YYYY-MM-DD), spreadsheet name, tracker URL, form URL, spreadsheet ID, form ID
 
 Constraints:
 - Only the spreadsheet owner sees the F3 Go30 menu

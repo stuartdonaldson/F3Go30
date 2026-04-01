@@ -165,9 +165,11 @@ function copyAndInit() {
     let linksSheet = currentSpreadsheet.getSheetByName('Links');
     if (!linksSheet) {
       linksSheet = currentSpreadsheet.insertSheet('Links');
-      linksSheet.appendRow(['Date', 'Month', 'Spreadsheet Name', 'Tracker URL', 'Form URL']);
+      linksSheet.appendRow(['Date', 'Month', 'Spreadsheet Name', 'Tracker URL', 'Form URL', 'Spreadsheet ID', 'Form ID']);
+    } else if (linksSheet.getRange(1, 6).getValue() === '') {
+      linksSheet.getRange(1, 6, 1, 2).setValues([['Spreadsheet ID', 'Form ID']]);
     }
-    linksSheet.appendRow([new Date(), startDateIso, newSpreadsheetName, trackerSheetShortUrl, formShortUrl]);
+    linksSheet.appendRow([new Date(), startDateIso, newSpreadsheetName, trackerSheetShortUrl, formShortUrl, newSpreadsheetId, form.getId()]);
 
   NoticeLog("-");
   NoticeLog('<b>Next steps:</b>');
