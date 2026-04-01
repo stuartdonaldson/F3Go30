@@ -1,13 +1,13 @@
 # CLAUDE.md — F3Go30
 
-**Tier:** Minimal
+**Tier:** Standard
 **Standards:** /docs/framework/doc-standard.md _(read-only — do not edit)_
 
 ## Reading Order
 1. Current state — `bd prime` (auto-loaded when bd in use)
-2. README.md §CONTEXT — purpose, capabilities, use cases
-3. README.md §DESIGN — architecture, modules
-4. README.md §OPERATIONS — how to run it
+2. docs/CONTEXT.md — purpose, capabilities, use cases
+3. docs/DESIGN.md — architecture, modules
+4. docs/OPERATIONS.md — how to run it
 5. /adr/ — why key decisions were made
 6. /docs/references/ — external document summaries
 
@@ -15,9 +15,9 @@
 
 | Content | Location |
 |---------|---------|
-| Purpose, capabilities, use cases, glossary | README.md §CONTEXT |
-| Architecture, modules, data model, runtime risks | README.md §DESIGN |
-| Deployment, configuration, failure modes | README.md §OPERATIONS |
+| Purpose, capabilities, use cases, glossary | docs/CONTEXT.md |
+| Architecture, modules, data model, runtime risks | docs/DESIGN.md |
+| Deployment, configuration, failure modes | docs/OPERATIONS.md |
 | Current state | `bd ready` |
 | Identified work | bd issues |
 | Technical decisions | /adr/ |
@@ -26,20 +26,13 @@
 | Go30 Q tutorial narration script | /docs/references/go30-q-tutorial-script.md |
 
 ## Placement Rules
-- New capabilities → README.md §CONTEXT §Capabilities + use case if actor-driven
-- Architecture changes → README.md §DESIGN + affected diagrams
-- Operational changes → README.md §OPERATIONS
+- New capabilities → docs/CONTEXT.md §Capabilities + use case if actor-driven
+- Architecture changes → docs/DESIGN.md + affected diagrams
+- Operational changes → docs/OPERATIONS.md
 - Resolved decisions → /adr/
-- New terms → README.md §CONTEXT §Glossary
+- New terms → docs/CONTEXT.md §Glossary
 - New risk identified → `bd remember`
 - New initiative → docs/ROADMAP.md §Funnel
-- Do not create new top-level document types — review tier escalation signals first (doc-standard.md §Tier Overview)
-
-To expand:
-1. Create /docs/ with CONTEXT.md, DESIGN.md, OPERATIONS.md
-2. Migrate each README.md section to its corresponding document
-3. README.md becomes a brief project intro with pointers to /docs/
-4. Run the bootstrap prompt to normalize the new structure
 
 ## Maintenance Protocol
 

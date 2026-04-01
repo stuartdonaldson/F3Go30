@@ -59,7 +59,7 @@ Options:
                        "standalone")
   --title <title>      The project title.
   --parentId <id>      A project parent Id.
-  --rootDir <rootDir>  Local root directory in which clasp will store your
+  --rootDir <rootDir>  Local root dircectory in which clasp will store your
                        project files.
   -h, --help           display help for command
 
