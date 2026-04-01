@@ -30,8 +30,9 @@ function getOrCreateLogFile_() {
     if (m) return m[1];
   }
 
-  // Create plain-text file; Drive places it in root by default
-  const file = DriveApp.createFile('F3Go30-LogFile', '', MimeType.PLAIN_TEXT);
+  // Create plain-text file with a creation header; Drive places it in root by default
+  const header = '# F3Go30-LogFile created: ' + new Date().toISOString() + '\n\n';
+  const file = DriveApp.createFile('F3Go30-LogFile', header, MimeType.PLAIN_TEXT);
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.READ);
   const fileUrl = file.getUrl();
   const fileId = file.getId();
@@ -70,7 +71,7 @@ function appendToLogFile_(fileId, triggerName, payload) {
   const existing = file.getBlob().getDataAsString();
   const newContent = existing + entry;
 
-  UrlFetchApp.fetch(
+  const resp = UrlFetchApp.fetch(
     'https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=media',
     {
       method: 'PATCH',
@@ -80,4 +81,8 @@ function appendToLogFile_(fileId, triggerName, payload) {
       muteHttpExceptions: true
     }
   );
+  const code = resp.getResponseCode();
+  if (code < 200 || code >= 300) {
+    throw new Error('appendToLogFile: Drive PATCH returned HTTP ' + code + ' — ' + resp.getContentText());
+  }
 }
