@@ -115,6 +115,7 @@ def argb_matches(fill, hex_color: str) -> bool:
 
 ORANGE = "FF9900"
 GREEN  = "00FF00"
+LAST_TRACKER_COLUMN = 44  # Column AR — matches GAS LAST_TRACKER_COLUMN constant
 
 RESULT = {"pass": 0, "fail": 0}
 
@@ -312,17 +313,22 @@ def check_tracker(ws):
     # AC 9 (partial — hidden columns): first column after last day/bonus region must be hidden.
     # Google Sheets XLSX export only marks the start of a hidden range; checking only the
     # first column after the date area is sufficient.
+    # Skip bonus columns not captured in the main loop (e.g. trailing bonus added after last day).
     if date_cols:
         last_date_col = max(date_cols.values())
         check_from = last_date_col + 1
-        if check_from in bonus_cols:
+        while check_from in bonus_cols or argb_matches(ws.cell(row=3, column=check_from).fill, GREEN):
             check_from += 1
-        col_letter = get_column_letter(check_from)
-        dim = ws.column_dimensions.get(col_letter)
-        is_hidden = (dim.hidden if dim else False)
-        check("First column after date area is hidden",
-              is_hidden,
-              f"col {check_from} ({col_letter}) not hidden" if not is_hidden else "")
+        if check_from > LAST_TRACKER_COLUMN:
+            check("First column after date area is hidden", True,
+                  "month fills tracker width — no columns to hide")
+        else:
+            col_letter = get_column_letter(check_from)
+            dim = ws.column_dimensions.get(col_letter)
+            is_hidden = (dim.hidden if dim else False)
+            check("First column after date area is hidden",
+                  is_hidden,
+                  f"col {check_from} ({col_letter}) not hidden" if not is_hidden else "")
 
 
 def check_bonus_tracker(wb):
