@@ -3,7 +3,11 @@
 Verify that a Google Sheets Tracker has been correctly initialized by copyAndInit().
 
 Usage:
-    python test_tracker_init.py <sheet_url>
+    # Primary: discover sheet URL from the most recent log entry
+    python test_tracker_init.py --log <drive_logfile_url>
+
+    # Legacy: provide sheet URL directly
+    python test_tracker_init.py <google_sheets_url>
 
 The sheet must be publicly shared (no auth required).
 Exits 0 if all checks pass, non-zero if any fail.
@@ -13,11 +17,15 @@ import sys
 import re
 import io
 import calendar
-from datetime import date, timedelta
+from datetime import date, datetime as dt, timedelta
 
 import requests
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
+
+# Import log_channel from same directory
+sys.path.insert(0, __file__.rsplit("/", 1)[0])
+from log_channel import fetch_log_entries
 
 
 # ---------------------------------------------------------------------------
@@ -41,14 +49,67 @@ def download_xlsx(export_url: str) -> bytes:
     return resp.content
 
 
+def follow_redirect(url: str) -> str:
+    """Follow redirects and return the final URL."""
+    resp = requests.head(url, allow_redirects=True, timeout=15)
+    return resp.url
+
+
+def find_sheet_url_from_log(log_url: str) -> tuple[str, dict]:
+    """
+    Download the LogFile, find the most recent successful copyAndInit entry,
+    follow the trackerUrl redirect to obtain the full spreadsheet URL.
+
+    Returns (sheet_url, entry) where entry is the log payload dict.
+    """
+    entries = fetch_log_entries(log_url)
+    if not entries:
+        raise RuntimeError("LogFile is empty — no entries found.")
+
+    # Most recent entry is last; search in reverse for a successful copyAndInit
+    for entry in reversed(entries):
+        if entry["trigger"] != "copyAndInit":
+            continue
+        payload = entry["payload"]
+        if "error" in payload:
+            continue
+        tracker_url = payload.get("trackerUrl")
+        if not tracker_url:
+            continue
+
+        print(f"Most recent copyAndInit: [{entry['timestamp']}]")
+        print(f"  spreadsheetName: {payload.get('spreadsheetName', '?')}")
+        print(f"  trackerUrl: {tracker_url}")
+
+        # Follow the short URL redirect to get the full spreadsheet URL
+        final_url = follow_redirect(tracker_url)
+        print(f"  resolved to: {final_url}")
+
+        # Strip the #gid fragment — we need the spreadsheet root URL
+        sheet_url = final_url.split("#")[0]
+        return sheet_url, payload
+
+    raise RuntimeError(
+        "No successful copyAndInit entry found in LogFile. "
+        "Most recent entries:\n" +
+        "\n".join(
+            f"  [{e['timestamp']}] {e['trigger']} "
+            f"{'(error)' if 'error' in e['payload'] else ''}"
+            for e in reversed(entries[-5:])
+        )
+    )
+
+
 def argb_matches(fill, hex_color: str) -> bool:
     """Check if an openpyxl PatternFill matches a hex color (RRGGBB or FFRRGGBB)."""
     if fill is None or fill.fgColor is None:
         return False
     color = fill.fgColor
     if color.type == "rgb":
-        val = color.rgb.upper().lstrip("FF") if len(color.rgb) == 8 else color.rgb.upper()
-        return val == hex_color.upper().lstrip("#")
+        rgb = color.rgb.upper()
+        if len(rgb) == 8:
+            rgb = rgb[2:]  # strip alpha byte (first two hex chars)
+        return rgb == hex_color.upper().lstrip("#")
     return False
 
 
@@ -73,10 +134,12 @@ def check(name: str, passed: bool, detail: str = "") -> bool:
 # ---------------------------------------------------------------------------
 
 def first_date_in_row3(ws):
-    """Return the first date value found in row 3, or None."""
+    """Return the first date value found in row 3, or None (always a date, never datetime)."""
     for col in range(1, ws.max_column + 1):
         val = ws.cell(row=3, column=col).value
-        if isinstance(val, (date,)):
+        if isinstance(val, dt):
+            return val.date()
+        if isinstance(val, date):
             return val
         if isinstance(val, str):
             try:
@@ -97,9 +160,7 @@ def check_tracker(ws):
 
     # Identify the first date cell to determine the month being tested
     first_date = first_date_in_row3(ws)
-    if not check("Row 3 has at least one date value", first_date is not None,
-                 "could not find a date in row 3"):
-        # Cannot continue date-dependent checks
+    if not check("Row 3 has at least one date value", first_date is not None):
         return
 
     year = first_date.year
@@ -107,13 +168,26 @@ def check_tracker(ws):
     days_in_month = calendar.monthrange(year, month)[1]
     month_start = date(year, month, 1)
 
-    # Find the column where the first date sits (to anchor the rest)
+    # Find the column where the first DATE sits (skip fixed header columns like "F3 Name")
     first_date_col = None
     for col in range(1, ws.max_column + 1):
         val = ws.cell(row=3, column=col).value
-        if val is not None:
+        if isinstance(val, date):
             first_date_col = col
             break
+        if isinstance(val, str):
+            try:
+                parts = val.split("/")
+                if len(parts) == 2:
+                    int(parts[0]); int(parts[1])
+                    first_date_col = col
+                    break
+            except (ValueError, IndexError):
+                pass
+
+    if first_date_col is None:
+        check("Could anchor date column in row 3", False)
+        return
 
     # AC 4: sequential dates starting from the 1st
     date_cols = {}        # date → column index
@@ -138,8 +212,10 @@ def check_tracker(ws):
             col += 1
             continue
 
-        # Parse the date value
-        if isinstance(val, date):
+        # Parse the date value (normalize datetime → date)
+        if isinstance(val, dt):
+            cell_date = val.date()
+        elif isinstance(val, date):
             cell_date = val
         elif isinstance(val, str):
             try:
@@ -203,7 +279,26 @@ def check_tracker(ws):
           len(bad_bonus) == 0,
           f"missing: {bad_bonus}" if bad_bonus else "")
 
-    # AC 7: no data rows beyond row 4
+    # AC 7 (trailing Bonus): a Bonus column exists after the last day of the month
+    if date_cols:
+        last_date = max(date_cols.keys())
+        last_col = date_cols[last_date]
+        trailing_col = last_col + 1
+        trailing_fill = ws.cell(row=3, column=trailing_col).fill
+        trailing_header = (
+            ws.cell(row=1, column=trailing_col).value or
+            ws.cell(row=2, column=trailing_col).value or ""
+        )
+        has_trailing = (
+            argb_matches(trailing_fill, GREEN)
+            or (isinstance(trailing_header, str) and "bonus" in trailing_header.lower())
+        )
+        check("Trailing Bonus column exists after last day of month",
+              has_trailing,
+              f"col {trailing_col} fill={ws.cell(row=3, column=trailing_col).fill.fgColor.rgb!r}"
+              if not has_trailing else "")
+
+    # AC 8: no data rows beyond row 4
     non_empty = []
     for row in range(5, ws.max_row + 1):
         for col_idx in range(1, ws.max_column + 1):
@@ -214,25 +309,20 @@ def check_tracker(ws):
           len(non_empty) == 0,
           f"rows with data: {non_empty}" if non_empty else "")
 
-    # AC 8 (partial — hidden columns): columns after the last day's column should have width 0
-    # openpyxl exposes column dimensions; width=None or 0 means hidden/default
+    # AC 9 (partial — hidden columns): first column after last day/bonus region must be hidden.
+    # Google Sheets XLSX export only marks the start of a hidden range; checking only the
+    # first column after the date area is sufficient.
     if date_cols:
         last_date_col = max(date_cols.values())
-        # Also account for any trailing bonus column
         check_from = last_date_col + 1
         if check_from in bonus_cols:
             check_from += 1
-        hidden_violations = []
-        for col_idx in range(check_from, min(check_from + 10, ws.max_column + 1)):
-            col_letter = get_column_letter(col_idx)
-            dim = ws.column_dimensions.get(col_letter)
-            width = dim.width if dim else None
-            hidden = dim.hidden if dim else False
-            if not hidden and width not in (None, 0):
-                hidden_violations.append(col_idx)
-        check("Columns after last day are hidden or zero-width",
-              len(hidden_violations) == 0,
-              f"non-hidden cols: {hidden_violations}" if hidden_violations else "")
+        col_letter = get_column_letter(check_from)
+        dim = ws.column_dimensions.get(col_letter)
+        is_hidden = (dim.hidden if dim else False)
+        check("First column after date area is hidden",
+              is_hidden,
+              f"col {check_from} ({col_letter}) not hidden" if not is_hidden else "")
 
 
 def check_bonus_tracker(wb):
@@ -270,20 +360,100 @@ def check_responses(wb):
           f"rows with data: {non_empty}" if non_empty else "")
 
 
+def check_activity(wb):
+    print("\n--- Activity sheet ---")
+    sheet_name = next((s for s in wb.sheetnames if "activity" in s.lower()), None)
+    if sheet_name is None:
+        check("Activity sheet exists", False, "sheet not found")
+        return
+    ws = wb[sheet_name]
+    non_empty = []
+    for row in range(2, ws.max_row + 1):
+        for col in range(1, ws.max_column + 1):
+            if ws.cell(row=row, column=col).value not in (None, ""):
+                non_empty.append(row)
+                break
+    check("Activity sheet has only the header row",
+          len(non_empty) == 0,
+          f"rows with data: {non_empty}" if non_empty else "")
+
+
+def check_config(wb):
+    print("\n--- Config sheet ---")
+    sheet_name = next((s for s in wb.sheetnames if s.lower() == "config"), None)
+    if sheet_name is None:
+        check("Config sheet exists", False, "sheet not found")
+        return
+    ws = wb[sheet_name]
+
+    # AC 12: Config sheet should be hidden
+    state = ws.sheet_state  # 'visible', 'hidden', 'veryHidden'
+    check("Config sheet is hidden",
+          state in ("hidden", "veryHidden"),
+          f"sheet_state={state!r}")
+
+    # Build a map of variable name → (col_b, col_c)
+    config_rows = {}
+    for row in range(1, ws.max_row + 1):
+        key = ws.cell(row=row, column=1).value
+        if key:
+            config_rows[str(key).strip()] = (
+                ws.cell(row=row, column=2).value,
+                ws.cell(row=row, column=3).value,
+            )
+
+    # AC 13: NameSpace row with non-empty value in column B
+    ns = config_rows.get("NameSpace")
+    check("Config has NameSpace row with non-empty column B",
+          ns is not None and ns[0] not in (None, ""),
+          f"value={ns!r}" if ns is not None else "row not found")
+
+    # AC 13: Site Q row with name in column B and email in column C
+    sq = config_rows.get("Site Q")
+    has_sq_name = sq is not None and sq[0] not in (None, "")
+    has_sq_email = sq is not None and sq[1] not in (None, "")
+    check("Config has Site Q row with name in column B",
+          has_sq_name,
+          f"value={sq!r}" if sq is not None else "row not found")
+    check("Config has Site Q row with email in column C",
+          has_sq_email,
+          f"value={sq!r}" if sq is not None else "row not found")
+
+    # AC 13: LogFile row with non-empty URL in column B
+    lf = config_rows.get("LogFile")
+    check("Config has LogFile row with non-empty column B",
+          lf is not None and lf[0] not in (None, ""),
+          f"value={lf!r}" if lf is not None else "row not found")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main():
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <google_sheets_url>", file=sys.stderr)
+    args = sys.argv[1:]
+    log_entry_payload = None
+
+    if len(args) == 2 and args[0] == "--log":
+        log_url = args[1]
+        print(f"LogFile URL: {log_url}")
+        try:
+            sheet_url, log_entry_payload = find_sheet_url_from_log(log_url)
+        except RuntimeError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(2)
+    elif len(args) == 1 and not args[0].startswith("--"):
+        sheet_url = args[0]
+    else:
+        print(f"Usage:", file=sys.stderr)
+        print(f"  {sys.argv[0]} --log <drive_logfile_url>", file=sys.stderr)
+        print(f"  {sys.argv[0]} <google_sheets_url>", file=sys.stderr)
         sys.exit(2)
 
-    url = sys.argv[1]
-    print(f"Sheet URL: {url}")
+    print(f"Sheet URL: {sheet_url}")
 
     try:
-        sheet_id = extract_sheet_id(url)
+        sheet_id = extract_sheet_id(sheet_url)
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(2)
@@ -307,6 +477,8 @@ def main():
     check_tracker(wb["Tracker"])
     check_bonus_tracker(wb)
     check_responses(wb)
+    check_activity(wb)
+    check_config(wb)
 
     print(f"\nResults: {RESULT['pass']} passed, {RESULT['fail']} failed")
     sys.exit(0 if RESULT["fail"] == 0 else 1)
