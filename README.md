@@ -390,6 +390,7 @@ assert "confirmationMessage" in latest["payload"]
 | `siteQEmail` | Site Q email from Config |
 | `confirmationMessage` | Text set on the HC form confirmation |
 | `error` | Present only on failure; contains error message |
+| `warning` | Present in a separate entry when URL shortening falls back to raw URL; also includes `alias` (attempted TinyURL alias) and `rawUrl` (raw URL returned) |
 
 **Security:** The LogFile URL grants read access to anyone with the link. It contains Site Q email and spreadsheet/form URLs. Do not share publicly or commit the URL to version control.
 

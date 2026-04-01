@@ -142,6 +142,15 @@ function copyAndInit() {
       NoticeLog('Shorten URL failed for form: ' + error.message);
     }
 
+    if (!formShortUrl.startsWith('https://tinyurl.com')) {
+      try {
+        const logFileId = getOrCreateLogFile_();
+        appendToLogFile_(logFileId, 'copyAndInit', { warning: 'urlShortener failed for HC form', alias: formAlias, rawUrl: formShortUrl });
+      } catch (logErr) {
+        Logger.log('copyAndInit: LogFile warning-write failed — ' + logErr.message);
+      }
+    }
+
     NoticeLog('New HC Form: ' + createHtmlLink(formName, formShortUrl));
 
     // Modify sheets in the new spreadsheet
@@ -472,6 +481,14 @@ function autoGenerateNextMonthTracker() {
     } catch (e) {
       Logger.log('autoGenerateNextMonthTracker: shorten URL failed for tracker: ' + e.message);
     }
+    if (!trackerSheetShortUrl.startsWith('https://tinyurl.com')) {
+      try {
+        const logFileId = getOrCreateLogFile_();
+        appendToLogFile_(logFileId, 'autoGenerateNextMonthTracker', { warning: 'urlShortener failed for tracker sheet', alias: newSpreadsheetName, rawUrl: trackerSheetShortUrl });
+      } catch (logErr) {
+        Logger.log('autoGenerateNextMonthTracker: LogFile warning-write failed — ' + logErr.message);
+      }
+    }
 
     const formUrl = newSpreadsheet.getFormUrl();
     if (!formUrl) {
@@ -496,6 +513,14 @@ function autoGenerateNextMonthTracker() {
       formShortUrl = shortenUrl(formUrl, newSpreadsheetName + 'HC', 5, 'tinyurl');
     } catch (e) {
       Logger.log('autoGenerateNextMonthTracker: shorten URL failed for form: ' + e.message);
+    }
+    if (!formShortUrl.startsWith('https://tinyurl.com')) {
+      try {
+        const logFileId = getOrCreateLogFile_();
+        appendToLogFile_(logFileId, 'autoGenerateNextMonthTracker', { warning: 'urlShortener failed for HC form', alias: newSpreadsheetName + 'HC', rawUrl: formShortUrl });
+      } catch (logErr) {
+        Logger.log('autoGenerateNextMonthTracker: LogFile warning-write failed — ' + logErr.message);
+      }
     }
 
     initSheets(newSpreadsheet, nextMonthStart);
