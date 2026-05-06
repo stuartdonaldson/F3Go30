@@ -40,8 +40,34 @@ function handleFormSubmit_(e) {
 
 function onFormSubmitLocked_(e) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet(); // Get the active spreadsheet
-  var responsesSheet = sheet.getSheetByName("Responses"); // Adjust based on actual use-case
-  var destinationSheet = sheet.getSheetByName("Tracker");
+
+  // Prefer ManagedSheet for Responses and Tracker for clearer column mapping and easier updates.
+  var responsesSheet = null;
+  var responseColumns = null;
+  var destinationSheet = null;
+  try {
+    var ssManager = new SpreadsheetManager(sheet);
+    var responsesMs = ssManager.openExistingSheet ? ssManager.openExistingSheet('Responses', RESPONSE_COLUMN_MAP) : null;
+    var TRACKER_COLUMN_MAP = { F3_NAME: 'F3 Name' };
+    var trackerMs = ssManager.openExistingSheet ? ssManager.openExistingSheet('Tracker', TRACKER_COLUMN_MAP) : null;
+
+    if (responsesMs) {
+      responsesSheet = responsesMs.sheet || sheet.getSheetByName('Responses');
+      responseColumns = responsesMs.headerMap || resolveResponseColumns(responsesSheet);
+    } else {
+      responsesSheet = sheet.getSheetByName('Responses');
+      responseColumns = resolveResponseColumns(responsesSheet);
+    }
+
+    if (trackerMs) {
+      destinationSheet = trackerMs.sheet || sheet.getSheetByName('Tracker');
+    } else {
+      destinationSheet = sheet.getSheetByName('Tracker');
+    }
+    } catch (mgrErr) {
+    // fail-fast: if we can't resolve headers, rethrow so issues are visible
+    throw mgrErr;
+  }
 
   if (!responsesSheet || !destinationSheet) {
     Logger.log('handleFormSubmit_: required sheet not found — Responses: ' + !!responsesSheet + ', Tracker: ' + !!destinationSheet);
@@ -54,12 +80,13 @@ function onFormSubmitLocked_(e) {
     Logger.log("Not enough responses.");
     return; // Exit the function if not enough responses
   }
+  formResponses = maybeReuseLastMonthsGoals_(sheet, responsesSheet, e.range.getRow(), formResponses);
 
-  var f3Name = formResponses[3]; // Get the fourth response
+  var f3Name = getResponseValue_(formResponses, responseColumns, 'F3_NAME');
     
   // If Column F (team) is empty, log the assumed value from Column G — do not mutate the Responses sheet
-  if (!formResponses[5]) {
-    Logger.log("Assuming team is " + formResponses[6]);
+  if (!getResponseValue_(formResponses, responseColumns, 'TEAM')) {
+    Logger.log("Assuming team is " + getResponseValue_(formResponses, responseColumns, 'GOAL_SELECTION'));
   }
 
   // Guard: Tracker must have at least 4 rows before range operations are safe
@@ -69,38 +96,43 @@ function onFormSubmitLocked_(e) {
     return;
   }
 
-  // Search for f3Name in the Tracker sheet to avoid duplicates
-  var dataRange = destinationSheet.getRange(4, 1, trackerLastRow - 3, 1); // Adjust range to search in column A, starting from row 4
   var lastColumn = destinationSheet.getLastColumn();
 
+  // Always read column-A data from row 4 down — used for both duplicate detection and
+  // first-empty-row placement. A single read serves both, regardless of ManagedSheet availability.
+  var dataRange = destinationSheet.getRange(4, 1, trackerLastRow - 3, 1);
   var dataValues = dataRange.getValues();
-  var f3NameExists = dataValues.some(function(row) { return row[0] === f3Name; });
+
+  // Use ManagedSheet for duplicate detection when available (avoids a second scan).
+  var f3NameExists = false;
+  try {
+    if (typeof trackerMs !== 'undefined' && trackerMs) {
+      f3NameExists = !!trackerMs.findRow('F3_NAME', f3Name);
+    } else {
+      f3NameExists = dataValues.some(function(row) { return row[0] === f3Name; });
+    }
+  } catch (err) {
+    f3NameExists = dataValues.some(function(row) { return row[0] === f3Name; });
+  }
 
   if (f3NameExists) {
     Logger.log("f3Name already exists in the Tracker sheet.");
   } else {
-    // Find the first empty row in column A using the already-fetched dataValues — no extra API calls
+    // Find first empty slot in column A (rows 4+), falling back to next row after last.
     var emptyIdx = dataValues.findIndex(function(row) { return row[0] === ""; });
     var nextRow = emptyIdx === -1 ? trackerLastRow + 1 : 4 + emptyIdx;
 
-
-    // Set the F3 Name in the found row
-    destinationSheet.getRange(nextRow, 1).setValue(f3Name); // Append the F3 Name
+    // Always use setValue at nextRow — ManagedSheet.appendRow ignores the computed position.
+    destinationSheet.getRange(nextRow, 1).setValue(f3Name);
 
     // Copy formulas and formatting from the last filled row to the new row for columns B through the last column
-    // if we add a row, then fill the previous row down.
     if (nextRow > 4) {
-        var rangeToCopy = destinationSheet.getRange(nextRow - 1, 2, 1, lastColumn - 1);
-        var targetRange = destinationSheet.getRange(nextRow, 2, 1, lastColumn - 1);
-        rangeToCopy.copyTo(targetRange); // This copies both the formulas and formatting
-
-        // If you need to only copy formulas or formatting, you can specify that with the options in copyTo method
-        // For example, to copy only the formatting:
-        // rangeToCopy.copyFormatToRange(destinationSheet, 2, lastColumn, nextRow, nextRow);
+      var rangeToCopy = destinationSheet.getRange(nextRow - 1, 2, 1, lastColumn - 1);
+      var targetRange = destinationSheet.getRange(nextRow, 2, 1, lastColumn - 1);
+      rangeToCopy.copyTo(targetRange);
     }
 
-    // Clear the PAX entered numbers.  These should be numeric values that are not formulas.
-    // Batch the clears into a single RangeList call instead of one API call per cell.
+    // Clear the PAX entered numbers. Batch clears into a single RangeList call.
     var rowRange = destinationSheet.getRange(nextRow, 1, 1, lastColumn);
     var rowValues = rowRange.getValues()[0];
     var rowFormulas = rowRange.getFormulas()[0];
@@ -113,9 +145,11 @@ function onFormSubmitLocked_(e) {
     if (clearRanges.length > 0) {
       destinationSheet.getRangeList(clearRanges).clearContent();
     }
+
     // Re-read last row so the newly inserted PAX row is included in the sort range
     trackerLastRow = destinationSheet.getLastRow();
   }
+
   var rangeToSort = destinationSheet.getRange(4, 1, trackerLastRow - 3, lastColumn);
   rangeToSort.sort([{column: 2, ascending: true}, {column: 1, ascending: true}]);
 
