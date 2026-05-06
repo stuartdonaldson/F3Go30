@@ -1,8 +1,10 @@
 /**
- * Copy Responses from last month's tracker Responses sheet into the current
- * spreadsheet's Responses row matching the provided email. Matching and copying
- * are done by header name (case-insensitive) so layout changes do not break the mapping.
- * After copying, send a summary email to the address with the copied fields.
+ * Manual admin utility — copies one participant's responses from last month's
+ * tracker into the current tracker and emails them a summary.
+ *
+ * NOT called from the automated reuse flow (maybeReuseLastMonthsGoals_ handles
+ * that). Use this when a PAX needs their data backfilled manually outside the
+ * normal form-submit path.
  *
  * Usage: copyResponsesToCurrentTracker('foo@example.com')
  */

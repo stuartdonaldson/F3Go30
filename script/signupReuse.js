@@ -30,27 +30,8 @@ var OPTIONAL_RESPONSE_COLUMN_MAP = {
     NAG_EMAIL: 'NAG Email?'
 };
 
-// Legacy column indexes for older spreadsheets (zero-based)
-var LEGACY_IDX = { TIMESTAMP: 0, EMAIL: 1, PARTICIPATION: 2, F3_NAME: 3, TEAM_PREFERENCE: 4, TEAM: 5, GOAL_SELECTION: 6, WHO: 7, WHAT: 8, HOW: 9, PHONE: 10 };
-
-// Mapping from ManagedSheet/Tracker column keys to reusedValues properties
-var REUSED_TO_UPDATE_KEY_MAP = {
-    TEAM_PREFERENCE: 'teamPreference',
-    TEAM: 'team',
-    GOAL_SELECTION: 'goalSelection',
-    WHO: 'who',
-    WHAT: 'what',
-    HOW: 'how',
-    PHONE: 'phone'
-};
-
-// Backwards-compatible aliases and legacy exports (keep behavior names, no fallbacks)
+// GAS global alias — callers in nag.js and response_utils.js reference this name.
 var resolveResponseColumns_ = resolveResponseColumns;
-var isReuseLastMonthsGoalsChoice_ = isReuseLastMonthsGoalsChoice;
-var findLatestResponseByEmail_ = findLatestResponseByEmail;
-var extractReusableResponseValues_ = extractReusableResponseValues;
-var mergeReusedValuesIntoResponseRow_ = mergeReusedValuesIntoResponseArray;
-var buildReuseSummaryLines_ = buildReuseSummaryLines;
 
 function getResponseValue_(responseRow, columnMap, key) {
     if (!columnMap || typeof columnMap[key] !== 'number') throw new Error('Missing header mapping for ' + key);
@@ -128,23 +109,22 @@ function checkIsReuseChoice_(answer, reuseTriggerPhrase) {
 }
 
 function findLatestResponseByEmail(rows, emailAddress, responseColumns) {
+    if (!responseColumns || typeof responseColumns.EMAIL !== 'number') throw new Error('responseColumns required for findLatestResponseByEmail');
     var norm = normalizeEmailAddress(emailAddress);
     if (!norm) return null;
-    // Support legacy callers that pass raw row arrays without a responseColumns map.
-    var emailIdx = (responseColumns && typeof responseColumns.EMAIL === 'number') ? responseColumns.EMAIL : LEGACY_IDX.EMAIL;
     for (var i = rows.length - 1; i >= 0; i--) {
         var row = rows[i];
         if (!row) continue;
-        var val = row[emailIdx];
-        if (normalizeEmailAddress(val) === norm) return { rowIndex: i, row: row };
+        if (normalizeEmailAddress(row[responseColumns.EMAIL]) === norm) return { rowIndex: i, row: row };
     }
     return null;
 }
 
 function extractReusableResponseValues(responseRow, responseColumns) {
     if (!responseRow) return null;
+    if (!responseColumns) throw new Error('responseColumns required for extractReusableResponseValues');
     function v(key) {
-        var idx = (responseColumns && typeof responseColumns[key] === 'number') ? responseColumns[key] : LEGACY_IDX[key];
+        var idx = responseColumns[key];
         return (typeof idx === 'number' && idx >= 0) ? (responseRow[idx] || '') : '';
     }
     return {
@@ -160,8 +140,9 @@ function extractReusableResponseValues(responseRow, responseColumns) {
 
 function mergeReusedValuesIntoResponseArray(responseArray, reusedValues, responseColumns) {
     if (!responseArray || !reusedValues) return responseArray;
+    if (!responseColumns) throw new Error('responseColumns required for mergeReusedValuesIntoResponseArray');
     function setVal(key, value) {
-        var idx = (responseColumns && typeof responseColumns[key] === 'number') ? responseColumns[key] : LEGACY_IDX[key];
+        var idx = responseColumns[key];
         if (typeof idx === 'number' && idx >= 0) responseArray[idx] = value;
     }
     setVal('TEAM_PREFERENCE', reusedValues.teamPreference);
@@ -172,23 +153,6 @@ function mergeReusedValuesIntoResponseArray(responseArray, reusedValues, respons
     setVal('HOW', reusedValues.how);
     setVal('PHONE', reusedValues.phone);
     return responseArray;
-}
-
-function writeReusedValuesToResponseRow(responsesSheet, rowNumber, reusedValues, responseColumns) {
-    var map = {
-        TEAM_PREFERENCE: reusedValues.teamPreference,
-        TEAM: reusedValues.team,
-        GOAL_SELECTION: reusedValues.goalSelection,
-        WHO: reusedValues.who,
-        WHAT: reusedValues.what,
-        HOW: reusedValues.how,
-        PHONE: reusedValues.phone
-    };
-    for (var k in map) {
-        var colIndex = (responseColumns && typeof responseColumns[k] === 'number') ? responseColumns[k] : LEGACY_IDX[k];
-        if (typeof colIndex !== 'number') throw new Error('Missing header mapping for ' + k);
-        responsesSheet.getRange(rowNumber, colIndex + 1).setValue(map[k]);
-    }
 }
 
 function buildReuseSummaryLines(reusedValues) {
@@ -388,22 +352,16 @@ function maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNum
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-        // canonical names
         maybeReuseLastMonthsGoals_,
         isReuseLastMonthsGoalsChoice,
         checkIsReuseChoice_,
         resolveResponseColumns,
+        findLatestResponseByEmail,
         extractReusableResponseValues,
         mergeReusedValuesIntoResponseArray,
+        buildReuseSummaryLines,
         getResponseValue_,
         getOptionalResponseValue_,
-        setResponseValue_,
-        // legacy aliases for existing tests
-        findLatestResponseByEmail_: findLatestResponseByEmail_,
-        isReuseLastMonthsGoalsChoice_: isReuseLastMonthsGoalsChoice_,
-        extractReusableResponseValues_: extractReusableResponseValues_,
-        mergeReusedValuesIntoResponseRow_: mergeReusedValuesIntoResponseRow_,
-        buildReuseSummaryLines_: buildReuseSummaryLines_,
-        resolveResponseColumns_: resolveResponseColumns_
+        setResponseValue_
     };
 }

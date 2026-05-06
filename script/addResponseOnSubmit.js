@@ -39,47 +39,28 @@ function handleFormSubmit_(e) {
 }
 
 function onFormSubmitLocked_(e) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet(); // Get the active spreadsheet
+  var sheet = SpreadsheetApp.getActiveSpreadsheet();
 
-  // Prefer ManagedSheet for Responses and Tracker for clearer column mapping and easier updates.
-  var responsesSheet = null;
-  var responseColumns = null;
-  var destinationSheet = null;
-  try {
-    var ssManager = new SpreadsheetManager(sheet);
-    var responsesMs = ssManager.openExistingSheet ? ssManager.openExistingSheet('Responses', RESPONSE_COLUMN_MAP) : null;
-    var TRACKER_COLUMN_MAP = { F3_NAME: 'F3 Name' };
-    var trackerMs = ssManager.openExistingSheet ? ssManager.openExistingSheet('Tracker', TRACKER_COLUMN_MAP) : null;
-
-    if (responsesMs) {
-      responsesSheet = responsesMs.sheet || sheet.getSheetByName('Responses');
-      responseColumns = responsesMs.headerMap || resolveResponseColumns(responsesSheet);
-    } else {
-      responsesSheet = sheet.getSheetByName('Responses');
-      responseColumns = resolveResponseColumns(responsesSheet);
-    }
-
-    if (trackerMs) {
-      destinationSheet = trackerMs.sheet || sheet.getSheetByName('Tracker');
-    } else {
-      destinationSheet = sheet.getSheetByName('Tracker');
-    }
-    } catch (mgrErr) {
-    // fail-fast: if we can't resolve headers, rethrow so issues are visible
-    throw mgrErr;
-  }
+  var responsesSheet = sheet.getSheetByName('Responses');
+  var destinationSheet = sheet.getSheetByName('Tracker');
 
   if (!responsesSheet || !destinationSheet) {
     Logger.log('handleFormSubmit_: required sheet not found — Responses: ' + !!responsesSheet + ', Tracker: ' + !!destinationSheet);
     return;
   }
 
-  // Use e.range to identify the exact submitted row, avoiding getLastRow() race with concurrent submissions
+  // resolveResponseColumns throws fast if any required header is absent — no silent failures.
+  var responseColumns = resolveResponseColumns(responsesSheet);
+
+  // Use e.range to identify the exact submitted row, avoiding getLastRow() race with concurrent submissions.
   var formResponses = e.range.getValues()[0];
-  if (formResponses.length < 7) { // Check if there are at least 7 responses (indices 0-6 required)
-    Logger.log("Not enough responses.");
-    return; // Exit the function if not enough responses
+
+  // Guard: email and F3 name must be present — a row without them cannot be processed.
+  if (!formResponses[responseColumns.EMAIL] || !formResponses[responseColumns.F3_NAME]) {
+    Logger.log('handleFormSubmit_: submitted row missing EMAIL or F3_NAME — skipping');
+    return;
   }
+
   formResponses = maybeReuseLastMonthsGoals_(sheet, responsesSheet, e.range.getRow(), formResponses);
 
   var f3Name = getResponseValue_(formResponses, responseColumns, 'F3_NAME');
@@ -103,17 +84,7 @@ function onFormSubmitLocked_(e) {
   var dataRange = destinationSheet.getRange(4, 1, trackerLastRow - 3, 1);
   var dataValues = dataRange.getValues();
 
-  // Use ManagedSheet for duplicate detection when available (avoids a second scan).
-  var f3NameExists = false;
-  try {
-    if (typeof trackerMs !== 'undefined' && trackerMs) {
-      f3NameExists = !!trackerMs.findRow('F3_NAME', f3Name);
-    } else {
-      f3NameExists = dataValues.some(function(row) { return row[0] === f3Name; });
-    }
-  } catch (err) {
-    f3NameExists = dataValues.some(function(row) { return row[0] === f3Name; });
-  }
+  var f3NameExists = dataValues.some(function(row) { return row[0] === f3Name; });
 
   if (f3NameExists) {
     Logger.log("f3Name already exists in the Tracker sheet.");
