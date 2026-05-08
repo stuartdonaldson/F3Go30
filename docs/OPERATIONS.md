@@ -8,6 +8,11 @@ The script is bound to a specific Google Sheets spreadsheet and has no standalon
 Script files live in `script/` and are pushed to Google Apps Script via `clasp push` run from
 the `script/` folder.
 
+### Prerequisites
+
+- Template spreadsheet is created and owned by the operator (this is the Go30 Template spreadsheet used by `copyAndInit`).
+- `clasp` is installed and authenticated (`clasp login`) before pushing; `clasp` initializes `.clasprc.json` automatically.
+
 ### Installation
 
 ```bash
@@ -115,6 +120,44 @@ email and spreadsheet/form URLs. Do not share publicly or commit the URL to vers
 | −1 not appearing for missed days | Nightly trigger not firing | Verify daily trigger for `markEmptyCellsAsMinusOne` in Triggers panel; re-run "Initialize Triggers" |
 | `onFormSubmit` throws when Tracker is empty | Range error if Tracker has fewer than 4 rows | Script exits early with a log message; verify Tracker has at least one data row |
 | Auto-generate fails | Site Q receives failure email with error details and orphaned spreadsheet ID | Delete orphaned spreadsheet from Drive; run "Copy and Initialize" manually; check Config sheet for missing NameSpace or Site Q rows |
+
+---
+
+## Testing
+
+### GasLogger live test
+
+Verifies end-to-end structured logging: runs `testGasLogger()` in the Apps Script editor via
+Playwright, captures Logger output, and asserts on the Drive files written to
+`GAS_LOGGER_LOCAL_PATH/F3Go30/`.
+
+**Prerequisites:**
+- `local.settings.json` populated (`GAS_LOGGER_LOCAL_PATH`, `SCRIPT_ID_PROD`)
+- Google Drive for Desktop mounted at `GAS_LOGGER_LOCAL_PATH`
+- Node.js installed; `npm install` run once
+
+**One-time auth capture** (interactive — do this once per machine):
+```bash
+npm run auth
+# Log in to the f3go30@gmail.com account in the browser that opens, then press ENTER
+```
+
+**Running the test** (unattended after auth):
+```bash
+npm run test:gaslogger
+```
+
+The test opens the Apps Script editor, runs `testGasLogger()`, writes Logger output to
+`test/output/gaslogger-{timestamp}.txt`, then runs `test/test_gas_logger_live.py` to verify
+the five expected Drive entries (AC2–AC5). Passes in ~45s.
+
+**If it fails:**
+- Auth expired → re-run `npm run auth`
+- Drive not synced → ensure Google Drive for Desktop is running and mounted
+- Selector broken → check `test-results/**/error-context.md` for updated ARIA names;
+  see `/mnt/c/dev/GAS-Practices/best-practices/gas-editor-testing/README.md`
+
+---
 
 ## References
 
