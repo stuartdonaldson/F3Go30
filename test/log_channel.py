@@ -64,6 +64,16 @@ def _extract_file_id(url_or_id: str) -> str:
     raise ValueError(f"Cannot extract Drive file ID from: {url_or_id!r}")
 
 
+def _extract_folder_id(url_or_id: str) -> str:
+    """Return the Drive folder ID from a folders URL or bare ID string."""
+    m = re.search(r"/folders/([a-zA-Z0-9_-]+)", url_or_id)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r"[a-zA-Z0-9_-]+", url_or_id):
+        return url_or_id
+    raise ValueError(f"Cannot extract Drive folder ID from: {url_or_id!r}")
+
+
 def _download_log(file_id: str) -> str:
     """Download plain-text content from a publicly readable Drive file."""
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
@@ -117,6 +127,38 @@ def _parse_entries(content: str) -> list[dict[str, Any]]:
 
     flush()
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Local filesystem helpers (GasLogger files via mounted Drive)
+# ---------------------------------------------------------------------------
+
+def collect_local_log_entries(
+    local_folder: str,
+    run_id: Optional[str] = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """
+    Read all .log files from local_folder (a locally-mounted Drive path).
+    Returns {absolute_path: [entries]}, optionally filtered to run_id.
+
+    local_folder is typically GAS_LOGGER_LOCAL_PATH/GAS_LOGGER_PROJECT_PREFIX
+    from local.settings.json (e.g. '/mnt/g/My Drive/GAS-Logger/F3Go30').
+    """
+    from pathlib import Path as _Path
+    result: dict[str, list[dict[str, Any]]] = {}
+    folder = _Path(local_folder)
+    if not folder.exists():
+        return result
+    for f in sorted(folder.glob('*.log')):
+        try:
+            entries = parse_ndjson_entries(f.read_text(encoding='utf-8', errors='replace'))
+        except OSError:
+            continue
+        if run_id is not None:
+            entries = [e for e in entries if e.get('runId') == run_id]
+        if entries:
+            result[str(f)] = entries
+    return result
 
 
 # ---------------------------------------------------------------------------

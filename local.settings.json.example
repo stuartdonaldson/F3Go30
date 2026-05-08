@@ -1,0 +1,7 @@
+{
+  "GAS_LOGGER_PARENT_FOLDER_ID": "<Drive folder ID or URL of the shared log root>",
+  "GAS_LOGGER_PROJECT_PREFIX": "F3Go30",
+  "GAS_LOGGER_LOCAL_PATH": "<local filesystem path to mounted Drive folder, e.g. /mnt/g/My Drive/GAS-Logger>",
+  "SCRIPT_ID_PROD": "<prod tracker script project ID>",
+  "SCRIPT_ID_TEST": "<test tracker script project ID>"
+}

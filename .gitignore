@@ -50,3 +50,6 @@ bdreport.md
 # python caches
 __pycache__
 
+# local machine config (contains API keys and Drive folder IDs)
+local.settings.json
+

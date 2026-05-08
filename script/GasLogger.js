@@ -53,7 +53,6 @@ var GasLogger = {
       var parent = DriveApp.getFolderById(parentId);
       var iter = parent.getFoldersByName('F3Go30');
       this._folder = iter.hasNext() ? iter.next() : parent.createFolder('F3Go30');
-      this._folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
       return this._folder;
     } catch (e) {
       Logger.log('[GasLogger] _getFolder failed: ' + e);
@@ -106,7 +105,6 @@ var GasLogger = {
         // First flush for this execution run — create the file
         var filename = new Date().getTime() + '-' + (this._execId || Utilities.getUuid()) + '.log';
         var file = folder.createFile(filename, content, MimeType.PLAIN_TEXT);
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
         this._fileId = file.getId();
       }
     } catch (e) {

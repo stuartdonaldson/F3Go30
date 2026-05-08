@@ -21,17 +21,19 @@ function escapeHtml_(str) {
  * @returns {{primary: *, secondary: *}|null} Matched row values, or null if not found.
  */
 function getConfigValue_(spreadsheet, variableName, data) {
-  const rows = data || (() => {
-    const sheet = spreadsheet.getSheetByName('Config');
-    return sheet ? sheet.getDataRange().getValues() : null;
-  })();
-  if (!rows) return null;
-  for (let i = 0; i < rows.length; i++) {
-    if (rows[i][0] === variableName) {
-      return { primary: rows[i][1], secondary: rows[i][2] };
-    }
+  if (data) {
+    return ManagedConfigSheet.findValue(variableName, data);
   }
-  return null;
+  if (!spreadsheet) {
+    return null;
+  }
+
+  const config = openConfigSheet(spreadsheet);
+  if (!config) {
+    return null;
+  }
+
+  return config.getValue(variableName);
 }
 
 /**
@@ -45,6 +47,31 @@ function getConfigValue_(spreadsheet, variableName, data) {
 function buildSlackMessage_(year, month, formUrl, trackerUrl) {
   const prefix = year + ' ' + month;
   return prefix + ' Hard Commit Signup form is up:\n' + formUrl + '\n\n' + prefix + ' Tracker:\n' + trackerUrl;
+}
+
+/**
+ * Developer test: exercises GasLogger behavioral scenarios and writes to Drive.
+ * Run from the GAS editor, then verify with: python test/test_gas_logger_live.py
+ *
+ * Sets F3GO30_TEST_RUN_ID='gaslogger-test' so the local verifier can filter entries.
+ */
+function testGasLogger() {
+  PropertiesService.getScriptProperties().setProperty('F3GO30_TEST_RUN_ID', 'gaslogger-test');
+  GasLogger.init('testGasLogger');
+
+  // AC2: Normal run — two entries flushed together into one Drive file.
+  GasLogger.log('normal.first', { scenario: 'normal' });
+  GasLogger.log('normal.second', { scenario: 'normal' });
+  GasLogger.flush();
+
+  // AC3: Inline flush — entry written to Drive immediately.
+  GasLogger.log('inline.flush', { scenario: 'inline' }, true);
+
+  // AC4: newLog reset — newlog.before and newlog.after land in separate Drive files.
+  GasLogger.log('newlog.before', { scenario: 'newlog' }, true, true);
+  GasLogger.log('newlog.after', { scenario: 'newlog' }, true);
+
+  Logger.log('[testGasLogger_] complete — check Drive folder for runId=gaslogger-test');
 }
 
 function getLockedRowA1Notation(sheet, row, column) {
