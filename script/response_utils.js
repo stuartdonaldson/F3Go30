@@ -68,13 +68,7 @@ function copyResponsesToCurrentTracker(email) {
     Logger.log('copyResponsesToCurrentTracker: failed to send email — ' + e.message);
   }
 
-  // Log success
-  try {
-    const logFileId = getOrCreateLogFile_();
-    appendToLogFile_(logFileId, 'copyResponsesToCurrentTracker', { email: email, copied: copiedPairs.length, prevTracker: prevTrackerUrl });
-  } catch (e) {
-    Logger.log('copyResponsesToCurrentTracker: LogFile write failed — ' + e.message);
-  }
+  GasLogger.log('copyResponsesToCurrentTracker', { copied: copiedPairs.length, prevTracker: prevTrackerUrl });
 
   return { copied: copiedPairs.length, details: copiedPairs };
 }

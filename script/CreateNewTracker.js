@@ -1,5 +1,14 @@
 
 var MONTH_NAMES_ = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+var LINKS_SHEET_HEADERS_ = ['Date', 'StartDate', 'ShortTracker', 'TrackerURL', 'ShortHC', 'HC URL'];
+var LINKS_SHEET_COLUMN_MAP_ = {
+  date: 'Date',
+  startDate: 'StartDate',
+  shortTracker: 'ShortTracker',
+  trackerUrl: 'TrackerURL',
+  shortHc: 'ShortHC',
+  hcUrl: 'HC URL'
+};
 
 /**
  * Creates a new monthly tracker spreadsheet from the current template.
@@ -7,6 +16,7 @@ var MONTH_NAMES_ = ['January','February','March','April','May','June','July','Au
  * value from the Config sheet and the operator-supplied start date.
  */
 function copyAndInit() {
+  GasLogger.init('copyAndInit');
   NoticeLogInit("Create New Tracker", "This script will create a new monthly tracker. Enter the start date when prompted.");
 
   const response = NoticePrompt("Enter start date YYYY-MM-DD");
@@ -99,12 +109,7 @@ function copyAndInit() {
       NoticeLog('Shorten URL failed for tracker sheet: ' + error.message);
     }
     if (!trackerSheetShortUrl.startsWith('https://tinyurl.com')) {
-      try {
-        const logFileId = getOrCreateLogFile_();
-        appendToLogFile_(logFileId, 'copyAndInit', { warning: 'urlShortener failed for tracker sheet', alias: trackerAlias, rawUrl: trackerSheetShortUrl });
-      } catch (logErr) {
-        Logger.log('copyAndInit: LogFile warning-write failed — ' + logErr.message);
-      }
+      GasLogger.log('copyAndInit.warning', { warning: 'urlShortener failed for tracker sheet', alias: trackerAlias });
     }
 
     NoticeLog('New spreadsheet tracker sheet link: ' + createHtmlLink(newSpreadsheetName, trackerSheetShortUrl));
@@ -123,6 +128,7 @@ function copyAndInit() {
       const paddedDay = String(startDate.getDate()).padStart(2, '0');
       const ftitle = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay + ' HC Form';
       form.setTitle(ftitle);
+      ensureReuseOptionOnLinkedForm_(form);
       const confirmationMessage =
         'Thank you for your Hard Commit!\n\n' +
         'View the Go30 tracker here: ' + trackerSheetShortUrl + '\n\n' +
@@ -143,33 +149,50 @@ function copyAndInit() {
     }
 
     if (!formShortUrl.startsWith('https://tinyurl.com')) {
-      try {
-        const logFileId = getOrCreateLogFile_();
-        appendToLogFile_(logFileId, 'copyAndInit', { warning: 'urlShortener failed for HC form', alias: formAlias, rawUrl: formShortUrl });
-      } catch (logErr) {
-        Logger.log('copyAndInit: LogFile warning-write failed — ' + logErr.message);
-      }
+      GasLogger.log('copyAndInit.warning', { warning: 'urlShortener failed for HC form', alias: formAlias });
     }
 
     NoticeLog('New HC Form: ' + createHtmlLink(formName, formShortUrl));
+
+    // Persist canonical URLs into the created spreadsheet's Config sheet
+    const newConfigSheet = newSpreadsheet.getSheetByName('Config');
+    if (newConfigSheet) {
+      const cfgRange = newConfigSheet.getDataRange();
+      const cfgValues = cfgRange ? cfgRange.getValues() : [];
+      function upsertConfigRow(sheet, values, key, primary, secondary) {
+        for (let r = 0; r < values.length; r++) {
+          if (String(values[r][0]).trim() === key) {
+            sheet.getRange(r + 1, 2).setValue(primary || '');
+            sheet.getRange(r + 1, 3).setValue(secondary || '');
+            return;
+          }
+        }
+        sheet.appendRow([key, primary || '', secondary || '']);
+      }
+
+      // Write full (non-shortened) URLs so the created spreadsheet has canonical links
+      upsertConfigRow(newConfigSheet, cfgValues, 'Signup HC Form', formName, formUrl);
+      upsertConfigRow(newConfigSheet, cfgValues, 'Last Month Tracker', newSpreadsheetName, trackerSheetUrl);
+    }
 
     // Modify sheets in the new spreadsheet
     initSheets(newSpreadsheet, startDate);
 
     // Hide Config sheet — contains sensitive data (Site Q email)
-    const newConfigSheet = newSpreadsheet.getSheetByName('Config');
     if (newConfigSheet) newConfigSheet.hideSheet();
 
-    // Track all trackers created from this template — create sheet on first use
+    // Track all trackers created from this template — create Links sheet on first use
     const startDateIso = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay;
-    let linksSheet = currentSpreadsheet.getSheetByName('Links');
-    if (!linksSheet) {
-      linksSheet = currentSpreadsheet.insertSheet('Links');
-      linksSheet.appendRow(['Date', 'Month', 'Spreadsheet Name', 'Tracker URL', 'Form URL', 'Spreadsheet ID', 'Form ID']);
-    } else if (linksSheet.getRange(1, 6).getValue() === '') {
-      linksSheet.getRange(1, 6, 1, 2).setValues([['Spreadsheet ID', 'Form ID']]);
-    }
-    linksSheet.appendRow([new Date(), startDateIso, newSpreadsheetName, trackerSheetShortUrl, formShortUrl, newSpreadsheetId, form.getId()]);
+    let linksSheet = openOrCreateSheet('Links', LINKS_SHEET_COLUMN_MAP_, LINKS_SHEET_HEADERS_);
+    // Append short and full URLs (canonical full URLs stored in Tracker/Config of created spreadsheet)
+    linksSheet.appendRow({
+      date: new Date(),
+      startDate: startDateIso,
+      shortTracker: trackerSheetShortUrl,
+      trackerUrl: trackerSheetUrl,
+      shortHc: formShortUrl,
+      hcUrl: formUrl
+    });
 
   NoticeLog("-");
   NoticeLog('<b>Next steps:</b>');
@@ -185,22 +208,13 @@ function copyAndInit() {
 
   NoticeLog('You can now close this sidebar.');
 
-  try {
-    const logFileId = getOrCreateLogFile_();
-    appendToLogFile_(logFileId, 'copyAndInit', {
-      spreadsheetName: newSpreadsheetName,
-      startDateIso: startDateIso,
-      trackerUrl: trackerSheetShortUrl,
-      formUrl: formShortUrl,
-      slackMessage: slackMsg,
-      siteQName: siteQConfig.primary,
-      siteQEmail: siteQEmail,
-      confirmationMessage: confirmationMessage,
-      templateSpreadsheetId: currentSpreadsheet.getId()
-    });
-  } catch (logErr) {
-    Logger.log('copyAndInit: LogFile write failed — ' + logErr.message);
-  }
+  GasLogger.log('copyAndInit', {
+    spreadsheetName: newSpreadsheetName,
+    startDateIso: startDateIso,
+    trackerUrl: trackerSheetShortUrl,
+    formUrl: formShortUrl,
+    templateSpreadsheetId: currentSpreadsheet.getId()
+  }, true);
 
   noticeLogDone_();
 
@@ -213,16 +227,11 @@ function copyAndInit() {
       Logger.log('copyAndInit: copy() failed — ' + err.message);
       NoticeLog('Error: failed to copy spreadsheet — ' + err.message);
     }
-    try {
-      const logFileId = getOrCreateLogFile_();
-      appendToLogFile_(logFileId, 'copyAndInit', {
-        error: err.message,
-        spreadsheetName: newSpreadsheetName,
-        orphanedSpreadsheetId: newSpreadsheetId || null
-      });
-    } catch (logErr) {
-      Logger.log('copyAndInit: LogFile error-write also failed — ' + logErr.message);
-    }
+    GasLogger.log('copyAndInit.error', {
+      error: err.message,
+      spreadsheetName: newSpreadsheetName,
+      orphanedSpreadsheetId: newSpreadsheetId || null
+    }, true);
     throw err;
   }
 }
@@ -387,9 +396,9 @@ function populateTrackerSheet(sheet, startDate) {
   SpreadsheetApp.flush();
 
   // Adjust column visibility based on the month's end.
-  // Extend past LAST_TRACKER_COLUMN when the month fills completely, to hide the next template column.
-  const LAST_TRACKER_COLUMN = 44; // Column AR
-  const hideCount = Math.max(LAST_TRACKER_COLUMN, currentColumn) - currentColumn + 1;
+  // Hide only within the dynamic tracker window (I..AS); keep AT+ summary columns visible.
+  const LAST_DYNAMIC_TRACKER_COLUMN = 45; // Column AS
+  const hideCount = Math.max(0, LAST_DYNAMIC_TRACKER_COLUMN - currentColumn + 1);
   if (hideCount > 0) {
     sheet.hideColumns(currentColumn, hideCount);
   }
@@ -408,6 +417,7 @@ var MONTHLY_AUTO_GENERATE_HANDLER_ = 'autoGenerateNextMonthTracker';
  * Clears any existing monthly auto-generate trigger before registering.
  */
 function initializeMonthlyTrigger() {
+  GasLogger.init('initializeMonthlyTrigger');
   clearMonthlyAutoGenerateTrigger_();
   ScriptApp.newTrigger(MONTHLY_AUTO_GENERATE_HANDLER_)
     .timeBased()
@@ -416,12 +426,7 @@ function initializeMonthlyTrigger() {
     .atHour(2)
     .nearMinute(0)
     .create();
-  try {
-    const logFileId = getOrCreateLogFile_();
-    appendToLogFile_(logFileId, 'initializeMonthlyTrigger', { triggerDay: 20, triggerHour: 2 });
-  } catch (logErr) {
-    Logger.log('initializeMonthlyTrigger: LogFile write failed — ' + logErr.message);
-  }
+  GasLogger.log('initializeMonthlyTrigger', { triggerDay: 20, triggerHour: 2 }, true);
   SpreadsheetApp.getUi().alert('Monthly auto-generate trigger set for the 20th of each month at 2 AM.');
 }
 
@@ -440,6 +445,7 @@ function clearMonthlyAutoGenerateTrigger_() {
  * initializeMonthlyTrigger(). Emails the Site Q on success or failure.
  */
 function autoGenerateNextMonthTracker() {
+  GasLogger.init('autoGenerateNextMonthTracker');
   const today = new Date();
   const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
   const paddedMonth = String(nextMonthStart.getMonth() + 1).padStart(2, '0');
@@ -496,12 +502,7 @@ function autoGenerateNextMonthTracker() {
       Logger.log('autoGenerateNextMonthTracker: shorten URL failed for tracker: ' + e.message);
     }
     if (!trackerSheetShortUrl.startsWith('https://tinyurl.com')) {
-      try {
-        const logFileId = getOrCreateLogFile_();
-        appendToLogFile_(logFileId, 'autoGenerateNextMonthTracker', { warning: 'urlShortener failed for tracker sheet', alias: newSpreadsheetName, rawUrl: trackerSheetShortUrl });
-      } catch (logErr) {
-        Logger.log('autoGenerateNextMonthTracker: LogFile warning-write failed — ' + logErr.message);
-      }
+      GasLogger.log('autoGenerateNextMonthTracker.warning', { warning: 'urlShortener failed for tracker sheet', alias: newSpreadsheetName });
     }
 
     const formUrl = newSpreadsheet.getFormUrl();
@@ -512,6 +513,7 @@ function autoGenerateNextMonthTracker() {
     const formName = newSpreadsheetName + ' HC';
     const ftitle = nextMonthStart.getFullYear() + '-' + paddedMonth + '-01 HC Form';
     form.setTitle(ftitle);
+    ensureReuseOptionOnLinkedForm_(form);
     form.setConfirmationMessage(
       'Thank you for your Hard Commit!\n\n' +
       'View the Go30 tracker here: ' + trackerSheetShortUrl + '\n\n' +
@@ -529,12 +531,7 @@ function autoGenerateNextMonthTracker() {
       Logger.log('autoGenerateNextMonthTracker: shorten URL failed for form: ' + e.message);
     }
     if (!formShortUrl.startsWith('https://tinyurl.com')) {
-      try {
-        const logFileId = getOrCreateLogFile_();
-        appendToLogFile_(logFileId, 'autoGenerateNextMonthTracker', { warning: 'urlShortener failed for HC form', alias: newSpreadsheetName + 'HC', rawUrl: formShortUrl });
-      } catch (logErr) {
-        Logger.log('autoGenerateNextMonthTracker: LogFile warning-write failed — ' + logErr.message);
-      }
+      GasLogger.log('autoGenerateNextMonthTracker.warning', { warning: 'urlShortener failed for HC form', alias: newSpreadsheetName + 'HC' });
     }
 
     initSheets(newSpreadsheet, nextMonthStart);
@@ -552,33 +549,22 @@ function autoGenerateNextMonthTracker() {
     );
 
     Logger.log('autoGenerateNextMonthTracker: done — ' + newSpreadsheetName);
-    try {
-      const logFileId = getOrCreateLogFile_();
-      appendToLogFile_(logFileId, 'autoGenerateNextMonthTracker', {
-        spreadsheetName: newSpreadsheetName,
-        trackerUrl: trackerSheetShortUrl,
-        formUrl: formShortUrl,
-        slackMessage: slackMsg,
-        emailSent: true
-      });
-    } catch (logErr) {
-      Logger.log('autoGenerateNextMonthTracker: LogFile write failed — ' + logErr.message);
-    }
+    GasLogger.log('autoGenerateNextMonthTracker', {
+      spreadsheetName: newSpreadsheetName,
+      trackerUrl: trackerSheetShortUrl,
+      formUrl: formShortUrl,
+      emailSent: true
+    }, true);
 
   } catch (err) {
     Logger.log('autoGenerateNextMonthTracker: error' +
       (newSpreadsheetId ? ' — spreadsheet ID: ' + newSpreadsheetId : '') +
       ' — ' + err.message);
-    try {
-      const logFileId = getOrCreateLogFile_();
-      appendToLogFile_(logFileId, 'autoGenerateNextMonthTracker', {
-        error: err.message,
-        spreadsheetName: newSpreadsheetName || '(unknown)',
-        spreadsheetId: newSpreadsheetId || null
-      });
-    } catch (logErr) {
-      Logger.log('autoGenerateNextMonthTracker: LogFile error-write also failed — ' + logErr.message);
-    }
+    GasLogger.log('autoGenerateNextMonthTracker.error', {
+      error: err.message,
+      spreadsheetName: newSpreadsheetName || '(unknown)',
+      spreadsheetId: newSpreadsheetId || null
+    }, true);
     try {
       MailApp.sendEmail(
         siteQEmail,

@@ -33,6 +33,7 @@ function isYesLike_(val) {
 }
 
 function sendNagEmail() {
+  GasLogger.init('sendNagEmail');
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var tracker = ss.getSheetByName('Tracker');
   var responses = ss.getSheetByName('Responses');
@@ -158,10 +159,5 @@ function sendNagEmail() {
     }
   }
 
-  try {
-    var logFileId = getOrCreateLogFile_();
-    appendToLogFile_(logFileId, 'sendNagEmail', { date: targetDateString, teamsNotified: sentSummary });
-  } catch (e) {
-    Logger.log('sendNagEmail: logging failed — ' + e.message);
-  }
+  GasLogger.log('sendNagEmail', { date: targetDateString, teamsNotified: sentSummary }, true);
 }

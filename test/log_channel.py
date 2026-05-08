@@ -2,31 +2,51 @@
 """
 LogFile test channel helper.
 
-Downloads the F3Go30-LogFile from Google Drive and parses its structured entries.
-The file is publicly readable (anyone with the link) — no auth required.
+Two entry formats are supported:
 
-Usage (as a library):
-    from log_channel import fetch_log_entries
-
-    entries = fetch_log_entries("https://drive.google.com/file/d/FILE_ID/view?usp=sharing")
-    for e in entries:
-        print(e["timestamp"], e["trigger"], e["payload"])
-
-Usage (as a script):
-    python log_channel.py <drive_file_url_or_id>
-
-Entry format produced by appendToLogFile_ (GAS):
+  Legacy (appendToLogFile_):
     === <ISO-8601 timestamp> <trigger name> ===
     <JSON payload>
 
+  Structured NDJSON (GasLogger):
+    {"ts":"...","tag":"...","data":{...},"execId":"..."}   # one JSON object per line
+    runId field present when set by test fixture via F3GO30_TEST_RUN_ID Script Property
+
+Legacy API (single shared file, public URL):
+    from log_channel import fetch_log_entries
+    entries = fetch_log_entries("https://drive.google.com/file/d/FILE_ID/view?usp=sharing")
+
+NDJSON API (per-execution-run files in a Drive subfolder):
+    from log_channel import wait_for_log_entry
+    entry = wait_for_log_entry(folder_id, tag="sendNagEmail", predicate=lambda e: True)
+
+    Requires GAS_LOGGER_SUBFOLDER_ID and DRIVE_API_KEY in local.settings.json
+    (the F3Go30 subfolder must have "anyone with the link" VIEW access).
+
+CLI:
+    python log_channel.py <drive_file_url_or_id>
 """
 
 import json
 import re
 import sys
-from typing import Any
+import time
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 import requests
+
+
+# ---------------------------------------------------------------------------
+# local.settings.json loader (shared by NDJSON helpers)
+# ---------------------------------------------------------------------------
+
+def _load_settings() -> dict:
+    p = Path(__file__).parent.parent / 'local.settings.json'
+    try:
+        return json.loads(p.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -100,8 +120,86 @@ def _parse_entries(content: str) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# NDJSON helpers (GasLogger structured log files)
 # ---------------------------------------------------------------------------
+
+def parse_ndjson_entries(content: str) -> list[dict[str, Any]]:
+    """Parse NDJSON log content, silently skipping non-JSON lines."""
+    entries = []
+    for line in content.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+    return entries
+
+
+def _list_log_files(folder_id: str, api_key: str) -> list[dict]:
+    """List .log files in a public Drive folder, newest first."""
+    url = (
+        'https://www.googleapis.com/drive/v3/files'
+        f'?q=%27{folder_id}%27+in+parents+and+name+contains+%27.log%27'
+        '&fields=files(id,name,createdTime)'
+        '&orderBy=createdTime+desc'
+        f'&key={api_key}'
+    )
+    r = requests.get(url, timeout=15)
+    r.raise_for_status()
+    return r.json().get('files', [])
+
+
+def wait_for_log_entry(
+    tag: str,
+    predicate: Callable[[dict], bool] = lambda e: True,
+    timeout: float = 30,
+    folder_id: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Poll the GasLogger Drive subfolder until an entry matching tag and predicate
+    is found, or timeout (seconds) elapses.
+
+    folder_id and api_key default to GAS_LOGGER_SUBFOLDER_ID / DRIVE_API_KEY
+    from local.settings.json.
+
+    Returns the first matching entry dict: {ts, tag, data, execId, [runId]}.
+    Raises TimeoutError if no match is found within timeout seconds.
+    """
+    settings = _load_settings()
+    folder_id = folder_id or settings.get('GAS_LOGGER_SUBFOLDER_ID')
+    api_key = api_key or settings.get('DRIVE_API_KEY')
+    if not folder_id or not api_key:
+        raise ValueError(
+            'wait_for_log_entry requires GAS_LOGGER_SUBFOLDER_ID and DRIVE_API_KEY '
+            'in local.settings.json (or passed as arguments)'
+        )
+
+    deadline = time.monotonic() + timeout
+    seen_ids: set[str] = set()
+
+    while time.monotonic() < deadline:
+        try:
+            files = _list_log_files(folder_id, api_key)
+            for f in files:
+                file_id = f['id']
+                if file_id in seen_ids:
+                    continue
+                content = _download_log(file_id)
+                for entry in parse_ndjson_entries(content):
+                    if entry.get('tag') == tag and predicate(entry):
+                        return entry
+                seen_ids.add(file_id)
+        except requests.RequestException:
+            pass
+        time.sleep(2)
+
+    raise TimeoutError(
+        f'wait_for_log_entry: no {tag!r} entry found within {timeout}s'
+    )
+
 
 def fetch_log_entries(url_or_id: str) -> list[dict[str, Any]]:
     """

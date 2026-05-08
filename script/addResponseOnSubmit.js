@@ -33,9 +33,12 @@ function clearFormSubmitTrigger() {
  * 5. Sorts the "Tracker" sheet based on a specified column to organize the data efficiently.
  */
 function handleFormSubmit_(e) {
+  GasLogger.init('handleFormSubmit_');
   if (!runWithLock(function() { onFormSubmitLocked_(e); })) {
     Logger.log('handleFormSubmit_: lock timeout — event: ' + JSON.stringify(e));
+    GasLogger.log('handleFormSubmit_', { result: 'lock_timeout' });
   }
+  GasLogger.flush();
 }
 
 function onFormSubmitLocked_(e) {
@@ -88,6 +91,7 @@ function onFormSubmitLocked_(e) {
 
   if (f3NameExists) {
     Logger.log("f3Name already exists in the Tracker sheet.");
+    GasLogger.log('formSubmit.duplicate', { row: e.range.getRow() });
   } else {
     // Find first empty slot in column A (rows 4+), falling back to next row after last.
     var emptyIdx = dataValues.findIndex(function(row) { return row[0] === ""; });
@@ -119,6 +123,7 @@ function onFormSubmitLocked_(e) {
 
     // Re-read last row so the newly inserted PAX row is included in the sort range
     trackerLastRow = destinationSheet.getLastRow();
+    GasLogger.log('formSubmit.processed', { row: nextRow });
   }
 
   var rangeToSort = destinationSheet.getRange(4, 1, trackerLastRow - 3, lastColumn);
