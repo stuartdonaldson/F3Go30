@@ -52,6 +52,25 @@ assert.equal(responseColumns.F3_NAME, 3);
 assert.equal(responseColumns.TEAM_PREFERENCE, 4);
 assert.equal(responseColumns.TEAM, 5);
 
+// -- resolveResponseColumns: alias resolution for older tracker header phrasings --
+const LEGACY_HEADERS = [
+    'Timestamp',
+    'Email Address',
+    'Are you currently participating in Go30?',
+    'F3 Name',
+    'Do you want to be on an AO based team - OR- grouped with other HIMs around a common goal?',
+    'Team',
+    'What is your goal?',
+    'WHO do you ultimately want to become?',
+    'WHAT is your Go30 Challenge?',
+    'HOW are you going to be successful this month?',
+    'Cell Phone Number'
+];
+const legacyCols = resolveResponseColumns(LEGACY_HEADERS);
+assert.equal(legacyCols.GOAL_SELECTION, 6, 'GOAL_SELECTION resolved via alias "What is your goal?"');
+assert.equal(legacyCols.TEAM_PREFERENCE, 4, 'TEAM_PREFERENCE resolved via alias (long AO-based question)');
+assert.equal(legacyCols.TEAM, 5, 'TEAM still resolved in legacy layout');
+
 // -- isReuseLastMonthsGoalsChoice --
 assert.equal(isReuseLastMonthsGoalsChoice("Yes, and use last month's goals."), true);
 assert.equal(isReuseLastMonthsGoalsChoice(" yes, and use last month's goals. "), true);

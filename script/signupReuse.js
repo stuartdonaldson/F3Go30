@@ -24,6 +24,13 @@ var RESPONSE_COLUMN_MAP = {
     PHONE: 'Cell Phone Number'
 };
 
+// Alternative header phrasings for the same question — form text changes between tracker versions.
+// resolveResponseColumns tries these after the primary name fails.
+var RESPONSE_COLUMN_ALIASES = {
+    GOAL_SELECTION: ['What is your goal?'],
+    TEAM_PREFERENCE: ['Do you want to be on an AO based team - OR- grouped with other HIMs around a common goal?']
+};
+
 // Optional columns: resolved when header present, skipped silently when absent.
 var OPTIONAL_RESPONSE_COLUMN_MAP = {
     NAG_EMAIL: 'NAG Email?',
@@ -53,6 +60,18 @@ function normalizeHeaderName(val) {
     return String(val || '').trim().toLowerCase();
 }
 
+// Returns the 0-based index of primaryName (or any alias) in normalizedHeaders, or -1.
+function findHeaderIndex_(normalizedHeaders, primaryName, aliases) {
+    var names = [primaryName].concat(aliases || []);
+    for (var n = 0; n < names.length; n++) {
+        var norm = normalizeHeaderName(names[n]);
+        for (var h = 0; h < normalizedHeaders.length; h++) {
+            if (normalizedHeaders[h] === norm) return h;
+        }
+    }
+    return -1;
+}
+
 function resolveResponseColumns(responsesSheetOrHeaders) {
     var headers = Array.isArray(responsesSheetOrHeaders)
         ? responsesSheetOrHeaders
@@ -61,25 +80,19 @@ function resolveResponseColumns(responsesSheetOrHeaders) {
     var normalized = headers.map(normalizeHeaderName);
     var resolved = {};
 
-    // Required columns — throw if any are missing.
+    // Required columns — throw if absent under both canonical name and any alias.
     for (var canonical in RESPONSE_COLUMN_MAP) {
-        var expected = normalizeHeaderName(RESPONSE_COLUMN_MAP[canonical]);
-        var found = -1;
-        for (var h = 0; h < normalized.length; h++) {
-            if (normalized[h] === expected) { found = h; break; }
-        }
+        var found = findHeaderIndex_(normalized, RESPONSE_COLUMN_MAP[canonical], RESPONSE_COLUMN_ALIASES[canonical]);
         if (found === -1) {
             throw new Error('Missing expected header: ' + RESPONSE_COLUMN_MAP[canonical]);
         }
         resolved[canonical] = found;
     }
 
-    // Optional columns — silently skip when absent.
+    // Optional columns — silently skip when absent under both canonical name and any alias.
     for (var optKey in OPTIONAL_RESPONSE_COLUMN_MAP) {
-        var optExpected = normalizeHeaderName(OPTIONAL_RESPONSE_COLUMN_MAP[optKey]);
-        for (var oh = 0; oh < normalized.length; oh++) {
-            if (normalized[oh] === optExpected) { resolved[optKey] = oh; break; }
-        }
+        var optIdx = findHeaderIndex_(normalized, OPTIONAL_RESPONSE_COLUMN_MAP[optKey], RESPONSE_COLUMN_ALIASES[optKey]);
+        if (optIdx !== -1) resolved[optKey] = optIdx;
     }
 
     return resolved;
