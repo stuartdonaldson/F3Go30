@@ -2,7 +2,7 @@
   "name": "f3go30",
   "private": true,
   "scripts": {
-    "test": "node test/test_sheet_helpers.js && node test/test_signup_reuse.js",
+    "test": "node test/test_sheet_helpers.js && node test/test_signup_reuse.js && node test/test_add_response_on_submit.js",
     "test:gaslogger": "npx playwright test tests/playwright/gaslogger.spec.js",
     "auth": "node authenticate.js"
   },
