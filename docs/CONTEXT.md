@@ -55,6 +55,7 @@ configuration.
 - Shorten tracker and form URLs via TinyURL (or Bitly) and surface them in a notification sidebar
 - Set sharing permissions on the new tracker to anyone-with-link/view
 - Set up a daily 1 AM trigger to mark empty check-in cells as −1 after a 24-hour grace period
+- Send a basic daily nag email to opted-in team members when teammates missed the previous day's check-in; this workflow exists in code but is not yet aligned with the finalized FunFacts-based reminder design
 - Set up a form-submit trigger to populate the Tracker sheet when a PAX submits the HC form
 - Auto-generate next month's tracker and HC form via a scheduled trigger on the 20th of each
   month; email Site Q with links and a ready-to-paste Slack message on success or failure
@@ -206,12 +207,40 @@ Constraints:
 
 ---
 
+### UC-6: Daily Reminder Email Runs
+
+Actor: Time-based trigger (10 AM daily)
+
+Preconditions:
+- The daily nag trigger has been initialized
+- Tracker and Responses sheets exist and contain current-month data
+- Reminder recipients have explicitly opted in via the HC form reminder-consent field
+
+Primary Flow:
+1. Trigger fires the daily nag email function
+2. Script finds the prior day's column in the Tracker sheet
+3. Script groups PAX by team and identifies members who did not check in
+4. Script emails the opted-in members of each affected team with the missing-member list and tracker reminder text
+
+Alternate Flows:
+A1: Prior-day date column not found → function logs and exits without sending
+A2: No missing PAX on a team → no email sent for that team
+A3: Team has missing PAX but no opted-in recipients → no email sent for that team
+
+Postconditions:
+- Opted-in team members may receive a nag email about missing prior-day check-ins
+
+Constraints:
+- Current implementation is partial: the nag email exists in code, but it does not yet use the finalized FunFacts-based motivation content or the final reminder template design
+
+---
+
 ## Non-Goals
 
 - Not a multi-region coordination platform; each region operates its own independent spreadsheet
 - Not a public SaaS; no web app, API, or external hosting
 - Does not automate the initial one-time form linking step when bootstrapping a new region
-- Does not send proactive PAX-facing email; Site Q email is only used for auto-generate success/failure notification
+- Does not yet deliver the finalized reminder-email experience described by the reminder workflow design; the existing nag email path is partial and still needs alignment with the FunFacts-based template and content decisions
 - No automated testing or CI/CD pipeline
 
 ---

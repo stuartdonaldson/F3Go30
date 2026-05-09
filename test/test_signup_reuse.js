@@ -25,6 +25,8 @@ const {
     extractReusableResponseValues,
     mergeReusedValuesIntoResponseArray,
     buildReuseSummaryLines,
+    sanitizeTextForEmailLine_,
+    sanitizeEmailAddressForSend_,
     maybeReuseLastMonthsGoals_
 } = require('../script/signupReuse.js');
 
@@ -34,9 +36,9 @@ const HEADERS = [
     'Email Address',
     'Are you currently participating in Go30?',
     'F3 Name',
-    'Team preference',
+    'Team type',
     'Team',
-    'Goal selection',
+    'Other team name',
     'WHO do you ultimately want to become?',
     'WHAT is your Go30 Challenge?',
     'HOW are you going to be successful this month?',
@@ -49,8 +51,9 @@ const responseColumns = resolveResponseColumns(HEADERS);
 assert.equal(responseColumns.EMAIL, 1);
 assert.equal(responseColumns.PARTICIPATION, 2);
 assert.equal(responseColumns.F3_NAME, 3);
-assert.equal(responseColumns.TEAM_PREFERENCE, 4);
+assert.equal(responseColumns.TEAM_TYPE, 4);
 assert.equal(responseColumns.TEAM, 5);
+assert.equal(responseColumns.OTHER_TEAM, 6);
 
 // -- resolveResponseColumns: alias resolution for older tracker header phrasings --
 const LEGACY_HEADERS = [
@@ -67,8 +70,8 @@ const LEGACY_HEADERS = [
     'Cell Phone Number'
 ];
 const legacyCols = resolveResponseColumns(LEGACY_HEADERS);
-assert.equal(legacyCols.GOAL_SELECTION, 6, 'GOAL_SELECTION resolved via alias "What is your goal?"');
-assert.equal(legacyCols.TEAM_PREFERENCE, 4, 'TEAM_PREFERENCE resolved via alias (long AO-based question)');
+assert.equal(legacyCols.OTHER_TEAM, 6, 'OTHER_TEAM resolved via alias "What is your goal?"');
+assert.equal(legacyCols.TEAM_TYPE, 4, 'TEAM_TYPE resolved via alias (long AO-based question)');
 assert.equal(legacyCols.TEAM, 5, 'TEAM still resolved in legacy layout');
 
 // -- isReuseLastMonthsGoalsChoice --
@@ -108,9 +111,9 @@ assert.throws(
 // -- extractReusableResponseValues --
 const reusedValues = extractReusableResponseValues(latest.row, responseColumns);
 assert.deepEqual(reusedValues, {
-    teamPreference: 'goal-based',
+    teamType: 'goal-based',
     team: 'Team B',
-    goalSelection: 'Endurance',
+    otherTeam: 'Endurance',
     who: 'Disciplined',
     what: 'Ruck',
     how: 'Journal',
@@ -135,16 +138,21 @@ assert.throws(
 
 // -- buildReuseSummaryLines --
 assert.deepEqual(buildReuseSummaryLines(reusedValues), [
-    'Team preference: goal-based',
+    'Team type: goal-based',
     'Team: Team B',
-    'Goal selection: Endurance',
+    'Other team name: Endurance',
     'Who: Disciplined',
     'What: Ruck',
     'How: Journal',
     'Phone: 555-2222',
 ]);
 
-assert.deepEqual(buildReuseSummaryLines({ teamPreference: '', team: 'T', goalSelection: '', who: '', what: '', how: '', phone: '' }), ['Team: T'], 'omits empty fields');
+assert.deepEqual(buildReuseSummaryLines({ teamType: '', team: 'T', otherTeam: '', who: '', what: '', how: '', phone: '' }), ['Team: T'], 'omits empty fields');
+
+// -- send sanitizers --
+assert.equal(sanitizeTextForEmailLine_('  F3\nNew\tGuy\u0007  '), 'F3 New Guy');
+assert.equal(sanitizeEmailAddressForSend_('  Test<User>@Example.com\n'), '', 'invalid address characters are rejected');
+assert.equal(sanitizeEmailAddressForSend_(' Test.User+go30@example.com\n'), 'test.user+go30@example.com');
 
 // -- maybeReuseLastMonthsGoals_ --
 
@@ -201,7 +209,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockPrevSs = {};
     global._mockManagedSheet = {
         getAllRows: function() {
-            return [{ EMAIL: 'a@example.com', TEAM_PREFERENCE: 'AO-based', TEAM: 'Team C', GOAL_SELECTION: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
+            return [{ EMAIL: 'a@example.com', TEAM_TYPE: 'AO-based', TEAM: 'Team C', OTHER_TEAM: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
         }
     };
 
@@ -211,9 +219,9 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
         makeMockResponsesSheet(HEADERS), 2, formRow
     );
 
-    assert.equal(result[responseColumns.TEAM_PREFERENCE], 'AO-based', 'teamPreference merged');
+    assert.equal(result[responseColumns.TEAM_TYPE], 'AO-based', 'teamType merged');
     assert.equal(result[responseColumns.TEAM], 'Team C', 'team merged');
-    assert.equal(result[responseColumns.GOAL_SELECTION], 'Strength', 'goalSelection merged');
+    assert.equal(result[responseColumns.OTHER_TEAM], 'Strength', 'otherTeam merged');
     assert.equal(result[responseColumns.WHO], 'Leader', 'who merged');
     assert.equal(result[responseColumns.WHAT], 'Run hard', 'what merged');
     assert.equal(result[responseColumns.HOW], 'Track daily', 'how merged');
@@ -242,6 +250,30 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     assert.deepEqual(result, formRow, 'not-found: formResponses unchanged');
     assert.equal(mailsSent.length, 1, 'not-found: one email');
     assert.ok(!mailsSent[0].subj.includes('reused'), 'not-found: email signals no-reuse');
+
+    global._mockPrevSs = null;
+    global._mockManagedSheet = null;
+}
+
+// Test: send path sanitizes email recipient and F3 name before sending
+{
+    mailsSent = [];
+    global._mockPrevSs = {};
+    global._mockManagedSheet = {
+        getAllRows: function() {
+            return [{ EMAIL: 'test.user@example.com', TEAM_TYPE: 'AO-based', TEAM: 'Team C', OTHER_TEAM: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
+        }
+    };
+
+    const dirtyFormRow = ['ts', ' Test.User@example.com\n', REUSE_ANSWER, 'F3\nNew\tGuy', '', '', '', '', '', '', ''];
+    maybeReuseLastMonthsGoals_(
+        makeMockSs({ 'Last Month Tracker': { primary: 'https://docs.google.com/spreadsheets/d/abc123/edit' } }),
+        makeMockResponsesSheet(HEADERS), 2, dirtyFormRow
+    );
+
+    assert.equal(mailsSent.length, 1, 'sanitized send: one email');
+    assert.equal(mailsSent[0].to, 'test.user@example.com', 'recipient sanitized and normalized');
+    assert.ok(mailsSent[0].body.includes('F3 Name: F3 New Guy'), 'f3 name sanitized into a single line');
 
     global._mockPrevSs = null;
     global._mockManagedSheet = null;

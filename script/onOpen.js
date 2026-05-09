@@ -18,7 +18,8 @@ function onOpen()
         .addItem('Initialize Monthly Trigger', 'initializeMonthlyTrigger')
         .addItem('Reinitialize this spreadsheet', 'reinitializeSheets')
         .addSeparator()
-        .addItem('Run test function (DEV)', 'testFunction')
+      .addItem('Run test function (DEV)', 'testFunction')
+      .addItem('Test Reuse', 'testReuseMenu')
         .addSeparator();
   }
 
@@ -60,6 +61,10 @@ function showAbout() {
 function initializeTriggers() {
   setupDailyMinusOneTrigger();  // markMinusOne.js
   setupFormSubmitTrigger(); // addResponseOnSubmit.js
+  // Daily nag emails at 10:00 — sendNagEmail defined in script/nag.js
+  if (typeof setupDailyNagTrigger === 'function') {
+    try { setupDailyNagTrigger(); } catch (e) { Logger.log('initializeTriggers: setupDailyNagTrigger failed — ' + e.message); }
+  }
 }
 
 
@@ -153,4 +158,43 @@ function InspireNow() {
   const randomAuthor = data[randomIndex][1];
   
   trackerSheet.getRange("H1").setValue(`"${randomQuote}" - ${randomAuthor}`);
+}
+
+/**
+ * testReuseMenu
+ * Owner-only menu action to append a dummy Responses row and invoke the
+ * on-form-submit handler to exercise the reuse-last-months-goals path.
+ */
+function testReuseMenu() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var responsesSheet = ss.getSheetByName('Responses');
+  if (!responsesSheet) { ui.alert('Responses sheet not found.'); return; }
+
+  var numCols = responsesSheet.getLastColumn() || 11;
+  var cols = null;
+  try { cols = resolveResponseColumns(responsesSheet); } catch (e) { cols = null; }
+
+  var row = new Array(numCols).fill('');
+  // timestamp in first column if present
+  row[0] = new Date();
+  if (cols && typeof cols.EMAIL === 'number') row[cols.EMAIL] = 'stu@asyn.com';
+  else row[1] = 'stu@asyn.com';
+  if (cols && typeof cols.F3_NAME === 'number') row[cols.F3_NAME] = 'F3 New Guy';
+  else row[3] = 'F3 New Guy';
+  var reuseAnswer = "Yes, and use last month's goals.";
+  if (cols && typeof cols.PARTICIPATION === 'number') row[cols.PARTICIPATION] = reuseAnswer;
+  else row[2] = reuseAnswer;
+
+  // Append the row and invoke the submit handler with a fake event range.
+  responsesSheet.appendRow(row);
+  var newRow = responsesSheet.getLastRow();
+  var rng = responsesSheet.getRange(newRow, 1, 1, numCols);
+  var e = { range: rng };
+  try {
+    handleFormSubmit_(e);
+    ui.alert('Test reuse submitted for stu@asyn.com');
+  } catch (err) {
+    ui.alert('Test reuse failed: ' + (err && err.message));
+  }
 }

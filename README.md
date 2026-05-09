@@ -2,6 +2,12 @@
 
 Google Apps Script automation for managing monthly Go30 fitness challenge trackers in Google Sheets.
 
+About
+
+- Short: Automates copying and initializing a monthly Go30 tracker spreadsheet and its signup form, wiring triggers, URL shortening, and logging for non-technical operators.
+- Topics: apps-script, google-sheets, automation, fitness, go30, beads, gdpr-conscious
+
+
 ---
 
 ## Getting Started
@@ -9,7 +15,9 @@ Google Apps Script automation for managing monthly Go30 fitness challenge tracke
 ### Prerequisites
 
 - Google account that owns the Go30 tracker spreadsheet
+- Go30 Template spreadsheet created and accessible (the bound script is deployed on this template)
 - [clasp](https://github.com/google/clasp) installed: `npm install -g @google/clasp`
+- `.clasprc.json` configured by running `clasp login` from the `script/` folder. (`clasp` will create this file automatically.)
 - `TINYURL_ACCESS_TOKEN` Script Property configured (see [OPERATIONS.md](docs/OPERATIONS.md))
 
 ### Deploy

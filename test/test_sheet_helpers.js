@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildCaseInsensitiveHeaderMap_,
+  resolveManagedHeaderMap_,
   findRowIndexByNormalizedValue_,
   buildSharedHeaderCopyPlan_,
 } = require('../script/libSheets.js');
@@ -33,5 +34,28 @@ assert.deepEqual(copyPlan, [
   { header: 'Email Address', targetIndex: 1, value: 'pax@example.com' },
   { header: 'How', targetIndex: 0, value: 'Journal' },
 ]);
+
+const normalizedResponseMap = resolveManagedHeaderMap_(
+  [
+    'Email Address',
+    'Team preference',
+    'What is your goal?',
+    'WHO do you ultimately want to become?'
+  ],
+  {
+    EMAIL: { header: 'Email Address' },
+    TEAM_TYPE: { header: 'Team type', aliases: ['Team preference'], optional: true },
+    OTHER_TEAM: { header: 'Other team name', aliases: ['What is your goal?'] },
+    WHO: { header: 'WHO do you ultimately want to become?' },
+    NAG_EMAIL: { header: 'NAG Email?', aliases: ['NAG'], optional: true }
+  }
+);
+
+assert.deepEqual(normalizedResponseMap, {
+  EMAIL: 0,
+  TEAM_TYPE: 1,
+  OTHER_TEAM: 2,
+  WHO: 3,
+});
 
 console.log('test_sheet_helpers.js: PASS');

@@ -1,8 +1,9 @@
 /**
  * libSheets.js
  * 
- * This library provides a set of classes and functions to manage Google Sheets efficiently.
- * It includes functionalities for creating, retrieving, and managing sheets and their data.
+ * This library provides a standard interface for Google Sheets that behave like tables.
+ * It supports stable canonical field names in code, while allowing existing sheets to keep
+ * legacy header text until an explicit migration is requested elsewhere.
  * 
  * Primary Use Case Scenarios:
  * 
@@ -15,7 +16,9 @@
  * 
  * 2. ManagedSheet Class:
  *    - Handles row-level operations, including retrieving rows, searching, updating, and appending.
- *    - Keeps in-memory data synchronized with the sheet and provides methods to manage rows within a sheet.
+ *    - Builds an in-memory header map from canonical field keys to actual sheet columns.
+ *    - Header resolution is alias-aware but read-only: opening a legacy sheet normalizes access in memory
+ *      without rewriting the underlying header row.
  *    - Example:
  *      const managedSheet = new ManagedSheet(sheet, columnMap, headers);
  *      managedSheet.appendRow({ column1: "Value1", column2: "Value2" });
@@ -30,6 +33,8 @@
  * 4. openExistingSheet Function:
  *    - Opens an existing sheet and returns a ManagedSheet object.
  *    - Throws an error if the sheet does not exist.
+ *    - Future path: explicit schema/header migration may be added as a separate operation,
+ *      but opening a legacy sheet must remain non-destructive.
  *    - Example:
  *      const managedSheet = openExistingSheet("Sheet Name", columnMap);
  * 
@@ -181,6 +186,59 @@ function buildCaseInsensitiveHeaderMap_(headers) {
     map[String(header || '').trim().toLowerCase()] = index;
   });
   return map;
+}
+
+function normalizeManagedColumnSpec_(columnSpec) {
+  if (typeof columnSpec === 'string') {
+    return { header: columnSpec, aliases: [], optional: false };
+  }
+
+  if (!columnSpec || typeof columnSpec.header !== 'string') {
+    throw new Error('ManagedSheet column spec must be a header string or { header, aliases?, optional? } object');
+  }
+
+  return {
+    header: columnSpec.header,
+    aliases: Array.isArray(columnSpec.aliases) ? columnSpec.aliases : [],
+    optional: !!columnSpec.optional
+  };
+}
+
+function getManagedColumnHeader_(columnSpec) {
+  return normalizeManagedColumnSpec_(columnSpec).header;
+}
+
+function resolveManagedHeaderMap_(headerRow, columnMap, options) {
+  const normalizedHeaderMap = buildCaseInsensitiveHeaderMap_(headerRow || []);
+  const resolved = {};
+  const missing = [];
+
+  Object.keys(columnMap || {}).forEach((key) => {
+    const spec = normalizeManagedColumnSpec_(columnMap[key]);
+    const candidateHeaders = [spec.header].concat(spec.aliases || []);
+    let foundIndex = -1;
+
+    for (let i = 0; i < candidateHeaders.length; i++) {
+      const normalizedName = String(candidateHeaders[i] || '').trim().toLowerCase();
+      if (normalizedName in normalizedHeaderMap) {
+        foundIndex = normalizedHeaderMap[normalizedName];
+        break;
+      }
+    }
+
+    if (foundIndex !== -1) {
+      resolved[key] = foundIndex;
+    } else if (!spec.optional) {
+      missing.push(spec.header);
+    }
+  });
+
+  if (missing.length && !(options && options.allowMissingRequired)) {
+    const targetName = options && options.sheetName ? " in sheet '" + options.sheetName + "'" : '';
+    throw new Error('Missing expected headers' + targetName + ': ' + missing.join(', '));
+  }
+
+  return resolved;
 }
 
 /**
@@ -392,7 +450,7 @@ class ManagedSheet {
 
     if (typeof headers === 'string') {
       // Comma-separated string of internal field names needs to be converted to an array
-      headers = headers.split(',').map(key => columnMap[key.trim()]);
+      headers = headers.split(',').map(key => getManagedColumnHeader_(columnMap[key.trim()]));
     }
     this.headers = headers;
     this.columnMap = columnMap;
@@ -419,7 +477,7 @@ class ManagedSheet {
     if (headers) {
       if (typeof headers === 'string') {
         // Comma-separated string of internal field names needs to be converted to an array
-        headers = headers.split(',').map(key => columnMap[key.trim()]);
+        headers = headers.split(',').map(key => getManagedColumnHeader_(this.columnMap[key.trim()]));
       }
       this.headers = headers;
     }
@@ -469,14 +527,20 @@ class ManagedSheet {
     let map = {};
     const dthis = this;
 
+    try {
+      map = resolveManagedHeaderMap_(headerRow, this.columnMap, {
+        allowMissingRequired: true,
+        sheetName: this.sheet.getName()
+      });
+    } catch (err) {
+      Logger.log(`Warning: Failed to resolve header map for sheet '${dthis.sheet.getName()}': ${err.message}`);
+      map = {};
+    }
+
     for (let key in this.columnMap) {
-      let columnName = this.columnMap[key];
-      let index = headerRow.indexOf(columnName);
-      if (index !== -1) {
-        map[key] = index;
-      } else {
-        Logger.log(`Warning: Column '${columnName}' not found in sheet '${dthis.sheet.getName()}'`);
-      }
+      if (key in map) continue;
+      const columnName = getManagedColumnHeader_(this.columnMap[key]);
+      Logger.log(`Warning: Column '${columnName}' not found in sheet '${dthis.sheet.getName()}'`);
     }
     this.headerMap = map;
     return this;
@@ -745,6 +809,9 @@ class ManagedSheet {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildCaseInsensitiveHeaderMap_,
+    normalizeManagedColumnSpec_,
+    getManagedColumnHeader_,
+    resolveManagedHeaderMap_,
     findRowIndexByNormalizedValue_,
     buildSharedHeaderCopyPlan_
   };

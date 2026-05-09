@@ -32,6 +32,152 @@ function isYesLike_(val) {
   return s === 'yes' || s === 'y' || s === 'true' || s.indexOf('yes') === 0;
 }
 
+function sanitizeNagRecipientEmail_(email) {
+  var flattened = String(email || '').replace(/[\r\n\t]+/g, ' ').trim();
+  if (/[<>\",;]/.test(flattened)) return '';
+  var cleaned = flattened.replace(/\s+/g, '');
+  if (!cleaned) return '';
+  if (!/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(cleaned)) return '';
+  return cleaned.toLowerCase();
+}
+
+function sanitizeNagDisplayName_(name) {
+  var flattened = String(name || '').replace(/[\r\n\t]+/g, ' ').trim();
+  if (!flattened) return '';
+
+  var normalized = typeof flattened.normalize === 'function'
+    ? flattened.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    : flattened;
+
+  return normalized
+    .replace(/[^A-Za-z0-9 ._'()-]+/g, ' ')
+    .replace(/[<>",;]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildNagRecipientList_(recipients) {
+  return (recipients || []).map(function(recipient) {
+    var email = sanitizeNagRecipientEmail_(recipient && recipient.email);
+    if (!email) return '';
+
+    var displayName = sanitizeNagDisplayName_(recipient && recipient.name);
+    return displayName ? (displayName + ' <' + email + '>') : email;
+  }).filter(function(entry) {
+    return !!entry;
+  }).join(',');
+}
+
+function buildTrackerUrl_(ss, tracker) {
+  return ss.getUrl() + '#gid=' + tracker.getSheetId();
+}
+
+function pickFunFactFromValues_(values, randomIndexFn) {
+  if (!values || values.length < 2) return '';
+
+  var dataRows = values.slice(1).filter(function(row) {
+    return row && row.some(function(cell) {
+      return String(cell || '').trim() !== '';
+    });
+  });
+
+  if (dataRows.length === 0) return '';
+
+  var index = randomIndexFn
+    ? randomIndexFn(dataRows.length)
+    : Math.floor(Math.random() * dataRows.length);
+  var selected = dataRows[index] || [];
+  var left = String(selected[0] || '').trim();
+  var right = String(selected[1] || '').trim();
+  var detail = right ? (left + ' - ' + right) : left;
+
+  return detail ? ('Fun fact: ' + detail) : '';
+}
+
+function readRandomFunFact_(ss) {
+  var funFacts = ss.getSheetByName('FunFacts');
+  if (!funFacts) return '';
+  return pickFunFactFromValues_(funFacts.getDataRange().getValues());
+}
+
+function escapeHtmlForEmail_(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderReminderEmailHtmlFallback_(options) {
+  var missingItems = (options.missing || []).map(function(member) {
+    var goal = member.who ? (' - goal: ' + escapeHtmlForEmail_(member.who)) : '';
+    return '<li><strong>' + escapeHtmlForEmail_(member.name) + '</strong>' + goal + '</li>';
+  }).join('');
+
+  return [
+    '<!DOCTYPE html>',
+    '<html><body style="font-family:Arial,sans-serif;color:#222;line-height:1.5;">',
+    options.funFact ? ('<p style="font-weight:bold;">' + escapeHtmlForEmail_(options.funFact) + '</p>') : '',
+    '<p>Men of ' + escapeHtmlForEmail_(options.teamName) + ',</p>',
+    '<p>This is a quick reminder that the following teammates have not yet checked in for ' + escapeHtmlForEmail_(options.targetDateString) + ':</p>',
+    '<ul>' + missingItems + '</ul>',
+    '<p><a href="' + escapeHtmlForEmail_(options.trackerUrl) + '">Open the tracker</a></p>',
+    '<p>If you already checked in and your entry is not showing yet, just update it in the tracker.</p>',
+    '<p>This reminder was sent only to teammates who explicitly opted in to nag emails.</p>',
+    '<p>Stay after it,<br>F3 Go30</p>',
+    '</body></html>'
+  ].join('');
+}
+
+function renderReminderEmailHtml_(options) {
+  if (typeof HtmlService === 'undefined' || !HtmlService.createTemplateFromFile) {
+    return renderReminderEmailHtmlFallback_(options);
+  }
+
+  var template = HtmlService.createTemplateFromFile('ReminderEmailTemplate');
+  template.teamName = options.teamName;
+  template.targetDateString = options.targetDateString;
+  template.trackerUrl = options.trackerUrl;
+  template.funFact = options.funFact;
+  template.missing = options.missing || [];
+  return template.evaluate().getContent();
+}
+
+function buildReminderEmailTemplate_(options) {
+  var subject = 'Go30 Reminder | ' + options.teamName + ' | Missing check-ins for ' + options.targetDateString;
+  var bodyLines = [];
+
+  if (options.funFact) bodyLines.push(options.funFact, '');
+  bodyLines.push('Men of ' + options.teamName + ',');
+  bodyLines.push('');
+  bodyLines.push('This is a quick reminder that the following teammates have not yet checked in for ' + options.targetDateString + ':');
+  bodyLines.push('');
+
+  options.missing.forEach(function(member) {
+    var line = '- ' + member.name;
+    if (member.who) line += ' (goal: ' + member.who + ')';
+    bodyLines.push(line);
+  });
+
+  bodyLines.push('');
+  bodyLines.push('Open the tracker here:');
+  bodyLines.push(options.trackerUrl);
+  bodyLines.push('');
+  bodyLines.push('If you already checked in and your entry is not showing yet, just update it in the tracker.');
+  bodyLines.push('');
+  bodyLines.push('This reminder was sent only to teammates who explicitly opted in to nag emails.');
+  bodyLines.push('');
+  bodyLines.push('Stay after it,');
+  bodyLines.push('F3 Go30');
+
+  return {
+    subject: subject,
+    body: bodyLines.join('\n'),
+    htmlBody: renderReminderEmailHtml_(options)
+  };
+}
+
 function sendNagEmail() {
   GasLogger.init('sendNagEmail');
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -47,6 +193,7 @@ function sendNagEmail() {
   var yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   var targetDateString = Utilities.formatDate(yesterday, tz, 'MM/dd/yyyy');
+  var trackerUrl = buildTrackerUrl_(ss, tracker);
 
   // Find the column in row 3 that matches yesterday's date
   var lastCol = tracker.getLastColumn();
@@ -111,18 +258,7 @@ function sendNagEmail() {
     teams[team].members.push({ name: name, email: email, who: who, nagOpt: nagOpt, checked: checked });
   }
 
-  // Load inspiration quote (optional)
-  var quote = '';
-  var insp = ss.getSheetByName('Inspiration');
-  if (insp) {
-    var inspData = insp.getDataRange().getValues();
-    if (inspData.length > 1) {
-      var idx = Math.floor(Math.random() * (inspData.length - 1)) + 1;
-      var q = inspData[idx][0] || '';
-      var a = inspData[idx][1] || '';
-      quote = (q ? ('"' + q + '"') : '') + (a ? (' - ' + a) : '');
-    }
-  }
+  var funFact = readRandomFunFact_(ss);
 
   var sentSummary = [];
   for (var teamName in teams) {
@@ -134,25 +270,24 @@ function sendNagEmail() {
     var recipients = group.members.filter(function(m){ return m.nagOpt && m.email; });
     if (recipients.length === 0) continue; // no recipients
 
-    var recipientList = recipients.map(function(r){ return r.name + ' <' + r.email + '>'; }).join(',');
+    var recipientList = buildNagRecipientList_(recipients);
+    if (!recipientList) continue;
 
-    var subject = 'Go30 Daily Nag — ' + targetDateString + ' — Team: ' + teamName;
-    var bodyLines = [];
-    if (quote) bodyLines.push(quote, '', '');
-    bodyLines.push('Hello,');
-    bodyLines.push('');
-    bodyLines.push('The following team members have not yet checked in for ' + targetDateString + ':');
-    bodyLines.push('');
-    missing.forEach(function(m) {
-      var whoPart = m.who ? (', who wants to be ' + m.who) : '';
-      bodyLines.push('- ' + m.name + whoPart);
+    var message = buildReminderEmailTemplate_({
+      teamName: teamName,
+      targetDateString: targetDateString,
+      trackerUrl: trackerUrl,
+      funFact: funFact,
+      missing: missing
     });
-    bodyLines.push('');
-    bodyLines.push('This notice was sent to everyone on the team who requested Nag Emails.');
-    bodyLines.push('Keep going — you got this.');
 
     try {
-      MailApp.sendEmail(recipientList, subject, bodyLines.join('\n'));
+      MailApp.sendEmail({
+        to: recipientList,
+        subject: message.subject,
+        body: message.body,
+        htmlBody: message.htmlBody
+      });
       sentSummary.push({ team: teamName, recipients: recipients.length, missing: missing.length });
     } catch (e) {
       Logger.log('sendNagEmail: MailApp.sendEmail failed for team ' + teamName + ' — ' + e.message);
@@ -160,4 +295,15 @@ function sendNagEmail() {
   }
 
   GasLogger.log('sendNagEmail', { date: targetDateString, teamsNotified: sentSummary }, true);
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    buildTrackerUrl_: buildTrackerUrl_,
+    pickFunFactFromValues_: pickFunFactFromValues_,
+    buildReminderEmailTemplate_: buildReminderEmailTemplate_,
+    sanitizeNagRecipientEmail_: sanitizeNagRecipientEmail_,
+    sanitizeNagDisplayName_: sanitizeNagDisplayName_,
+    buildNagRecipientList_: buildNagRecipientList_
+  };
 }

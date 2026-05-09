@@ -67,9 +67,9 @@ function onFormSubmitLocked_(e) {
   var f3Name = getResponseValue_(formResponses, responseColumns, 'F3_NAME');
   deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, responseColumns);
 
-  // Phase 3 — Resolve Team: if the Team column is blank, log the inferred value from Goal selection.
+  // Phase 3 — Resolve Team: if the Team column is blank, log the inferred value from Other team name.
   if (!getResponseValue_(formResponses, responseColumns, 'TEAM')) {
-    Logger.log('handleFormSubmit_: Team blank — inferred from Goal selection: ' + getResponseValue_(formResponses, responseColumns, 'GOAL_SELECTION'));
+    Logger.log('handleFormSubmit_: Team blank — inferred from Other team name: ' + getResponseValue_(formResponses, responseColumns, 'OTHER_TEAM'));
   }
 
   // Phase 4 — Write to Tracker.

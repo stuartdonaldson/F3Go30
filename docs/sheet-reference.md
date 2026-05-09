@@ -315,20 +315,8 @@ or grows.
 **Visibility:** Hidden  
 **Who uses it:** Tracker row 1 rotating quote display.
 
-A two-column table of motivational quotes (Quote in column A, Author in column B). Currently
-holds 25 entries. The merged cell H1 in the Tracker cycles through these quotes every 10 seconds
-using a `LET` formula that computes an index from the current time of day modulo the number of
+A two-column table of motivational quotes (Quote in column A, Author in column B). Populates the top of the  Tracker with a changing quote each time someone loads the tracker.  See cell Tracker!H1 for the `LET` formula that computes an index from the current time of day modulo the number of
 available quotes.
-
----
-
-### Status
-
-**Visibility:** Hidden  
-**Who uses it:** Reserved for automation state flags.
-
-A single-cell sheet. Currently empty. Exists as a reserved location for GAS functions to
-write transient state (e.g., "initialization in progress") that other functions could check.
 
 ---
 
@@ -346,66 +334,12 @@ a `Response` entry with the PAX's F3 name.
 
 ## Legacy and Archive Sheets
 
-### Links old
-
-**Visibility:** Visible  
-**Who uses it:** Operators looking up historical tracker and form URLs.
-
-A historical registry of past monthly trackers. Each row records the Month (date), Spreadsheet
-ID, Tracker URL (tinyURL), HC Form URL (tinyURL), Slack Channel, and Slack Canvas for one past
-month. Rows go back to at least February 2026. The current scheme records links in a `Links`
-sheet on the template spreadsheet instead; this sheet preserves the older pre-migration history.
-
----
-
-### Responses old
-
-**Visibility:** Hidden  
-**Who uses it:** Goals by AO query — legacy data only.
-
-One header row plus one data row from a prior month when teams were AO-based (column F was
-"AO" rather than "Team"). Referenced only by the Goals by AO sheet. No new data is written
-here.
-
----
 
 ### Goals by AO
 
 **Visibility:** Hidden  
 **Who uses it:** Legacy — not shown to PAX or operators in current workflow.
 
-The predecessor to Goals by HIM. Queries `Responses old` instead of the current Responses
+The predecessor to Goals by HIM. Queries `Responses` instead of the current Responses
 sheet. Orders by AO then F3 Name. Kept for historical continuity but not actively used in
 current scoring or display.
-
----
-
-### Notes
-
-**Visibility:** Hidden  
-**Who uses it:** Reference — not used by active automation.
-
-A single row containing the raw Google Forms URL for the signup form. Predates the Links sheet
-tracking system. Kept as a fallback reference if the form URL is needed.
-
----
-
-### Copy of NextMonthLink
-
-**Visibility:** Hidden  
-**Who uses it:** Template for generating pre-filled sign-up form links.
-
-Contains a pre-filled Google Forms URL template with placeholder tokens
-(`F3NAME`, `WHO`, `WHAT`, `HOW`, `0000000000`, team name) that can be substituted to generate
-a personalized re-enrollment link for the next month. Used when generating the auto-notification
-email to re-engage existing PAX.
-
----
-
-### Sheet195
-
-**Visibility:** Visible  
-**Content:** Empty (1 row × 1 column)
-
-An artifact sheet — likely the remnant of a spreadsheet copy or import operation. No formulas,
-no data, no known purpose. Safe to delete.

@@ -5,7 +5,7 @@ Domain: documentation
 
 ## Observation
 - Requested: generate `CONTEXT.md` and `DESIGN.md` for the project based on `docs/framework` standards and the repo `README.md`.
-- Assistant created `docs/CONTEXT.md` and `docs/DESIGN.md` in the parent `docs/` folder, but both drafts omitted several sections (full Constraints, complete Use Cases, full Stakeholders table, some Glossary items) despite that material being present in `README.md`.
+- GPT-5 mini Assistant created `docs/CONTEXT.md` and `docs/DESIGN.md` in the parent `docs/` folder, but both drafts omitted several sections (full Constraints, complete Use Cases, full Stakeholders table, some Glossary items) despite that material being present in `README.md`.
 - The user reported the omission and asked for a lessons-learned capture.
 
 ## Why Chain

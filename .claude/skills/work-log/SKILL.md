@@ -49,19 +49,16 @@ Keep a project activity log without manual formatting — date headers, consiste
 ## Procedure
 
 1. **Determine mode** → If argument provided, use as filter prompt (guided capture); otherwise proceed to auto-summary
-2. **Auto-summarize or filter** → No arg: analyze session context to extract accomplishments and changes; With arg: use prompt to identify matching work from session
-3. **Add timestamp** → Include HH:MM:SS in log entry (system time at log invocation)
-4. **Locate work-log.md** → Check for file in project root (`./work-log.md`) | Fail: note to user, create empty file and continue
-5. **Check date header** → Read file and look for `## YYYY-MM-DD` matching today's date | Fail: assume no header; continue without check
-6. **Append via heredoc** → Run `cat >> work-log.md << 'EOF'` with summary and timestamp, single Bash call | Fail: display error, abort, suggest manual edit
-7. **Display result** → Show last 15 lines of updated file | Fail: read-back failed; user should verify manually
-8. **Suggest context clear** → Display message: "Cache context grown large? Run `/clear` to clean up session history." | Do not auto-invoke /clear
+2. **Auto-summarize or filter** → No arg: analyze session context to extract accomplishments and changes and key learnings; With arg: use prompt to identify matching work from session
+3. **Include header** → `## YYYY-MM-DD HH:MM:SS` matching current date and time.
+4. **Append via heredoc** → Run `cat >> work-log.md << 'EOF'` with header and smmary, single Bash call | Fail: display error, abort, suggest manual edit
+5. **Display result** → Show last 15 lines of updated file | Fail: read-back failed; user should verify manually
+6. **Suggest context clear** → Display message: "Cache context grown large? Run `/clear` to clean up session history." | Do not auto-invoke /clear
 
 ## Success Criteria
-
+- Summary and details are clear and concise
 - Summary appended to work-log.md (verify: `tail -5` shows new content with no truncation)
-- Date header exists and matches today (verify: `grep "## YYYY-MM-DD"` returns current date)
-- Timestamp included in log entry (verify: HH:MM:SS visible in appended line)
+- Date and time header exists and matches today (verify: `grep "## YYYY-MM-DD"` returns current date and time `HH:MM:SS`)
 - File remains readable and valid (verify: file size increased, bash command returned 0)
 - User sees final state (verify: output shows last 15 lines, date header and timestamp visible)
 - Cache-clear suggestion displayed (verify: message shown to user, no auto `/clear` invoked)
@@ -75,24 +72,14 @@ Keep a project activity log without manual formatting — date headers, consiste
 **Analyzes:** Current session context  
 **Expected output:**
 ```
-## 2026-05-08
+## 2026-05-08 20:33:01
 
-14:32:15 — Fixed auth validation bug in login flow; added 12 unit tests; reviewed and approved 3 PRs
+### Summary:
+Fixed auth validation bug in login flow; added 12 unit tests; reviewed and approved 3 PRs
+
+### Key Learnings:
+To use the `clasp run function` requires a GCP project along with custom OAuth screen.
 ```
-
-### Example 2: Filtered capture (with argument)
-
-**Input:** `/work-log "tests"`
-
-**Analyzes:** Session context, filters for test-related work  
-**Expected output:**
-```
-## 2026-05-08
-
-14:42:08 — Tests: Added 12 unit tests for auth module, refactored test fixtures, integrated with CI pipeline
-```
-
-**Actual:** File appended atomically, user sees confirmation with updated content and cache-clear suggestion.
 
 ## Anti-Pattern
 

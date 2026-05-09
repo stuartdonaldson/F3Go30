@@ -1,3 +1,102 @@
+var libSheetsModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./libSheets.js')
+  : null;
+
+var resolveManagedHeaderMap_ = (libSheetsModule_ && libSheetsModule_.resolveManagedHeaderMap_)
+  || (typeof globalThis !== 'undefined' && globalThis.resolveManagedHeaderMap_);
+var findRowIndexByNormalizedValue_ = (libSheetsModule_ && libSheetsModule_.findRowIndexByNormalizedValue_)
+  || (typeof globalThis !== 'undefined' && globalThis.findRowIndexByNormalizedValue_);
+
+var RESPONSE_COLUMN_MAP = {
+  EMAIL: { header: 'Email Address', aliases: ['Email'] },
+  F3_NAME: { header: 'F3 Name' },
+  PARTICIPATION: { header: 'Are you currently participating in Go30?' },
+  TEAM_TYPE: {
+    header: 'Team type',
+    aliases: [
+      'Do you want to be on an AO based team - OR- grouped with other HIMs around a common goal?',
+      'Team preference'
+    ],
+    optional: true
+  },
+  TEAM: { header: 'Team' },
+  OTHER_TEAM: {
+    header: 'Other team name',
+    aliases: [
+      "Great! Here are some goals that other HIM's are focused on this month. Pick one or choose 'other' and we will try and pair you with someone else who has a similar goal. Or specify another team name for grouping",
+      'Goal or other team name',
+      'What is your goal?',
+      'Goal selection'
+    ]
+  },
+  WHO: { header: 'WHO do you ultimately want to become?' },
+  WHAT: { header: 'WHAT is your Go30 Challenge?' },
+  HOW: { header: 'HOW are you going to be successful this month?' },
+  PHONE: { header: 'Cell Phone Number' },
+  NAG_EMAIL: {
+    header: 'NAG Email?',
+    aliases: ['NAG Email', 'Nag Email?', 'NAG'],
+    optional: true
+  }
+};
+
+function getResponseColumnSpec_(key) {
+  if (!(key in RESPONSE_COLUMN_MAP)) throw new Error('Unknown response column key: ' + key);
+  return RESPONSE_COLUMN_MAP[key];
+}
+
+function getResponseColumnHeader_(key) {
+  return getResponseColumnSpec_(key).header;
+}
+
+function getResponseFieldTitles_(key) {
+  var spec = getResponseColumnSpec_(key);
+  return [spec.header].concat(spec.aliases || []);
+}
+
+function resolveResponseColumns(responsesSheetOrHeaders) {
+  var headers = Array.isArray(responsesSheetOrHeaders)
+    ? responsesSheetOrHeaders
+    : (responsesSheetOrHeaders ? responsesSheetOrHeaders.getRange(1, 1, 1, responsesSheetOrHeaders.getLastColumn()).getValues()[0] : []);
+
+  return resolveManagedHeaderMap_(headers, RESPONSE_COLUMN_MAP);
+}
+
+var resolveResponseColumns_ = resolveResponseColumns;
+
+function buildResponseFieldCopyPlan_(sourceColumns, sourceRow, targetColumns) {
+  var copyPlan = [];
+  Object.keys(RESPONSE_COLUMN_MAP).forEach(function(key) {
+    if (typeof sourceColumns[key] !== 'number' || typeof targetColumns[key] !== 'number') return;
+    copyPlan.push({
+      field: key,
+      header: getResponseColumnHeader_(key),
+      targetIndex: targetColumns[key],
+      value: sourceRow[sourceColumns[key]]
+    });
+  });
+  return copyPlan;
+}
+
+function sanitizeTextForEmailLine_(value) {
+  return String(value || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function sanitizeEmailAddressForSend_(email) {
+  var flattened = sanitizeTextForEmailLine_(email);
+  if (/[<>\",;]/.test(flattened)) return '';
+
+  var cleaned = flattened.replace(/\s+/g, '');
+
+  if (!cleaned) return '';
+  if (!/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(cleaned)) return '';
+  return cleaned.toLowerCase();
+}
+
 /**
  * Manual admin utility — copies one participant's responses from last month's
  * tracker into the current tracker and emails them a summary.
@@ -55,7 +154,7 @@ function copyResponsesToCurrentTracker(email) {
 
   // Copy values for headers that exist in both
   const copiedPairs = [];
-  const copyPlan = buildSharedHeaderCopyPlan_(prevHeaders, prevRowValues, curHeaders);
+  const copyPlan = buildResponseFieldCopyPlan_(prevResponseColumns, prevRowValues, curResponseColumns);
   copyPlan.forEach((entry) => {
     curResponses.getRange(curRowIndex + 1, entry.targetIndex + 1).setValue(entry.value);
     copiedPairs.push({ header: entry.header, value: entry.value });
@@ -79,7 +178,8 @@ function copyResponsesToCurrentTracker(email) {
  * `data` is an array of {header, value} objects.
  */
 function sendResponseSettingsEmail(email, data) {
-  if (!email) throw new Error('email required');
+  var recipient = sanitizeEmailAddressForSend_(email);
+  if (!recipient) throw new Error('valid email required');
   if (!data || !Array.isArray(data)) throw new Error('data required');
 
   const subject = 'Your Go30 signup settings';
@@ -89,11 +189,20 @@ function sendResponseSettingsEmail(email, data) {
   });
   body += '\nIf any value looks incorrect, please update your form response or contact the Site Q.';
 
-  MailApp.sendEmail(email, subject, body);
+  MailApp.sendEmail(recipient, subject, body);
 }
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    RESPONSE_COLUMN_MAP,
+    getResponseColumnSpec_,
+    getResponseColumnHeader_,
+    getResponseFieldTitles_,
+    resolveResponseColumns,
+    resolveResponseColumns_,
+    buildResponseFieldCopyPlan_,
+    sanitizeTextForEmailLine_,
+    sanitizeEmailAddressForSend_,
     sendResponseSettingsEmail
   };
 }

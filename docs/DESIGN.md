@@ -61,7 +61,7 @@ class BG1,BG2,BG3 lightgreen
 | Module | Files | Responsibility |
 |--------|-------|---------------|
 | Entry Points | `onOpen.js`, `macros.js` | Custom menu, trigger initialization, legacy macro entry points |
-| Tracker Lifecycle | `CreateNewTracker.js`, `addResponseOnSubmit.js`, `markMinusOne.js` | Copy-and-init workflow, form-submit handler, nightly miss marking |
+| Tracker Lifecycle | `CreateNewTracker.js`, `addResponseOnSubmit.js`, `markMinusOne.js`, `nag.js` | Copy-and-init workflow, form-submit handler, nightly miss marking, daily reminder email workflow |
 | UI / Notifications | `NotificationSBCode.js`, `NotificationSidebar.html` | Sidebar panel: log streaming, prompts, HTML link generation |
 | Utilities | `logActivity.js`, `urlShortener.js`, `Utilities.js` | Activity logging, URL shortening (TinyURL/Bitly), cell utilities, Config sheet reads |
 
@@ -81,6 +81,7 @@ Known code-level risks:
 | Tracker has fewer than 4 rows when `onFormSubmit` runs | `getRange` throws on negative row count | Guard added — F3Go30-x82 |
 | URL shortener returns non-200 | Error caught but fallback URL not surfaced with actionable message | Known gap |
 | `autoGenerateNextMonthTracker` installed on wrong spreadsheet | If installed on a monthly tracker instead of the template, copies from that tracker not the template | Install monthly trigger only on the template spreadsheet |
+| Reminder workflow design vs current code | `sendNagEmail` exists, but current code still uses the `Inspiration` sheet and ad hoc body text rather than the resolved `FunFacts`-based reminder template and finalized content model | Known drift — `F3Go30-559`, `F3Go30-ul1`, `F3Go30-agl` |
 
 ---
 
@@ -98,6 +99,14 @@ Two logging channels serve different execution contexts:
 
 `NoticeLog()` mirrors to `Logger.log()` (HTML-stripped) regardless of sidebar state. Functions
 that cannot guarantee a sidebar context must call `Logger.log()` directly.
+
+## Decisions (short)
+
+- **PAX motivation data source (F3Go30-r1b) — DECIDED:** Use the `FunFacts` sheet as the motivation source. Reminder emails will include a randomly-selected entry from the `FunFacts` sheet when personalization is desired. This removes the need for an additional per-person profile submission for basic motivational text; code must implement a random-row selector and include the chosen text in the email payload.
+
+- **Notification scope (F3Go30-a45) — DECIDED:** Notification scope is *team* by default. Reminder emails will be addressed to the team (whole tracker or sub-team when a Team column is present), but the system MUST filter recipients to include only members who have explicitly opted in via the `NAG email?` response column on the HC form (opt-in consent). The reminder trigger implementation must consult the Responses/Preferences data to honor consent before sending any emails.
+
+- **Current implementation note:** `nag.js` already sends a basic team-scoped nag email to opted-in recipients. That implementation is only partial: it currently pulls quote text from the `Inspiration` sheet and uses direct body construction rather than the resolved `FunFacts`-based reminder template. Documentation and implementation should treat this as in-progress behavior, not the final design.
 
 ---
 

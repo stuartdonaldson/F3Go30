@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+  </head>
+  <body style="margin:0;padding:0;background:#f4f1ea;font-family:Arial,sans-serif;color:#222;line-height:1.5;">
+    <div style="max-width:680px;margin:0 auto;padding:24px;">
+      <div style="background:#fffdf8;border:1px solid #d8cfbf;border-radius:12px;overflow:hidden;">
+        <div style="background:#2f5d50;color:#f8f4ea;padding:20px 24px;">
+          <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.9;">F3 Go30 Reminder</div>
+          <h1 style="margin:8px 0 0;font-size:24px;line-height:1.2;">Missing check-ins for <?= targetDateString ?></h1>
+          <div style="margin-top:6px;font-size:14px;opacity:0.95;">Team <?= teamName ?></div>
+        </div>
+
+        <div style="padding:24px;">
+          <? if (funFact) { ?>
+            <div style="margin-bottom:20px;padding:14px 16px;background:#f3efe4;border-left:4px solid #b8860b;border-radius:8px;font-size:14px;">
+              <strong><?= funFact ?></strong>
+            </div>
+          <? } ?>
+
+          <p style="margin:0 0 16px;">Men of <?= teamName ?>,</p>
+
+          <p style="margin:0 0 16px;">This is a quick reminder that the following teammates have not yet checked in for <?= targetDateString ?>:</p>
+
+          <ul style="margin:0 0 20px 20px;padding:0;">
+            <? for (var i = 0; i < missing.length; i++) { ?>
+              <li style="margin:0 0 10px;">
+                <strong><?= missing[i].name ?></strong>
+                <? if (missing[i].who) { ?>
+                  <span style="color:#555;"> - goal: <?= missing[i].who ?></span>
+                <? } ?>
+              </li>
+            <? } ?>
+          </ul>
+
+          <p style="margin:0 0 10px;">Open the tracker here:</p>
+          <p style="margin:0 0 20px;"><a href="<?= trackerUrl ?>" style="color:#0b5c86;font-weight:bold;">View current tracker</a></p>
+
+          <p style="margin:0 0 16px;">If you already checked in and your entry is not showing yet, just update it in the tracker.</p>
+
+          <p style="margin:0 0 16px;font-size:13px;color:#555;">This reminder was sent only to teammates who explicitly opted in to nag emails.</p>
+
+          <p style="margin:20px 0 0;">Stay after it,<br>F3 Go30</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

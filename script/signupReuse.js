@@ -9,36 +9,23 @@
  *   current Responses row, merges them into the in-memory formResponses, and
  *   emails the participant a summary with a prefilled edit link.
  */
+var responseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
+    ? require('./response_utils.js')
+    : null;
 
-// Mapping used by ManagedSheet to map internal keys to canonical header names.
-// All keys are required; resolveResponseColumns throws if any are absent.
-var RESPONSE_COLUMN_MAP = {
-    EMAIL: 'Email Address',
-    F3_NAME: 'F3 Name',
-    PARTICIPATION: 'Are you currently participating in Go30?',
-    TEAM: 'Team',
-    GOAL_SELECTION: 'Goal selection',
-    WHO: 'WHO do you ultimately want to become?',
-    WHAT: 'WHAT is your Go30 Challenge?',
-    HOW: 'HOW are you going to be successful this month?',
-    PHONE: 'Cell Phone Number'
-};
-
-// Alternative header phrasings for the same question — form text changes between tracker versions.
-// resolveResponseColumns tries these after the primary name fails.
-var RESPONSE_COLUMN_ALIASES = {
-    GOAL_SELECTION: ['What is your goal?'],
-    TEAM_PREFERENCE: ['Do you want to be on an AO based team - OR- grouped with other HIMs around a common goal?']
-};
-
-// Optional columns: resolved when header present, skipped silently when absent.
-var OPTIONAL_RESPONSE_COLUMN_MAP = {
-    NAG_EMAIL: 'NAG Email?',
-    TEAM_PREFERENCE: 'Team preference'
-};
-
-// GAS global alias — callers in nag.js and response_utils.js reference this name.
-var resolveResponseColumns_ = resolveResponseColumns;
+var RESPONSE_COLUMN_MAP = (responseUtilsModule_ && responseUtilsModule_.RESPONSE_COLUMN_MAP)
+    || (typeof globalThis !== 'undefined' && globalThis.RESPONSE_COLUMN_MAP);
+var getResponseFieldTitles_ = (responseUtilsModule_ && responseUtilsModule_.getResponseFieldTitles_)
+    || (typeof globalThis !== 'undefined' && globalThis.getResponseFieldTitles_);
+var sanitizeTextForEmailLine_ = (responseUtilsModule_ && responseUtilsModule_.sanitizeTextForEmailLine_)
+    || (typeof globalThis !== 'undefined' && globalThis.sanitizeTextForEmailLine_);
+var sanitizeEmailAddressForSend_ = (responseUtilsModule_ && responseUtilsModule_.sanitizeEmailAddressForSend_)
+    || (typeof globalThis !== 'undefined' && globalThis.sanitizeEmailAddressForSend_);
+var resolveResponseColumns = (responseUtilsModule_ && responseUtilsModule_.resolveResponseColumns)
+    || (typeof globalThis !== 'undefined' && globalThis.resolveResponseColumns);
+var resolveResponseColumns_ = (responseUtilsModule_ && responseUtilsModule_.resolveResponseColumns_)
+    || (typeof globalThis !== 'undefined' && globalThis.resolveResponseColumns_)
+    || resolveResponseColumns;
 
 function getResponseValue_(responseRow, columnMap, key) {
     if (!columnMap || typeof columnMap[key] !== 'number') throw new Error('Missing header mapping for ' + key);
@@ -54,48 +41,6 @@ function getOptionalResponseValue_(responseRow, columnMap, key) {
 function setResponseValue_(responseRow, columnMap, key, value) {
     if (!columnMap || typeof columnMap[key] !== 'number') throw new Error('Missing header mapping for ' + key);
     responseRow[columnMap[key]] = value;
-}
-
-function normalizeHeaderName(val) {
-    return String(val || '').trim().toLowerCase();
-}
-
-// Returns the 0-based index of primaryName (or any alias) in normalizedHeaders, or -1.
-function findHeaderIndex_(normalizedHeaders, primaryName, aliases) {
-    var names = [primaryName].concat(aliases || []);
-    for (var n = 0; n < names.length; n++) {
-        var norm = normalizeHeaderName(names[n]);
-        for (var h = 0; h < normalizedHeaders.length; h++) {
-            if (normalizedHeaders[h] === norm) return h;
-        }
-    }
-    return -1;
-}
-
-function resolveResponseColumns(responsesSheetOrHeaders) {
-    var headers = Array.isArray(responsesSheetOrHeaders)
-        ? responsesSheetOrHeaders
-        : (responsesSheetOrHeaders ? responsesSheetOrHeaders.getRange(1, 1, 1, responsesSheetOrHeaders.getLastColumn()).getValues()[0] : []);
-
-    var normalized = headers.map(normalizeHeaderName);
-    var resolved = {};
-
-    // Required columns — throw if absent under both canonical name and any alias.
-    for (var canonical in RESPONSE_COLUMN_MAP) {
-        var found = findHeaderIndex_(normalized, RESPONSE_COLUMN_MAP[canonical], RESPONSE_COLUMN_ALIASES[canonical]);
-        if (found === -1) {
-            throw new Error('Missing expected header: ' + RESPONSE_COLUMN_MAP[canonical]);
-        }
-        resolved[canonical] = found;
-    }
-
-    // Optional columns — silently skip when absent under both canonical name and any alias.
-    for (var optKey in OPTIONAL_RESPONSE_COLUMN_MAP) {
-        var optIdx = findHeaderIndex_(normalized, OPTIONAL_RESPONSE_COLUMN_MAP[optKey], RESPONSE_COLUMN_ALIASES[optKey]);
-        if (optIdx !== -1) resolved[optKey] = optIdx;
-    }
-
-    return resolved;
 }
 
 function normalizeEmailAddress(email) {
@@ -141,9 +86,9 @@ function extractReusableResponseValues(responseRow, responseColumns) {
         return (typeof idx === 'number' && idx >= 0) ? (responseRow[idx] || '') : '';
     }
     return {
-        teamPreference: v('TEAM_PREFERENCE'),
+        teamType: v('TEAM_TYPE'),
         team: v('TEAM'),
-        goalSelection: v('GOAL_SELECTION'),
+        otherTeam: v('OTHER_TEAM'),
         who: v('WHO'),
         what: v('WHAT'),
         how: v('HOW'),
@@ -158,9 +103,9 @@ function mergeReusedValuesIntoResponseArray(responseArray, reusedValues, respons
         var idx = responseColumns[key];
         if (typeof idx === 'number' && idx >= 0) responseArray[idx] = value;
     }
-    setVal('TEAM_PREFERENCE', reusedValues.teamPreference);
+    setVal('TEAM_TYPE', reusedValues.teamType);
     setVal('TEAM', reusedValues.team);
-    setVal('GOAL_SELECTION', reusedValues.goalSelection);
+    setVal('OTHER_TEAM', reusedValues.otherTeam);
     setVal('WHO', reusedValues.who);
     setVal('WHAT', reusedValues.what);
     setVal('HOW', reusedValues.how);
@@ -171,9 +116,9 @@ function mergeReusedValuesIntoResponseArray(responseArray, reusedValues, respons
 function buildReuseSummaryLines(reusedValues) {
     if (!reusedValues) return [];
     var lines = [
-        ['Team preference', reusedValues.teamPreference],
+        ['Team type', reusedValues.teamType],
         ['Team', reusedValues.team],
-        ['Goal selection', reusedValues.goalSelection],
+        ['Other team name', reusedValues.otherTeam],
         ['Who', reusedValues.who],
         ['What', reusedValues.what],
         ['How', reusedValues.how],
@@ -191,6 +136,15 @@ function findFormItemByTitle(form, titlePrefix) {
         if (typeof item.getTitle !== 'function') continue;
         var title = String(item.getTitle() || '').trim().toLowerCase();
         if (title === norm || title.indexOf(norm) === 0) return item;
+    }
+    return null;
+}
+
+function findResponseFormItemByKey_(form, key) {
+    var titles = getResponseFieldTitles_(key);
+    for (var i = 0; i < titles.length; i++) {
+        var item = findFormItemByTitle(form, titles[i]);
+        if (item) return item;
     }
     return null;
 }
@@ -216,15 +170,15 @@ function addPrefilledItemResponse(draftResponse, item, value) {
 function buildPrefilledGoalUpdateUrl(form, currentResponseRow, reusedValues, responseColumns) {
     if (!form) return '';
     var draft = form.createResponse();
-    addPrefilledItemResponse(draft, findFormItemByTitle(form, 'Are you currently participating in Go30?'), 'Yes');
-    addPrefilledItemResponse(draft, findFormItemByTitle(form, 'F3 Name'), (currentResponseRow && currentResponseRow[responseColumns.F3_NAME]) || '');
-    addPrefilledItemResponse(draft, findFormItemByTitle(form, 'Team preference'), reusedValues.teamPreference);
-    addPrefilledItemResponse(draft, findFormItemByTitle(form, 'Team'), reusedValues.team);
-    addPrefilledItemResponse(draft, findFormItemByTitle(form, 'Goal selection'), reusedValues.goalSelection);
-    addPrefilledItemResponse(draft, findFormItemByTitle(form, 'WHO do you ultimately want to become?'), reusedValues.who);
-    addPrefilledItemResponse(draft, findFormItemByTitle(form, 'WHAT is your Go30 Challenge?'), reusedValues.what);
-    addPrefilledItemResponse(draft, findFormItemByTitle(form, 'HOW are you going to be successful this month?'), reusedValues.how);
-    addPrefilledItemResponse(draft, findFormItemByTitle(form, 'Cell Phone Number'), reusedValues.phone);
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'PARTICIPATION'), 'Yes');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'F3_NAME'), (currentResponseRow && currentResponseRow[responseColumns.F3_NAME]) || '');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'TEAM_TYPE'), reusedValues.teamType);
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'TEAM'), reusedValues.team);
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'OTHER_TEAM'), reusedValues.otherTeam);
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'WHO'), reusedValues.who);
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'WHAT'), reusedValues.what);
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'HOW'), reusedValues.how);
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'PHONE'), reusedValues.phone);
     return draft.toPrefilledUrl();
 }
 
@@ -254,9 +208,9 @@ function getPriorResponse(prevSs, emailAddress) {
         return {
             ok: true,
             reusedValues: {
-                teamPreference: foundObj.TEAM_PREFERENCE || '',
+                teamType: foundObj.TEAM_TYPE || '',
                 team: foundObj.TEAM || '',
-                goalSelection: foundObj.GOAL_SELECTION || '',
+                otherTeam: foundObj.OTHER_TEAM || '',
                 who: foundObj.WHO || '',
                 what: foundObj.WHAT || '',
                 how: foundObj.HOW || '',
@@ -269,8 +223,10 @@ function getPriorResponse(prevSs, emailAddress) {
 }
 
 function sendGoalReuseEmail(emailAddress, f3Name, trackerUrl, prefilledUrl, summaryLines, usedPriorGoals) {
-    if (!emailAddress) { Logger.log('sendGoalReuseEmail: missing email'); return; }
-    var body = ['F3 Name: ' + (f3Name || '(unknown)'), ''];
+    var recipient = sanitizeEmailAddressForSend_(emailAddress);
+    if (!recipient) { Logger.log('sendGoalReuseEmail: invalid email'); return; }
+    var safeF3Name = sanitizeTextForEmailLine_(f3Name) || '(unknown)';
+    var body = ['F3 Name: ' + safeF3Name, ''];
     if (usedPriorGoals) {
         body.push('We reused your most recent prior Go30 entries for this month:');
         body = body.concat(summaryLines);
@@ -291,7 +247,7 @@ function sendGoalReuseEmail(emailAddress, f3Name, trackerUrl, prefilledUrl, summ
             body.push(prefilledUrl);
         }
     }
-    MailApp.sendEmail(emailAddress, 'F3 Go30: ' + (usedPriorGoals ? 'last month\'s goals reused' : 'enter your goals'), body.join('\n'));
+    MailApp.sendEmail(recipient, 'F3 Go30: ' + (usedPriorGoals ? 'last month\'s goals reused' : 'enter your goals'), body.join('\n'));
 }
 
 /**
@@ -373,6 +329,8 @@ if (typeof module !== 'undefined' && module.exports) {
         extractReusableResponseValues,
         mergeReusedValuesIntoResponseArray,
         buildReuseSummaryLines,
+        sanitizeTextForEmailLine_,
+        sanitizeEmailAddressForSend_,
         getResponseValue_,
         getOptionalResponseValue_,
         setResponseValue_
