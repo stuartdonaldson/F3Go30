@@ -145,7 +145,7 @@ function renderReminderEmailHtml_(options) {
 }
 
 function buildReminderEmailTemplate_(options) {
-  var subject = 'Go30 Reminder | ' + options.teamName + ' | Missing check-ins for ' + options.targetDateString;
+  var subject = 'Go30 Reminder; Missing check-in for ' + options.targetDateString;
   var bodyLines = [];
 
   if (options.funFact) bodyLines.push(options.funFact, '');

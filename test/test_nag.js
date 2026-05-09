@@ -90,7 +90,7 @@ const message = buildReminderEmailTemplate_({
   ],
 });
 
-assert.equal(message.subject, 'Go30 Reminder | Team Test | Missing check-ins for 05/08/2026');
+assert.equal(message.subject, 'Go30 Reminder; Missing check-in for 05/08/2026');
 assert.match(message.body, /Fun fact: Favorite CSAUP - Murph/);
 assert.match(message.body, /This is a quick reminder that the following teammates have not yet checked in for 05\/08\/2026:/);
 assert.match(message.body, /- Anchor \(goal: Leader\)/);
