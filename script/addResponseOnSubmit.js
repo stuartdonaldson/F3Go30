@@ -57,18 +57,17 @@ function onFormSubmitLocked_(e) {
     return;
   }
 
-  var emailAddress = formResponses[responseColumns.EMAIL];
-
   // Phase 1 — Reuse last month's goals if the participant requested it.
   // Returns formResponses unchanged when reuse was not selected.
   formResponses = maybeReuseLastMonthsGoals_(sheet, responsesSheet, submittedRowNumber, formResponses);
 
-  // Phase 2 — Dedup Responses sheet: remove any prior row for the same email so that
+  // Phase 2 — Dedup Responses sheet: remove any prior row for the same F3 Name so that
   // sheets querying Responses (Goals by HIM, Goals by AO) show only the latest submission.
-  deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, emailAddress, responseColumns);
+  // Keyed on F3 Name (not email) per ADR-008 — allows a PAX to change their email address.
+  var f3Name = getResponseValue_(formResponses, responseColumns, 'F3_NAME');
+  deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, responseColumns);
 
   // Phase 3 — Resolve Team: if the Team column is blank, log the inferred value from Goal selection.
-  var f3Name = getResponseValue_(formResponses, responseColumns, 'F3_NAME');
   if (!getResponseValue_(formResponses, responseColumns, 'TEAM')) {
     Logger.log('handleFormSubmit_: Team blank — inferred from Goal selection: ' + getResponseValue_(formResponses, responseColumns, 'GOAL_SELECTION'));
   }
@@ -128,22 +127,22 @@ function onFormSubmitLocked_(e) {
 }
 
 /**
- * Returns the 1-based row numbers of Responses rows that match emailAddress but are NOT
+ * Returns the 1-based row numbers of Responses rows that match keyValue but are NOT
  * the submitted row, sorted descending so callers can delete them highest-first without
  * index drift.
  *
- * emailValues: output of getRange(...).getValues() — array of [email] single-column rows,
- *              where index 0 corresponds to sheet row 2 (first data row after header).
+ * keyValues: output of getRange(...).getValues() — array of single-column rows,
+ *            where index 0 corresponds to sheet row 2 (first data row after header).
  */
-function findDuplicateResponseRows_(emailValues, submittedRowNumber, emailAddress) {
-  var normEmail = String(emailAddress || '').trim().toLowerCase();
-  if (!normEmail) return [];
+function findDuplicateResponseRows_(keyValues, submittedRowNumber, keyValue) {
+  var normKey = String(keyValue || '').trim().toLowerCase();
+  if (!normKey) return [];
 
   var toDelete = [];
-  for (var i = 0; i < emailValues.length; i++) {
+  for (var i = 0; i < keyValues.length; i++) {
     var rowNum = i + 2; // i=0 → sheet row 2
     if (rowNum === submittedRowNumber) continue;
-    if (String(emailValues[i][0] || '').trim().toLowerCase() === normEmail) {
+    if (String(keyValues[i][0] || '').trim().toLowerCase() === normKey) {
       toDelete.push(rowNum);
     }
   }
@@ -151,20 +150,20 @@ function findDuplicateResponseRows_(emailValues, submittedRowNumber, emailAddres
 }
 
 /**
- * Removes prior Responses rows for emailAddress, keeping only submittedRowNumber.
- * Deletions go highest-row-first to avoid index drift.
+ * Removes prior Responses rows whose F3 Name matches f3Name, keeping only submittedRowNumber.
+ * Keyed on F3 Name per ADR-008. Deletions go highest-row-first to avoid index drift.
  */
-function deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, emailAddress, responseColumns) {
-  if (!emailAddress) return;
+function deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, responseColumns) {
+  if (!f3Name) return;
   var lastRow = responsesSheet.getLastRow();
   if (lastRow < 3) return; // header + submitted row only — nothing else to check
 
-  var emailColNum = responseColumns.EMAIL + 1; // 1-based column for getRange
-  var emailValues = responsesSheet.getRange(2, emailColNum, lastRow - 1, 1).getValues();
-  var toDelete = findDuplicateResponseRows_(emailValues, submittedRowNumber, emailAddress);
+  var f3NameColNum = responseColumns.F3_NAME + 1; // 1-based column for getRange
+  var keyValues = responsesSheet.getRange(2, f3NameColNum, lastRow - 1, 1).getValues();
+  var toDelete = findDuplicateResponseRows_(keyValues, submittedRowNumber, f3Name);
 
   for (var j = 0; j < toDelete.length; j++) {
-    Logger.log('handleFormSubmit_: removing prior Responses row ' + toDelete[j] + ' for ' + emailAddress + ' (kept: ' + submittedRowNumber + ')');
+    Logger.log('handleFormSubmit_: removing prior Responses row ' + toDelete[j] + ' for F3 Name "' + f3Name + '" (kept: ' + submittedRowNumber + ')');
     GasLogger.log('formSubmit.responseDeduplicated', { removedRow: toDelete[j], keptRow: submittedRowNumber });
     responsesSheet.deleteRow(toDelete[j]);
   }
