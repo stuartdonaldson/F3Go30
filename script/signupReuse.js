@@ -16,7 +16,6 @@ var RESPONSE_COLUMN_MAP = {
     EMAIL: 'Email Address',
     F3_NAME: 'F3 Name',
     PARTICIPATION: 'Are you currently participating in Go30?',
-    TEAM_PREFERENCE: 'Team preference',
     TEAM: 'Team',
     GOAL_SELECTION: 'Goal selection',
     WHO: 'WHO do you ultimately want to become?',
@@ -27,7 +26,8 @@ var RESPONSE_COLUMN_MAP = {
 
 // Optional columns: resolved when header present, skipped silently when absent.
 var OPTIONAL_RESPONSE_COLUMN_MAP = {
-    NAG_EMAIL: 'NAG Email?'
+    NAG_EMAIL: 'NAG Email?',
+    TEAM_PREFERENCE: 'Team preference'
 };
 
 // GAS global alias — callers in nag.js and response_utils.js reference this name.
