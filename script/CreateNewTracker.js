@@ -563,7 +563,8 @@ function autoGenerateNextMonthTracker() {
       ],
       slackReadyMessage: slackMsg,
       operatorName: null,
-      contactEmail: siteQEmail
+      contactEmail: siteQEmail,
+      appVersion: APP_VERSION
     });
 
     MailApp.sendEmail({

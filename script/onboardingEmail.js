@@ -25,6 +25,7 @@ function renderOnboardingEmailHtml_(options) {
   template.slackReadyMessage = options.slackReadyMessage;
   template.operatorName = options.operatorName;
   template.contactEmail = options.contactEmail;
+  template.appVersion = options.appVersion || (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '');
   return template.evaluate().getContent();
 }
 
