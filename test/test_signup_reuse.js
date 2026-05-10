@@ -292,4 +292,96 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockManagedSheet = null;
 }
 
+// Test: Little John reuse from actual Last Month data
+{
+    mailsSent = [];
+    global._mockPrevSs = {};
+    // Mock with Little John's actual data from last month
+    const littleJohnLastMonth = extractReusableResponseValues(rows[3], responseColumns);
+    global._mockManagedSheet = {
+        getAllRows: function() {
+            return [{
+                EMAIL: 'littlejohn@example.com',
+                TEAM_TYPE: littleJohnLastMonth.teamType,
+                TEAM: littleJohnLastMonth.team,
+                OTHER_TEAM: littleJohnLastMonth.otherTeam,
+                WHO: littleJohnLastMonth.who,
+                WHAT: littleJohnLastMonth.what,
+                HOW: littleJohnLastMonth.how,
+                PHONE: littleJohnLastMonth.phone
+            }];
+        }
+    };
+
+    const littleJohnFormRow = ['ts', 'littlejohn@example.com', REUSE_ANSWER, 'Little John', '', '', '', '', '', '', ''];
+    const result = maybeReuseLastMonthsGoals_(
+        makeMockSs({ 'Last Month Tracker': { primary: 'https://docs.google.com/spreadsheets/d/abc123/edit' } }),
+        makeMockResponsesSheet(HEADERS), 2, littleJohnFormRow
+    );
+
+    console.log('\nLittle John reused values:');
+    console.log('  Team Type:', result[responseColumns.TEAM_TYPE]);
+    console.log('  Team:', result[responseColumns.TEAM]);
+    console.log('  Other Team:', result[responseColumns.OTHER_TEAM]);
+    console.log('  Who:', result[responseColumns.WHO]);
+    console.log('  What:', result[responseColumns.WHAT]);
+    console.log('  How:', result[responseColumns.HOW]);
+    console.log('  Phone:', result[responseColumns.PHONE]);
+
+    assert.equal(result[responseColumns.TEAM_TYPE], 'AO', 'Little John: teamType reused');
+    assert.equal(result[responseColumns.TEAM], 'Crucible', 'Little John: team reused');
+    assert.equal(result[responseColumns.WHO], 'Best loving father, partner, friend and leader I can be', 'Little John: who reused');
+    assert.equal(mailsSent.length, 1, 'Little John: email sent');
+    assert.ok(mailsSent[0].subj.includes('reused'), 'Little John: email confirms reuse');
+
+    global._mockPrevSs = null;
+    global._mockManagedSheet = null;
+}
+
+// Test: Crazy Ivan reuse from actual Last Month data
+{
+    mailsSent = [];
+    global._mockPrevSs = {};
+    // Mock with Crazy Ivan's actual data from last month
+    const crazyIvanLastMonth = extractReusableResponseValues(rows[4], responseColumns);
+    global._mockManagedSheet = {
+        getAllRows: function() {
+            return [{
+                EMAIL: 'crazyivan@example.com',
+                TEAM_TYPE: crazyIvanLastMonth.teamType,
+                TEAM: crazyIvanLastMonth.team,
+                OTHER_TEAM: crazyIvanLastMonth.otherTeam,
+                WHO: crazyIvanLastMonth.who,
+                WHAT: crazyIvanLastMonth.what,
+                HOW: crazyIvanLastMonth.how,
+                PHONE: crazyIvanLastMonth.phone
+            }];
+        }
+    };
+
+    const crazyIvanFormRow = ['ts', 'crazyivan@example.com', REUSE_ANSWER, 'Crazy Ivan', '', '', '', '', '', '', ''];
+    const result = maybeReuseLastMonthsGoals_(
+        makeMockSs({ 'Last Month Tracker': { primary: 'https://docs.google.com/spreadsheets/d/abc123/edit' } }),
+        makeMockResponsesSheet(HEADERS), 2, crazyIvanFormRow
+    );
+
+    console.log('\nCrazy Ivan reused values:');
+    console.log('  Team Type:', result[responseColumns.TEAM_TYPE]);
+    console.log('  Team:', result[responseColumns.TEAM]);
+    console.log('  Other Team:', result[responseColumns.OTHER_TEAM]);
+    console.log('  Who:', result[responseColumns.WHO]);
+    console.log('  What:', result[responseColumns.WHAT]);
+    console.log('  How:', result[responseColumns.HOW]);
+    console.log('  Phone:', result[responseColumns.PHONE]);
+
+    assert.equal(result[responseColumns.TEAM_TYPE], 'AO', 'Crazy Ivan: teamType reused');
+    assert.equal(result[responseColumns.TEAM], 'Crucible', 'Crazy Ivan: team reused');
+    assert.equal(result[responseColumns.WHO], 'A highly intentional, purpose-driven, and effective HIM', 'Crazy Ivan: who reused');
+    assert.equal(mailsSent.length, 1, 'Crazy Ivan: email sent');
+    assert.ok(mailsSent[0].subj.includes('reused'), 'Crazy Ivan: email confirms reuse');
+
+    global._mockPrevSs = null;
+    global._mockManagedSheet = null;
+}
+
 console.log('test_signup_reuse.js: PASS');
