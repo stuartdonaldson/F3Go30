@@ -3,7 +3,13 @@ const assert = require('node:assert/strict');
 // GAS global mocks — must be set before require so the module sees them.
 let mailsSent = [];
 global.Logger = { log: function() {} };
-global.MailApp = { sendEmail: function(to, subj, body) { mailsSent.push({ to, subj, body }); } };
+global.MailApp = { sendEmail: function(arg1, arg2, arg3) {
+    if (typeof arg1 === 'object' && arg1 !== null) {
+        mailsSent.push({ to: arg1.to, subj: arg1.subject || arg1.subj || '', body: arg1.body || '', htmlBody: arg1.htmlBody || '' });
+    } else {
+        mailsSent.push({ to: arg1, subj: arg2, body: arg3 || '' });
+    }
+} };
 global.FormApp = { ItemType: { TEXT: 0, PARAGRAPH_TEXT: 1, MULTIPLE_CHOICE: 2, LIST: 3 } };
 global.SpreadsheetApp = {
     openById: function() { return global._mockPrevSs || null; },
@@ -16,6 +22,11 @@ global.SpreadsheetManager = function(ss) {
         throw new Error('No mock ManagedSheet configured');
     };
 };
+
+// Load templating helper in test environment so signupReuse can call the global helper
+const signupEmailModule = require('../script/signupEmail.js');
+global.buildSignupReuseEmailTemplate_ = signupEmailModule.buildSignupReuseEmailTemplate_;
+global.renderSignupReuseEmailHtml_ = signupEmailModule.renderSignupReuseEmailHtml_;
 
 const {
     isReuseLastMonthsGoalsChoice,
@@ -92,6 +103,8 @@ const rows = [
     ['2026-03-01 08:00:00', 'pax@example.com', 'Yes', 'Anchor', 'AO-based', 'Team A', 'Strength', 'Leader', 'Run', 'Plan', '555-1111'],
     ['2026-03-02 08:00:00', 'other@example.com', 'No', 'Other', '', '', '', '', '', '', ''],
     ['2026-03-03 08:00:00', 'PAX@example.com', 'Yes', 'Anchor', 'goal-based', 'Team B', 'Endurance', 'Disciplined', 'Ruck', 'Journal', '555-2222'],
+    ['2026-04-20 19:35:15', 'littlejohn@example.com', 'Yes', 'Little John', 'AO', 'Crucible', '', 'Best loving father, partner, friend and leader I can be', 'Doing my morning routine with daily plan.\nStaying engaged - at least 1 gathering or interaction with people each day\nF3 workout, ruck at least 3 days each week', 'Partner with other PAX for morning check-in.  Track plan on whiteboard.', '2067797808'],
+    ['2026-05-02 22:17:17', 'crazyivan@example.com', 'Yes', 'Crazy Ivan', 'AO', 'Crucible', '', 'A highly intentional, purpose-driven, and effective HIM', 'Consume <1452 net calories; 5+ minutes of HOAM/SAVERS by 8:30 a.m.; lights out by 10:00 p.m.', 'Pro-active tracking', '4259413500'],
 ];
 
 // -- findLatestResponseByEmail --
