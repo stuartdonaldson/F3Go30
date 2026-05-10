@@ -10,7 +10,10 @@ global.MailApp = { sendEmail: function(arg1, arg2, arg3) {
         mailsSent.push({ to: arg1, subj: arg2, body: arg3 || '' });
     }
 } };
-global.FormApp = { ItemType: { TEXT: 0, PARAGRAPH_TEXT: 1, MULTIPLE_CHOICE: 2, LIST: 3 } };
+global.FormApp = {
+    ItemType: { TEXT: 0, PARAGRAPH_TEXT: 1, MULTIPLE_CHOICE: 2, LIST: 3 },
+    openByUrl: function() { return global._mockForm || null; }
+};
 global.SpreadsheetApp = {
     openById: function() { return global._mockPrevSs || null; },
     openByUrl: function() { return global._mockPrevSs || null; }
@@ -54,7 +57,8 @@ const HEADERS = [
     'WHO do you ultimately want to become?',
     'WHAT is your Go30 Challenge?',
     'HOW are you going to be successful this month?',
-    'Cell Phone Number'
+    'Cell Phone Number',
+    'NAG Email?'
 ];
 
 const responseColumns = resolveResponseColumns(HEADERS);
@@ -101,11 +105,11 @@ assert.equal(checkIsReuseChoice_("Yes", ''), false, 'empty phrase falls back to 
 
 // -- test rows (column layout matches HEADERS above) --
 const rows = [
-    ['2026-03-01 08:00:00', 'pax@example.com', 'Yes', 'Anchor', 'AO-based', 'Team A', 'Strength', 'Leader', 'Run', 'Plan', '555-1111'],
-    ['2026-03-02 08:00:00', 'other@example.com', 'No', 'Other', '', '', '', '', '', '', ''],
-    ['2026-03-03 08:00:00', 'PAX@example.com', 'Yes', 'Anchor', 'goal-based', 'Team B', 'Endurance', 'Disciplined', 'Ruck', 'Journal', '555-2222'],
-    ['2026-04-20 19:35:15', 'littlejohn@example.com', 'Yes', 'Little John', 'AO', 'Crucible', '', 'Best loving father, partner, friend and leader I can be', 'Doing my morning routine with daily plan.\nStaying engaged - at least 1 gathering or interaction with people each day\nF3 workout, ruck at least 3 days each week', 'Partner with other PAX for morning check-in.  Track plan on whiteboard.', '2067797808'],
-    ['2026-05-02 22:17:17', 'crazyivan@example.com', 'Yes', 'Crazy Ivan', 'AO', 'Crucible', '', 'A highly intentional, purpose-driven, and effective HIM', 'Consume <1452 net calories; 5+ minutes of HOAM/SAVERS by 8:30 a.m.; lights out by 10:00 p.m.', 'Pro-active tracking', '4259413500'],
+    ['2026-03-01 08:00:00', 'pax@example.com', 'Yes', 'Anchor', 'AO-based', 'Team A', 'Strength', 'Leader', 'Run', 'Plan', '555-1111', 'No'],
+    ['2026-03-02 08:00:00', 'other@example.com', 'No', 'Other', '', '', '', '', '', '', '', ''],
+    ['2026-03-03 08:00:00', 'PAX@example.com', 'Yes', 'Anchor', 'goal-based', 'Team B', 'Endurance', 'Disciplined', 'Ruck', 'Journal', '555-2222', 'Yes'],
+    ['2026-04-20 19:35:15', 'littlejohn@example.com', 'Yes', 'Little John', 'AO', 'Crucible', '', 'Best loving father, partner, friend and leader I can be', 'Doing my morning routine with daily plan.\nStaying engaged - at least 1 gathering or interaction with people each day\nF3 workout, ruck at least 3 days each week', 'Partner with other PAX for morning check-in.  Track plan on whiteboard.', '2067797808', 'Yes'],
+    ['2026-05-02 22:17:17', 'crazyivan@example.com', 'Yes', 'Crazy Ivan', 'AO', 'Crucible', '', 'A highly intentional, purpose-driven, and effective HIM', 'Consume <1452 net calories; 5+ minutes of HOAM/SAVERS by 8:30 a.m.; lights out by 10:00 p.m.', 'Pro-active tracking', '4259413500', 'No'],
 ];
 
 // -- findLatestResponseByEmail --
@@ -148,6 +152,7 @@ assert.throws(
 // -- extractReusableResponseValues --
 const reusedValues = extractReusableResponseValues(latest.row, responseColumns);
 assert.deepEqual(reusedValues, {
+    email: 'PAX@example.com',
     teamType: 'goal-based',
     team: 'Team B',
     otherTeam: 'Endurance',
@@ -155,6 +160,7 @@ assert.deepEqual(reusedValues, {
     what: 'Ruck',
     how: 'Journal',
     phone: '555-2222',
+    nagEmail: 'Yes',
 });
 
 assert.throws(
@@ -164,8 +170,9 @@ assert.throws(
 
 // -- mergeReusedValuesIntoResponseArray --
 const blankRow = ['2026-04-01 08:00:00', 'pax@example.com', "Yes, and use last month's goals.", 'Anchor', '', '', '', '', '', '', ''];
-const merged = mergeReusedValuesIntoResponseArray([...blankRow], reusedValues, responseColumns);
+const merged = mergeReusedValuesIntoResponseArray([...blankRow], { ...reusedValues, email: 'current@example.com' }, responseColumns);
 
+assert.equal(merged[1], 'current@example.com', 'current email preserved in reused data');
 assert.deepEqual(merged.slice(4, 11), ['goal-based', 'Team B', 'Endurance', 'Disciplined', 'Ruck', 'Journal', '555-2222']);
 
 assert.throws(
@@ -173,8 +180,10 @@ assert.throws(
     /responseColumns required/
 );
 
-// -- buildReuseSummaryLines --
-assert.deepEqual(buildReuseSummaryLines(reusedValues), [
+// -- buildReuseSummaryLines includes email and NAG email --
+assert.deepEqual(buildReuseSummaryLines({ ...reusedValues, email: 'current@example.com' }), [
+    'Email: current@example.com',
+    'NAG Email: Yes',
     'Team type: goal-based',
     'Team: Team B',
     'Other team name: Endurance',
@@ -183,8 +192,7 @@ assert.deepEqual(buildReuseSummaryLines(reusedValues), [
     'How: Journal',
     'Phone: 555-2222',
 ]);
-
-assert.deepEqual(buildReuseSummaryLines({ teamType: '', team: 'T', otherTeam: '', who: '', what: '', how: '', phone: '' }), ['Team: T'], 'omits empty fields');
+assert.deepEqual(buildReuseSummaryLines({ email: '', nagEmail: '', teamType: '', team: 'T', otherTeam: '', who: '', what: '', how: '', phone: '' }), ['Team: T'], 'omits empty fields');
 
 // -- send sanitizers --
 assert.equal(sanitizeTextForEmailLine_('  F3\nNew\tGuy\u0007  '), 'F3 New Guy');
@@ -404,6 +412,193 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     assert.equal(mailsSent.length, 1, 'Crazy Ivan: email sent');
     assert.ok(mailsSent[0].subj.includes('reused'), 'Crazy Ivan: email confirms reuse');
 
+    global._mockPrevSs = null;
+    global._mockManagedSheet = null;
+}
+
+// Test: prefilled URL generation carries current email and NAG email without throwing.
+{
+    mailsSent = [];
+    global._mockPrevSs = {};
+    global._mockManagedSheet = {
+        getAllRows: function() {
+            return [{
+                F3_NAME: 'TestPax',
+                EMAIL: 'old@example.com',
+                TEAM_TYPE: 'AO',
+                TEAM: 'Crucible',
+                OTHER_TEAM: '',
+                WHO: 'Leader',
+                WHAT: 'Run hard',
+                HOW: 'Track daily',
+                PHONE: '555-9999',
+                NAG_EMAIL: 'Yes'
+            }];
+        }
+    };
+
+    function makeListItem(title, choices) {
+        return {
+            getType: function() { return global.FormApp.ItemType.LIST; },
+            getTitle: function() { return title; },
+            asListItem: function() {
+                return {
+                    getChoices: function() {
+                        return choices.map(function(v) {
+                            return { getValue: function() { return v; } };
+                        });
+                    },
+                    createResponse: function(v) {
+                        if (choices.indexOf(v) === -1) {
+                            throw new Error('Invalid response submitted to item: ' + v + '.');
+                        }
+                        return { value: v };
+                    }
+                };
+            }
+        };
+    }
+
+    function makeTextItem(title) {
+        return {
+            getType: function() { return global.FormApp.ItemType.TEXT; },
+            getTitle: function() { return title; },
+            asTextItem: function() {
+                return {
+                    createResponse: function(v) { return { value: v }; }
+                };
+            }
+        };
+    }
+
+    var fakeForm = {
+        getItems: function() {
+            return [
+                makeTextItem('Email Address'),
+                makeTextItem('Are you currently participating in Go30?'),
+                makeTextItem('F3 Name'),
+                makeListItem('NAG Email?', ['Yes', 'No']),
+                makeListItem('Team', ['AO', 'Crucible'])
+            ];
+        },
+        createResponse: function() {
+            return {
+                withItemResponse: function() { return this; },
+                toPrefilledUrl: function() { return 'https://example.com/prefill'; }
+            };
+        }
+    };
+
+    global._mockForm = fakeForm;
+
+    const result = maybeReuseLastMonthsGoals_(
+        {
+            getFormUrl: function() { return 'https://docs.google.com/forms/d/mock/viewform'; },
+            getSheetByName: function() { return null; },
+            getUrl: function() { return 'https://mock-ss.example.com'; }
+        },
+        makeMockResponsesSheet(HEADERS),
+        2,
+        ['ts', 'current@example.com', REUSE_ANSWER, 'TestPax', '', '', '', '', '', '', '', '']
+    );
+
+    assert.equal(result[responseColumns.EMAIL], 'current@example.com', 'current email kept in reused response');
+    assert.equal(result[responseColumns.NAG_EMAIL], 'Yes', 'NAG email flag copied into reused response');
+    assert.equal(mailsSent.length, 1, 'still sends single reuse email');
+    assert.match(mailsSent[0].body, /Email: current@example.com/);
+    assert.match(mailsSent[0].body, /NAG Email: Yes/);
+
+    global._mockForm = null;
+    global._mockPrevSs = null;
+    global._mockManagedSheet = null;
+}
+
+// Test: prefilled URL generation skips invalid list choice values without throwing.
+{
+    mailsSent = [];
+    global._mockPrevSs = {};
+    global._mockManagedSheet = {
+        getAllRows: function() {
+            return [{
+                F3_NAME: 'TestPax',
+                TEAM_TYPE: 'AO',
+                TEAM: 'Crucible',
+                OTHER_TEAM: '',
+                WHO: 'Leader',
+                WHAT: 'Run hard',
+                HOW: 'Track daily',
+                PHONE: '555-9999'
+            }];
+        }
+    };
+
+    function makeListItem(title, choices) {
+        return {
+            getType: function() { return global.FormApp.ItemType.LIST; },
+            getTitle: function() { return title; },
+            asListItem: function() {
+                return {
+                    getChoices: function() {
+                        return choices.map(function(v) {
+                            return { getValue: function() { return v; } };
+                        });
+                    },
+                    createResponse: function(v) {
+                        if (choices.indexOf(v) === -1) {
+                            throw new Error('Invalid response submitted to item: ' + v + '.');
+                        }
+                        return { value: v };
+                    }
+                };
+            }
+        };
+    }
+
+    function makeTextItem(title) {
+        return {
+            getType: function() { return global.FormApp.ItemType.TEXT; },
+            getTitle: function() { return title; },
+            asTextItem: function() {
+                return {
+                    createResponse: function(v) { return { value: v }; }
+                };
+            }
+        };
+    }
+
+    var fakeForm = {
+        getItems: function() {
+            return [
+                makeTextItem('Are you currently participating in Go30?'),
+                makeTextItem('F3 Name'),
+                makeListItem('Team', ['Bourbon', 'Fusion'])
+            ];
+        },
+        createResponse: function() {
+            return {
+                withItemResponse: function() { return this; },
+                toPrefilledUrl: function() { return 'https://example.com/prefill'; }
+            };
+        }
+    };
+
+    global._mockForm = fakeForm;
+
+    const result = maybeReuseLastMonthsGoals_(
+        {
+            getFormUrl: function() { return 'https://docs.google.com/forms/d/mock/viewform'; },
+            getSheetByName: function() { return null; },
+            getUrl: function() { return 'https://mock-ss.example.com'; }
+        },
+        makeMockResponsesSheet(HEADERS),
+        2,
+        reusableFormRow()
+    );
+
+    assert.equal(result[responseColumns.TEAM], 'Crucible', 'reuse merge still applies with invalid form choice');
+    assert.equal(mailsSent.length, 1, 'still sends single reuse email');
+
+    global._mockForm = null;
     global._mockPrevSs = null;
     global._mockManagedSheet = null;
 }

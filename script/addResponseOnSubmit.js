@@ -65,6 +65,7 @@ function onFormSubmitLocked_(e) {
   // sheets querying Responses (Goals by HIM, Goals by AO) show only the latest submission.
   // Keyed on F3 Name (not email) per ADR-008 — allows a PAX to change their email address.
   var f3Name = getResponseValue_(formResponses, responseColumns, 'F3_NAME');
+  Logger.log('handleFormSubmit_: dedup start — submittedRow: ' + submittedRowNumber + ', f3Name: "' + f3Name + '"');
   deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, responseColumns);
 
   // Phase 3 — Resolve Team: if the Team column is blank, log the inferred value from Other team name.
@@ -149,9 +150,21 @@ function findDuplicateResponseRows_(keyValues, submittedRowNumber, keyValue) {
   return toDelete.sort(function(a, b) { return b - a; });
 }
 
+function removeDuplicateResponseRow_(responsesSheet, rowNumber, responseColumns) {
+  try {
+    responsesSheet.getRange(rowNumber, responseColumns.PARTICIPATION + 1).setValue('DELETED');
+    return 'marked_deleted';
+  } catch (e) {
+    Logger.log('handleFormSubmit_: mark duplicate Responses row failed for row ' + rowNumber + ' — falling back to deleteRow: ' + (e && e.message));
+    responsesSheet.deleteRow(rowNumber);
+    return 'deleted';
+  }
+}
+
 /**
  * Removes prior Responses rows whose F3 Name matches f3Name, keeping only submittedRowNumber.
- * Keyed on F3 Name per ADR-008. Deletions go highest-row-first to avoid index drift.
+ * Keyed on F3 Name per ADR-008. Rows are marked DELETED highest-row-first to avoid mutating
+ * the linked form response sheet structure during submit handling; deleteRow is a fallback.
  */
 function deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, responseColumns) {
   if (!f3Name) return;
@@ -160,15 +173,19 @@ function deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, 
 
   var f3NameColNum = responseColumns.F3_NAME + 1; // 1-based column for getRange
   var keyValues = responsesSheet.getRange(2, f3NameColNum, lastRow - 1, 1).getValues();
+  Logger.log('handleFormSubmit_: dedup scan — rows: ' + keyValues.map(function(row, idx) {
+    return (idx + 2) + '="' + String(row[0] || '') + '"';
+  }).join(', '));
   var toDelete = findDuplicateResponseRows_(keyValues, submittedRowNumber, f3Name);
+  Logger.log('handleFormSubmit_: dedup matches — submittedRow: ' + submittedRowNumber + ', f3Name: "' + f3Name + '", toDelete: [' + toDelete.join(', ') + ']');
 
   for (var j = 0; j < toDelete.length; j++) {
-    Logger.log('handleFormSubmit_: removing prior Responses row ' + toDelete[j] + ' for F3 Name "' + f3Name + '" (kept: ' + submittedRowNumber + ')');
-    GasLogger.log('formSubmit.responseDeduplicated', { removedRow: toDelete[j], keptRow: submittedRowNumber });
-    responsesSheet.deleteRow(toDelete[j]);
+    var action = removeDuplicateResponseRow_(responsesSheet, toDelete[j], responseColumns);
+    Logger.log('handleFormSubmit_: ' + action + ' prior Responses row ' + toDelete[j] + ' for F3 Name "' + f3Name + '" (kept: ' + submittedRowNumber + ')');
+    GasLogger.log('formSubmit.responseDeduplicated', { removedRow: toDelete[j], keptRow: submittedRowNumber, action: action });
   }
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { findDuplicateResponseRows_ };
+  module.exports = { findDuplicateResponseRows_, removeDuplicateResponseRow_, deduplicateResponsesSheet_ };
 }

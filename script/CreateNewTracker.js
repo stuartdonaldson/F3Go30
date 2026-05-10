@@ -538,15 +538,28 @@ function autoGenerateNextMonthTracker() {
 
     const slackMsg = buildSlackMessage_(nextMonthStart.getFullYear(), MONTH_NAMES_[nextMonthStart.getMonth()], formShortUrl, trackerSheetShortUrl);
 
-    MailApp.sendEmail(
-      siteQEmail,
-      'F3 Go30: ' + newSpreadsheetName + ' is ready',
-      newSpreadsheetName + ' has been created.\n\n' +
-      'Tracker: ' + trackerSheetShortUrl + '\n' +
-      'HC Form: ' + formShortUrl + '\n\n' +
-      'Next step: open the new spreadsheet and select F3 Go30 > Initialize Triggers.\n\n' +
-      'Slack message:\n' + slackMsg
-    );
+    var message = buildOnboardingEmailTemplate_({
+      trackerName: newSpreadsheetName,
+      siteName: siteQName,
+      trackerUrl: trackerSheetShortUrl,
+      formUrl: formShortUrl,
+      ownerAccount: siteQConfig.primary,
+      initSteps: [
+        'Open the new spreadsheet and verify it looks correct',
+        'F3 Go30 Menu > Initialize Triggers',
+        'Open the HC form and verify it looks correct'
+      ],
+      slackReadyMessage: slackMsg,
+      operatorName: null,
+      contactEmail: siteQEmail
+    });
+
+    MailApp.sendEmail({
+      to: siteQEmail,
+      subject: message.subject,
+      body: message.body,
+      htmlBody: message.htmlBody
+    });
 
     Logger.log('autoGenerateNextMonthTracker: done — ' + newSpreadsheetName);
     GasLogger.log('autoGenerateNextMonthTracker', {

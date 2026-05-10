@@ -11,7 +11,11 @@ global.resolveResponseColumns = function(sheet) { return {}; };
 global.maybeReuseLastMonthsGoals_ = function(ss, respSheet, rowNum, responses) { return responses; };
 global.logActivity = function() {};
 
-const { findDuplicateResponseRows_ } = require('../script/addResponseOnSubmit.js');
+const {
+  findDuplicateResponseRows_,
+  removeDuplicateResponseRow_,
+  deduplicateResponsesSheet_
+} = require('../script/addResponseOnSubmit.js');
 
 // Helper: build a single-column values array as getRange().getValues() returns.
 function col(values) {
@@ -76,6 +80,53 @@ function col(values) {
   // Row 3: new submission — same F3 name, different email would be in a different column
   const result = findDuplicateResponseRows_(col(['Anchor', 'Anchor']), 3, 'Anchor');
   assert.deepEqual(result, [2], 'email change: old row matched by F3 name and deleted');
+}
+
+// Duplicate rows are marked DELETED in the PARTICIPATION column during form-submit handling.
+{
+  const writes = [];
+  const deleted = [];
+  const responsesSheet = {
+    getLastRow: function() { return 4; },
+    getLastColumn: function() { return 12; },
+    getRange: function(row, column, numRows, numCols) {
+      if (column === 4) {
+        assert.equal(row, 2, 'F3 name scan starts at first data row');
+        assert.equal(numRows, 3, 'F3 name scan covers all data rows');
+        assert.equal(numCols, 1, 'F3 name scan is single-column');
+        return { getValues: function() { return col(['Anchor', 'Sapper', 'Anchor']); } };
+      }
+      return {
+        setValue: function(value) {
+          writes.push({ row: row, col: column, value: value });
+        }
+      };
+    },
+    deleteRow: function(row) { deleted.push(row); }
+  };
+
+  deduplicateResponsesSheet_(responsesSheet, 4, 'Anchor', { F3_NAME: 3, PARTICIPATION: 2 });
+  assert.deepEqual(writes, [{ row: 2, col: 3, value: 'DELETED' }], 'duplicate row marked deleted in participation column');
+  assert.deepEqual(deleted, [], 'clear path does not delete rows');
+}
+
+// If clearContent fails, dedup falls back to deleteRow.
+{
+  const deleted = [];
+  const responsesSheet = {
+    getRange: function() {
+      return {
+        setValue: function() {
+          throw new Error('clear failed');
+        }
+      };
+    },
+    deleteRow: function(row) { deleted.push(row); }
+  };
+
+  const action = removeDuplicateResponseRow_(responsesSheet, 7, { PARTICIPATION: 2 });
+  assert.equal(action, 'deleted', 'deleteRow fallback used when clear fails');
+  assert.deepEqual(deleted, [7], 'fallback deletes the duplicate row');
 }
 
 console.log('test_add_response_on_submit.js: PASS');

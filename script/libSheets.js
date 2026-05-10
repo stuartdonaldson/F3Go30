@@ -539,7 +539,9 @@ class ManagedSheet {
 
     for (let key in this.columnMap) {
       if (key in map) continue;
-      const columnName = getManagedColumnHeader_(this.columnMap[key]);
+      const columnSpec = normalizeManagedColumnSpec_(this.columnMap[key]);
+      if (columnSpec.optional) continue;
+      const columnName = columnSpec.header;
       Logger.log(`Warning: Column '${columnName}' not found in sheet '${dthis.sheet.getName()}'`);
     }
     this.headerMap = map;

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+  </head>
+  <body style="margin:0;padding:0;background:#f4f1ea;font-family:Arial,sans-serif;color:#222;line-height:1.5;">
+    <div style="max-width:680px;margin:0 auto;padding:24px;">
+      <div style="background:#fffdf8;border:1px solid #d8cfbf;border-radius:12px;overflow:hidden;">
+        <div style="background:#2f5d50;color:#f8f4ea;padding:20px 24px;">
+          <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.9;">F3 Go30</div>
+          <h1 style="margin:8px 0 0;font-size:20px;line-height:1.2;"><?= usedPriorGoals ? "Your previous goals were reused" : "Please enter your goals" ?></h1>
+        </div>
+
+        <div style="padding:24px;">
+          <p style="margin:0 0 16px;">Hi <?= f3Name || 'there' ?>,</p>
+
+          <? if (usedPriorGoals) { ?>
+            <p style="margin:0 0 16px;">We reused your most recent prior Go30 entries for this month. Below is a summary of the values we copied for you.</p>
+            <div style="margin:0 0 16px;padding:12px;background:#f3efe4;border-left:4px solid #b8860b;border-radius:8px;font-size:14px;">
+              <? for (var i = 0; i < summaryLines.length; i++) { ?>
+                <div><?= summaryLines[i] ?></div>
+              <? } ?>
+            </div>
+            <? if (prefilledUrl) { ?>
+              <p style="margin:0 0 16px;">If you want to adjust those defaults, open this prefilled form link and submit again:</p>
+              <p style="margin:0 0 16px;"><a href="<?= prefilledUrl ?>" style="color:#0b5c86;font-weight:bold;">Open prefilled form</a></p>
+            <? } ?>
+          <? } else { ?>
+            <p style="margin:0 0 16px;">We could not find a prior entry to reuse for this email address.</p>
+            <? if (prefilledUrl) { ?>
+              <p style="margin:0 0 16px;">Use this form link to enter or update your goals:</p>
+              <p style="margin:0 0 16px;"><a href="<?= prefilledUrl ?>" style="color:#0b5c86;font-weight:bold;">Open form</a></p>
+            <? } ?>
+          <? } ?>
+
+          <p style="margin:0 0 16px;">Tracker: <a href="<?= trackerUrl ?>" style="color:#0b5c86;font-weight:bold;">View tracker</a></p>
+
+          <p style="margin:20px 0 0;">Thanks,<br>F3 Go30</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

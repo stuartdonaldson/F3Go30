@@ -68,3 +68,21 @@ Refactored response-sheet column handling around a shared canonical schema and a
 ### Key Learnings:
 - Historical Google Form prompt drift is better handled as read-only alias normalization in code than as implicit header migration on sheet open.
 - MailApp recipient parsing tolerates display names, but non-ASCII or unsupported characters in the display name can break sends unless normalized first.
+
+## 2026-05-09 18:15:00
+
+### Summary:
+Fixed reuse goals workflow to match by F3 Name instead of email. Downloaded actual Go30 Template and Last Month Tracker data, added realistic test coverage for Crazy Ivan and Little John, updated email template error messages.
+
+### Changes:
+- **signupReuse.js**: Changed `getPriorResponse()` lookup from email to F3 Name; added `findLatestResponseByF3Name()` function
+- **signupEmail.js**: Updated no-reuse email message to refer to F3 Name instead of email address
+- **test_signup_reuse.js**: Added full column headers from actual Last Month Tracker; added realistic test data for Crazy Ivan and Little John; created reuse simulation tests showing what values were reused for each candidate
+
+### Key Learnings:
+F3 Names are more stable matching identifiers than email addresses since community members may change email but keep their F3 Name. Header alias resolution was critical — simplified test headers weren't triggering proper column mapping, so using actual spreadsheet headers exposed the real schema. Mock data structure must match lookup key (F3_NAME vs EMAIL).
+
+### Test Results:
+All tests pass. Verified reuse works for both candidates:
+- **Little John**: Team=Crucible, Who=Best loving father/partner/friend/leader, What=Morning routine with daily plan
+- **Crazy Ivan**: Team=Crucible, Who=Highly intentional/purpose-driven/effective HIM, What=Consume <1452 net calories + HOAM/SAVERS by 8:30am

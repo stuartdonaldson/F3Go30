@@ -98,13 +98,15 @@ function extractReusableResponseValues(responseRow, responseColumns) {
         return (typeof idx === 'number' && idx >= 0) ? (responseRow[idx] || '') : '';
     }
     return {
+        email: v('EMAIL'),
         teamType: v('TEAM_TYPE'),
         team: v('TEAM'),
         otherTeam: v('OTHER_TEAM'),
         who: v('WHO'),
         what: v('WHAT'),
         how: v('HOW'),
-        phone: v('PHONE')
+        phone: v('PHONE'),
+        nagEmail: v('NAG_EMAIL')
     };
 }
 
@@ -115,6 +117,7 @@ function mergeReusedValuesIntoResponseArray(responseArray, reusedValues, respons
         var idx = responseColumns[key];
         if (typeof idx === 'number' && idx >= 0) responseArray[idx] = value;
     }
+    setVal('EMAIL', reusedValues.email);
     setVal('TEAM_TYPE', reusedValues.teamType);
     setVal('TEAM', reusedValues.team);
     setVal('OTHER_TEAM', reusedValues.otherTeam);
@@ -122,12 +125,15 @@ function mergeReusedValuesIntoResponseArray(responseArray, reusedValues, respons
     setVal('WHAT', reusedValues.what);
     setVal('HOW', reusedValues.how);
     setVal('PHONE', reusedValues.phone);
+    setVal('NAG_EMAIL', reusedValues.nagEmail);
     return responseArray;
 }
 
 function buildReuseSummaryLines(reusedValues) {
     if (!reusedValues) return [];
     var lines = [
+        ['Email', reusedValues.email],
+        ['NAG Email', reusedValues.nagEmail],
         ['Team type', reusedValues.teamType],
         ['Team', reusedValues.team],
         ['Other team name', reusedValues.otherTeam],
@@ -161,21 +167,49 @@ function findResponseFormItemByKey_(form, key) {
     return null;
 }
 
+function resolveChoiceValue_(choices, value) {
+    var normValue = String(value || '').trim().toLowerCase();
+    if (!normValue) return '';
+    for (var i = 0; i < (choices || []).length; i++) {
+        var choiceValue = String(choices[i].getValue() || '');
+        if (choiceValue.trim().toLowerCase() === normValue) {
+            return choiceValue;
+        }
+    }
+    return '';
+}
+
 function addPrefilledItemResponse(draftResponse, item, value) {
     if (!item || String(value || '').trim() === '') return;
-    switch (item.getType()) {
-        case FormApp.ItemType.TEXT:
-            draftResponse.withItemResponse(item.asTextItem().createResponse(String(value)));
-            return;
-        case FormApp.ItemType.PARAGRAPH_TEXT:
-            draftResponse.withItemResponse(item.asParagraphTextItem().createResponse(String(value)));
-            return;
-        case FormApp.ItemType.MULTIPLE_CHOICE:
-            draftResponse.withItemResponse(item.asMultipleChoiceItem().createResponse(String(value)));
-            return;
-        case FormApp.ItemType.LIST:
-            draftResponse.withItemResponse(item.asListItem().createResponse(String(value)));
-            return;
+    try {
+        switch (item.getType()) {
+            case FormApp.ItemType.TEXT:
+                draftResponse.withItemResponse(item.asTextItem().createResponse(String(value)));
+                return;
+            case FormApp.ItemType.PARAGRAPH_TEXT:
+                draftResponse.withItemResponse(item.asParagraphTextItem().createResponse(String(value)));
+                return;
+            case FormApp.ItemType.MULTIPLE_CHOICE:
+                var mcItem = item.asMultipleChoiceItem();
+                var mcChoice = resolveChoiceValue_(mcItem.getChoices(), value);
+                if (!mcChoice) {
+                    Logger.log('buildPrefilledGoalUpdateUrl: skipping invalid multiple-choice value "' + value + '" for item "' + item.getTitle() + '"');
+                    return;
+                }
+                draftResponse.withItemResponse(mcItem.createResponse(mcChoice));
+                return;
+            case FormApp.ItemType.LIST:
+                var listItem = item.asListItem();
+                var listChoice = resolveChoiceValue_(listItem.getChoices(), value);
+                if (!listChoice) {
+                    Logger.log('buildPrefilledGoalUpdateUrl: skipping invalid list value "' + value + '" for item "' + item.getTitle() + '"');
+                    return;
+                }
+                draftResponse.withItemResponse(listItem.createResponse(listChoice));
+                return;
+        }
+    } catch (e) {
+        Logger.log('buildPrefilledGoalUpdateUrl: prefill failed for item "' + (item.getTitle ? item.getTitle() : '(unknown)') + '" with value "' + value + '" — ' + (e && e.message));
     }
 }
 
@@ -183,6 +217,7 @@ function buildPrefilledGoalUpdateUrl(form, currentResponseRow, reusedValues, res
     if (!form) return '';
     var draft = form.createResponse();
     addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'PARTICIPATION'), 'Yes');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'EMAIL'), (currentResponseRow && currentResponseRow[responseColumns.EMAIL]) || reusedValues.email || '');
     addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'F3_NAME'), (currentResponseRow && currentResponseRow[responseColumns.F3_NAME]) || '');
     addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'TEAM_TYPE'), reusedValues.teamType);
     addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'TEAM'), reusedValues.team);
@@ -191,6 +226,7 @@ function buildPrefilledGoalUpdateUrl(form, currentResponseRow, reusedValues, res
     addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'WHAT'), reusedValues.what);
     addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'HOW'), reusedValues.how);
     addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'PHONE'), reusedValues.phone);
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'NAG_EMAIL'), reusedValues.nagEmail);
     return draft.toPrefilledUrl();
 }
 
@@ -219,13 +255,15 @@ function getPriorResponse(prevSs, f3Name) {
         return {
             ok: true,
             reusedValues: {
+                email: foundObj.EMAIL || '',
                 teamType: foundObj.TEAM_TYPE || '',
                 team: foundObj.TEAM || '',
                 otherTeam: foundObj.OTHER_TEAM || '',
                 who: foundObj.WHO || '',
                 what: foundObj.WHAT || '',
                 how: foundObj.HOW || '',
-                phone: foundObj.PHONE || ''
+                phone: foundObj.PHONE || '',
+                nagEmail: foundObj.NAG_EMAIL || ''
             }
         };
     } catch (err) {
@@ -305,6 +343,7 @@ function maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNum
     }
 
     var reusedValues = priorResult.reusedValues;
+    reusedValues.email = emailAddress || reusedValues.email || '';
 
     // Merge reused values into in-memory row, then write back in one shot (P1-8).
     mergeReusedValuesIntoResponseArray(formResponses, reusedValues, currentResponseColumns);
