@@ -370,6 +370,59 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockManagedSheet = null;
 }
 
+// Test: deleted prior-month rows are ignored when selecting the reusable response.
+{
+    mailsSent = [];
+    global._mockPrevSs = {};
+    global._mockManagedSheet = {
+        getAllRows: function() {
+            return [
+                {
+                    F3_NAME: 'TestPax',
+                    PARTICIPATION: 'Yes',
+                    EMAIL: 'older@example.com',
+                    TEAM_TYPE: 'AO-based',
+                    TEAM: 'Team Old',
+                    OTHER_TEAM: 'Strength',
+                    WHO: 'Leader Old',
+                    WHAT: 'Run old',
+                    HOW: 'Track old',
+                    PHONE: '555-0000',
+                    NAG_EMAIL: 'No'
+                },
+                {
+                    F3_NAME: 'TestPax',
+                    PARTICIPATION: 'DELETED',
+                    EMAIL: 'deleted@example.com',
+                    TEAM_TYPE: 'goal-based',
+                    TEAM: 'Team Deleted',
+                    OTHER_TEAM: 'Should Ignore',
+                    WHO: 'Deleted Leader',
+                    WHAT: 'Deleted goal',
+                    HOW: 'Deleted how',
+                    PHONE: '555-9999',
+                    NAG_EMAIL: 'Yes'
+                }
+            ];
+        }
+    };
+
+    const result = maybeReuseLastMonthsGoals_(
+        makeMockSs({ 'Last Month Tracker': { primary: 'https://docs.google.com/spreadsheets/d/abc123/edit' } }),
+        makeMockResponsesSheet(HEADERS),
+        2,
+        ['ts', 'current@example.com', REUSE_ANSWER, 'TestPax', '', '', '', '', '', '', '', '']
+    );
+
+    assert.equal(result[responseColumns.TEAM], 'Team Old', 'deleted prior row ignored and older live row reused');
+    assert.equal(result[responseColumns.EMAIL], 'current@example.com', 'current email still preserved');
+    assert.equal(result[responseColumns.NAG_EMAIL], 'No', 'live prior row NAG flag reused');
+    assert.equal(mailsSent.length, 1, 'single reuse email sent');
+
+    global._mockPrevSs = null;
+    global._mockManagedSheet = null;
+}
+
 // Test: Crazy Ivan reuse from actual Last Month data
 {
     mailsSent = [];

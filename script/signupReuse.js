@@ -110,6 +110,10 @@ function extractReusableResponseValues(responseRow, responseColumns) {
     };
 }
 
+function isDeletedResponseRow_(responseRow) {
+    return String(responseRow && responseRow.PARTICIPATION || '').trim().toLowerCase() === 'deleted';
+}
+
 function mergeReusedValuesIntoResponseArray(responseArray, reusedValues, responseColumns) {
     if (!responseArray || !reusedValues) return responseArray;
     if (!responseColumns) throw new Error('responseColumns required for mergeReusedValuesIntoResponseArray');
@@ -249,6 +253,7 @@ function getPriorResponse(prevSs, f3Name) {
         for (var i = prevRowsObj.length - 1; i >= 0; i--) {
             var r = prevRowsObj[i];
             if (!r) continue;
+            if (isDeletedResponseRow_(r)) continue;
             if (String(r.F3_NAME || '').trim().toLowerCase() === normF3Name) { foundObj = r; break; }
         }
         if (!foundObj) return { ok: false, error: 'not-found', message: 'no previous response found for F3 Name: ' + f3Name };
