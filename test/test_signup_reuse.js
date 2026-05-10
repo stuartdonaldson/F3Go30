@@ -33,6 +33,7 @@ const {
     checkIsReuseChoice_,
     resolveResponseColumns,
     findLatestResponseByEmail,
+    findLatestResponseByF3Name,
     extractReusableResponseValues,
     mergeReusedValuesIntoResponseArray,
     buildReuseSummaryLines,
@@ -117,6 +118,29 @@ assert.equal(findLatestResponseByEmail(rows, 'missing@example.com', responseColu
 
 assert.throws(
     () => findLatestResponseByEmail(rows, 'pax@example.com', null),
+    /responseColumns required/,
+    'throws when responseColumns omitted'
+);
+
+// -- findLatestResponseByF3Name --
+const latestByF3 = findLatestResponseByF3Name(rows, 'Little John', responseColumns);
+assert.ok(latestByF3);
+assert.equal(latestByF3.rowIndex, 3, 'finds Little John by F3 Name (exact match)');
+assert.equal(latestByF3.row[responseColumns.EMAIL], 'littlejohn@example.com');
+
+const crazyByF3 = findLatestResponseByF3Name(rows, 'Crazy Ivan', responseColumns);
+assert.ok(crazyByF3);
+assert.equal(crazyByF3.rowIndex, 4, 'finds Crazy Ivan by F3 Name (exact match)');
+assert.equal(crazyByF3.row[responseColumns.EMAIL], 'crazyivan@example.com');
+
+assert.equal(findLatestResponseByF3Name(rows, 'Missing Ivan', responseColumns), null);
+
+const caseInsensitive = findLatestResponseByF3Name(rows, 'crazy ivan', responseColumns);
+assert.ok(caseInsensitive, 'finds by F3 Name (case-insensitive)');
+assert.equal(caseInsensitive.rowIndex, 4);
+
+assert.throws(
+    () => findLatestResponseByF3Name(rows, 'Anchor', null),
     /responseColumns required/,
     'throws when responseColumns omitted'
 );
@@ -222,7 +246,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockPrevSs = {};
     global._mockManagedSheet = {
         getAllRows: function() {
-            return [{ EMAIL: 'a@example.com', TEAM_TYPE: 'AO-based', TEAM: 'Team C', OTHER_TEAM: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
+            return [{ F3_NAME: 'TestPax', TEAM_TYPE: 'AO-based', TEAM: 'Team C', OTHER_TEAM: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
         }
     };
 
@@ -246,7 +270,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockManagedSheet = null;
 }
 
-// Test: reuse choice, email not found in prior tracker → sends no-reuse email
+// Test: reuse choice, F3 Name not found in prior tracker → sends no-reuse email
 {
     mailsSent = [];
     global._mockPrevSs = {};
@@ -274,7 +298,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockPrevSs = {};
     global._mockManagedSheet = {
         getAllRows: function() {
-            return [{ EMAIL: 'test.user@example.com', TEAM_TYPE: 'AO-based', TEAM: 'Team C', OTHER_TEAM: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
+            return [{ F3_NAME: 'F3 New Guy', TEAM_TYPE: 'AO-based', TEAM: 'Team C', OTHER_TEAM: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
         }
     };
 
@@ -301,7 +325,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockManagedSheet = {
         getAllRows: function() {
             return [{
-                EMAIL: 'littlejohn@example.com',
+                F3_NAME: 'Little John',
                 TEAM_TYPE: littleJohnLastMonth.teamType,
                 TEAM: littleJohnLastMonth.team,
                 OTHER_TEAM: littleJohnLastMonth.otherTeam,
@@ -347,7 +371,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockManagedSheet = {
         getAllRows: function() {
             return [{
-                EMAIL: 'crazyivan@example.com',
+                F3_NAME: 'Crazy Ivan',
                 TEAM_TYPE: crazyIvanLastMonth.teamType,
                 TEAM: crazyIvanLastMonth.team,
                 OTHER_TEAM: crazyIvanLastMonth.otherTeam,

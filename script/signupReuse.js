@@ -78,6 +78,18 @@ function findLatestResponseByEmail(rows, emailAddress, responseColumns) {
     return null;
 }
 
+function findLatestResponseByF3Name(rows, f3Name, responseColumns) {
+    if (!responseColumns || typeof responseColumns.F3_NAME !== 'number') throw new Error('responseColumns required for findLatestResponseByF3Name');
+    var norm = String(f3Name || '').trim().toLowerCase();
+    if (!norm) return null;
+    for (var i = rows.length - 1; i >= 0; i--) {
+        var row = rows[i];
+        if (!row) continue;
+        if (String(row[responseColumns.F3_NAME] || '').trim().toLowerCase() === norm) return { rowIndex: i, row: row };
+    }
+    return null;
+}
+
 function extractReusableResponseValues(responseRow, responseColumns) {
     if (!responseRow) return null;
     if (!responseColumns) throw new Error('responseColumns required for extractReusableResponseValues');
@@ -185,26 +197,25 @@ function buildPrefilledGoalUpdateUrl(form, currentResponseRow, reusedValues, res
 /**
  * getPriorResponse
  * - prevSs: Spreadsheet object for previous tracker
- * - emailAddress: email to lookup
- * - form: Form object (may be null)
- * - currentResponseRow/currentResponseColumns: used to build prefilled URL
+ * - f3Name: F3 Name to lookup
  *
- * Returns { ok: true, reusedValues: {...}, prefilledUrl: '...' }
+ * Returns { ok: true, reusedValues: {...} }
  * or { ok: false, error: 'reason', message: 'human message' }
  */
-function getPriorResponse(prevSs, emailAddress) {
+function getPriorResponse(prevSs, f3Name) {
     if (!prevSs) return { ok: false, error: 'no-ss', message: 'previous spreadsheet not provided' };
     try {
         var prevManager = new SpreadsheetManager(prevSs);
         var prevMs = prevManager.openExistingSheet('Responses', RESPONSE_COLUMN_MAP);
         var prevRowsObj = prevMs.getAllRows();
         var foundObj = null;
+        var normF3Name = String(f3Name || '').trim().toLowerCase();
         for (var i = prevRowsObj.length - 1; i >= 0; i--) {
             var r = prevRowsObj[i];
             if (!r) continue;
-            if (normalizeEmailAddress(r.EMAIL) === normalizeEmailAddress(emailAddress)) { foundObj = r; break; }
+            if (String(r.F3_NAME || '').trim().toLowerCase() === normF3Name) { foundObj = r; break; }
         }
-        if (!foundObj) return { ok: false, error: 'not-found', message: 'no previous response found for ' + emailAddress };
+        if (!foundObj) return { ok: false, error: 'not-found', message: 'no previous response found for F3 Name: ' + f3Name };
         return {
             ok: true,
             reusedValues: {
@@ -226,28 +237,21 @@ function sendGoalReuseEmail(emailAddress, f3Name, trackerUrl, prefilledUrl, summ
     var recipient = sanitizeEmailAddressForSend_(emailAddress);
     if (!recipient) { Logger.log('sendGoalReuseEmail: invalid email'); return; }
     var safeF3Name = sanitizeTextForEmailLine_(f3Name) || '(unknown)';
-    var body = ['F3 Name: ' + safeF3Name, ''];
-    if (usedPriorGoals) {
-        body.push('We reused your most recent prior Go30 entries for this month:');
-        body = body.concat(summaryLines);
-        body.push('');
-        body.push('Tracker: ' + trackerUrl);
-        if (prefilledUrl) {
-            body.push('');
-            body.push('If you want to adjust those defaults, open this prefilled form link and submit again:');
-            body.push(prefilledUrl);
-        }
-    } else {
-        body.push('We could not find a prior Go30 entry to reuse for this email address.');
-        body.push('');
-        body.push('Tracker: ' + trackerUrl);
-        if (prefilledUrl) {
-            body.push('');
-            body.push('Use this form link to enter or update your goals:');
-            body.push(prefilledUrl);
-        }
+    var message = buildSignupReuseEmailTemplate_({
+        usedPriorGoals: !!usedPriorGoals,
+        f3Name: safeF3Name,
+        trackerUrl: trackerUrl,
+        prefilledUrl: prefilledUrl,
+        summaryLines: summaryLines || []
+    });
+
+    try {
+        MailApp.sendEmail({ to: recipient, subject: message.subject, body: message.body, htmlBody: message.htmlBody });
+    } catch (e) {
+        // Fallback to plain text send if templated send fails
+        Logger.log('sendGoalReuseEmail: template send failed — ' + (e && e.message));
+        MailApp.sendEmail(recipient, message.subject, message.body);
     }
-    MailApp.sendEmail(recipient, 'F3 Go30: ' + (usedPriorGoals ? 'last month\'s goals reused' : 'enter your goals'), body.join('\n'));
 }
 
 /**
@@ -290,7 +294,7 @@ function maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNum
     try {
         var match = trackerReference.match(/\/d\/([a-zA-Z0-9_-]+)/);
         var prevSs = match ? SpreadsheetApp.openById(match[1]) : SpreadsheetApp.openByUrl(trackerReference);
-        priorResult = getPriorResponse(prevSs, emailAddress);
+        priorResult = getPriorResponse(prevSs, f3Name);
     } catch (e) {
         priorResult = { ok: false, error: 'open-failed', message: 'failed to open previous tracker: ' + (e && e.message) };
     }
@@ -326,6 +330,7 @@ if (typeof module !== 'undefined' && module.exports) {
         checkIsReuseChoice_,
         resolveResponseColumns,
         findLatestResponseByEmail,
+        findLatestResponseByF3Name,
         extractReusableResponseValues,
         mergeReusedValuesIntoResponseArray,
         buildReuseSummaryLines,
