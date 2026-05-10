@@ -21,6 +21,7 @@ function renderOnboardingEmailHtml_(options) {
   template.formUrl = options.formUrl;
   template.ownerAccount = options.ownerAccount;
   template.initSteps = options.initSteps || [];
+  template.postCopyChecklist = options.postCopyChecklist || [];
   template.slackReadyMessage = options.slackReadyMessage;
   template.operatorName = options.operatorName;
   template.contactEmail = options.contactEmail;

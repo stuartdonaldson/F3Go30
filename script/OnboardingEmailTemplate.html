@@ -32,6 +32,15 @@
             </ol>
           <? } ?>
 
+          <? if (postCopyChecklist && postCopyChecklist.length) { ?>
+            <p style="margin:0 0 8px;font-weight:bold;">Post-copy checklist</p>
+            <ul style="margin:0 0 16px;padding-left:20px;">
+              <? for (var j = 0; j < postCopyChecklist.length; j++) { ?>
+                <li style="margin:0 0 8px;"><?= postCopyChecklist[j] ?></li>
+              <? } ?>
+            </ul>
+          <? } ?>
+
           <? if (formUrl) { ?>
             <p style="margin:0 0 8px;font-weight:bold;">HC form</p>
             <p style="margin:0 0 16px;"><a href="<?= formUrl ?>" style="color:#0b5c86;font-weight:bold;">Open HC form</a></p>

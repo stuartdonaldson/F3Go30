@@ -549,6 +549,18 @@ function autoGenerateNextMonthTracker() {
         'F3 Go30 Menu > Initialize Triggers',
         'Open the HC form and verify it looks correct'
       ],
+      postCopyChecklist: [
+        'Open new spreadsheet and verify layout',
+        'Run F3 Go30 > Initialize Triggers',
+        'Open HC form and verify title + choices',
+        'Verify Config rows (Signup HC Form, Last Month Tracker, Site Q, NameSpace)',
+        'Confirm Links sheet entry for new tracker and form',
+        'Verify form sharing, file name and folder placement',
+        'Run test reuse flow (Test Reuse menu or submit sample)',
+        'Copy Slack message from sidebar and post to channel',
+        'Verify Help sheet Next Month signup link (optional)',
+        'Verify Config sheet hidden and sensitive values protected'
+      ],
       slackReadyMessage: slackMsg,
       operatorName: null,
       contactEmail: siteQEmail
