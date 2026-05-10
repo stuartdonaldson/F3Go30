@@ -41,15 +41,15 @@ const {
     maybeReuseLastMonthsGoals_
 } = require('../script/signupReuse.js');
 
-// Header row matching RESPONSE_COLUMN_MAP order (Timestamp is not in the map but present in real data).
+// Header row extracted from actual Last Month Tracker Responses sheet
 const HEADERS = [
     'Timestamp',
     'Email Address',
     'Are you currently participating in Go30?',
     'F3 Name',
-    'Team type',
+    'Do you want to be on an AO based team - OR- grouped with other HIMs around a common goal?',
     'Team',
-    'Other team name',
+    "Great! Here are some goals that other HIM's are focused on this month. Pick one or choose 'other' and we will try and pair you with someone else who has a similar goal. Or specify another team name for grouping",
     'WHO do you ultimately want to become?',
     'WHAT is your Go30 Challenge?',
     'HOW are you going to be successful this month?',
