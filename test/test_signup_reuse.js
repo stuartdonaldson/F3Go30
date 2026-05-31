@@ -656,4 +656,209 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockManagedSheet = null;
 }
 
+// Test: Team field lookup does not confuse a Teams page break with the Team list item.
+{
+    mailsSent = [];
+    global._mockPrevSs = {};
+    global._mockManagedSheet = {
+        getAllRows: function() {
+            return [{
+                F3_NAME: 'TestPax',
+                TEAM_TYPE: 'AO',
+                TEAM: 'Crucible',
+                OTHER_TEAM: '',
+                WHO: 'Leader',
+                WHAT: 'Run hard',
+                HOW: 'Track daily',
+                PHONE: '555-9999'
+            }];
+        }
+    };
+
+    function makePageBreakItem(title) {
+        return {
+            getType: function() { return 'PAGE_BREAK'; },
+            getTitle: function() { return title; }
+        };
+    }
+
+    function makeListItem(title, choices) {
+        return {
+            getType: function() { return global.FormApp.ItemType.LIST; },
+            getTitle: function() { return title; },
+            asListItem: function() {
+                return {
+                    getChoices: function() {
+                        return choices.map(function(v) {
+                            return { getValue: function() { return v; } };
+                        });
+                    },
+                    createResponse: function(v) {
+                        return { itemTitle: title, value: v };
+                    }
+                };
+            }
+        };
+    }
+
+    function makeTextItem(title) {
+        return {
+            getType: function() { return global.FormApp.ItemType.TEXT; },
+            getTitle: function() { return title; },
+            asTextItem: function() {
+                return {
+                    createResponse: function(v) { return { itemTitle: title, value: v }; }
+                };
+            }
+        };
+    }
+
+    var capturedResponses = [];
+    var fakeForm = {
+        getItems: function() {
+            return [
+                makeTextItem('Are you currently participating in Go30?'),
+                makeTextItem('F3 Name'),
+                makePageBreakItem('Teams'),
+                makeListItem('Team', ['Crucible', 'Fusion'])
+            ];
+        },
+        createResponse: function() {
+            return {
+                withItemResponse: function(response) {
+                    capturedResponses.push(response);
+                    return this;
+                },
+                toPrefilledUrl: function() { return 'https://example.com/prefill'; }
+            };
+        }
+    };
+
+    global._mockForm = fakeForm;
+
+    maybeReuseLastMonthsGoals_(
+        {
+            getFormUrl: function() { return 'https://docs.google.com/forms/d/mock/viewform'; },
+            getSheetByName: function() { return null; },
+            getUrl: function() { return 'https://mock-ss.example.com'; }
+        },
+        makeMockResponsesSheet(HEADERS),
+        2,
+        reusableFormRow()
+    );
+
+    assert.ok(capturedResponses.some(function(response) {
+        return response && response.itemTitle === 'Team' && response.value === 'Crucible';
+    }), 'Team list item receives the prefilled Crucible value even when a Teams page break exists');
+
+    global._mockForm = null;
+    global._mockPrevSs = null;
+    global._mockManagedSheet = null;
+}
+
+// Test: Team field lookup does not confuse Team type with the Team choice item.
+{
+    mailsSent = [];
+    global._mockPrevSs = {};
+    global._mockManagedSheet = {
+        getAllRows: function() {
+            return [{
+                F3_NAME: 'TestPax',
+                TEAM_TYPE: 'AO',
+                TEAM: 'Crucible',
+                OTHER_TEAM: '',
+                WHO: 'Leader',
+                WHAT: 'Run hard',
+                HOW: 'Track daily',
+                PHONE: '555-9999'
+            }];
+        }
+    };
+
+    function makeChoiceItem(title, choices, type) {
+        return {
+            getType: function() { return type; },
+            getTitle: function() { return title; },
+            asMultipleChoiceItem: function() {
+                return {
+                    getChoices: function() {
+                        return choices.map(function(v) {
+                            return { getValue: function() { return v; } };
+                        });
+                    },
+                    createResponse: function(v) {
+                        return { itemTitle: title, value: v };
+                    }
+                };
+            },
+            asListItem: function() {
+                return {
+                    getChoices: function() {
+                        return choices.map(function(v) {
+                            return { getValue: function() { return v; } };
+                        });
+                    },
+                    createResponse: function(v) {
+                        return { itemTitle: title, value: v };
+                    }
+                };
+            }
+        };
+    }
+
+    function makeTextItem(title) {
+        return {
+            getType: function() { return global.FormApp.ItemType.TEXT; },
+            getTitle: function() { return title; },
+            asTextItem: function() {
+                return {
+                    createResponse: function(v) { return { itemTitle: title, value: v }; }
+                };
+            }
+        };
+    }
+
+    var capturedResponses = [];
+    var fakeForm = {
+        getItems: function() {
+            return [
+                makeTextItem('Are you currently participating in Go30?'),
+                makeTextItem('F3 Name'),
+                makeChoiceItem('Team type', ['AO', 'Goal based - or other team'], global.FormApp.ItemType.MULTIPLE_CHOICE),
+                makeChoiceItem('Team', ['Crucible', 'Fusion'], global.FormApp.ItemType.LIST)
+            ];
+        },
+        createResponse: function() {
+            return {
+                withItemResponse: function(response) {
+                    capturedResponses.push(response);
+                    return this;
+                },
+                toPrefilledUrl: function() { return 'https://example.com/prefill'; }
+            };
+        }
+    };
+
+    global._mockForm = fakeForm;
+
+    maybeReuseLastMonthsGoals_(
+        {
+            getFormUrl: function() { return 'https://docs.google.com/forms/d/mock/viewform'; },
+            getSheetByName: function() { return null; },
+            getUrl: function() { return 'https://mock-ss.example.com'; }
+        },
+        makeMockResponsesSheet(HEADERS),
+        2,
+        reusableFormRow()
+    );
+
+    assert.ok(capturedResponses.some(function(response) {
+        return response && response.itemTitle === 'Team' && response.value === 'Crucible';
+    }), 'Team item receives the Crucible prefill even when Team type appears first');
+
+    global._mockForm = null;
+    global._mockPrevSs = null;
+    global._mockManagedSheet = null;
+}
+
 console.log('test_signup_reuse.js: PASS');

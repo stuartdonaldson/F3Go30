@@ -149,17 +149,30 @@ function buildReuseSummaryLines(reusedValues) {
     return lines.filter(function(e) { return String(e[1] || '').trim() !== ''; }).map(function(e) { return e[0] + ': ' + e[1]; });
 }
 
+function isFormTitleMatch_(title, titlePrefix) {
+    var normalizedTitle = String(title || '').trim().toLowerCase();
+    var normalizedPrefix = String(titlePrefix || '').trim().toLowerCase();
+    if (!normalizedTitle || !normalizedPrefix) return false;
+    if (normalizedTitle === normalizedPrefix) return true;
+    if (normalizedTitle.indexOf(normalizedPrefix) !== 0) return false;
+
+    var nextChar = normalizedTitle.charAt(normalizedPrefix.length);
+    return /[:;,.!?()[\]{}\-_/]/.test(nextChar);
+}
+
 function findFormItemByTitle(form, titlePrefix) {
     if (!form) return null;
     var items = form.getItems();
     var norm = String(titlePrefix || '').trim().toLowerCase();
+    var prefixMatch = null;
     for (var i = 0; i < items.length; i++) {
         var item = items[i];
         if (typeof item.getTitle !== 'function') continue;
         var title = String(item.getTitle() || '').trim().toLowerCase();
-        if (title === norm || title.indexOf(norm) === 0) return item;
+        if (title === norm) return item;
+        if (!prefixMatch && isFormTitleMatch_(title, norm)) prefixMatch = item;
     }
-    return null;
+    return prefixMatch;
 }
 
 function findResponseFormItemByKey_(form, key) {
@@ -169,6 +182,35 @@ function findResponseFormItemByKey_(form, key) {
         if (item) return item;
     }
     return null;
+}
+
+function ensureReuseOptionOnLinkedForm_(form) {
+  var reuseChoiceText = "Yes, and use last month's goals.";
+  var item = findResponseFormItemByKey_(form, 'PARTICIPATION');
+  if (!item) {
+    Logger.log('ensureReuseOptionOnLinkedForm_: PARTICIPATION item not found — skipping');
+    return;
+  }
+  var type = item.getType();
+  var typedItem;
+  if (type === FormApp.ItemType.MULTIPLE_CHOICE) {
+    typedItem = item.asMultipleChoiceItem();
+  } else if (type === FormApp.ItemType.LIST) {
+    typedItem = item.asListItem();
+  } else {
+    Logger.log('ensureReuseOptionOnLinkedForm_: PARTICIPATION item type not supported — skipping');
+    return;
+  }
+  var existingChoices = typedItem.getChoices();
+  var norm = reuseChoiceText.trim().toLowerCase();
+  for (var i = 0; i < existingChoices.length; i++) {
+    if (existingChoices[i].getValue().trim().toLowerCase() === norm) return;
+  }
+  // Forms API requires all choices to be created via createChoice() — cannot mix
+  // existing Choice objects with new ones in setChoices().
+  var newChoices = existingChoices.map(function(c) { return typedItem.createChoice(c.getValue()); });
+  newChoices.push(typedItem.createChoice(reuseChoiceText));
+  typedItem.setChoices(newChoices);
 }
 
 function resolveChoiceValue_(choices, value) {
@@ -183,54 +225,82 @@ function resolveChoiceValue_(choices, value) {
     return '';
 }
 
-function addPrefilledItemResponse(draftResponse, item, value) {
-    if (!item || String(value || '').trim() === '') return;
+function getChoiceValuesForLog_(item) {
+    if (!item || typeof item.getType !== 'function') return [];
+    try {
+        switch (item.getType()) {
+            case FormApp.ItemType.MULTIPLE_CHOICE:
+                return item.asMultipleChoiceItem().getChoices().map(function(choice) { return choice.getValue(); });
+            case FormApp.ItemType.LIST:
+                return item.asListItem().getChoices().map(function(choice) { return choice.getValue(); });
+            default:
+                return [];
+        }
+    } catch (e) {
+        return [];
+    }
+}
+
+function addPrefilledItemResponse(draftResponse, item, value, fieldKey) {
+    var safeFieldKey = fieldKey || '(unknown)';
+    var safeValue = String(value || '');
+    if (!item) {
+        Logger.log('buildPrefilledGoalUpdateUrl: item not found for field ' + safeFieldKey + ' using titles [' + getResponseFieldTitles_(safeFieldKey).join(', ') + ']' + (safeFieldKey === 'EMAIL' ? ' (possible built-in form email collection)' : ''));
+        return;
+    }
+    if (safeValue.trim() === '') {
+        Logger.log('buildPrefilledGoalUpdateUrl: skipping blank value for field ' + safeFieldKey + ' on item "' + item.getTitle() + '"');
+        return;
+    }
     try {
         switch (item.getType()) {
             case FormApp.ItemType.TEXT:
-                draftResponse.withItemResponse(item.asTextItem().createResponse(String(value)));
+                draftResponse.withItemResponse(item.asTextItem().createResponse(safeValue));
                 return;
             case FormApp.ItemType.PARAGRAPH_TEXT:
-                draftResponse.withItemResponse(item.asParagraphTextItem().createResponse(String(value)));
+                draftResponse.withItemResponse(item.asParagraphTextItem().createResponse(safeValue));
                 return;
             case FormApp.ItemType.MULTIPLE_CHOICE:
                 var mcItem = item.asMultipleChoiceItem();
-                var mcChoice = resolveChoiceValue_(mcItem.getChoices(), value);
+                var mcChoice = resolveChoiceValue_(mcItem.getChoices(), safeValue);
                 if (!mcChoice) {
-                    Logger.log('buildPrefilledGoalUpdateUrl: skipping invalid multiple-choice value "' + value + '" for item "' + item.getTitle() + '"');
+                    Logger.log('buildPrefilledGoalUpdateUrl: skipping invalid multiple-choice value "' + safeValue + '" for field ' + safeFieldKey + ' on item "' + item.getTitle() + '". Available choices: [' + getChoiceValuesForLog_(item).join(', ') + ']');
                     return;
                 }
                 draftResponse.withItemResponse(mcItem.createResponse(mcChoice));
                 return;
             case FormApp.ItemType.LIST:
                 var listItem = item.asListItem();
-                var listChoice = resolveChoiceValue_(listItem.getChoices(), value);
+                var listChoice = resolveChoiceValue_(listItem.getChoices(), safeValue);
                 if (!listChoice) {
-                    Logger.log('buildPrefilledGoalUpdateUrl: skipping invalid list value "' + value + '" for item "' + item.getTitle() + '"');
+                    Logger.log('buildPrefilledGoalUpdateUrl: skipping invalid list value "' + safeValue + '" for field ' + safeFieldKey + ' on item "' + item.getTitle() + '". Available choices: [' + getChoiceValuesForLog_(item).join(', ') + ']');
                     return;
                 }
                 draftResponse.withItemResponse(listItem.createResponse(listChoice));
                 return;
+            default:
+                Logger.log('buildPrefilledGoalUpdateUrl: unsupported item type ' + item.getType() + ' for field ' + safeFieldKey + ' on item "' + item.getTitle() + '"');
+                return;
         }
     } catch (e) {
-        Logger.log('buildPrefilledGoalUpdateUrl: prefill failed for item "' + (item.getTitle ? item.getTitle() : '(unknown)') + '" with value "' + value + '" — ' + (e && e.message));
+        Logger.log('buildPrefilledGoalUpdateUrl: prefill failed for field ' + safeFieldKey + ' on item "' + (item.getTitle ? item.getTitle() : '(unknown)') + '" with value "' + safeValue + '" — ' + (e && e.message));
     }
 }
 
 function buildPrefilledGoalUpdateUrl(form, currentResponseRow, reusedValues, responseColumns) {
     if (!form) return '';
     var draft = form.createResponse();
-    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'PARTICIPATION'), 'Yes');
-    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'EMAIL'), (currentResponseRow && currentResponseRow[responseColumns.EMAIL]) || reusedValues.email || '');
-    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'F3_NAME'), (currentResponseRow && currentResponseRow[responseColumns.F3_NAME]) || '');
-    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'TEAM_TYPE'), reusedValues.teamType);
-    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'TEAM'), reusedValues.team);
-    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'OTHER_TEAM'), reusedValues.otherTeam);
-    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'WHO'), reusedValues.who);
-    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'WHAT'), reusedValues.what);
-    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'HOW'), reusedValues.how);
-    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'PHONE'), reusedValues.phone);
-    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'NAG_EMAIL'), reusedValues.nagEmail);
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'PARTICIPATION'), 'Yes', 'PARTICIPATION');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'EMAIL'), (currentResponseRow && currentResponseRow[responseColumns.EMAIL]) || reusedValues.email || '', 'EMAIL');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'F3_NAME'), (currentResponseRow && currentResponseRow[responseColumns.F3_NAME]) || '', 'F3_NAME');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'TEAM_TYPE'), reusedValues.teamType, 'TEAM_TYPE');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'TEAM'), reusedValues.team, 'TEAM');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'OTHER_TEAM'), reusedValues.otherTeam, 'OTHER_TEAM');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'WHO'), reusedValues.who, 'WHO');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'WHAT'), reusedValues.what, 'WHAT');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'HOW'), reusedValues.how, 'HOW');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'PHONE'), reusedValues.phone, 'PHONE');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'NAG_EMAIL'), reusedValues.nagEmail, 'NAG_EMAIL');
     return draft.toPrefilledUrl();
 }
 
