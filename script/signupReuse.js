@@ -12,6 +12,9 @@
 var responseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
     ? require('./response_utils.js')
     : null;
+var signupReuseUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
+    ? require('./Utilities.js')
+    : null;
 
 var RESPONSE_COLUMN_MAP = (responseUtilsModule_ && responseUtilsModule_.RESPONSE_COLUMN_MAP)
     || (typeof globalThis !== 'undefined' && globalThis.RESPONSE_COLUMN_MAP);
@@ -23,11 +26,15 @@ var sanitizeEmailAddressForSend_ = (responseUtilsModule_ && responseUtilsModule_
     || (typeof globalThis !== 'undefined' && globalThis.sanitizeEmailAddressForSend_);
 var buildGoalSummaryLines_ = (responseUtilsModule_ && responseUtilsModule_.buildGoalSummaryLines_)
     || (typeof globalThis !== 'undefined' && globalThis.buildGoalSummaryLines_);
+var getResponseEmailValue_ = (responseUtilsModule_ && responseUtilsModule_.getResponseEmailValue_)
+    || (typeof globalThis !== 'undefined' && globalThis.getResponseEmailValue_);
 var resolveResponseColumns = (responseUtilsModule_ && responseUtilsModule_.resolveResponseColumns)
     || (typeof globalThis !== 'undefined' && globalThis.resolveResponseColumns);
 var resolveResponseColumns_ = (responseUtilsModule_ && responseUtilsModule_.resolveResponseColumns_)
     || (typeof globalThis !== 'undefined' && globalThis.resolveResponseColumns_)
     || resolveResponseColumns;
+var sendConfiguredEmail_ = (signupReuseUtilitiesModule_ && signupReuseUtilitiesModule_.sendConfiguredEmail_)
+    || (typeof globalThis !== 'undefined' && globalThis.sendConfiguredEmail_);
 
 function getResponseValue_(responseRow, columnMap, key) {
     if (!columnMap || typeof columnMap[key] !== 'number') throw new Error('Missing header mapping for ' + key);
@@ -49,6 +56,111 @@ function normalizeEmailAddress(email) {
     return String(email || '').trim().toLowerCase();
 }
 
+function formatTrackerReferenceDate_(value) {
+    if (value instanceof Date && !isNaN(value.getTime())) {
+        return value.getFullYear()
+            + '-' + String(value.getMonth() + 1).padStart(2, '0')
+            + '-' + String(value.getDate()).padStart(2, '0');
+    }
+    return String(value || '').trim();
+}
+
+function extractSpreadsheetIdFromReference_(trackerReference) {
+    var reference = String(trackerReference || '').trim();
+    if (!reference) return '';
+
+    var trackerIdMatch = reference.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (trackerIdMatch) return trackerIdMatch[1];
+    if (/^[a-zA-Z0-9_-]{20,}$/.test(reference)) return reference;
+    return '';
+}
+
+function resolveTrackerReferenceFromLinks_(spreadsheet, previousTrackerConfig) {
+    if (!spreadsheet || typeof spreadsheet.getSheetByName !== 'function') return '';
+
+    var trackerName = String((previousTrackerConfig && previousTrackerConfig.primary) || '').trim();
+    if (!trackerName) return '';
+
+    var linksSheet = spreadsheet.getSheetByName('Links');
+    if (!linksSheet || typeof linksSheet.getDataRange !== 'function') return '';
+
+    var values = linksSheet.getDataRange().getValues();
+    if (!values || values.length < 2) return '';
+
+    var headers = values[0].map(function(header) {
+        return String(header || '').trim().toLowerCase();
+    });
+    var startDateIndex = headers.indexOf('startdate');
+    if (startDateIndex === -1) startDateIndex = headers.indexOf('month');
+    if (startDateIndex === -1) return '';
+
+    var sheetIdIndex = headers.indexOf('sheetid');
+    var trackerUrlIndex = headers.indexOf('trackerurl');
+    if (trackerUrlIndex === -1) trackerUrlIndex = headers.indexOf('tracker url');
+    var shortTrackerIndex = headers.indexOf('shorttracker');
+
+    for (var i = values.length - 1; i >= 1; i--) {
+        var row = values[i] || [];
+        if (formatTrackerReferenceDate_(row[startDateIndex]) !== trackerName) continue;
+
+        var sheetId = sheetIdIndex >= 0 ? String(row[sheetIdIndex] || '').trim() : '';
+        if (sheetId) return sheetId;
+
+        var trackerUrl = trackerUrlIndex >= 0 ? String(row[trackerUrlIndex] || '').trim() : '';
+        if (trackerUrl) return trackerUrl;
+
+        return shortTrackerIndex >= 0 ? String(row[shortTrackerIndex] || '').trim() : '';
+    }
+
+    return '';
+}
+
+function openSpreadsheetFromReference_(trackerReference) {
+    var trackerId = extractSpreadsheetIdFromReference_(trackerReference);
+    if (trackerId) return SpreadsheetApp.openById(trackerId);
+    return SpreadsheetApp.openByUrl(String(trackerReference || '').trim());
+}
+
+function describePriorTrackerContext_(prevSs, trackerReference) {
+    var parts = ['reference=' + JSON.stringify(String(trackerReference || '').trim())];
+    if (!prevSs) return parts.join(', ');
+
+    try {
+        if (typeof prevSs.getName === 'function') {
+            parts.push('spreadsheetName=' + JSON.stringify(prevSs.getName()));
+        }
+    } catch (e) {}
+
+    try {
+        if (typeof prevSs.getId === 'function') {
+            parts.push('spreadsheetId=' + JSON.stringify(prevSs.getId()));
+        }
+    } catch (e) {}
+
+    try {
+        if (typeof prevSs.getUrl === 'function') {
+            parts.push('spreadsheetUrl=' + JSON.stringify(prevSs.getUrl()));
+        }
+    } catch (e) {}
+
+    try {
+        if (typeof prevSs.getSheetByName === 'function') {
+            var responsesSheet = prevSs.getSheetByName('Responses');
+            parts.push('responsesSheet=' + (responsesSheet ? 'present' : 'missing'));
+            if (responsesSheet && typeof responsesSheet.getDataRange === 'function') {
+                var values = responsesSheet.getDataRange().getValues();
+                var headerRow = values && values.length ? values[0] : [];
+                parts.push('responsesHeaders=' + JSON.stringify(headerRow));
+                parts.push('responsesRowCount=' + (values ? values.length : 0));
+            }
+        }
+    } catch (e) {
+        parts.push('responsesInspectError=' + JSON.stringify(e && e.message));
+    }
+
+    return parts.join(', ');
+}
+
 function isReuseLastMonthsGoalsChoice(answer) {
     var s = String(answer || '').trim();
     if (!s) return false;
@@ -68,14 +180,14 @@ function checkIsReuseChoice_(answer, reuseTriggerPhrase) {
     return isReuseLastMonthsGoalsChoice(answer);
 }
 
-function findLatestResponseByEmail(rows, emailAddress, responseColumns) {
+function findLatestResponseByEmail(rows, emailAddress, responseColumns, responseHeaders) {
     if (!responseColumns || typeof responseColumns.EMAIL !== 'number') throw new Error('responseColumns required for findLatestResponseByEmail');
     var norm = normalizeEmailAddress(emailAddress);
     if (!norm) return null;
     for (var i = rows.length - 1; i >= 0; i--) {
         var row = rows[i];
         if (!row) continue;
-        if (normalizeEmailAddress(row[responseColumns.EMAIL]) === norm) return { rowIndex: i, row: row };
+        if (normalizeEmailAddress(getResponseEmailValue_(row, responseColumns, responseHeaders)) === norm) return { rowIndex: i, row: row };
     }
     return null;
 }
@@ -96,6 +208,7 @@ function extractReusableResponseValues(responseRow, responseColumns) {
     if (!responseRow) return null;
     if (!responseColumns) throw new Error('responseColumns required for extractReusableResponseValues');
     function v(key) {
+        if (key === 'EMAIL') return getResponseEmailValue_(responseRow, responseColumns);
         var idx = responseColumns[key];
         return (typeof idx === 'number' && idx >= 0) ? (responseRow[idx] || '') : '';
     }
@@ -291,7 +404,7 @@ function buildPrefilledGoalUpdateUrl(form, currentResponseRow, reusedValues, res
     if (!form) return '';
     var draft = form.createResponse();
     addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'PARTICIPATION'), 'Yes', 'PARTICIPATION');
-    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'EMAIL'), (currentResponseRow && currentResponseRow[responseColumns.EMAIL]) || reusedValues.email || '', 'EMAIL');
+    addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'EMAIL'), (currentResponseRow && getResponseEmailValue_(currentResponseRow, responseColumns)) || reusedValues.email || '', 'EMAIL');
     addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'F3_NAME'), (currentResponseRow && currentResponseRow[responseColumns.F3_NAME]) || '', 'F3_NAME');
     addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'TEAM_TYPE'), reusedValues.teamType, 'TEAM_TYPE');
     addPrefilledItemResponse(draft, findResponseFormItemByKey_(form, 'TEAM'), reusedValues.team, 'TEAM');
@@ -312,7 +425,7 @@ function buildPrefilledGoalUpdateUrl(form, currentResponseRow, reusedValues, res
  * Returns { ok: true, reusedValues: {...} }
  * or { ok: false, error: 'reason', message: 'human message' }
  */
-function getPriorResponse(prevSs, f3Name) {
+function getPriorResponse(prevSs, f3Name, trackerReference) {
     if (!prevSs) return { ok: false, error: 'no-ss', message: 'previous spreadsheet not provided' };
     try {
         var prevManager = new SpreadsheetManager(prevSs);
@@ -326,7 +439,13 @@ function getPriorResponse(prevSs, f3Name) {
             if (isDeletedResponseRow_(r)) continue;
             if (String(r.F3_NAME || '').trim().toLowerCase() === normF3Name) { foundObj = r; break; }
         }
-        if (!foundObj) return { ok: false, error: 'not-found', message: 'no previous response found for F3 Name: ' + f3Name };
+        if (!foundObj) {
+            var ssName = ''; var ssId = '';
+            try { ssName = prevSs.getName(); } catch (e) {}
+            try { ssId = prevSs.getId(); } catch (e) {}
+            var sampleNames = prevRowsObj.slice(0, 5).map(function(r) { return r && r.F3_NAME || '(blank)'; });
+            return { ok: false, error: 'not-found', message: 'no previous response found for F3 Name: ' + f3Name + ' — prevSs=' + JSON.stringify(ssName) + ' id=' + JSON.stringify(ssId) + ' rowCount=' + prevRowsObj.length + ' sampleNames=' + JSON.stringify(sampleNames) };
+        }
         return {
             ok: true,
             reusedValues: {
@@ -342,11 +461,15 @@ function getPriorResponse(prevSs, f3Name) {
             }
         };
     } catch (err) {
-        return { ok: false, error: 'lookup-failed', message: 'prior tracker lookup failed: ' + (err && err.message) };
+        return {
+            ok: false,
+            error: 'lookup-failed',
+            message: 'prior tracker lookup failed: ' + (err && err.message) + ' (' + describePriorTrackerContext_(prevSs, trackerReference) + ')'
+        };
     }
 }
 
-function sendGoalReuseEmail(emailAddress, f3Name, trackerUrl, prefilledUrl, summaryLines, usedPriorGoals) {
+function sendGoalReuseEmail(spreadsheet, emailAddress, f3Name, trackerUrl, prefilledUrl, summaryLines, usedPriorGoals) {
     var recipient = sanitizeEmailAddressForSend_(emailAddress);
     if (!recipient) { Logger.log('sendGoalReuseEmail: invalid email'); return; }
     var safeF3Name = sanitizeTextForEmailLine_(f3Name) || '(unknown)';
@@ -359,15 +482,21 @@ function sendGoalReuseEmail(emailAddress, f3Name, trackerUrl, prefilledUrl, summ
     });
 
     try {
-        MailApp.sendEmail({ to: recipient, subject: message.subject, body: message.body, htmlBody: message.htmlBody });
+        sendConfiguredEmail_({
+            spreadsheet: spreadsheet,
+            recipients: [{ name: safeF3Name, email: recipient }],
+            subject: message.subject,
+            body: message.body,
+            htmlBody: message.htmlBody,
+            allowPlainTextFallback: true,
+            logLabel: 'sendGoalReuseEmail'
+        });
     } catch (e) {
-        // Fallback to plain text send if templated send fails
-        Logger.log('sendGoalReuseEmail: template send failed — ' + (e && e.message));
-        MailApp.sendEmail(recipient, message.subject, message.body);
+        Logger.log('sendGoalReuseEmail: send failed — ' + (e && e.message));
     }
 }
 
-function sendRegistrationConfirmationEmail_(emailAddress, f3Name, trackerUrl, prefilledUrl, summaryLines, registrationMonth) {
+function sendRegistrationConfirmationEmail_(spreadsheet, emailAddress, f3Name, trackerUrl, prefilledUrl, summaryLines, registrationMonth) {
     var recipient = sanitizeEmailAddressForSend_(emailAddress);
     if (!recipient) { Logger.log('sendRegistrationConfirmationEmail_: invalid email'); return; }
 
@@ -387,7 +516,15 @@ function sendRegistrationConfirmationEmail_(emailAddress, f3Name, trackerUrl, pr
         registrationMonth: safeRegistrationMonth
     });
 
-    MailApp.sendEmail({ to: recipient, subject: message.subject, body: message.body, htmlBody: message.htmlBody });
+    sendConfiguredEmail_({
+        spreadsheet: spreadsheet,
+        recipients: [{ name: safeF3Name, email: recipient }],
+        subject: message.subject,
+        body: message.body,
+        htmlBody: message.htmlBody,
+        allowPlainTextFallback: true,
+        logLabel: 'sendRegistrationConfirmationEmail_'
+    });
 }
 
 /**
@@ -401,6 +538,7 @@ function sendRegistrationConfirmationEmail_(emailAddress, f3Name, trackerUrl, pr
  */
 function maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNumber, formResponses) {
     var currentResponseColumns = resolveResponseColumns(responsesSheet);
+    var currentResponseHeaders = responsesSheet.getRange(1, 1, 1, responsesSheet.getLastColumn()).getValues()[0];
 
     // Read optional Config trigger phrase so the reuse option text is not hardcoded.
     var triggerConfig = getConfigValue_(spreadsheet, 'Reuse Goals Trigger');
@@ -410,7 +548,7 @@ function maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNum
         return formResponses;
     }
 
-    var emailAddress = formResponses[currentResponseColumns.EMAIL];
+    var emailAddress = getResponseEmailValue_(formResponses, currentResponseColumns, currentResponseHeaders);
     var f3Name = formResponses[currentResponseColumns.F3_NAME];
     var trackerUrl = (spreadsheet.getSheetByName('Tracker') ? spreadsheet.getUrl() + '#gid=' + spreadsheet.getSheetByName('Tracker').getSheetId() : spreadsheet.getUrl());
     var form = spreadsheet.getFormUrl() ? FormApp.openByUrl(spreadsheet.getFormUrl()) : null;
@@ -421,22 +559,27 @@ function maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNum
     var trackerReference = String((previousTrackerConfig && (previousTrackerConfig.secondary || previousTrackerConfig.primary)) || '').trim();
     if (!trackerReference) {
         Logger.log('maybeReuseLastMonthsGoals_: no previous tracker found in Config sheet');
-        sendGoalReuseEmail(emailAddress, f3Name, trackerUrl, prefilledUrl, [], false);
+        sendGoalReuseEmail(spreadsheet, emailAddress, f3Name, trackerUrl, prefilledUrl, [], false);
         return formResponses;
     }
 
-    // Open the previous tracker spreadsheet.
     var priorResult;
     try {
-        var match = trackerReference.match(/\/d\/([a-zA-Z0-9_-]+)/);
-        var prevSs = match ? SpreadsheetApp.openById(match[1]) : SpreadsheetApp.openByUrl(trackerReference);
-        priorResult = getPriorResponse(prevSs, f3Name);
+        var prevSs;
+        try {
+            prevSs = openSpreadsheetFromReference_(trackerReference);
+        } catch (openErr) {
+            var linksFallbackReference = resolveTrackerReferenceFromLinks_(spreadsheet, previousTrackerConfig);
+            if (!linksFallbackReference || linksFallbackReference === trackerReference) throw openErr;
+            prevSs = openSpreadsheetFromReference_(linksFallbackReference);
+        }
+        priorResult = getPriorResponse(prevSs, f3Name, trackerReference);
     } catch (e) {
         priorResult = { ok: false, error: 'open-failed', message: 'failed to open previous tracker: ' + (e && e.message) };
     }
     if (!priorResult.ok) {
         Logger.log('maybeReuseLastMonthsGoals_: ' + priorResult.message);
-        sendGoalReuseEmail(emailAddress, f3Name, trackerUrl, prefilledUrl, [], false);
+        sendGoalReuseEmail(spreadsheet, emailAddress, f3Name, trackerUrl, prefilledUrl, [], false);
         return formResponses;
     }
 
@@ -456,7 +599,7 @@ function maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNum
         prefilledUrl = buildPrefilledGoalUpdateUrl(form, formResponses, reusedValues, currentResponseColumns) || prefilledUrl;
     }
 
-    sendGoalReuseEmail(emailAddress, f3Name, trackerUrl, prefilledUrl, buildReuseSummaryLines(reusedValues), true);
+    sendGoalReuseEmail(spreadsheet, emailAddress, f3Name, trackerUrl, prefilledUrl, buildReuseSummaryLines(reusedValues), true);
     return formResponses;
 }
 
@@ -474,6 +617,7 @@ if (typeof module !== 'undefined' && module.exports) {
         sendRegistrationConfirmationEmail_,
         sanitizeTextForEmailLine_,
         sanitizeEmailAddressForSend_,
+        resolveTrackerReferenceFromLinks_,
         getResponseValue_,
         getOptionalResponseValue_,
         setResponseValue_
