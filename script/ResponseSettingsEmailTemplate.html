@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+  </head>
+  <body style="margin:0;padding:0;background:#f4f1ea;font-family:Arial,sans-serif;color:#222;line-height:1.5;">
+    <div style="max-width:680px;margin:0 auto;padding:24px;">
+      <div style="background:#fffdf8;border:1px solid #d8cfbf;border-radius:12px;overflow:hidden;">
+        <div style="background:#2f5d50;color:#f8f4ea;padding:20px 24px;">
+          <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.9;">F3 Go30</div>
+          <h1 style="margin:8px 0 0;font-size:20px;line-height:1.2;">Your Go30 signup settings were copied</h1>
+        </div>
+
+        <div style="padding:24px;">
+          <p style="margin:0 0 16px;">Hello <?= recipientName || 'there' ?>,</p>
+          <p style="margin:0 0 16px;">The following signup settings were copied into the current tracker for your account:</p>
+
+          <div style="margin:0 0 16px;padding:12px;background:#f3efe4;border-left:4px solid #b8860b;border-radius:8px;font-size:14px;">
+            <? for (var i = 0; i < copiedSettings.length; i++) { ?>
+              <div><strong><?= copiedSettings[i].header ?>:</strong> <?= copiedSettings[i].value ?></div>
+            <? } ?>
+          </div>
+
+          <p style="margin:0;">If any value looks incorrect, please update your form response or contact the Site Q.</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

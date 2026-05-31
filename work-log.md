@@ -107,3 +107,14 @@ Google Forms prefilled URLs are produced from matched form items, not from respo
 - Focused validation passed with `node test/test_signup_reuse.js` after each matcher change.
 - Live cloud logs confirmed TEAM warnings disappeared and only expected blank OTHER_TEAM and NAG_EMAIL skips remained.
 - Created bd issue `F3Go30-q16` to track remaining email-template cleanup work and closed `F3Go30-zof` after live verification.
+
+## 2026-05-30 18:38:52
+
+### Summary:
+Implemented tracker-month registration confirmation emails on form submit using the shared signup email template.
+Converted copied-response settings email to a dedicated HtmlService template and shared goal-summary helpers.
+Documented the submit-flow email behavior in docs/CONTEXT.md and closed bd issues F3Go30-flo and F3Go30-q16 after validation.
+
+### Key Learnings:
+The registration month should come from the Tracker sheet start date rather than the current date or spreadsheet name.
+Email content builders are shared now, but MailApp.sendEmail still remains at workflow edges rather than behind a single gateway.

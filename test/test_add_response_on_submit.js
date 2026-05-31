@@ -9,12 +9,22 @@ global.runWithLock = function(fn) { fn(); return true; };
 global.getResponseValue_ = function(row, cols, key) { return row[cols[key]] || ''; };
 global.resolveResponseColumns = function(sheet) { return {}; };
 global.maybeReuseLastMonthsGoals_ = function(ss, respSheet, rowNum, responses) { return responses; };
+global.buildGoalSummaryLinesFromResponse_ = function() { return ['Who: Leader']; };
+global.sendRegistrationConfirmationEmail_ = function(email, f3Name, trackerUrl, formUrl, summaryLines, registrationMonth) {
+  global._registrationConfirmationCalls.push({ email, f3Name, trackerUrl, formUrl, summaryLines, registrationMonth });
+};
+global.checkIsReuseChoice_ = function(answer) { return answer === 'Reuse'; };
+global.getConfigValue_ = function() { return null; };
 global.logActivity = function() {};
+global._registrationConfirmationCalls = [];
 
 const {
   findDuplicateResponseRows_,
   removeDuplicateResponseRow_,
-  deduplicateResponsesSheet_
+  deduplicateResponsesSheet_,
+  getTrackerStartDate_,
+  formatRegistrationMonth_,
+  maybeSendRegistrationConfirmation_
 } = require('../script/addResponseOnSubmit.js');
 
 // Helper: build a single-column values array as getRange().getValues() returns.
@@ -127,6 +137,71 @@ function col(values) {
   const action = removeDuplicateResponseRow_(responsesSheet, 7, { PARTICIPATION: 2 });
   assert.equal(action, 'deleted', 'deleteRow fallback used when clear fails');
   assert.deepEqual(deleted, [7], 'fallback deletes the duplicate row');
+}
+
+// Tracker month is derived from the first date column in row 3.
+{
+  const startDate = getTrackerStartDate_({
+    getLastColumn: function() { return 12; },
+    getRange: function(row, col, numRows, numCols) {
+      assert.equal(row, 3);
+      assert.equal(col, 9);
+      assert.equal(numRows, 1);
+      assert.equal(numCols, 4);
+      return { getValues: function() { return [[new Date(2026, 5, 1), '', '', '']]; } };
+    }
+  });
+
+  assert.equal(formatRegistrationMonth_(startDate), 'June 2026');
+}
+
+// Non-reuse submit sends a generic registration confirmation using tracker start date.
+{
+  global._registrationConfirmationCalls = [];
+  const sent = maybeSendRegistrationConfirmation_(
+    {
+      getUrl: function() { return 'https://spreadsheet.example.com'; },
+      getFormUrl: function() { return 'https://form.example.com'; }
+    },
+    {
+      getSheetId: function() { return 456; },
+      getLastColumn: function() { return 10; },
+      getRange: function() { return { getValues: function() { return [[new Date(2026, 5, 1), '']]; } }; }
+    },
+    { EMAIL: 1, PARTICIPATION: 2, F3_NAME: 3 },
+    ['ts', 'anchor@example.com', 'No', 'Anchor']
+  );
+
+  assert.equal(sent, true, 'confirmation was sent');
+  assert.deepEqual(global._registrationConfirmationCalls, [{
+    email: 'anchor@example.com',
+    f3Name: 'Anchor',
+    trackerUrl: 'https://spreadsheet.example.com#gid=456',
+    formUrl: 'https://form.example.com',
+    summaryLines: ['Who: Leader'],
+    registrationMonth: 'June 2026'
+  }]);
+}
+
+// Reuse submit keeps the dedicated reuse email and skips the generic confirmation.
+{
+  global._registrationConfirmationCalls = [];
+  const sent = maybeSendRegistrationConfirmation_(
+    {
+      getUrl: function() { return 'https://spreadsheet.example.com'; },
+      getFormUrl: function() { return 'https://form.example.com'; }
+    },
+    {
+      getSheetId: function() { return 456; },
+      getLastColumn: function() { return 10; },
+      getRange: function() { return { getValues: function() { return [[new Date(2026, 5, 1), '']]; } }; }
+    },
+    { EMAIL: 1, PARTICIPATION: 2, F3_NAME: 3 },
+    ['ts', 'anchor@example.com', 'Reuse', 'Anchor']
+  );
+
+  assert.equal(sent, false, 'reuse path skips generic confirmation');
+  assert.deepEqual(global._registrationConfirmationCalls, []);
 }
 
 console.log('test_add_response_on_submit.js: PASS');

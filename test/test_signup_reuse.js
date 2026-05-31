@@ -45,6 +45,21 @@ const {
     maybeReuseLastMonthsGoals_
 } = require('../script/signupReuse.js');
 
+const confirmationMessage = signupEmailModule.buildSignupReuseEmailTemplate_({
+    mode: 'confirmation',
+    f3Name: 'Anchor',
+    trackerUrl: 'https://tracker.example.com',
+    prefilledUrl: 'https://form.example.com',
+    summaryLines: ['Who: Leader', 'What: Ruck'],
+    registrationMonth: 'June 2026'
+});
+
+assert.equal(confirmationMessage.subject, 'F3 Go30: registration updated for June 2026');
+assert.match(confirmationMessage.body, /We saved your current goals for June 2026\./);
+assert.match(confirmationMessage.body, /Current goals:/);
+assert.ok(!/reused/i.test(confirmationMessage.body), 'generic confirmation avoids reuse copy');
+assert.match(confirmationMessage.htmlBody, /Your registration was updated/);
+
 // Header row extracted from actual Last Month Tracker Responses sheet
 const HEADERS = [
     'Timestamp',

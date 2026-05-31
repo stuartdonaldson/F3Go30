@@ -4,6 +4,12 @@ var FORM_SUBMIT_HANDLER_ = 'handleFormSubmit_';
 // Old handler name — kept here so clearFormSubmitTrigger can remove stale triggers registered
 // before the handler was renamed. Safe to remove once all trackers have been re-triggered.
 var LEGACY_FORM_SUBMIT_HANDLER_ = 'onFormSubmit';
+var REGISTRATION_MONTH_NAMES_ = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+var buildGoalSummaryLinesFromResponse_ = (typeof globalThis !== 'undefined' && globalThis.buildGoalSummaryLinesFromResponse_) || null;
+var sendRegistrationConfirmationEmail_ = (typeof globalThis !== 'undefined' && globalThis.sendRegistrationConfirmationEmail_) || null;
+var checkIsReuseChoice_ = (typeof globalThis !== 'undefined' && globalThis.checkIsReuseChoice_) || null;
+var getConfigValue_ = (typeof globalThis !== 'undefined' && globalThis.getConfigValue_) || null;
 
 function setupFormSubmitTrigger() {
   clearFormSubmitTrigger();
@@ -23,6 +29,64 @@ function clearFormSubmitTrigger() {
       ScriptApp.deleteTrigger(trigger);
     }
   });
+}
+
+function getTrackerStartDate_(trackerSheet) {
+  if (!trackerSheet || typeof trackerSheet.getLastColumn !== 'function') return null;
+
+  var lastColumn = trackerSheet.getLastColumn();
+  if (lastColumn < 9) return null;
+
+  var rowValues = trackerSheet.getRange(3, 9, 1, lastColumn - 8).getValues()[0];
+  for (var i = 0; i < rowValues.length; i++) {
+    var value = rowValues[i];
+    if (value instanceof Date && !isNaN(value.getTime())) return new Date(value.getTime());
+    var text = String(value || '').trim();
+    if (!text) continue;
+    var parsed = new Date(text);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+
+  return null;
+}
+
+function formatRegistrationMonth_(startDate) {
+  if (!(startDate instanceof Date) || isNaN(startDate.getTime())) return '';
+  return REGISTRATION_MONTH_NAMES_[startDate.getMonth()] + ' ' + startDate.getFullYear();
+}
+
+function maybeSendRegistrationConfirmation_(spreadsheet, trackerSheet, responseColumns, formResponses) {
+  if (typeof sendRegistrationConfirmationEmail_ !== 'function' || typeof buildGoalSummaryLinesFromResponse_ !== 'function') {
+    return false;
+  }
+
+  var reuseTriggerConfig = typeof getConfigValue_ === 'function' ? getConfigValue_(spreadsheet, 'Reuse Goals Trigger') : null;
+  var reuseTriggerPhrase = reuseTriggerConfig && (reuseTriggerConfig.primary || reuseTriggerConfig.secondary) || '';
+  var participation = getResponseValue_(formResponses, responseColumns, 'PARTICIPATION');
+  if (typeof checkIsReuseChoice_ === 'function' && checkIsReuseChoice_(participation, reuseTriggerPhrase)) {
+    return false;
+  }
+
+  var startDate = getTrackerStartDate_(trackerSheet);
+  var registrationMonth = formatRegistrationMonth_(startDate);
+  if (!registrationMonth) {
+    Logger.log('handleFormSubmit_: tracker start date unavailable — registration confirmation skipped');
+    return false;
+  }
+
+  var email = getResponseValue_(formResponses, responseColumns, 'EMAIL');
+  if (!email) return false;
+
+  var trackerUrl = spreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
+  sendRegistrationConfirmationEmail_(
+    email,
+    getResponseValue_(formResponses, responseColumns, 'F3_NAME'),
+    trackerUrl,
+    spreadsheet.getFormUrl ? (spreadsheet.getFormUrl() || '') : '',
+    buildGoalSummaryLinesFromResponse_(formResponses, responseColumns),
+    registrationMonth
+  );
+  return true;
 }
 
 function handleFormSubmit_(e) {
@@ -60,6 +124,7 @@ function onFormSubmitLocked_(e) {
   // Phase 1 — Reuse last month's goals if the participant requested it.
   // Returns formResponses unchanged when reuse was not selected.
   formResponses = maybeReuseLastMonthsGoals_(sheet, responsesSheet, submittedRowNumber, formResponses);
+  maybeSendRegistrationConfirmation_(sheet, destinationSheet, responseColumns, formResponses);
 
   // Phase 2 — Dedup Responses sheet: remove any prior row for the same F3 Name so that
   // sheets querying Responses (Goals by HIM, Goals by AO) show only the latest submission.
@@ -187,5 +252,13 @@ function deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, 
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { findDuplicateResponseRows_, removeDuplicateResponseRow_, deduplicateResponsesSheet_ };
+  module.exports = {
+    findDuplicateResponseRows_,
+    removeDuplicateResponseRow_,
+    deduplicateResponsesSheet_,
+    getTrackerStartDate_,
+    formatRegistrationMonth_,
+    maybeSendRegistrationConfirmation_,
+    onFormSubmitLocked_
+  };
 }

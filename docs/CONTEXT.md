@@ -56,7 +56,7 @@ configuration.
 - Set sharing permissions on the new tracker to anyone-with-link/view
 - Set up a daily 1 AM trigger to mark empty check-in cells as −1 after a 24-hour grace period
 - Send a basic daily nag email to opted-in team members when teammates missed the previous day's check-in; this workflow exists in code but is not yet aligned with the finalized FunFacts-based reminder design
-- Set up a form-submit trigger to populate the Tracker sheet when a PAX submits the HC form
+- Set up a form-submit trigger to populate the Tracker sheet when a PAX submits the HC form and send a registration confirmation email summarizing the current goals for that tracker month
 - Auto-generate next month's tracker and HC form via a scheduled trigger on the 20th of each
   month; email Site Q with links and a ready-to-paste Slack message on success or failure
 - Log all menu-initiated activity to a hidden Activity sheet
@@ -111,8 +111,9 @@ Primary Flow:
 1. PAX opens the HC form link and submits their goal and F3 name
 2. Form response lands in the Responses sheet
 3. Form-submit trigger fires `onFormSubmit`
-4. Script checks for a duplicate F3 name in the Tracker sheet
-5. If not a duplicate, adds a new row with the PAX's data, copies formulas from the prior row, and sorts
+4. Script sends a registration confirmation email that summarizes the current goals for the tracker month derived from the Tracker start date
+5. Script checks for a duplicate F3 name in the Tracker sheet
+6. If not a duplicate, adds a new row with the PAX's data, copies formulas from the prior row, and sorts
 
 Alternate Flows:
 A1: F3 name already exists in Tracker → submission is ignored; no duplicate row added
@@ -120,6 +121,7 @@ A2: Fewer than 4 form fields present → function exits without writing
 
 Postconditions:
 - PAX row exists in the Tracker sheet, sorted and formula-populated
+- PAX receives a registration confirmation email for the target tracker month unless the reuse-specific email path already handled the submit
 
 Constraints:
 - Deduplication is by F3 name only; name collisions between distinct PAX are possible

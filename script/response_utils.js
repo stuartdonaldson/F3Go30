@@ -97,6 +97,42 @@ function sanitizeEmailAddressForSend_(email) {
   return cleaned.toLowerCase();
 }
 
+var GOAL_SUMMARY_FIELDS_ = [
+  ['EMAIL', 'Email'],
+  ['NAG_EMAIL', 'NAG Email'],
+  ['TEAM_TYPE', 'Team type'],
+  ['TEAM', 'Team'],
+  ['OTHER_TEAM', 'Other team name'],
+  ['WHO', 'Who'],
+  ['WHAT', 'What'],
+  ['HOW', 'How'],
+  ['PHONE', 'Phone']
+];
+
+function buildGoalSummaryLines_(valuesByField) {
+  if (!valuesByField) return [];
+
+  return GOAL_SUMMARY_FIELDS_
+    .filter(function(field) {
+      return String(valuesByField[field[0]] || '').trim() !== '';
+    })
+    .map(function(field) {
+      return field[1] + ': ' + valuesByField[field[0]];
+    });
+}
+
+function buildGoalSummaryLinesFromResponse_(responseRow, responseColumns) {
+  if (!responseRow || !responseColumns) return [];
+
+  var valuesByField = {};
+  GOAL_SUMMARY_FIELDS_.forEach(function(field) {
+    var idx = responseColumns[field[0]];
+    valuesByField[field[0]] = (typeof idx === 'number' && idx >= 0) ? responseRow[idx] : '';
+  });
+
+  return buildGoalSummaryLines_(valuesByField);
+}
+
 /**
  * Manual admin utility — copies one participant's responses from last month's
  * tracker into the current tracker and emails them a summary.
@@ -182,14 +218,27 @@ function sendResponseSettingsEmail(email, data) {
   if (!recipient) throw new Error('valid email required');
   if (!data || !Array.isArray(data)) throw new Error('data required');
 
-  const subject = 'Your Go30 signup settings';
-  let body = 'Hello,\n\nThe following signup settings were copied into the current tracker for your account:\n\n';
-  data.forEach(d => {
-    body += d.header + ': ' + (d.value === undefined || d.value === null ? '' : String(d.value)) + '\n';
-  });
-  body += '\nIf any value looks incorrect, please update your form response or contact the Site Q.';
+  var responseSettingsEmailModule_ = (typeof module !== 'undefined' && module.exports)
+    ? require('./responseSettingsEmail.js')
+    : null;
+  var buildResponseSettingsEmailTemplate_ = (responseSettingsEmailModule_ && responseSettingsEmailModule_.buildResponseSettingsEmailTemplate_)
+    || (typeof globalThis !== 'undefined' && globalThis.buildResponseSettingsEmailTemplate_);
 
-  MailApp.sendEmail(recipient, subject, body);
+  if (typeof buildResponseSettingsEmailTemplate_ !== 'function') {
+    throw new Error('buildResponseSettingsEmailTemplate_ is unavailable');
+  }
+
+  var message = buildResponseSettingsEmailTemplate_({
+    copiedSettings: data,
+    recipientName: 'there'
+  });
+
+  MailApp.sendEmail({
+    to: recipient,
+    subject: message.subject,
+    body: message.body,
+    htmlBody: message.htmlBody
+  });
 }
 
 if (typeof module !== 'undefined' && module.exports) {
@@ -203,6 +252,8 @@ if (typeof module !== 'undefined' && module.exports) {
     buildResponseFieldCopyPlan_,
     sanitizeTextForEmailLine_,
     sanitizeEmailAddressForSend_,
+    buildGoalSummaryLines_,
+    buildGoalSummaryLinesFromResponse_,
     sendResponseSettingsEmail
   };
 }

@@ -21,6 +21,8 @@ var sanitizeTextForEmailLine_ = (responseUtilsModule_ && responseUtilsModule_.sa
     || (typeof globalThis !== 'undefined' && globalThis.sanitizeTextForEmailLine_);
 var sanitizeEmailAddressForSend_ = (responseUtilsModule_ && responseUtilsModule_.sanitizeEmailAddressForSend_)
     || (typeof globalThis !== 'undefined' && globalThis.sanitizeEmailAddressForSend_);
+var buildGoalSummaryLines_ = (responseUtilsModule_ && responseUtilsModule_.buildGoalSummaryLines_)
+    || (typeof globalThis !== 'undefined' && globalThis.buildGoalSummaryLines_);
 var resolveResponseColumns = (responseUtilsModule_ && responseUtilsModule_.resolveResponseColumns)
     || (typeof globalThis !== 'undefined' && globalThis.resolveResponseColumns);
 var resolveResponseColumns_ = (responseUtilsModule_ && responseUtilsModule_.resolveResponseColumns_)
@@ -134,19 +136,17 @@ function mergeReusedValuesIntoResponseArray(responseArray, reusedValues, respons
 }
 
 function buildReuseSummaryLines(reusedValues) {
-    if (!reusedValues) return [];
-    var lines = [
-        ['Email', reusedValues.email],
-        ['NAG Email', reusedValues.nagEmail],
-        ['Team type', reusedValues.teamType],
-        ['Team', reusedValues.team],
-        ['Other team name', reusedValues.otherTeam],
-        ['Who', reusedValues.who],
-        ['What', reusedValues.what],
-        ['How', reusedValues.how],
-        ['Phone', reusedValues.phone]
-    ];
-    return lines.filter(function(e) { return String(e[1] || '').trim() !== ''; }).map(function(e) { return e[0] + ': ' + e[1]; });
+    return typeof buildGoalSummaryLines_ === 'function' ? buildGoalSummaryLines_({
+        EMAIL: reusedValues && reusedValues.email,
+        NAG_EMAIL: reusedValues && reusedValues.nagEmail,
+        TEAM_TYPE: reusedValues && reusedValues.teamType,
+        TEAM: reusedValues && reusedValues.team,
+        OTHER_TEAM: reusedValues && reusedValues.otherTeam,
+        WHO: reusedValues && reusedValues.who,
+        WHAT: reusedValues && reusedValues.what,
+        HOW: reusedValues && reusedValues.how,
+        PHONE: reusedValues && reusedValues.phone
+    }) : [];
 }
 
 function isFormTitleMatch_(title, titlePrefix) {
@@ -367,6 +367,29 @@ function sendGoalReuseEmail(emailAddress, f3Name, trackerUrl, prefilledUrl, summ
     }
 }
 
+function sendRegistrationConfirmationEmail_(emailAddress, f3Name, trackerUrl, prefilledUrl, summaryLines, registrationMonth) {
+    var recipient = sanitizeEmailAddressForSend_(emailAddress);
+    if (!recipient) { Logger.log('sendRegistrationConfirmationEmail_: invalid email'); return; }
+
+    var safeF3Name = sanitizeTextForEmailLine_(f3Name) || '(unknown)';
+    var safeRegistrationMonth = sanitizeTextForEmailLine_(registrationMonth);
+    if (!safeRegistrationMonth) {
+        Logger.log('sendRegistrationConfirmationEmail_: registration month required');
+        return;
+    }
+
+    var message = buildSignupReuseEmailTemplate_({
+        mode: 'confirmation',
+        f3Name: safeF3Name,
+        trackerUrl: trackerUrl,
+        prefilledUrl: prefilledUrl,
+        summaryLines: summaryLines || [],
+        registrationMonth: safeRegistrationMonth
+    });
+
+    MailApp.sendEmail({ to: recipient, subject: message.subject, body: message.body, htmlBody: message.htmlBody });
+}
+
 /**
  * maybeReuseLastMonthsGoals_
  * - spreadsheet: active Spreadsheet object
@@ -448,6 +471,7 @@ if (typeof module !== 'undefined' && module.exports) {
         extractReusableResponseValues,
         mergeReusedValuesIntoResponseArray,
         buildReuseSummaryLines,
+        sendRegistrationConfirmationEmail_,
         sanitizeTextForEmailLine_,
         sanitizeEmailAddressForSend_,
         getResponseValue_,
