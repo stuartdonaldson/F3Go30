@@ -1,14 +1,219 @@
 
 var MONTH_NAMES_ = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-var LINKS_SHEET_HEADERS_ = ['Date', 'StartDate', 'ShortTracker', 'TrackerURL', 'ShortHC', 'HC URL'];
+var LINKS_SHEET_HEADERS_ = ['Date', 'StartDate', 'SpreadsheetName', 'ShortTracker', 'TrackerURL', 'ShortHC', 'HC URL', 'SheetId', 'FormId'];
 var LINKS_SHEET_COLUMN_MAP_ = {
   date: 'Date',
-  startDate: 'StartDate',
+  startDate: { header: 'StartDate', aliases: ['Month'] },
+  spreadsheetName: { header: 'SpreadsheetName', aliases: ['Spreadsheet Name'] },
   shortTracker: 'ShortTracker',
-  trackerUrl: 'TrackerURL',
+  trackerUrl: { header: 'TrackerURL', aliases: ['Tracker URL'] },
   shortHc: 'ShortHC',
-  hcUrl: 'HC URL'
+  hcUrl: { header: 'HC URL', aliases: ['Form URL'] },
+  sheetId: { header: 'SheetId', aliases: ['Spreadsheet ID'] },
+  formId: { header: 'FormId', aliases: ['Form ID'] }
 };
+
+function buildLinksHeaderIndex_(headers) {
+  const headerIndex = {};
+  (headers || []).forEach((header, index) => {
+    headerIndex[String(header || '').trim().toLowerCase()] = index;
+  });
+  return headerIndex;
+}
+
+function formatTrackerMonthKey_(date) {
+  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0');
+}
+
+function formatLinksStartDateValue_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return value.getFullYear()
+      + '-' + String(value.getMonth() + 1).padStart(2, '0')
+      + '-' + String(value.getDate()).padStart(2, '0');
+  }
+
+  return String(value || '').trim();
+}
+
+function resolvePreviousTrackerReference_(row) {
+  const sheetId = String((row && row.sheetId) || '').trim();
+  if (sheetId) return sheetId;
+
+  const trackerUrl = String((row && row.trackerUrl) || '').trim();
+  if (trackerUrl) return trackerUrl;
+
+  return String((row && row.shortTracker) || '').trim();
+}
+
+function findPreviousTrackerFromLinks_(linksRows, startDate) {
+  const previousMonth = new Date(startDate.getFullYear(), startDate.getMonth() - 1, 1);
+  const previousMonthKey = formatTrackerMonthKey_(previousMonth);
+
+  for (let i = linksRows.length - 1; i >= 0; i--) {
+    const row = linksRows[i] || {};
+    const rowStartDate = formatLinksStartDateValue_(row.startDate);
+    if (!rowStartDate || rowStartDate.slice(0, 7) !== previousMonthKey) continue;
+
+    return {
+      name: rowStartDate,
+      url: resolvePreviousTrackerReference_(row)
+    };
+  }
+
+  return null;
+}
+
+function ensureLinksSheetSchema_(linksSheet) {
+  if (!linksSheet || !linksSheet.sheet) return linksSheet;
+
+  const range = typeof linksSheet.sheet.getDataRange === 'function' ? linksSheet.sheet.getDataRange() : null;
+  const values = range ? range.getValues() : [];
+  const headerRow = values && values.length ? values[0] : [];
+  const headerIndex = buildLinksHeaderIndex_(headerRow);
+  let mutated = false;
+
+  const columnSpecs = [
+    { header: 'StartDate', backfillFrom: ['Month'] },
+    { header: 'SpreadsheetName', backfillFrom: ['Spreadsheet Name'] },
+    { header: 'ShortTracker', backfillFrom: ['Tracker URL', 'TrackerURL'] },
+    { header: 'TrackerURL', backfillFrom: ['Tracker URL'] },
+    { header: 'ShortHC', backfillFrom: ['Form URL', 'HC URL'] },
+    { header: 'HC URL', backfillFrom: ['Form URL'] },
+    { header: 'SheetId', backfillFrom: ['Spreadsheet ID'] },
+    { header: 'FormId', backfillFrom: ['Form ID'] }
+  ];
+
+  columnSpecs.forEach((spec) => {
+    const normalizedHeader = spec.header.toLowerCase();
+    if (normalizedHeader in headerIndex) return;
+    const nextColumn = Math.max(linksSheet.sheet.getLastColumn(), 0) + 1;
+    linksSheet.sheet.getRange(1, nextColumn).setValue(spec.header);
+    headerIndex[normalizedHeader] = nextColumn - 1;
+    mutated = true;
+  });
+
+  for (let rowIndex = 1; rowIndex < values.length; rowIndex++) {
+    const rowValues = values[rowIndex] || [];
+    columnSpecs.forEach((spec) => {
+      const targetIndex = headerIndex[spec.header.toLowerCase()];
+      if (targetIndex === undefined) return;
+
+      const currentValue = rowValues[targetIndex];
+      if (currentValue !== undefined && currentValue !== null && currentValue !== '') return;
+
+      for (let i = 0; i < spec.backfillFrom.length; i++) {
+        const sourceIndex = headerIndex[String(spec.backfillFrom[i]).trim().toLowerCase()];
+        if (sourceIndex === undefined) continue;
+
+        const sourceValue = rowValues[sourceIndex];
+        if (sourceValue === undefined || sourceValue === null || sourceValue === '') continue;
+
+        linksSheet.sheet.getRange(rowIndex + 1, targetIndex + 1).setValue(sourceValue);
+        rowValues[targetIndex] = sourceValue;
+        mutated = true;
+        break;
+      }
+    });
+  }
+
+  if (mutated) {
+    linksSheet.refreshData();
+  }
+  return linksSheet;
+}
+
+function openLinksSheet_(spreadsheet) {
+  const ssManager = new SpreadsheetManager(spreadsheet);
+  const linksSheet = ssManager.openOrCreateManagedSheet('Links', LINKS_SHEET_COLUMN_MAP_, LINKS_SHEET_HEADERS_);
+  return ensureLinksSheetSchema_(linksSheet);
+}
+
+function getPreviousTrackerConfigFromLinks_(spreadsheet, startDate) {
+  const linksSheet = openLinksSheet_(spreadsheet);
+  const linksRows = typeof linksSheet.getAllRows === 'function' ? linksSheet.getAllRows() : [];
+  return findPreviousTrackerFromLinks_(linksRows, startDate);
+}
+
+function upsertLinksRow_(linksSheet, rowData) {
+  if (!linksSheet) return 'skipped';
+
+  const sheetId = rowData && rowData.sheetId ? String(rowData.sheetId).trim() : '';
+  if (sheetId && typeof linksSheet.findRow === 'function' && linksSheet.findRow('sheetId', sheetId)) {
+    linksSheet.updateRowByValue('sheetId', sheetId, rowData);
+    return 'updated';
+  }
+
+  linksSheet.appendRow(rowData || {});
+  return 'appended';
+}
+
+function writeTrackerConfigRows_(configSheet, formName, formUrl, templateUrl) {
+  if (!configSheet) return;
+
+  const cfgRange = configSheet.getDataRange();
+  const cfgValues = cfgRange ? cfgRange.getValues() : [];
+
+  function upsertConfigRow(sheet, values, key, primary, secondary) {
+    for (let r = 0; r < values.length; r++) {
+      if (String(values[r][0]).trim() === key) {
+        sheet.getRange(r + 1, 2).setValue(primary || '');
+        sheet.getRange(r + 1, 3).setValue(secondary || '');
+        return;
+      }
+    }
+    sheet.appendRow([key, primary || '', secondary || '']);
+  }
+
+  upsertConfigRow(configSheet, cfgValues, 'Signup HC Form', formName, formUrl);
+  upsertConfigRow(configSheet, cfgValues, 'Sheet Template', templateUrl || '', '');
+}
+
+function writeLastMonthTrackerConfig_(configSheet, lastMonthTracker) {
+  if (!configSheet) return;
+
+  const cfgRange = configSheet.getDataRange();
+  const cfgValues = cfgRange ? cfgRange.getValues() : [];
+
+  for (let r = 0; r < cfgValues.length; r++) {
+    if (String(cfgValues[r][0]).trim() === 'Last Month Tracker') {
+      configSheet.getRange(r + 1, 2).setValue(lastMonthTracker ? lastMonthTracker.name : '');
+      configSheet.getRange(r + 1, 3).setValue(lastMonthTracker ? lastMonthTracker.url : '');
+      return;
+    }
+  }
+
+  configSheet.appendRow([
+    'Last Month Tracker',
+    lastMonthTracker ? lastMonthTracker.name : '',
+    lastMonthTracker ? lastMonthTracker.url : ''
+  ]);
+}
+
+function hideInternalSheets_(spreadsheet) {
+  if (!spreadsheet || typeof spreadsheet.getSheetByName !== 'function') return;
+
+  ['Config', 'Links', 'FunFacts', 'Inspiration', 'Periods', 'Controls'].forEach(function(sheetName) {
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    if (sheet && typeof sheet.hideSheet === 'function') {
+      sheet.hideSheet();
+    }
+  });
+}
+
+function getTemplateSpreadsheetForInit_(spreadsheet, configSheet) {
+  const configRows = configSheet ? configSheet.getDataRange().getValues() : null;
+  const templateConfig = getConfigValue_(null, 'Sheet Template', configRows);
+  const templateUrl = String((templateConfig && templateConfig.primary) || '').trim();
+
+  if (!templateUrl) return spreadsheet;
+
+  try {
+    return SpreadsheetApp.openByUrl(templateUrl);
+  } catch (err) {
+    Logger.log('getTemplateSpreadsheetForInit_: failed to open template URL ' + templateUrl + ' — ' + err.message);
+    return spreadsheet;
+  }
+}
 
 /**
  * Creates a new monthly tracker spreadsheet from the current template.
@@ -156,38 +361,20 @@ function copyAndInit() {
 
     // Persist canonical URLs into the created spreadsheet's Config sheet
     const newConfigSheet = newSpreadsheet.getSheetByName('Config');
-    if (newConfigSheet) {
-      const cfgRange = newConfigSheet.getDataRange();
-      const cfgValues = cfgRange ? cfgRange.getValues() : [];
-      function upsertConfigRow(sheet, values, key, primary, secondary) {
-        for (let r = 0; r < values.length; r++) {
-          if (String(values[r][0]).trim() === key) {
-            sheet.getRange(r + 1, 2).setValue(primary || '');
-            sheet.getRange(r + 1, 3).setValue(secondary || '');
-            return;
-          }
-        }
-        sheet.appendRow([key, primary || '', secondary || '']);
-      }
-
-      // Write full (non-shortened) URLs so the created spreadsheet has canonical links
-      upsertConfigRow(newConfigSheet, cfgValues, 'Signup HC Form', formName, formUrl);
-      upsertConfigRow(newConfigSheet, cfgValues, 'Last Month Tracker', newSpreadsheetName, trackerSheetUrl);
-    }
+    writeTrackerConfigRows_(newConfigSheet, formName, formUrl, currentSpreadsheet.getUrl());
 
     // Modify sheets in the new spreadsheet
     initSheets(newSpreadsheet, startDate);
 
-    // Hide Config sheet — contains sensitive data (Site Q email)
-    if (newConfigSheet) newConfigSheet.hideSheet();
-
     // Track all trackers created from this template — create Links sheet on first use
     const startDateIso = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay;
-    let linksSheet = openOrCreateSheet('Links', LINKS_SHEET_COLUMN_MAP_, LINKS_SHEET_HEADERS_);
-    // Append short and full URLs (canonical full URLs stored in Tracker/Config of created spreadsheet)
-    linksSheet.appendRow({
+    let linksSheet = openLinksSheet_(currentSpreadsheet);
+    upsertLinksRow_(linksSheet, {
       date: new Date(),
       startDate: startDateIso,
+      spreadsheetName: newSpreadsheetName,
+      sheetId: newSpreadsheetId,
+      formId: form.getId(),
       shortTracker: trackerSheetShortUrl,
       trackerUrl: trackerSheetUrl,
       shortHc: formShortUrl,
@@ -209,6 +396,7 @@ function copyAndInit() {
   NoticeLog('You can now close this sidebar.');
 
   GasLogger.log('copyAndInit', {
+    spreadsheetId: newSpreadsheetId,
     spreadsheetName: newSpreadsheetName,
     startDateIso: startDateIso,
     trackerUrl: trackerSheetShortUrl,
@@ -277,6 +465,19 @@ function reinitializeSheets() {
   noticeLogDone_();
 }
 
+function initializeConfigSheet() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const configSheet = spreadsheet.getSheetByName('Config');
+  if (!configSheet) {
+    Logger.log('initializeConfigSheet: Config sheet not found');
+    return;
+  }
+
+  initializeConfigSheet_(configSheet);
+  SpreadsheetApp.flush();
+  Logger.log('initializeConfigSheet: Config sheet standardized');
+}
+
 
 /**
  * Initializes and resets the sheets in the given spreadsheet.
@@ -296,10 +497,15 @@ function initSheets(newSpreadsheet, startDate) {
   const bonusTrackerSheet = newSpreadsheet.getSheetByName('Bonus Tracker');
   const responsesSheet = newSpreadsheet.getSheetByName('Responses');
   const activitySheet = newSpreadsheet.getSheetByName('Activity');
+  const configSheet = newSpreadsheet.getSheetByName('Config');
   if (!trackerSheet || !bonusTrackerSheet || !responsesSheet) {
     NoticeLog('Error: Required sheet(s) not found — Tracker, Bonus Tracker, and Responses must all exist.');
     return;
   }
+
+  initializeConfigSheet_(configSheet);
+  const templateSpreadsheet = getTemplateSpreadsheetForInit_(newSpreadsheet, configSheet);
+  writeLastMonthTrackerConfig_(configSheet, getPreviousTrackerConfigFromLinks_(templateSpreadsheet, startDate));
 
   NoticeLog('Resetting Tracker sheet...');
     if (trackerSheet.getLastRow() > 4) {
@@ -326,6 +532,8 @@ function initSheets(newSpreadsheet, startDate) {
     activitySheet.getRange(2, 1, activitySheet.getLastRow() - 1, activitySheet.getLastColumn()).clearContent();
     SpreadsheetApp.flush();
   }
+
+  hideInternalSheets_(newSpreadsheet);
 }
 
 function clearNonFormulaCells(range) {
@@ -465,8 +673,13 @@ function autoGenerateNextMonthTracker() {
   const nameSpaceConfig = getConfigValue_(null, 'NameSpace', configData);
   if (!nameSpaceConfig || !nameSpaceConfig.primary) {
     Logger.log('autoGenerateNextMonthTracker: NameSpace not found in Config sheet — aborting');
-    MailApp.sendEmail(siteQEmail, 'F3 Go30: Auto-generate failed',
-      'autoGenerateNextMonthTracker failed: NameSpace not found in Config sheet.');
+    sendConfiguredEmail_({
+      spreadsheet: currentSpreadsheet,
+      configData: configData,
+      recipientList: siteQEmail,
+      subject: 'F3 Go30: Auto-generate failed',
+      body: 'autoGenerateNextMonthTracker failed: NameSpace not found in Config sheet.'
+    });
     return;
   }
   const nameSpace = nameSpaceConfig.primary;
@@ -534,7 +747,23 @@ function autoGenerateNextMonthTracker() {
       GasLogger.log('autoGenerateNextMonthTracker.warning', { warning: 'urlShortener failed for HC form', alias: newSpreadsheetName + 'HC' });
     }
 
+    const newConfigSheet = newSpreadsheet.getSheetByName('Config');
+    writeTrackerConfigRows_(newConfigSheet, formName, formUrl, currentSpreadsheet.getUrl());
+
     initSheets(newSpreadsheet, nextMonthStart);
+
+    const linksSheet = openLinksSheet_(currentSpreadsheet);
+    upsertLinksRow_(linksSheet, {
+      date: new Date(),
+      startDate: nextMonthStart.getFullYear() + '-' + paddedMonth + '-01',
+      spreadsheetName: newSpreadsheetName,
+      sheetId: newSpreadsheetId,
+      formId: form.getId(),
+      shortTracker: trackerSheetShortUrl,
+      trackerUrl: trackerSheetUrl,
+      shortHc: formShortUrl,
+      hcUrl: formUrl
+    });
 
     const slackMsg = buildSlackMessage_(nextMonthStart.getFullYear(), MONTH_NAMES_[nextMonthStart.getMonth()], formShortUrl, trackerSheetShortUrl);
 
@@ -553,7 +782,7 @@ function autoGenerateNextMonthTracker() {
         'Open new spreadsheet and verify layout',
         'Run F3 Go30 > Initialize Triggers',
         'Open HC form and verify title + choices',
-        'Verify Config rows (Signup HC Form, Last Month Tracker, Site Q, NameSpace)',
+        'Verify Config rows (Signup HC Form, Sheet Template, Last Month Tracker, Site Q, NameSpace)',
         'Confirm Links sheet entry for new tracker and form',
         'Verify form sharing, file name and folder placement',
         'Run test reuse flow (Test Reuse menu or submit sample)',
@@ -567,15 +796,20 @@ function autoGenerateNextMonthTracker() {
       appVersion: APP_VERSION
     });
 
-    MailApp.sendEmail({
-      to: siteQEmail,
+    sendConfiguredEmail_({
+      spreadsheet: currentSpreadsheet,
+      configData: configData,
+      recipientList: siteQEmail,
       subject: message.subject,
       body: message.body,
-      htmlBody: message.htmlBody
+      htmlBody: message.htmlBody,
+      allowPlainTextFallback: true,
+      logLabel: 'autoGenerateNextMonthTracker'
     });
 
     Logger.log('autoGenerateNextMonthTracker: done — ' + newSpreadsheetName);
     GasLogger.log('autoGenerateNextMonthTracker', {
+      spreadsheetId: newSpreadsheetId,
       spreadsheetName: newSpreadsheetName,
       trackerUrl: trackerSheetShortUrl,
       formUrl: formShortUrl,
@@ -592,18 +826,33 @@ function autoGenerateNextMonthTracker() {
       spreadsheetId: newSpreadsheetId || null
     }, true);
     try {
-      MailApp.sendEmail(
-        siteQEmail,
-        'F3 Go30: Auto-generate failed for ' + newSpreadsheetName,
-        'autoGenerateNextMonthTracker failed.\n\n' +
-        'Error: ' + err.message + '\n\n' +
-        (err.stack ? 'Stack:\n' + err.stack + '\n\n' : '') +
-        (newSpreadsheetId ? 'Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.' : '')
-      );
+      sendConfiguredEmail_({
+        spreadsheet: currentSpreadsheet,
+        configData: configData,
+        recipientList: siteQEmail,
+        subject: 'F3 Go30: Auto-generate failed for ' + newSpreadsheetName,
+        body: 'autoGenerateNextMonthTracker failed.\n\n' +
+          'Error: ' + err.message + '\n\n' +
+          (err.stack ? 'Stack:\n' + err.stack + '\n\n' : '') +
+          (newSpreadsheetId ? 'Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.' : ''),
+        logLabel: 'autoGenerateNextMonthTracker.error'
+      });
     } catch (mailErr) {
       Logger.log('autoGenerateNextMonthTracker: also failed to send error email — ' + mailErr.message);
     }
     throw err;
   }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    ensureLinksSheetSchema_: ensureLinksSheetSchema_,
+    findPreviousTrackerFromLinks_: findPreviousTrackerFromLinks_,
+    formatLinksStartDateValue_: formatLinksStartDateValue_,
+    formatTrackerMonthKey_: formatTrackerMonthKey_,
+    hideInternalSheets_: hideInternalSheets_,
+    resolvePreviousTrackerReference_: resolvePreviousTrackerReference_,
+    upsertLinksRow_: upsertLinksRow_
+  };
 }
 

@@ -5,6 +5,7 @@ const {
   resolveManagedHeaderMap_,
   findRowIndexByNormalizedValue_,
   buildSharedHeaderCopyPlan_,
+  sheetHasContent_,
 } = require('../script/libSheets.js');
 
 const headerMap = buildCaseInsensitiveHeaderMap_(['Email Address', 'F3 Name', 'Goal Selection']);
@@ -57,5 +58,10 @@ assert.deepEqual(normalizedResponseMap, {
   OTHER_TEAM: 2,
   WHO: 3,
 });
+
+assert.equal(sheetHasContent_([]), false);
+assert.equal(sheetHasContent_([['']]), false);
+assert.equal(sheetHasContent_([[null, undefined, '']]), false);
+assert.equal(sheetHasContent_([['Timestamp', 'Email Address']]), true);
 
 console.log('test_sheet_helpers.js: PASS');

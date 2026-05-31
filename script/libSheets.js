@@ -302,6 +302,24 @@ function buildSharedHeaderCopyPlan_(sourceHeaders, sourceRow, targetHeaders) {
   return copyPlan;
 }
 
+function sheetHasContent_(data) {
+  if (!Array.isArray(data) || !data.length) {
+    return false;
+  }
+
+  for (let rowIndex = 0; rowIndex < data.length; rowIndex++) {
+    const row = Array.isArray(data[rowIndex]) ? data[rowIndex] : [];
+    for (let colIndex = 0; colIndex < row.length; colIndex++) {
+      const cellValue = row[colIndex];
+      if (cellValue !== '' && cellValue !== null && cellValue !== undefined) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 /**
  * SpreadsheetManager: Handles high-level operations on the entire spreadsheet.
  * - Manages the creation, deletion, renaming, and listing of sheets.
@@ -457,7 +475,7 @@ class ManagedSheet {
     this.liveUpdate = true;
     this.updatesPending = 0;
     var data = this.sheet.getDataRange().getValues();
-    if ((!data.length || (data.length==1 && data[0].length))) {
+    if (!sheetHasContent_(data)) {
       this.initSheet();
     } else {
       this.refreshData();
@@ -815,6 +833,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getManagedColumnHeader_,
     resolveManagedHeaderMap_,
     findRowIndexByNormalizedValue_,
-    buildSharedHeaderCopyPlan_
+    buildSharedHeaderCopyPlan_,
+    sheetHasContent_
   };
 }

@@ -1,6 +1,10 @@
 // Named with trailing underscore so GAS does not auto-register it as a simple trigger.
 var FORM_SUBMIT_HANDLER_ = 'handleFormSubmit_';
 
+var addResponseResponseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./response_utils.js')
+  : null;
+
 // Old handler name — kept here so clearFormSubmitTrigger can remove stale triggers registered
 // before the handler was renamed. Safe to remove once all trackers have been re-triggered.
 var LEGACY_FORM_SUBMIT_HANDLER_ = 'onFormSubmit';
@@ -10,6 +14,9 @@ var buildGoalSummaryLinesFromResponse_ = (typeof globalThis !== 'undefined' && g
 var sendRegistrationConfirmationEmail_ = (typeof globalThis !== 'undefined' && globalThis.sendRegistrationConfirmationEmail_) || null;
 var checkIsReuseChoice_ = (typeof globalThis !== 'undefined' && globalThis.checkIsReuseChoice_) || null;
 var getConfigValue_ = (typeof globalThis !== 'undefined' && globalThis.getConfigValue_) || null;
+var getResponseEmailValue_ = (addResponseResponseUtilsModule_ && addResponseResponseUtilsModule_.getResponseEmailValue_)
+  || (typeof globalThis !== 'undefined' && globalThis.getResponseEmailValue_)
+  || null;
 
 function setupFormSubmitTrigger() {
   clearFormSubmitTrigger();
@@ -55,7 +62,7 @@ function formatRegistrationMonth_(startDate) {
   return REGISTRATION_MONTH_NAMES_[startDate.getMonth()] + ' ' + startDate.getFullYear();
 }
 
-function maybeSendRegistrationConfirmation_(spreadsheet, trackerSheet, responseColumns, formResponses) {
+function maybeSendRegistrationConfirmation_(spreadsheet, trackerSheet, responseColumns, formResponses, responseHeaders) {
   if (typeof sendRegistrationConfirmationEmail_ !== 'function' || typeof buildGoalSummaryLinesFromResponse_ !== 'function') {
     return false;
   }
@@ -74,16 +81,19 @@ function maybeSendRegistrationConfirmation_(spreadsheet, trackerSheet, responseC
     return false;
   }
 
-  var email = getResponseValue_(formResponses, responseColumns, 'EMAIL');
+  var email = typeof getResponseEmailValue_ === 'function'
+    ? getResponseEmailValue_(formResponses, responseColumns, responseHeaders)
+    : getResponseValue_(formResponses, responseColumns, 'EMAIL');
   if (!email) return false;
 
   var trackerUrl = spreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
   sendRegistrationConfirmationEmail_(
+    spreadsheet,
     email,
     getResponseValue_(formResponses, responseColumns, 'F3_NAME'),
     trackerUrl,
     spreadsheet.getFormUrl ? (spreadsheet.getFormUrl() || '') : '',
-    buildGoalSummaryLinesFromResponse_(formResponses, responseColumns),
+    buildGoalSummaryLinesFromResponse_(formResponses, responseColumns, responseHeaders),
     registrationMonth
   );
   return true;
@@ -110,13 +120,17 @@ function onFormSubmitLocked_(e) {
 
   // resolveResponseColumns throws fast if any required header is absent — no silent failures.
   var responseColumns = resolveResponseColumns(responsesSheet);
+  var responseHeaders = responsesSheet.getRange(1, 1, 1, responsesSheet.getLastColumn()).getValues()[0];
 
   // Use e.range to identify the exact submitted row, avoiding getLastRow() race with concurrent submissions.
   var submittedRowNumber = e.range.getRow();
   var formResponses = e.range.getValues()[0];
 
   // Guard: email and F3 name must be present — a row without them cannot be processed.
-  if (!formResponses[responseColumns.EMAIL] || !formResponses[responseColumns.F3_NAME]) {
+  var submittedEmail = typeof getResponseEmailValue_ === 'function'
+    ? getResponseEmailValue_(formResponses, responseColumns, responseHeaders)
+    : formResponses[responseColumns.EMAIL];
+  if (!submittedEmail || !formResponses[responseColumns.F3_NAME]) {
     Logger.log('handleFormSubmit_: submitted row missing EMAIL or F3_NAME — skipping');
     return;
   }
@@ -124,7 +138,7 @@ function onFormSubmitLocked_(e) {
   // Phase 1 — Reuse last month's goals if the participant requested it.
   // Returns formResponses unchanged when reuse was not selected.
   formResponses = maybeReuseLastMonthsGoals_(sheet, responsesSheet, submittedRowNumber, formResponses);
-  maybeSendRegistrationConfirmation_(sheet, destinationSheet, responseColumns, formResponses);
+  maybeSendRegistrationConfirmation_(sheet, destinationSheet, responseColumns, formResponses, responseHeaders);
 
   // Phase 2 — Dedup Responses sheet: remove any prior row for the same F3 Name so that
   // sheets querying Responses (Goals by HIM, Goals by AO) show only the latest submission.
@@ -133,9 +147,13 @@ function onFormSubmitLocked_(e) {
   Logger.log('handleFormSubmit_: dedup start — submittedRow: ' + submittedRowNumber + ', f3Name: "' + f3Name + '"');
   deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, responseColumns);
 
-  // Phase 3 — Resolve Team: if the Team column is blank, log the inferred value from Other team name.
-  if (!getResponseValue_(formResponses, responseColumns, 'TEAM')) {
-    Logger.log('handleFormSubmit_: Team blank — inferred from Other team name: ' + getResponseValue_(formResponses, responseColumns, 'OTHER_TEAM'));
+  // Phase 3 — Resolve Team: if TEAM is blank but OTHER_TEAM is set, promote OTHER_TEAM → TEAM.
+  // Runs after reuse so it applies whether data came from this submission or last month's.
+  var otherTeamVal = getResponseValue_(formResponses, responseColumns, 'OTHER_TEAM');
+  if (!getResponseValue_(formResponses, responseColumns, 'TEAM') && otherTeamVal) {
+    formResponses[responseColumns.TEAM] = otherTeamVal;
+    responsesSheet.getRange(submittedRowNumber, responseColumns.TEAM + 1).setValue(otherTeamVal);
+    Logger.log('handleFormSubmit_: promoted OTHER_TEAM to TEAM — "' + otherTeamVal + '"');
   }
 
   // Phase 4 — Write to Tracker.

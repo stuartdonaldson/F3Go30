@@ -1,11 +1,16 @@
 var libSheetsModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./libSheets.js')
   : null;
+var responseUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./Utilities.js')
+  : null;
 
 var resolveManagedHeaderMap_ = (libSheetsModule_ && libSheetsModule_.resolveManagedHeaderMap_)
   || (typeof globalThis !== 'undefined' && globalThis.resolveManagedHeaderMap_);
 var findRowIndexByNormalizedValue_ = (libSheetsModule_ && libSheetsModule_.findRowIndexByNormalizedValue_)
   || (typeof globalThis !== 'undefined' && globalThis.findRowIndexByNormalizedValue_);
+var sendConfiguredEmail_ = (responseUtilitiesModule_ && responseUtilitiesModule_.sendConfiguredEmail_)
+  || (typeof globalThis !== 'undefined' && globalThis.sendConfiguredEmail_);
 
 var RESPONSE_COLUMN_MAP = {
   EMAIL: { header: 'Email Address', aliases: ['Email'] },
@@ -87,6 +92,11 @@ function sanitizeTextForEmailLine_(value) {
 }
 
 function sanitizeEmailAddressForSend_(email) {
+  var cleaned = cleanEmailAddressValue_(email);
+  return cleaned ? cleaned.toLowerCase() : '';
+}
+
+function cleanEmailAddressValue_(email) {
   var flattened = sanitizeTextForEmailLine_(email);
   if (/[<>\",;]/.test(flattened)) return '';
 
@@ -94,7 +104,69 @@ function sanitizeEmailAddressForSend_(email) {
 
   if (!cleaned) return '';
   if (!/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(cleaned)) return '';
-  return cleaned.toLowerCase();
+  return cleaned;
+}
+
+function normalizeResponseHeader_(header) {
+  return String(header || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function getResponseEmailColumnIndexes_(responseColumns, responseHeaders) {
+  var indexes = [];
+  var seen = {};
+
+  function pushIndex(index) {
+    if (typeof index !== 'number' || index < 0 || seen[index]) return;
+    seen[index] = true;
+    indexes.push(index);
+  }
+
+  if (responseColumns && typeof responseColumns.EMAIL === 'number') pushIndex(responseColumns.EMAIL);
+  if (!Array.isArray(responseHeaders)) return indexes;
+
+  var preferredHeaders = {};
+  getResponseFieldTitles_('EMAIL')
+    .concat(['Email Address 2', 'Email Address 3'])
+    .forEach(function(title) {
+      preferredHeaders[normalizeResponseHeader_(title)] = true;
+    });
+
+  for (var i = 0; i < responseHeaders.length; i++) {
+    var normalizedHeader = normalizeResponseHeader_(responseHeaders[i]);
+    if (!normalizedHeader) continue;
+    if (preferredHeaders[normalizedHeader] || /^email address \d+$/.test(normalizedHeader)) {
+      pushIndex(i);
+    }
+  }
+
+  return indexes;
+}
+
+function getResponseEmailValue_(responseRow, responseColumns, responseHeaders) {
+  if (!responseRow) return '';
+
+  var emailIndexes = getResponseEmailColumnIndexes_(responseColumns, responseHeaders);
+  for (var i = 0; i < emailIndexes.length; i++) {
+    var candidate = cleanEmailAddressValue_(responseRow[emailIndexes[i]]);
+    if (candidate) return candidate;
+  }
+
+  return '';
+}
+
+function findResponseRowIndexByEmail_(rows, emailAddress, responseColumns, responseHeaders, startRow) {
+  var target = sanitizeEmailAddressForSend_(emailAddress);
+  if (!target || !Array.isArray(rows)) return -1;
+
+  var firstRow = typeof startRow === 'number' && startRow >= 0 ? startRow : 0;
+  for (var i = firstRow; i < rows.length; i++) {
+    if (getResponseEmailValue_(rows[i], responseColumns, responseHeaders) === target) return i;
+  }
+
+  return -1;
 }
 
 var GOAL_SUMMARY_FIELDS_ = [
@@ -121,11 +193,15 @@ function buildGoalSummaryLines_(valuesByField) {
     });
 }
 
-function buildGoalSummaryLinesFromResponse_(responseRow, responseColumns) {
+function buildGoalSummaryLinesFromResponse_(responseRow, responseColumns, responseHeaders) {
   if (!responseRow || !responseColumns) return [];
 
   var valuesByField = {};
   GOAL_SUMMARY_FIELDS_.forEach(function(field) {
+    if (field[0] === 'EMAIL') {
+      valuesByField[field[0]] = getResponseEmailValue_(responseRow, responseColumns, responseHeaders);
+      return;
+    }
     var idx = responseColumns[field[0]];
     valuesByField[field[0]] = (typeof idx === 'number' && idx >= 0) ? responseRow[idx] : '';
   });
@@ -149,10 +225,16 @@ function copyResponsesToCurrentTracker(email) {
   const currentSs = SpreadsheetApp.getActiveSpreadsheet();
 
   const prevTrackerConfig = getConfigValue_(currentSs, 'Last Month Tracker');
-  const prevTrackerUrl = String((prevTrackerConfig && (prevTrackerConfig.secondary || prevTrackerConfig.primary)) || '').trim();
-  if (!prevTrackerUrl) throw new Error('Previous tracker URL not found in Config sheet Last Month Tracker');
+  const prevTrackerReference = String((prevTrackerConfig && (prevTrackerConfig.secondary || prevTrackerConfig.primary)) || '').trim();
+  if (!prevTrackerReference) throw new Error('Previous tracker URL not found in Config sheet Last Month Tracker');
 
-  const prevSs = SpreadsheetApp.openByUrl(prevTrackerUrl);
+  const trackerIdMatch = prevTrackerReference.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  const trackerId = trackerIdMatch
+    ? trackerIdMatch[1]
+    : (/^[a-zA-Z0-9_-]{20,}$/.test(prevTrackerReference) ? prevTrackerReference : '');
+  const prevSs = trackerId
+    ? SpreadsheetApp.openById(trackerId)
+    : SpreadsheetApp.openByUrl(prevTrackerReference);
   const prevResponses = prevSs.getSheetByName('Responses');
   if (!prevResponses) throw new Error('Responses sheet not found in previous tracker');
 
@@ -161,10 +243,7 @@ function copyResponsesToCurrentTracker(email) {
 
   const prevHeaders = prevData[0].map(h => String(h || '').trim());
   const prevResponseColumns = resolveResponseColumns_(prevHeaders);
-  const emailColPrev = prevResponseColumns.EMAIL;
-  if (emailColPrev === -1) throw new Error('Email column not found in previous Responses headers');
-
-  let prevRowIndex = findRowIndexByNormalizedValue_(prevData, emailColPrev, email, { startRow: 1 });
+  let prevRowIndex = findResponseRowIndexByEmail_(prevData, email, prevResponseColumns, prevHeaders, 1);
   if (prevRowIndex === -1) throw new Error('Email not found in previous Responses');
 
   const prevRowValues = prevData[prevRowIndex];
@@ -177,10 +256,7 @@ function copyResponsesToCurrentTracker(email) {
 
   const curHeaders = curData[0].map(h => String(h || '').trim());
   const curResponseColumns = resolveResponseColumns_(curHeaders);
-  const emailColCur = curResponseColumns.EMAIL;
-  if (emailColCur === -1) throw new Error('Email column not found in current Responses headers');
-
-  let curRowIndex = findRowIndexByNormalizedValue_(curData, emailColCur, email, { startRow: 1 });
+  let curRowIndex = findResponseRowIndexByEmail_(curData, email, curResponseColumns, curHeaders, 1);
   // If the email is not present in current Responses, append a new row and use it
   if (curRowIndex === -1) {
     const newRowIdx = curData.length + 1; // 1-based rows
@@ -198,7 +274,8 @@ function copyResponsesToCurrentTracker(email) {
 
   // Notify via helper
   try {
-    sendResponseSettingsEmail(email, copiedPairs);
+    const paxName = String(prevRowValues[prevResponseColumns.F3_NAME] || '').trim();
+    sendResponseSettingsEmail(currentSs, email, paxName, copiedPairs);
   } catch (e) {
     Logger.log('copyResponsesToCurrentTracker: failed to send email — ' + e.message);
   }
@@ -213,10 +290,11 @@ function copyResponsesToCurrentTracker(email) {
  * Sends an email to `email` summarizing the copied response settings.
  * `data` is an array of {header, value} objects.
  */
-function sendResponseSettingsEmail(email, data) {
+function sendResponseSettingsEmail(spreadsheet, email, recipientName, data) {
   var recipient = sanitizeEmailAddressForSend_(email);
   if (!recipient) throw new Error('valid email required');
   if (!data || !Array.isArray(data)) throw new Error('data required');
+  var safeRecipientName = sanitizeTextForEmailLine_(recipientName) || 'there';
 
   var responseSettingsEmailModule_ = (typeof module !== 'undefined' && module.exports)
     ? require('./responseSettingsEmail.js')
@@ -230,14 +308,17 @@ function sendResponseSettingsEmail(email, data) {
 
   var message = buildResponseSettingsEmailTemplate_({
     copiedSettings: data,
-    recipientName: 'there'
+    recipientName: safeRecipientName
   });
 
-  MailApp.sendEmail({
-    to: recipient,
+  sendConfiguredEmail_({
+    spreadsheet: spreadsheet,
+    recipients: [{ name: safeRecipientName, email: recipient }],
     subject: message.subject,
     body: message.body,
-    htmlBody: message.htmlBody
+    htmlBody: message.htmlBody,
+    allowPlainTextFallback: true,
+    logLabel: 'sendResponseSettingsEmail'
   });
 }
 
@@ -252,6 +333,9 @@ if (typeof module !== 'undefined' && module.exports) {
     buildResponseFieldCopyPlan_,
     sanitizeTextForEmailLine_,
     sanitizeEmailAddressForSend_,
+    getResponseEmailColumnIndexes_,
+    getResponseEmailValue_,
+    findResponseRowIndexByEmail_,
     buildGoalSummaryLines_,
     buildGoalSummaryLinesFromResponse_,
     sendResponseSettingsEmail

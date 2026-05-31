@@ -137,3 +137,11 @@ Diagnosed "reuse last month's goals" feature returning `not-found` on every subm
 ### Key Learnings
 - When `not-found` fires in `getPriorResponse`, the tracker reference lookup chain (Config → openSpreadsheetFromReference_) can succeed even when pointing to the wrong copy of a sheet. The diagnostic context (spreadsheet name, rowCount, sampleNames) is essential to distinguish "wrong spreadsheet" from "person not in it".
 - URL/ID ambiguity in "Last Month Tracker" Config is already handled by `extractSpreadsheetIdFromReference_`; the real risk is the Config pointing to a template copy with empty Responses rather than the production tracker with actual submissions.
+
+## 2026-05-31 09:21:56
+
+### Summary
+Promoted OTHER_TEAM → TEAM in Phase 3 of handleFormSubmit_ when TEAM is blank and OTHER_TEAM is present. Removed the TEAM_TYPE "goal based" guard — the promotion is unconditional on TEAM being empty, which is simpler and also catches the post-reuse case where OTHER_TEAM carries over from last month but TEAM does not. Phase 3 runs after maybeReuseLastMonthsGoals_ so reused data is covered. Writes to both formResponses (in-memory) and the Responses sheet cell.
+
+### Key Learnings
+- Promoting OTHER_TEAM → TEAM is most robust without a TEAM_TYPE gate; if TEAM is blank and OTHER_TEAM has a value it should always be promoted regardless of how it arrived.

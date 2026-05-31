@@ -1,5 +1,10 @@
 const assert = require('node:assert/strict');
 
+const {
+  prepareOutboundEmailDelivery_,
+  readEmailDeliveryPolicy_,
+} = require('../script/Utilities.js');
+
 global.HtmlService = {
   createTemplateFromFile: function(fileName) {
     assert.equal(fileName, 'ReminderEmailTemplate');
@@ -35,6 +40,7 @@ const {
   sanitizeNagDisplayName_,
   buildNagRecipientList_,
   buildReminderEmailTemplate_,
+  getNagDisplayNameFromResponse_,
 } = require('../script/nag.js');
 
 assert.equal(
@@ -70,6 +76,16 @@ assert.equal(
 assert.equal(sanitizeNagDisplayName_('Güéŕó 🌮'), 'Guero');
 
 assert.equal(
+  getNagDisplayNameFromResponse_(['05/31/2026', 'littlejohn@example.com', 'Little John'], { F3_NAME: 2 }, 'Tracker Name'),
+  'Little John'
+);
+
+assert.equal(
+  getNagDisplayNameFromResponse_(['05/31/2026', 'littlejohn@example.com', ''], { F3_NAME: 2 }, 'Tracker Name'),
+  'Tracker Name'
+);
+
+assert.equal(
   buildNagRecipientList_([
     { name: 'Little John', email: 'stuart.donaldson+Go30@gmail.com' },
     { name: 'Güéŕó 🌮', email: 'stuart.donaldson+Go30@gmail.com\n' },
@@ -103,5 +119,60 @@ assert.match(message.htmlBody, /<h1>Go30 Reminder<\/h1>/);
 assert.match(message.htmlBody, /<li>Anchor - goal: Leader<\/li>/);
 assert.match(message.htmlBody, /<li>Torch<\/li>/);
 assert.match(message.htmlBody, /Tracker/);
+
+const liveDelivery = prepareOutboundEmailDelivery_({
+  policy: {},
+  recipientList: 'alpha@example.com,beta@example.com',
+  subject: 'Reminder Subject',
+  body: 'Body line',
+  htmlBody: '<html><body><p>Body line</p></body></html>'
+});
+
+assert.equal(liveDelivery.ok, true);
+assert.equal(liveDelivery.message.to, 'alpha@example.com,beta@example.com');
+assert.equal(liveDelivery.message.subject, 'Reminder Subject');
+assert.equal(liveDelivery.message.body, 'Body line');
+assert.equal(liveDelivery.message.htmlBody, '<html><body><p>Body line</p></body></html>');
+
+const testDelivery = prepareOutboundEmailDelivery_({
+  policy: {
+    emailTestMode: true,
+    siteQEmail: 'siteq@example.com'
+  },
+  recipientList: 'alpha@example.com,beta@example.com',
+  subject: 'Reminder Subject',
+  body: 'Body line',
+  htmlBody: '<html><body><p>Body line</p></body></html>'
+});
+
+assert.equal(testDelivery.ok, true);
+assert.equal(testDelivery.message.to, 'siteq@example.com');
+assert.equal(testDelivery.message.subject, '[TEST MODE] Reminder Subject');
+assert.match(testDelivery.message.body, /TEST MODE - Intended Recipients: alpha@example.com,beta@example.com/);
+assert.match(testDelivery.message.body, /Body line/);
+assert.match(testDelivery.message.htmlBody, /TEST MODE - Intended Recipients: alpha@example.com,beta@example.com/);
+assert.match(testDelivery.message.htmlBody, /<p>Body line<\/p>/);
+
+const blockedDelivery = prepareOutboundEmailDelivery_({
+  policy: {
+    emailTestMode: true,
+    siteQEmail: ''
+  },
+  recipientList: 'alpha@example.com',
+  subject: 'Reminder Subject',
+  body: 'Body line',
+  htmlBody: '<html><body><p>Body line</p></body></html>'
+});
+
+assert.equal(blockedDelivery.ok, false);
+assert.match(blockedDelivery.error, /site q/i);
+
+const aliasPolicy = readEmailDeliveryPolicy_(null, [
+  ['Site Q', 'Little John', 'siteq@example.com'],
+  ['Email Test', 'Yes', '']
+]);
+
+assert.equal(aliasPolicy.emailTestMode, true);
+assert.equal(aliasPolicy.siteQEmail, 'siteq@example.com');
 
 console.log('test_nag.js: PASS');

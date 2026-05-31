@@ -10,8 +10,8 @@ global.getResponseValue_ = function(row, cols, key) { return row[cols[key]] || '
 global.resolveResponseColumns = function(sheet) { return {}; };
 global.maybeReuseLastMonthsGoals_ = function(ss, respSheet, rowNum, responses) { return responses; };
 global.buildGoalSummaryLinesFromResponse_ = function() { return ['Who: Leader']; };
-global.sendRegistrationConfirmationEmail_ = function(email, f3Name, trackerUrl, formUrl, summaryLines, registrationMonth) {
-  global._registrationConfirmationCalls.push({ email, f3Name, trackerUrl, formUrl, summaryLines, registrationMonth });
+global.sendRegistrationConfirmationEmail_ = function(spreadsheet, email, f3Name, trackerUrl, formUrl, summaryLines, registrationMonth) {
+  global._registrationConfirmationCalls.push({ spreadsheet, email, f3Name, trackerUrl, formUrl, summaryLines, registrationMonth });
 };
 global.checkIsReuseChoice_ = function(answer) { return answer === 'Reuse'; };
 global.getConfigValue_ = function() { return null; };
@@ -173,14 +173,15 @@ function col(values) {
   );
 
   assert.equal(sent, true, 'confirmation was sent');
-  assert.deepEqual(global._registrationConfirmationCalls, [{
-    email: 'anchor@example.com',
-    f3Name: 'Anchor',
-    trackerUrl: 'https://spreadsheet.example.com#gid=456',
-    formUrl: 'https://form.example.com',
-    summaryLines: ['Who: Leader'],
-    registrationMonth: 'June 2026'
-  }]);
+  assert.equal(global._registrationConfirmationCalls.length, 1, 'one confirmation call captured');
+  assert.equal(global._registrationConfirmationCalls[0].spreadsheet.getUrl(), 'https://spreadsheet.example.com');
+  assert.equal(global._registrationConfirmationCalls[0].spreadsheet.getFormUrl(), 'https://form.example.com');
+  assert.equal(global._registrationConfirmationCalls[0].email, 'anchor@example.com');
+  assert.equal(global._registrationConfirmationCalls[0].f3Name, 'Anchor');
+  assert.equal(global._registrationConfirmationCalls[0].trackerUrl, 'https://spreadsheet.example.com#gid=456');
+  assert.equal(global._registrationConfirmationCalls[0].formUrl, 'https://form.example.com');
+  assert.deepEqual(global._registrationConfirmationCalls[0].summaryLines, ['Who: Leader']);
+  assert.equal(global._registrationConfirmationCalls[0].registrationMonth, 'June 2026');
 }
 
 // Reuse submit keeps the dedicated reuse email and skips the generic confirmation.

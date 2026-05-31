@@ -6,6 +6,22 @@
  *   into the "NAG Email?" column with a list of missing people.
  */
 
+var nagUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./Utilities.js')
+  : null;
+
+var sendConfiguredEmail_ = (nagUtilitiesModule_ && nagUtilitiesModule_.sendConfiguredEmail_)
+  || (typeof globalThis !== 'undefined' && globalThis.sendConfiguredEmail_);
+var buildEmailRecipientList_ = (nagUtilitiesModule_ && nagUtilitiesModule_.buildEmailRecipientList_)
+  || (typeof globalThis !== 'undefined' && globalThis.buildEmailRecipientList_);
+var sanitizeEmailDisplayName_ = (nagUtilitiesModule_ && nagUtilitiesModule_.sanitizeEmailDisplayName_)
+  || (typeof globalThis !== 'undefined' && globalThis.sanitizeEmailDisplayName_);
+var nagResponseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./response_utils.js')
+  : null;
+var getResponseEmailValue_ = (nagResponseUtilsModule_ && nagResponseUtilsModule_.getResponseEmailValue_)
+  || (typeof globalThis !== 'undefined' && globalThis.getResponseEmailValue_);
+
 function setupDailyNagTrigger() {
   clearDailyNagTrigger();
   ScriptApp.newTrigger('sendNagEmail')
@@ -42,30 +58,21 @@ function sanitizeNagRecipientEmail_(email) {
 }
 
 function sanitizeNagDisplayName_(name) {
-  var flattened = String(name || '').replace(/[\r\n\t]+/g, ' ').trim();
-  if (!flattened) return '';
-
-  var normalized = typeof flattened.normalize === 'function'
-    ? flattened.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-    : flattened;
-
-  return normalized
-    .replace(/[^A-Za-z0-9 ._'()-]+/g, ' ')
-    .replace(/[<>",;]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return sanitizeEmailDisplayName_(name);
 }
 
 function buildNagRecipientList_(recipients) {
-  return (recipients || []).map(function(recipient) {
-    var email = sanitizeNagRecipientEmail_(recipient && recipient.email);
-    if (!email) return '';
+  return buildEmailRecipientList_(recipients);
+}
 
-    var displayName = sanitizeNagDisplayName_(recipient && recipient.name);
-    return displayName ? (displayName + ' <' + email + '>') : email;
-  }).filter(function(entry) {
-    return !!entry;
-  }).join(',');
+function getNagDisplayNameFromResponse_(respRow, responseColumns, fallbackName) {
+  var responseNameIndex = responseColumns && typeof responseColumns.F3_NAME === 'number'
+    ? responseColumns.F3_NAME
+    : -1;
+  var responseName = responseNameIndex >= 0
+    ? String((respRow && respRow[responseNameIndex]) || '').trim()
+    : '';
+  return responseName || String(fallbackName || '').trim();
 }
 
 function buildTrackerUrl_(ss, tracker) {
@@ -183,10 +190,13 @@ function sendNagEmail() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var tracker = ss.getSheetByName('Tracker');
   var responses = ss.getSheetByName('Responses');
+  var configSheet = ss.getSheetByName('Config');
   if (!tracker || !responses) {
     Logger.log('sendNagEmail: Tracker or Responses sheet missing');
     return;
   }
+
+  var configData = configSheet ? configSheet.getDataRange().getValues() : [];
 
   var tz = ss.getSpreadsheetTimeZone();
   var today = new Date();
@@ -230,6 +240,7 @@ function sendNagEmail() {
     return;
   }
   var responseColumns = resolveResponseColumns_(respData[0]);
+  var responseHeaders = respData[0];
 
   // Build latest response map by F3 Name (scan from bottom)
   var latestByName = {};
@@ -250,12 +261,13 @@ function sendNagEmail() {
     var checked = (val === 1 || val === '1' || val === 0 || val === '0');
 
     var respRow = latestByName[name] || [];
-    var email = String(getResponseValue_(respRow, responseColumns, 'EMAIL') || '').trim();
+    var email = getResponseEmailValue_(respRow, responseColumns, responseHeaders);
+    var displayName = getNagDisplayNameFromResponse_(respRow, responseColumns, name);
     var nagOpt = isYesLike_(getOptionalResponseValue_(respRow, responseColumns, 'NAG_EMAIL'));
     var who = String(getResponseValue_(respRow, responseColumns, 'WHO') || '').trim();
 
     if (!teams[team]) teams[team] = { members: [] };
-    teams[team].members.push({ name: name, email: email, who: who, nagOpt: nagOpt, checked: checked });
+    teams[team].members.push({ name: displayName, email: email, who: who, nagOpt: nagOpt, checked: checked });
   }
 
   var funFact = readRandomFunFact_(ss);
@@ -282,11 +294,14 @@ function sendNagEmail() {
     });
 
     try {
-      MailApp.sendEmail({
-        to: recipientList,
-        subject: message.subject,
-        body: message.body,
-        htmlBody: message.htmlBody
+      sendConfiguredEmail_({
+      configData: configData,
+      spreadsheet: ss,
+      recipients: recipients,
+      subject: message.subject,
+      body: message.body,
+      htmlBody: message.htmlBody,
+      logLabel: 'sendNagEmail'
       });
       sentSummary.push({ team: teamName, recipients: recipients.length, missing: missing.length });
     } catch (e) {
@@ -304,6 +319,7 @@ if (typeof module !== 'undefined' && module.exports) {
     buildReminderEmailTemplate_: buildReminderEmailTemplate_,
     sanitizeNagRecipientEmail_: sanitizeNagRecipientEmail_,
     sanitizeNagDisplayName_: sanitizeNagDisplayName_,
-    buildNagRecipientList_: buildNagRecipientList_
+    buildNagRecipientList_: buildNagRecipientList_,
+    getNagDisplayNameFromResponse_: getNagDisplayNameFromResponse_
   };
 }

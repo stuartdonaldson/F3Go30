@@ -22,7 +22,16 @@ function escapeHtml_(str) {
  */
 function getConfigValue_(spreadsheet, variableName, data) {
   if (data) {
-    return ManagedConfigSheet.findValue(variableName, data);
+    if (typeof ManagedConfigSheet !== 'undefined' && ManagedConfigSheet && typeof ManagedConfigSheet.findValue === 'function') {
+      return ManagedConfigSheet.findValue(variableName, data);
+    }
+
+    var rowIndex = findConfigRowIndex_(data, variableName);
+    if (rowIndex === -1) return null;
+    return {
+      primary: data[rowIndex][1],
+      secondary: data[rowIndex][2]
+    };
   }
   if (!spreadsheet) {
     return null;
@@ -34,6 +43,242 @@ function getConfigValue_(spreadsheet, variableName, data) {
   }
 
   return config.getValue(variableName);
+}
+
+function findConfigRowIndex_(rows, variableName) {
+  var target = String(variableName || '').trim();
+  for (var i = 0; i < (rows || []).length; i++) {
+    if (String(rows[i][0] || '').trim() === target) return i;
+  }
+  return -1;
+}
+
+function upsertConfigSheetRow_(configSheet, rows, key, primary, secondary) {
+  var rowIndex = findConfigRowIndex_(rows, key);
+  var nextPrimary = primary === undefined || primary === null ? '' : primary;
+  var nextSecondary = secondary === undefined || secondary === null ? '' : secondary;
+
+  if (rowIndex !== -1) {
+    configSheet.getRange(rowIndex + 1, 2).setValue(nextPrimary);
+    configSheet.getRange(rowIndex + 1, 3).setValue(nextSecondary);
+    rows[rowIndex][1] = nextPrimary;
+    rows[rowIndex][2] = nextSecondary;
+    return rowIndex;
+  }
+
+  configSheet.appendRow([key, nextPrimary, nextSecondary]);
+  rows.push([key, nextPrimary, nextSecondary]);
+  return rows.length - 1;
+}
+
+function initializeConfigSheet_(configSheet) {
+  if (!configSheet) return null;
+
+  var values = configSheet.getDataRange().getValues();
+  var rows = (values || []).map(function(row) {
+    return [row[0] || '', row[1] || '', row[2] || ''];
+  });
+  var parentSpreadsheet = typeof configSheet.getParent === 'function' ? configSheet.getParent() : null;
+  var activeSpreadsheetUrl = parentSpreadsheet && typeof parentSpreadsheet.getUrl === 'function'
+    ? String(parentSpreadsheet.getUrl() || '').trim()
+    : '';
+
+  var siteQ = getConfigValue_(null, 'Site Q', rows) || { primary: '', secondary: '' };
+  var nameSpace = getConfigValue_(null, 'NameSpace', rows) || { primary: '', secondary: '' };
+  var logFile = getConfigValue_(null, 'LogFile', rows) || { primary: '', secondary: '' };
+  var signupHcForm = getConfigValue_(null, 'Signup HC Form', rows) || { primary: '', secondary: '' };
+  var sheetTemplate = getConfigValue_(null, 'Sheet Template', rows) || { primary: '', secondary: '' };
+  var lastMonthTracker = getConfigValue_(null, 'Last Month Tracker', rows) || { primary: '', secondary: '' };
+  var emailTestMode = getConfigValue_(null, 'Email Test Mode', rows);
+  var legacyEmailTest = getConfigValue_(null, 'Email Test', rows);
+
+  var emailPrimary = emailTestMode && emailTestMode.primary;
+  if (!emailPrimary && legacyEmailTest && legacyEmailTest.primary) {
+    emailPrimary = legacyEmailTest.primary;
+  }
+  if (!emailPrimary) emailPrimary = 'No';
+
+  var emailSecondary = emailTestMode && emailTestMode.secondary;
+  if (!emailSecondary && legacyEmailTest && legacyEmailTest.secondary) {
+    emailSecondary = legacyEmailTest.secondary;
+  }
+
+  var sheetTemplatePrimary = sheetTemplate.primary;
+  if (!sheetTemplatePrimary && activeSpreadsheetUrl) {
+    sheetTemplatePrimary = activeSpreadsheetUrl;
+  }
+
+  upsertConfigSheetRow_(configSheet, rows, 'NameSpace', nameSpace.primary, nameSpace.secondary);
+  upsertConfigSheetRow_(configSheet, rows, 'Site Q', siteQ.primary, siteQ.secondary);
+  upsertConfigSheetRow_(configSheet, rows, 'LogFile', logFile.primary, logFile.secondary);
+  upsertConfigSheetRow_(configSheet, rows, 'Signup HC Form', signupHcForm.primary, signupHcForm.secondary);
+  upsertConfigSheetRow_(configSheet, rows, 'Sheet Template', sheetTemplatePrimary, sheetTemplate.secondary);
+  upsertConfigSheetRow_(configSheet, rows, 'Last Month Tracker', lastMonthTracker.primary, lastMonthTracker.secondary);
+  upsertConfigSheetRow_(configSheet, rows, 'Email Test Mode', emailPrimary, emailSecondary);
+
+  return rows;
+}
+
+function isConfigYesLike_(val) {
+  if (val === undefined || val === null) return false;
+  var s = String(val).trim().toLowerCase();
+  return s === 'yes' || s === 'y' || s === 'true' || s === '1' || s.indexOf('yes') === 0;
+}
+
+function sanitizePolicyEmailAddress_(email) {
+  var flattened = String(email || '').replace(/[\r\n\t]+/g, ' ').trim();
+  if (/[<>\",;]/.test(flattened)) return '';
+  var cleaned = flattened.replace(/\s+/g, '');
+  if (!cleaned) return '';
+  if (!/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(cleaned)) return '';
+  return cleaned.toLowerCase();
+}
+
+function sanitizeEmailDisplayName_(name) {
+  var flattened = String(name || '').replace(/[\r\n\t]+/g, ' ').trim();
+  if (!flattened) return '';
+
+  var normalized = typeof flattened.normalize === 'function'
+    ? flattened.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    : flattened;
+
+  return normalized
+    .replace(/[^A-Za-z0-9 ._'()-]+/g, ' ')
+    .replace(/[<>",;]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildEmailRecipientList_(recipients) {
+  if (typeof recipients === 'string') return String(recipients || '').trim();
+
+  return (recipients || []).map(function(recipient) {
+    var email = sanitizePolicyEmailAddress_(recipient && recipient.email);
+    if (!email) return '';
+
+    var displayName = sanitizeEmailDisplayName_(recipient && recipient.name);
+    return displayName ? (displayName + ' <' + email + '>') : email;
+  }).filter(function(entry) {
+    return !!entry;
+  }).join(',');
+}
+
+function getFirstConfigValue_(spreadsheet, variableNames, configData, configReader) {
+  var names = variableNames || [];
+  for (var i = 0; i < names.length; i++) {
+    var value = configReader(spreadsheet || null, names[i], configData);
+    if (value) return value;
+  }
+  return null;
+}
+
+function readEmailDeliveryPolicy_(spreadsheet, configData) {
+  var configReader = getConfigValue_;
+  if (!configData && typeof globalThis !== 'undefined' && typeof globalThis.getConfigValue_ === 'function' && globalThis.getConfigValue_ !== getConfigValue_) {
+    configReader = globalThis.getConfigValue_;
+  }
+
+  var testModeConfig = getFirstConfigValue_(spreadsheet, ['Email Test Mode', 'Email Test'], configData, configReader);
+  var siteQConfig = configReader(spreadsheet || null, 'Site Q', configData);
+
+  return {
+    emailTestMode: isConfigYesLike_(testModeConfig && (testModeConfig.primary || testModeConfig.secondary)),
+    siteQEmail: sanitizePolicyEmailAddress_(siteQConfig && siteQConfig.secondary),
+    siteQName: String(siteQConfig && siteQConfig.primary || '').trim()
+  };
+}
+
+function buildTestModeNoticeText_(recipientList) {
+  return 'TEST MODE - Intended Recipients: ' + String(recipientList || '').trim();
+}
+
+function buildTestModeNoticeHtml_(recipientList) {
+  return [
+    '<div style="margin:0 0 16px;padding:12px 14px;border:2px solid #b42318;background:#fef3f2;color:#7a271a;font-weight:bold;">',
+    escapeHtml_(buildTestModeNoticeText_(recipientList)),
+    '</div>'
+  ].join('');
+}
+
+function prependEmailHtmlNotice_(htmlBody, noticeHtml) {
+  var html = String(htmlBody || '');
+  if (!noticeHtml) return html;
+
+  if (/<body[^>]*>/i.test(html)) {
+    return html.replace(/<body[^>]*>/i, function(match) {
+      return match + noticeHtml;
+    });
+  }
+
+  return noticeHtml + html;
+}
+
+function prepareOutboundEmailDelivery_(options) {
+  var policy = options && options.policy || readEmailDeliveryPolicy_(options && options.spreadsheet, options && options.configData);
+  var intendedRecipients = buildEmailRecipientList_(options && (options.recipients || options.recipientList));
+  var subject = String(options && options.subject || '');
+  var body = String(options && options.body || '');
+  var htmlBody = String(options && options.htmlBody || '');
+
+  if (!intendedRecipients) {
+    return { ok: false, error: 'No intended recipients configured for outbound email.' };
+  }
+
+  if (!policy.emailTestMode) {
+    return {
+      ok: true,
+      message: {
+        to: intendedRecipients,
+        subject: subject,
+        body: body,
+        htmlBody: htmlBody
+      },
+      intendedRecipients: intendedRecipients,
+      effectiveRecipients: intendedRecipients,
+      testMode: false
+    };
+  }
+
+  if (!policy.siteQEmail) {
+    return { ok: false, error: 'Email test mode is enabled but Site Q email is missing or invalid.' };
+  }
+
+  var noticeText = buildTestModeNoticeText_(intendedRecipients);
+  var noticeHtml = buildTestModeNoticeHtml_(intendedRecipients);
+
+  return {
+    ok: true,
+    message: {
+      to: policy.siteQEmail,
+      subject: '[TEST MODE] ' + subject,
+      body: noticeText + '\n\n' + body,
+      htmlBody: prependEmailHtmlNotice_(htmlBody, noticeHtml)
+    },
+    intendedRecipients: intendedRecipients,
+    effectiveRecipients: policy.siteQEmail,
+    testMode: true
+  };
+}
+
+function sendConfiguredEmail_(options) {
+  var delivery = prepareOutboundEmailDelivery_(options);
+  if (!delivery.ok) {
+    throw new Error(delivery.error);
+  }
+
+  try {
+    MailApp.sendEmail(delivery.message);
+  } catch (err) {
+    if (!options || !options.allowPlainTextFallback || !delivery.message.htmlBody) {
+      throw err;
+    }
+
+    Logger.log((options.logLabel || 'sendConfiguredEmail_') + ': html send failed — ' + err.message);
+    MailApp.sendEmail(delivery.message.to, delivery.message.subject, delivery.message.body);
+    delivery.fellBackToPlainText = true;
+  }
+
+  return delivery;
 }
 
 /**
@@ -86,4 +331,18 @@ function getLockedRowA1Notation(sheet, row, column) {
   var lockedRowNotation = columnLetters + "$" + rowNumber;
   
   return lockedRowNotation;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    escapeHtml_: escapeHtml_,
+    getConfigValue_: getConfigValue_,
+    initializeConfigSheet_: initializeConfigSheet_,
+    sanitizeEmailDisplayName_: sanitizeEmailDisplayName_,
+    buildEmailRecipientList_: buildEmailRecipientList_,
+    readEmailDeliveryPolicy_: readEmailDeliveryPolicy_,
+    prepareOutboundEmailDelivery_: prepareOutboundEmailDelivery_,
+    sendConfiguredEmail_: sendConfiguredEmail_,
+    buildSlackMessage_: buildSlackMessage_
+  };
 }

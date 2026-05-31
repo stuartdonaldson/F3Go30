@@ -2,7 +2,11 @@ const assert = require('node:assert/strict');
 
 // GAS global mocks — must be set before require so the module sees them.
 let mailsSent = [];
-global.Logger = { log: function() {} };
+let openByIdCalls = [];
+let openByUrlCalls = [];
+let openByUrlFailures = {};
+let loggerMessages = [];
+global.Logger = { log: function(message) { loggerMessages.push(String(message || '')); } };
 global.MailApp = { sendEmail: function(arg1, arg2, arg3) {
     if (typeof arg1 === 'object' && arg1 !== null) {
         mailsSent.push({ to: arg1.to, subj: arg1.subject || arg1.subj || '', body: arg1.body || '', htmlBody: arg1.htmlBody || '' });
@@ -15,8 +19,17 @@ global.FormApp = {
     openByUrl: function() { return global._mockForm || null; }
 };
 global.SpreadsheetApp = {
-    openById: function() { return global._mockPrevSs || null; },
-    openByUrl: function() { return global._mockPrevSs || null; }
+    openById: function(id) {
+        openByIdCalls.push(id);
+        return global._mockPrevSs || null;
+    },
+    openByUrl: function(url) {
+        openByUrlCalls.push(url);
+        if (openByUrlFailures[url]) {
+            throw new Error(openByUrlFailures[url]);
+        }
+        return global._mockPrevSs || null;
+    }
 };
 global.getConfigValue_ = function(ss, key) { return (global._mockConfig && global._mockConfig[key]) || null; };
 global.SpreadsheetManager = function(ss) {
@@ -42,6 +55,7 @@ const {
     buildReuseSummaryLines,
     sanitizeTextForEmailLine_,
     sanitizeEmailAddressForSend_,
+    resolveTrackerReferenceFromLinks_,
     maybeReuseLastMonthsGoals_
 } = require('../script/signupReuse.js');
 
@@ -133,6 +147,30 @@ assert.ok(latest);
 assert.equal(latest.rowIndex, 2, 'finds last row for email (case-insensitive)');
 assert.equal(latest.row[responseColumns.TEAM], 'Team B');
 
+const alternateEmailHeaders = [
+    'Timestamp',
+    'Email Address',
+    'Are you currently participating in Go30?',
+    'F3 Name',
+    'Email Address 2',
+    'Do you want to be on an AO based team - OR- grouped with other HIMs around a common goal?',
+    'Team',
+    "Great! Here are some goals that other HIM's are focused on this month. Pick one or choose 'other' and we will try and pair you with someone else who has a similar goal. Or specify another team name for grouping",
+    'WHO do you ultimately want to become?',
+    'WHAT is your Go30 Challenge?',
+    'HOW are you going to be successful this month?',
+    'Cell Phone Number',
+    'NAG Email?'
+];
+const alternateEmailColumns = resolveResponseColumns(alternateEmailHeaders);
+const alternateEmailRows = [
+    ['2026-03-01 08:00:00', '', 'Yes', 'Anchor', 'pax@example.com', 'AO-based', 'Team A', 'Strength', 'Leader', 'Run', 'Plan', '555-1111', 'No'],
+    ['2026-03-03 08:00:00', '', 'Yes', 'Anchor', 'PAX@example.com', 'goal-based', 'Team B', 'Endurance', 'Disciplined', 'Ruck', 'Journal', '555-2222', 'Yes'],
+];
+const alternateLatest = findLatestResponseByEmail(alternateEmailRows, 'pax@example.com', alternateEmailColumns, alternateEmailHeaders);
+assert.ok(alternateLatest, 'finds last row when alternate email header is populated');
+assert.equal(alternateLatest.rowIndex, 1);
+
 assert.equal(findLatestResponseByEmail(rows, 'missing@example.com', responseColumns), null);
 
 assert.throws(
@@ -213,6 +251,18 @@ assert.deepEqual(buildReuseSummaryLines({ email: '', nagEmail: '', teamType: '',
 assert.equal(sanitizeTextForEmailLine_('  F3\nNew\tGuy\u0007  '), 'F3 New Guy');
 assert.equal(sanitizeEmailAddressForSend_('  Test<User>@Example.com\n'), '', 'invalid address characters are rejected');
 assert.equal(sanitizeEmailAddressForSend_(' Test.User+go30@example.com\n'), 'test.user+go30@example.com');
+assert.equal(
+    resolveTrackerReferenceFromLinks_(
+        makeMockSs({}, {
+            linksValues: [
+                ['Date', 'StartDate', 'TrackerURL', 'ShortTracker', 'SheetId'],
+                ['2026-05-31', '2026-05-01', 'https://tinyurl.com/fake-tracker', 'https://tinyurl.com/fake-short', '1SheetIdFromLinks1234567890abcDEF']
+            ]
+        }),
+        { primary: '2026-05-01', secondary: 'https://tinyurl.com/fake-tracker' }
+    ),
+    '1SheetIdFromLinks1234567890abcDEF'
+);
 
 // -- maybeReuseLastMonthsGoals_ --
 
@@ -228,11 +278,23 @@ function makeMockResponsesSheet(headersRow) {
     };
 }
 
-function makeMockSs(configMap) {
+function makeMockSs(configMap, options) {
     global._mockConfig = configMap || {};
+    const opts = options || {};
     return {
         getFormUrl: function() { return null; },
-        getSheetByName: function() { return null; },
+        getSheetByName: function(name) {
+            if (name === 'Links' && opts.linksValues) {
+                return {
+                    getDataRange: function() {
+                        return {
+                            getValues: function() { return opts.linksValues; }
+                        };
+                    }
+                };
+            }
+            return null;
+        },
         getUrl: function() { return 'https://mock-ss.example.com'; }
     };
 }
@@ -244,6 +306,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
 // Test: non-reuse PARTICIPATION answer → returns formResponses unchanged, no email
 {
     mailsSent = [];
+    loggerMessages = [];
     const formRow = nonReuseFormRow();
     const result = maybeReuseLastMonthsGoals_(makeMockSs(), makeMockResponsesSheet(HEADERS), 2, formRow);
     assert.deepEqual(result, formRow, 'non-reuse choice: formResponses unchanged');
@@ -253,6 +316,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
 // Test: reuse choice, 'Last Month Tracker' absent → sends no-reuse email, returns formResponses unchanged
 {
     mailsSent = [];
+    loggerMessages = [];
     const formRow = reusableFormRow();
     const result = maybeReuseLastMonthsGoals_(
         makeMockSs({ 'Last Month Tracker': null }),
@@ -266,6 +330,10 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
 // Test: reuse choice, prior tracker found → merges values, sends reuse email
 {
     mailsSent = [];
+    loggerMessages = [];
+    openByIdCalls = [];
+    openByUrlCalls = [];
+    openByUrlFailures = {};
     global._mockPrevSs = {};
     global._mockManagedSheet = {
         getAllRows: function() {
@@ -288,14 +356,82 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     assert.equal(result[responseColumns.PHONE], '555-9999', 'phone merged');
     assert.equal(mailsSent.length, 1, 'exactly one email sent');
     assert.ok(mailsSent[0].subj.includes('reused'), 'email signals goals reused');
+    assert.deepEqual(openByIdCalls, ['abc123'], 'URL-backed config opens by extracted spreadsheet ID');
+    assert.deepEqual(openByUrlCalls, [], 'URL-backed config does not fall through to openByUrl');
 
     global._mockPrevSs = null;
     global._mockManagedSheet = null;
 }
 
+// Test: reuse choice, bare spreadsheet ID in config → opens with openById
+{
+    mailsSent = [];
+    loggerMessages = [];
+    openByIdCalls = [];
+    openByUrlCalls = [];
+    openByUrlFailures = {};
+    global._mockPrevSs = {};
+    global._mockManagedSheet = {
+        getAllRows: function() {
+            return [{ F3_NAME: 'TestPax', TEAM_TYPE: 'AO-based', TEAM: 'Team C', OTHER_TEAM: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
+        }
+    };
+
+    const formRow = reusableFormRow();
+    const result = maybeReuseLastMonthsGoals_(
+        makeMockSs({ 'Last Month Tracker': { primary: '1AbcDefGhIJklMNopQRstuVWxyZ0123456789' } }),
+        makeMockResponsesSheet(HEADERS), 2, formRow
+    );
+
+    assert.equal(result[responseColumns.TEAM_TYPE], 'AO-based', 'bare-id config still reuses prior values');
+    assert.deepEqual(openByIdCalls, ['1AbcDefGhIJklMNopQRstuVWxyZ0123456789'], 'bare spreadsheet ID opens by ID');
+    assert.deepEqual(openByUrlCalls, [], 'bare spreadsheet ID never reaches openByUrl');
+
+    global._mockPrevSs = null;
+    global._mockManagedSheet = null;
+}
+
+// Test: reuse choice, bad config URL but Links sheet has SheetId → falls back to Links
+{
+    mailsSent = [];
+    loggerMessages = [];
+    openByIdCalls = [];
+    openByUrlCalls = [];
+    openByUrlFailures = { 'https://tinyurl.com/not-a-sheet': 'Invalid argument: url' };
+    global._mockPrevSs = {};
+    global._mockManagedSheet = {
+        getAllRows: function() {
+            return [{ F3_NAME: 'TestPax', TEAM_TYPE: 'AO-based', TEAM: 'Team C', OTHER_TEAM: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
+        }
+    };
+
+    const formRow = reusableFormRow();
+    const result = maybeReuseLastMonthsGoals_(
+        makeMockSs(
+            { 'Last Month Tracker': { primary: '2026-05-01', secondary: 'https://tinyurl.com/not-a-sheet' } },
+            {
+                linksValues: [
+                    ['Date', 'StartDate', 'TrackerURL', 'ShortTracker', 'SheetId'],
+                    ['2026-05-31', '2026-05-01', 'https://tinyurl.com/not-a-sheet', 'https://tinyurl.com/short', '1SheetIdFromLinks1234567890abcDEF']
+                ]
+            }
+        ),
+        makeMockResponsesSheet(HEADERS), 2, formRow
+    );
+
+    assert.equal(result[responseColumns.TEAM_TYPE], 'AO-based', 'Links fallback still reuses prior values');
+    assert.deepEqual(openByUrlCalls, ['https://tinyurl.com/not-a-sheet'], 'first tries the configured reference');
+    assert.deepEqual(openByIdCalls, ['1SheetIdFromLinks1234567890abcDEF'], 'then falls back to Links sheet ID');
+
+    global._mockPrevSs = null;
+    global._mockManagedSheet = null;
+    openByUrlFailures = {};
+}
+
 // Test: reuse choice, F3 Name not found in prior tracker → sends no-reuse email
 {
     mailsSent = [];
+    loggerMessages = [];
     global._mockPrevSs = {};
     global._mockManagedSheet = {
         getAllRows: function() { return []; }
@@ -315,6 +451,57 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockManagedSheet = null;
 }
 
+// Test: lookup failure logs spreadsheet and Responses-sheet context.
+{
+    mailsSent = [];
+    loggerMessages = [];
+    global._mockPrevSs = {
+        getId: function() { return 'prev-sheet-id'; },
+        getName: function() { return '2026-05-F3-Go30'; },
+        getUrl: function() { return 'https://docs.google.com/spreadsheets/d/prev-sheet-id/edit'; },
+        getSheetByName: function(name) {
+            if (name !== 'Responses') return null;
+            return {
+                getDataRange: function() {
+                    return {
+                        getValues: function() {
+                            return [['Timestamp', 'Email Address']];
+                        }
+                    };
+                }
+            };
+        }
+    };
+    global._mockManagedSheet = null;
+    global.SpreadsheetManager = function() {
+        this.openExistingSheet = function() {
+            throw new Error('No headers defined for sheet Responses');
+        };
+    };
+
+    const formRow = reusableFormRow();
+    maybeReuseLastMonthsGoals_(
+        makeMockSs({ 'Last Month Tracker': { primary: '2026-05-01', secondary: 'prev-sheet-id' } }),
+        makeMockResponsesSheet(HEADERS), 2, formRow
+    );
+
+    assert.ok(loggerMessages.some(function(message) {
+        return message.includes('prior tracker lookup failed: No headers defined for sheet Responses')
+            && message.includes('reference="prev-sheet-id"')
+            && message.includes('spreadsheetName="2026-05-F3-Go30"')
+            && message.includes('responsesSheet=present')
+            && message.includes('responsesHeaders=["Timestamp","Email Address"]');
+    }), 'lookup failure log includes prior spreadsheet context');
+
+    global.SpreadsheetManager = function(ss) {
+        this.openExistingSheet = function() {
+            if (global._mockManagedSheet) return global._mockManagedSheet;
+            throw new Error('No mock ManagedSheet configured');
+        };
+    };
+    global._mockPrevSs = null;
+}
+
 // Test: send path sanitizes email recipient and F3 name before sending
 {
     mailsSent = [];
@@ -332,7 +519,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     );
 
     assert.equal(mailsSent.length, 1, 'sanitized send: one email');
-    assert.equal(mailsSent[0].to, 'test.user@example.com', 'recipient sanitized and normalized');
+    assert.equal(mailsSent[0].to, 'F3 New Guy <test.user@example.com>', 'recipient uses F3 name and sanitized email');
     assert.ok(mailsSent[0].body.includes('F3 Name: F3 New Guy'), 'f3 name sanitized into a single line');
 
     global._mockPrevSs = null;
