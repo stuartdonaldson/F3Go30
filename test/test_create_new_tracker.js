@@ -160,18 +160,31 @@ assert.equal(legacyValues[1][14], 'form-legacy');
 assert.ok(writes.length >= 8);
 
 const hiddenSheets = [];
-hideInternalSheets_({
+const deletedSheets = [];
+
+function makeFakeSheet(name) {
+  return {
+    getName: function() { return name; },
+    hideSheet: function() { hiddenSheets.push(name); }
+  };
+}
+
+const allowListNames = ['Tracker', 'Bonus Tracker', 'Team Score', 'HIM Score', 'Goals by HIM', 'Goals by AO', 'Help'];
+const otherNames = ['TrackerDB', 'Responses', 'PaxDB', 'Config'];
+const allSheets = allowListNames.concat(otherNames).map(makeFakeSheet);
+
+const fakeSpreadsheet = {
+  getSheets: function() { return allSheets; },
   getSheetByName: function(name) {
-    if (name === 'Config' || name === 'Links') {
-      return {
-        hideSheet: function() {
-          hiddenSheets.push(name);
-        }
-      };
-    }
-    return null;
-  }
-});
-assert.deepEqual(hiddenSheets, ['Config', 'Links']);
+    return allSheets.find(function(s) { return s.getName() === name; }) || null;
+  },
+  deleteSheet: function(sheet) { deletedSheets.push(sheet.getName()); }
+};
+
+hideInternalSheets_(fakeSpreadsheet);
+
+assert.deepEqual(hiddenSheets.sort(), ['Config', 'Responses', 'TrackerDB']);
+assert.deepEqual(deletedSheets, ['PaxDB']);
+assert.ok(hiddenSheets.indexOf('PaxDB') === -1);
 
 console.log('test_create_new_tracker.js: PASS');

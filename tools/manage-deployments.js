@@ -59,19 +59,24 @@ function writeClasp(scriptId) {
 // version.js stamping
 // ─────────────────────────────────────────────────────────────────────────
 
-function stampVersion(label) {
-  const pkg     = JSON.parse(fs.readFileSync(PKG_PATH, 'utf8'));
-  const version = pkg.version || '0.0.0';
-  const now     = new Date().toISOString();
+function stampVersion(label, options = {}) {
+  const pkgPath = options.pkgPath || PKG_PATH;
+  const versionPath = options.versionPath || VERSION_PATH;
+  const now = options.now || new Date().toISOString();
 
-  let src = fs.readFileSync(VERSION_PATH, 'utf8');
+  const pkg     = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  const version = pkg.version || '0.0.0';
+
+  let src = fs.readFileSync(versionPath, 'utf8');
 
   src = replaceConst(src, 'APP_VERSION',      `'${version}'`);
   src = replaceConst(src, 'APP_VERSION_DATE', `'${now}'`);
   src = replaceConst(src, 'APP_DEPLOY_TARGET', `'${label}'`);
 
-  fs.writeFileSync(VERSION_PATH, src, 'utf8');
+  fs.writeFileSync(versionPath, src, 'utf8');
   console.log(`📝 version.js stamped: v${version}  ${now}  ${label}`);
+
+  return { version, now, label };
 }
 
 /**
@@ -154,11 +159,19 @@ async function main() {
   await interactiveMenu();
 }
 
-main().catch(err => {
-  if (err && (err.name === 'ExitPromptError' || err.message?.includes('force closed'))) {
-    console.log('\n❌ Cancelled.');
-    return;
-  }
-  console.error('❌ Error:', err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    if (err && (err.name === 'ExitPromptError' || err.message?.includes('force closed'))) {
+      console.log('\n❌ Cancelled.');
+      return;
+    }
+    console.error('❌ Error:', err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  replaceConst,
+  stampVersion,
+  TARGETS,
+};

@@ -61,6 +61,20 @@ bd close <id>         # mark complete
 /bd-report            # generate bdreport.md (snapshot with graph + narrative)
 ```
 
+## Shell Safety (Quoted Payloads)
+
+When running shell commands that include human-written text payloads (issue descriptions,
+acceptance criteria, notes, markdown), prevent shell expansion by default.
+
+- Use single-quoted heredocs for multi-line payloads: `<<'EOF'`
+- Never pass payload text in double-quoted CLI args when content may include backticks,
+	`$`, `$(...)`, or backslashes
+- Prefer stdin / `--body-file -` for multi-line content instead of inline argument strings
+- Do not chain create/update commands with command substitution in the same shell line
+	when payload text is present; run verification/read commands separately after writes
+- If a command must include literal backticks or `$`, verify they are inside a single-quoted
+	heredoc payload, not in shell-parsed argument context
+
 ## Reference Summaries
 
 | File | Source Document | Covers |

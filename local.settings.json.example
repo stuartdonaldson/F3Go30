@@ -7,5 +7,8 @@
   "monthScriptId":         "<current month tracker script project ID>",
   "monthSpreadsheetId":    "<current month tracker spreadsheet ID>",
   "testScriptId":          "<test tracker script project ID>",
-  "testSpreadsheetId":     "<test tracker spreadsheet ID>"
+  "testSpreadsheetId":     "<test tracker spreadsheet ID>",
+  "axiomDataset":          "<Axiom dataset name, e.g. go30-tracker — optional, used by query-axiom.py and GasLogger.flush()>",
+  "axiomToken":            "<Axiom ingest token — also set as the GAS script property AXIOM_TOKEN on the Template>",
+  "axiomQueryToken":       "<Axiom query token — used only by query-axiom.py; may be the same token as axiomToken>"
 }
