@@ -277,7 +277,7 @@ function copyResponsesToCurrentTracker(email) {
     const paxName = String(prevRowValues[prevResponseColumns.F3_NAME] || '').trim();
     sendResponseSettingsEmail(currentSs, email, paxName, copiedPairs);
   } catch (e) {
-    Logger.log('copyResponsesToCurrentTracker: failed to send email — ' + e.message);
+    GasLogger.log('copyResponsesToCurrentTracker.emailFailed', { error: e.message });
   }
 
   GasLogger.log('copyResponsesToCurrentTracker', { copied: copiedPairs.length, prevTracker: prevTrackerUrl });

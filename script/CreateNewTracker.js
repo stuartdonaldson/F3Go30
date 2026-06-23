@@ -190,11 +190,19 @@ function writeLastMonthTrackerConfig_(configSheet, lastMonthTracker) {
 }
 
 function hideInternalSheets_(spreadsheet) {
-  if (!spreadsheet || typeof spreadsheet.getSheetByName !== 'function') return;
+  if (!spreadsheet || typeof spreadsheet.getSheets !== 'function') return;
 
-  ['Config', 'Links', 'FunFacts', 'Inspiration', 'Periods', 'Controls'].forEach(function(sheetName) {
-    const sheet = spreadsheet.getSheetByName(sheetName);
-    if (sheet && typeof sheet.hideSheet === 'function') {
+  var visibleAllowList = ['Tracker', 'Bonus Tracker', 'Team Score', 'HIM Score', 'Goals by HIM', 'Goals by AO', 'Help'];
+
+  spreadsheet.getSheets().forEach(function(sheet) {
+    var name = sheet.getName();
+    if (name === 'PaxDB') {
+      if (typeof spreadsheet.deleteSheet === 'function') {
+        spreadsheet.deleteSheet(sheet);
+      }
+      return;
+    }
+    if (visibleAllowList.indexOf(name) === -1 && typeof sheet.hideSheet === 'function') {
       sheet.hideSheet();
     }
   });
@@ -210,7 +218,7 @@ function getTemplateSpreadsheetForInit_(spreadsheet, configSheet) {
   try {
     return SpreadsheetApp.openByUrl(templateUrl);
   } catch (err) {
-    Logger.log('getTemplateSpreadsheetForInit_: failed to open template URL ' + templateUrl + ' — ' + err.message);
+    GasLogger.log('getTemplateSpreadsheetForInit_.openFailed', { templateUrl: templateUrl, error: err.message });
     return spreadsheet;
   }
 }
@@ -221,7 +229,10 @@ function getTemplateSpreadsheetForInit_(spreadsheet, configSheet) {
  * value from the Config sheet and the operator-supplied start date.
  */
 function copyAndInit() {
-  GasLogger.init('copyAndInit');
+  return GasLogger.run('copyAndInit', copyAndInit_);
+}
+
+function copyAndInit_() {
   NoticeLogInit("Create New Tracker", "This script will create a new monthly tracker. Enter the start date when prompted.");
 
   const response = NoticePrompt("Enter start date YYYY-MM-DD");
@@ -402,24 +413,22 @@ function copyAndInit() {
     trackerUrl: trackerSheetShortUrl,
     formUrl: formShortUrl,
     templateSpreadsheetId: currentSpreadsheet.getId()
-  }, true);
+  });
 
   noticeLogDone_();
 
   } catch (err) {
     if (newSpreadsheetId) {
-      Logger.log('copyAndInit: error — spreadsheet ID: ' + newSpreadsheetId + ' — ' + err.message);
       NoticeLog('Error during initialization: ' + err.message);
       NoticeLog('Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.');
     } else {
-      Logger.log('copyAndInit: copy() failed — ' + err.message);
       NoticeLog('Error: failed to copy spreadsheet — ' + err.message);
     }
     GasLogger.log('copyAndInit.error', {
       error: err.message,
       spreadsheetName: newSpreadsheetName,
       orphanedSpreadsheetId: newSpreadsheetId || null
-    }, true);
+    });
     throw err;
   }
 }
@@ -434,48 +443,52 @@ function copyAndInit() {
  * @throws {Error} If the entered date is invalid or the operation is canceled.
  */
 function reinitializeSheets() {
-  NoticeLogInit("Reinitialize Sheets", "This script will reinitialize the sheets in the current spreadsheet. Please enter the start date for the new month.");
+  return GasLogger.run('reinitializeSheets', function() {
+    NoticeLogInit("Reinitialize Sheets", "This script will reinitialize the sheets in the current spreadsheet. Please enter the start date for the new month.");
 
-  const response = NoticePrompt("Enter start date YYYY-MM-DD");
-  if (!response) {
-    NoticeLog('Operation canceled.');
-    return;
-  }
-  const startDate = new Date(response + 'T00:00:00'); // local time to avoid UTC offset shifting the date
+    const response = NoticePrompt("Enter start date YYYY-MM-DD");
+    if (!response) {
+      NoticeLog('Operation canceled.');
+      return;
+    }
+    const startDate = new Date(response + 'T00:00:00'); // local time to avoid UTC offset shifting the date
 
-  if (isNaN(startDate.getTime())) {
-    NoticeLog('Invalid date format. Please use YYYY-MM-DD format.');
-    NoticeLog('Operation canceled.');
-    return;
-  }
-  const inputMonth = parseInt(response.split('-')[1], 10);
-  if (startDate.getMonth() + 1 !== inputMonth) {
-    NoticeLog('Invalid date: ' + response + ' does not exist. Please enter a valid calendar date.');
-    NoticeLog('Operation canceled.');
-    return;
-  }
+    if (isNaN(startDate.getTime())) {
+      NoticeLog('Invalid date format. Please use YYYY-MM-DD format.');
+      NoticeLog('Operation canceled.');
+      return;
+    }
+    const inputMonth = parseInt(response.split('-')[1], 10);
+    if (startDate.getMonth() + 1 !== inputMonth) {
+      NoticeLog('Invalid date: ' + response + ' does not exist. Please enter a valid calendar date.');
+      NoticeLog('Operation canceled.');
+      return;
+    }
 
-  NoticeLog('Reinitializing sheets. Please wait...');
+    NoticeLog('Reinitializing sheets. Please wait...');
 
-  initSheets(SpreadsheetApp.getActiveSpreadsheet(), startDate);
-  SpreadsheetApp.flush();
+    initSheets(SpreadsheetApp.getActiveSpreadsheet(), startDate);
+    SpreadsheetApp.flush();
 
-  NoticeLog('The sheets have been reinitialized successfully.');
-  NoticeLog('You can now close this message.');
-  noticeLogDone_();
+    NoticeLog('The sheets have been reinitialized successfully.');
+    NoticeLog('You can now close this message.');
+    noticeLogDone_();
+  });
 }
 
 function initializeConfigSheet() {
-  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-  const configSheet = spreadsheet.getSheetByName('Config');
-  if (!configSheet) {
-    Logger.log('initializeConfigSheet: Config sheet not found');
-    return;
-  }
+  return GasLogger.run('initializeConfigSheet', function() {
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const configSheet = spreadsheet.getSheetByName('Config');
+    if (!configSheet) {
+      GasLogger.log('initializeConfigSheet.notFound', {});
+      return;
+    }
 
-  initializeConfigSheet_(configSheet);
-  SpreadsheetApp.flush();
-  Logger.log('initializeConfigSheet: Config sheet standardized');
+    initializeConfigSheet_(configSheet);
+    SpreadsheetApp.flush();
+    GasLogger.log('initializeConfigSheet.standardized', {});
+  });
 }
 
 
@@ -625,17 +638,18 @@ var MONTHLY_AUTO_GENERATE_HANDLER_ = 'autoGenerateNextMonthTracker';
  * Clears any existing monthly auto-generate trigger before registering.
  */
 function initializeMonthlyTrigger() {
-  GasLogger.init('initializeMonthlyTrigger');
-  clearMonthlyAutoGenerateTrigger_();
-  ScriptApp.newTrigger(MONTHLY_AUTO_GENERATE_HANDLER_)
-    .timeBased()
-    .onMonthDay(20)
-    .inTimezone(Session.getScriptTimeZone())
-    .atHour(2)
-    .nearMinute(0)
-    .create();
-  GasLogger.log('initializeMonthlyTrigger', { triggerDay: 20, triggerHour: 2 }, true);
-  SpreadsheetApp.getUi().alert('Monthly auto-generate trigger set for the 20th of each month at 2 AM.');
+  return GasLogger.run('initializeMonthlyTrigger', function() {
+    clearMonthlyAutoGenerateTrigger_();
+    ScriptApp.newTrigger(MONTHLY_AUTO_GENERATE_HANDLER_)
+      .timeBased()
+      .onMonthDay(20)
+      .inTimezone(Session.getScriptTimeZone())
+      .atHour(2)
+      .nearMinute(0)
+      .create();
+    GasLogger.log('initializeMonthlyTrigger', { triggerDay: 20, triggerHour: 2 });
+    SpreadsheetApp.getUi().alert('Monthly auto-generate trigger set for the 20th of each month at 2 AM.');
+  });
 }
 
 function clearMonthlyAutoGenerateTrigger_() {
@@ -648,12 +662,26 @@ function clearMonthlyAutoGenerateTrigger_() {
 }
 
 /**
+ * True only on the Go30 Template's bound script project. Script Properties are never
+ * copied when a spreadsheet is duplicated via .copy(), so this flag — set once, manually,
+ * in the Template's Apps Script project settings — reliably distinguishes the Template
+ * from any monthly tracker copy (which inherits the Template's Config sheet *values* but
+ * gets its own, empty, Script Properties store).
+ */
+function isTemplateHost_() {
+  return PropertiesService.getScriptProperties().getProperty('IS_TEMPLATE_HOST') === 'true';
+}
+
+/**
  * Headless auto-generate: creates next month's tracker spreadsheet and HC form without
  * any UI interaction. Intended to be run by a time-based trigger installed via
  * initializeMonthlyTrigger(). Emails the Site Q on success or failure.
  */
 function autoGenerateNextMonthTracker() {
-  GasLogger.init('autoGenerateNextMonthTracker');
+  return GasLogger.run('autoGenerateNextMonthTracker', autoGenerateNextMonthTracker_);
+}
+
+function autoGenerateNextMonthTracker_() {
   const today = new Date();
   const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
   const paddedMonth = String(nextMonthStart.getMonth() + 1).padStart(2, '0');
@@ -664,15 +692,30 @@ function autoGenerateNextMonthTracker() {
 
   const siteQConfig = getConfigValue_(null, 'Site Q', configData);
   if (!siteQConfig || !siteQConfig.secondary) {
-    Logger.log('autoGenerateNextMonthTracker: Site Q email not found in Config sheet — aborting');
+    GasLogger.log('autoGenerateNextMonthTracker.siteQMissing', {});
     return;
   }
   const siteQEmail = siteQConfig.secondary;
   const siteQName = siteQConfig.primary || 'Site Q';
 
+  if (!isTemplateHost_()) {
+    GasLogger.log('autoGenerateNextMonthTracker.wrongHost', {});
+    sendConfiguredEmail_({
+      spreadsheet: currentSpreadsheet,
+      configData: configData,
+      recipientList: siteQEmail,
+      subject: 'F3 Go30: Auto-generate failed — wrong host',
+      body: 'autoGenerateNextMonthTracker fired on a spreadsheet that is not the Go30 Template host ' +
+        '(the IS_TEMPLATE_HOST script property is not set on this spreadsheet\'s Apps Script project). ' +
+        'This trigger must only run from the Template. Please delete this trigger from this spreadsheet ' +
+        '(Apps Script editor > Triggers) and confirm "Initialize Monthly Trigger" is only ever run from the Template.'
+    });
+    return;
+  }
+
   const nameSpaceConfig = getConfigValue_(null, 'NameSpace', configData);
   if (!nameSpaceConfig || !nameSpaceConfig.primary) {
-    Logger.log('autoGenerateNextMonthTracker: NameSpace not found in Config sheet — aborting');
+    GasLogger.log('autoGenerateNextMonthTracker.nameSpaceMissing', {});
     sendConfiguredEmail_({
       spreadsheet: currentSpreadsheet,
       configData: configData,
@@ -685,7 +728,7 @@ function autoGenerateNextMonthTracker() {
   const nameSpace = nameSpaceConfig.primary;
   const newSpreadsheetName = nextMonthStart.getFullYear() + '-' + paddedMonth + '-' + nameSpace;
 
-  Logger.log('autoGenerateNextMonthTracker: creating ' + newSpreadsheetName);
+  GasLogger.log('autoGenerateNextMonthTracker.creating', { spreadsheetName: newSpreadsheetName });
 
   let newSpreadsheetId = null;
   try {
@@ -712,7 +755,7 @@ function autoGenerateNextMonthTracker() {
     try {
       trackerSheetShortUrl = shortenUrl(trackerSheetUrl, newSpreadsheetName, 5, 'tinyurl');
     } catch (e) {
-      Logger.log('autoGenerateNextMonthTracker: shorten URL failed for tracker: ' + e.message);
+      GasLogger.log('autoGenerateNextMonthTracker.shortenUrlFailed', { target: 'tracker', error: e.message });
     }
     if (!trackerSheetShortUrl.startsWith('https://tinyurl.com')) {
       GasLogger.log('autoGenerateNextMonthTracker.warning', { warning: 'urlShortener failed for tracker sheet', alias: newSpreadsheetName });
@@ -741,7 +784,7 @@ function autoGenerateNextMonthTracker() {
     try {
       formShortUrl = shortenUrl(formUrl, newSpreadsheetName + 'HC', 5, 'tinyurl');
     } catch (e) {
-      Logger.log('autoGenerateNextMonthTracker: shorten URL failed for form: ' + e.message);
+      GasLogger.log('autoGenerateNextMonthTracker.shortenUrlFailed', { target: 'form', error: e.message });
     }
     if (!formShortUrl.startsWith('https://tinyurl.com')) {
       GasLogger.log('autoGenerateNextMonthTracker.warning', { warning: 'urlShortener failed for HC form', alias: newSpreadsheetName + 'HC' });
@@ -807,24 +850,20 @@ function autoGenerateNextMonthTracker() {
       logLabel: 'autoGenerateNextMonthTracker'
     });
 
-    Logger.log('autoGenerateNextMonthTracker: done — ' + newSpreadsheetName);
     GasLogger.log('autoGenerateNextMonthTracker', {
       spreadsheetId: newSpreadsheetId,
       spreadsheetName: newSpreadsheetName,
       trackerUrl: trackerSheetShortUrl,
       formUrl: formShortUrl,
       emailSent: true
-    }, true);
+    });
 
   } catch (err) {
-    Logger.log('autoGenerateNextMonthTracker: error' +
-      (newSpreadsheetId ? ' — spreadsheet ID: ' + newSpreadsheetId : '') +
-      ' — ' + err.message);
     GasLogger.log('autoGenerateNextMonthTracker.error', {
       error: err.message,
       spreadsheetName: newSpreadsheetName || '(unknown)',
       spreadsheetId: newSpreadsheetId || null
-    }, true);
+    });
     try {
       sendConfiguredEmail_({
         spreadsheet: currentSpreadsheet,
@@ -838,7 +877,7 @@ function autoGenerateNextMonthTracker() {
         logLabel: 'autoGenerateNextMonthTracker.error'
       });
     } catch (mailErr) {
-      Logger.log('autoGenerateNextMonthTracker: also failed to send error email — ' + mailErr.message);
+      GasLogger.log('autoGenerateNextMonthTracker.errorEmailFailed', { error: mailErr.message });
     }
     throw err;
   }

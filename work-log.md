@@ -145,3 +145,63 @@ Promoted OTHER_TEAM → TEAM in Phase 3 of handleFormSubmit_ when TEAM is blank 
 
 ### Key Learnings
 - Promoting OTHER_TEAM → TEAM is most robust without a TEAM_TYPE gate; if TEAM is blank and OTHER_TEAM has a value it should always be promoted regardless of how it arrived.
+
+## 2026-06-22 13:11:47
+
+### Summary:
+Diagnostic-only session (no code changes). Root-caused the "raw URLs in auto-generate onboarding email" report and confirmed scope for two further changes. Outcome: three changes specified and ready to implement, all unambiguous.
+
+**1. Raw-URL email — root cause: TinyURL alias collision (F3Go30-7mz).**
+Traced via the raw email source + GasLogger NDJSON timeline:
+- Confirmed the *entire* email is raw (both body-link `href`s AND the Slack block) — not a Slack-path or HTML-template-substitution issue. `buildSlackMessage_` is a pure concat (verified: short in → short out) and HtmlService `<?= ?>` only HTML-escapes.
+- Two `autoGenerateNextMonthTracker` runs fired ~2 min apart on 2026-06-20 for the same month, both deriving the identical deterministic alias `2026-07-F3-Go30a` (`year-month-NameSpace`, no per-spreadsheet uniqueness):
+  - 09:03:18 UTC (logged, runId `gaslogger-test`, ss `1wDRlbkv…`) → **claimed** `tinyurl.com/2026-07-F3-Go30a` ✅
+  - 09:05:18 UTC (scheduled trigger, unlogged — GAS_LOGGER folder not set, ss `10GZa4wo…`) → alias already taken → retries exhausted/rate-limited → `catch` fell back to **raw** → emailed all-raw message.
+- Earlier 05-31 failures were the same mechanism via invalid alias chars (`.` / space): `2026-05-T5.1 Go30`, `2026-06-F3.Go30`. Success case used only a dash (`2026-07-F3-Go30a`).
+
+**2. Sheet visibility — invert `hideInternalSheets_` to an allow-list.**
+Per owner: only these tabs stay visible — Tracker, Bonus Tracker, Team Score, HIM Score, Goals by HIM, Goals by AO, Help. Everything else hidden (notably Responses, currently visible; and TrackerDB). Full tab inventory confirmed from `docs/sheet-reference.md`.
+
+**3. Remove PaxDB** sheet from each created tracker (delete during init).
+
+### Planned fix (not yet implemented):
+- Add tested helper `buildShortenerAlias_()` in `Utilities.js`: sanitize to `[A-Za-z0-9_-]` + append a fragment of `newSpreadsheetId` for per-spreadsheet uniqueness. Apply at all 4 call sites (copyAndInit + autoGenerate, tracker + form). Closes F3Go30-7mz (AC: aliases unique per created spreadsheet).
+- Rewrite `hideInternalSheets_` (CreateNewTracker.js:192) to an allow-list + delete PaxDB; update `test/test_create_new_tracker.js` accordingly.
+
+### Key Learnings:
+- Deploy is `manage-deployments.js` → version-stamps `version.js` from `package.json`, then verbatim `clasp push -f` of `script/`. Working-tree `version.js` is `0.0.0`; deployed template pulled clean = matches repo. The migrated copy at `/home/stuar/roots/c-Proj/F3Go30-migrated/` is `APP_VERSION 2.2.1` (matches the email) but byte-identical slack/email code — same latent bug, not a divergent version.
+- The MONTH script project (`monthScriptId`) is an older, smaller codebase (has `formManager.js`/`macros.js`, lacks `onboardingEmail.js`/`autoGenerate`) — it does NOT send onboarding emails. The autoGenerate trigger lives on the TEMPLATE.
+- GasLogger writes NDJSON to `/mnt/g/My Drive/GAS-Logger/F3Go30/<ms>-<execId>.log`; `F3GO30_TEST_RUN_ID` was left set to `gaslogger-test`, tagging prod runs as test data — worth clearing.
+- Silent shortener fallback is a real observability gap: the failing 09:05 run produced raw URLs + sent email but left no structured log (GAS_LOGGER_PARENT_FOLDER_ID unset on that execution).
+
+## 2026-06-22 20:40:19
+
+### Summary:
+Implemented and deployed a fix for the raw-URL onboarding email bug, after the initial diagnosis (TinyURL alias collision, bd issue F3Go30-7mz) was disproven by the user's live Apps Script execution log and reverted.
+
+**Real root cause (confirmed from live log, not inferred):** `autoGenerateNextMonthTracker`'s monthly trigger had been installed on a monthly tracker copy instead of only the Go30 Template host. Each spreadsheet `.copy()` gets its own independent bound Apps Script project, and Script Properties (`TINYURL_ACCESS_TOKEN`) are never copied with it — so `shortenUrl` failed instantly with "access token is missing" on every link, and the catch fell back to raw URLs for the whole email. The existing `-1`/`-2` retry counter in `shortenUrl` correctly did NOT retry this (it's not alias-related), so there was no retry-logic bug either.
+
+**Fix shipped:** `isTemplateHost_()` in `script/CreateNewTracker.js`, gated on a new Script Property `IS_TEMPLATE_HOST` (must be set manually on the Template only — properties don't propagate via `.copy()`, making this a reliable host signal). `autoGenerateNextMonthTracker` now aborts and emails Site Q a clear wrong-host error instead of proceeding with missing config.
+
+**Also shipped this session:**
+- `hideInternalSheets_` rewritten from a hide-list to an allow-list (`Tracker, Bonus Tracker, Team Score, HIM Score, Goals by HIM, Goals by AO, Help` stay visible; everything else, including `Responses`/`TrackerDB`, gets hidden) and now deletes `PaxDB` outright.
+- `GasLogger.js` gained an optional Axiom sink: `flush()` routes exclusively to Axiom when `AXIOM_TOKEN`/`AXIOM_DATASET` script properties are both set (ported from `/mnt/c/dev/GAS-Core`'s `GasLogger.js` pattern), else unchanged Drive-file behavior. Existing `init()`/`log()`/`flush()` API and ~32 call sites untouched. New pure `buildAxiomRows_` helper, unit tested in `test/test_gas_logger.js`.
+- `local.settings.json`/`.example` renamed `AxiomToken`/`AxiomDataSet` → GAS-Core's `axiomDataset`/`axiomToken`/`axiomQueryToken` convention; added `query-axiom.py` (ported from GAS-Core) for CLI querying.
+- `test/test_create_new_tracker.js` rewritten for the allow-list/PaxDB behavior; `test/test_create_new_tracker.js` and `test/test_gas_logger.js` wired into `npm test` (previously only `test_utilities.js` etc. ran).
+- Deployed to TEMPLATE via `npm run push` (v2.2.1) — included the uncommitted `script/go30tools.js` since clasp pushes the whole `script/` dir regardless of git status.
+
+**bd tracking:** F3Go30-7mz closed as invalid premise (comment records the corrected diagnosis); F3Go30-36gl opened and closed for the wrong-host guard fix.
+
+### Key Learnings:
+- GAS Script Properties never propagate via `SpreadsheetApp.copy()` — each copy gets an independent bound script project with its own (initially empty) properties store. This is both the root cause of today's bug and the basis of the `IS_TEMPLATE_HOST` fix's reliability.
+- Axiom API tokens are scoped per-capability (ingest vs query) even when scoped to one dataset — an ingest-only token returns a clean 403 (`token does not have access to resource: query with action: read`) on query attempts. Querying an empty dataset for a not-yet-ingested field (e.g. `--name`) also fails with `invalid field` until the first event establishes that field in the schema.
+- `clasp push -f` is a literal mirror of `script/` onto the target script ID — no git-status awareness, no diffing. Uncommitted files go live exactly like committed ones.
+- Never run `find /` (or anything root-anchored) to locate a file the user already told you the path to — this environment mounts several network shares under root; scope searches to the narrowest known directory instead (saved as a standing feedback memory).
+
+## 2026-06-22 22:16:48
+
+### Summary:
+Added `GasLogger.run(triggerName, fn)` wrapper to script/GasLogger.js (init + try/finally flush + error logging) plus lazy auto-init in `log()`, replacing the manual init/flush pattern that left several entry points (notably `sendNagEmail`) with early-return paths that silently skipped flush. Wrapped all real Apps Script entry points — `handleFormSubmit_`, `markEmptyCellsAsMinusOne`, `sendNagEmail`, `onOpen`/`initializeTriggers`/`InspireNow`, `copyAndInit`/`reinitializeSheets`/`initializeConfigSheet`/`initializeMonthlyTrigger`/`autoGenerateNextMonthTracker`, `scanTrackers`/`scanAllGo30` — in `GasLogger.run(...)` and converted ~70 raw `Logger.log()` calls inside their call trees to structured `GasLogger.log(tag, data)` calls. Removed the now-dead `_sanitizeLogToken_` helper in go30tools.js. `script/NotificationSBCode.js` left untouched per its existing comment (background/polling functions must use `Logger.log()` directly). All 9 test suites pass.
+
+### Key Learnings:
+Apps Script has no execution-lifecycle hook (no `process.on('exit')` equivalent), so GasLogger's accumulated entries can only be guaranteed to flush by wrapping each entry point once — not by auditing every return path inside it. `GasLogger.log()` already calls `Logger.log()` unconditionally regardless of init/flush state, so converting a raw `Logger.log()` call to `GasLogger.log()` is safe even outside a wrapped scope: worst case it behaves identically (visible in Stackdriver only), best case it also persists to Drive/Axiom once flushed.

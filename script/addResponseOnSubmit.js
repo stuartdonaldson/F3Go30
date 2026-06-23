@@ -77,7 +77,7 @@ function maybeSendRegistrationConfirmation_(spreadsheet, trackerSheet, responseC
   var startDate = getTrackerStartDate_(trackerSheet);
   var registrationMonth = formatRegistrationMonth_(startDate);
   if (!registrationMonth) {
-    Logger.log('handleFormSubmit_: tracker start date unavailable — registration confirmation skipped');
+    GasLogger.log('formSubmit.registrationConfirmationSkipped', { reason: 'tracker_start_date_unavailable' });
     return false;
   }
 
@@ -100,12 +100,11 @@ function maybeSendRegistrationConfirmation_(spreadsheet, trackerSheet, responseC
 }
 
 function handleFormSubmit_(e) {
-  GasLogger.init('handleFormSubmit_');
-  if (!runWithLock(function() { onFormSubmitLocked_(e); })) {
-    Logger.log('handleFormSubmit_: lock timeout — event: ' + JSON.stringify(e));
-    GasLogger.log('handleFormSubmit_', { result: 'lock_timeout' });
-  }
-  GasLogger.flush();
+  return GasLogger.run('handleFormSubmit_', function() {
+    if (!runWithLock(function() { onFormSubmitLocked_(e); })) {
+      GasLogger.log('handleFormSubmit_', { result: 'lock_timeout', event: JSON.stringify(e) });
+    }
+  });
 }
 
 function onFormSubmitLocked_(e) {
@@ -114,7 +113,7 @@ function onFormSubmitLocked_(e) {
   var destinationSheet = sheet.getSheetByName('Tracker');
 
   if (!responsesSheet || !destinationSheet) {
-    Logger.log('handleFormSubmit_: required sheet not found — Responses: ' + !!responsesSheet + ', Tracker: ' + !!destinationSheet);
+    GasLogger.log('formSubmit.missingSheet', { responsesFound: !!responsesSheet, trackerFound: !!destinationSheet });
     return;
   }
 
@@ -131,7 +130,7 @@ function onFormSubmitLocked_(e) {
     ? getResponseEmailValue_(formResponses, responseColumns, responseHeaders)
     : formResponses[responseColumns.EMAIL];
   if (!submittedEmail || !formResponses[responseColumns.F3_NAME]) {
-    Logger.log('handleFormSubmit_: submitted row missing EMAIL or F3_NAME — skipping');
+    GasLogger.log('formSubmit.missingRequiredFields', {});
     return;
   }
 
@@ -144,7 +143,7 @@ function onFormSubmitLocked_(e) {
   // sheets querying Responses (Goals by HIM, Goals by AO) show only the latest submission.
   // Keyed on F3 Name (not email) per ADR-008 — allows a PAX to change their email address.
   var f3Name = getResponseValue_(formResponses, responseColumns, 'F3_NAME');
-  Logger.log('handleFormSubmit_: dedup start — submittedRow: ' + submittedRowNumber + ', f3Name: "' + f3Name + '"');
+  GasLogger.log('formSubmit.dedupStart', { submittedRow: submittedRowNumber, f3Name: f3Name });
   deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, responseColumns);
 
   // Phase 3 — Resolve Team: if TEAM is blank but OTHER_TEAM is set, promote OTHER_TEAM → TEAM.
@@ -153,13 +152,13 @@ function onFormSubmitLocked_(e) {
   if (!getResponseValue_(formResponses, responseColumns, 'TEAM') && otherTeamVal) {
     formResponses[responseColumns.TEAM] = otherTeamVal;
     responsesSheet.getRange(submittedRowNumber, responseColumns.TEAM + 1).setValue(otherTeamVal);
-    Logger.log('handleFormSubmit_: promoted OTHER_TEAM to TEAM — "' + otherTeamVal + '"');
+    GasLogger.log('formSubmit.teamPromoted', { otherTeam: otherTeamVal });
   }
 
   // Phase 4 — Write to Tracker.
   var trackerLastRow = destinationSheet.getLastRow();
   if (trackerLastRow < 4) {
-    Logger.log('handleFormSubmit_: Tracker has ' + trackerLastRow + ' rows — need at least 4 to process. Skipping.');
+    GasLogger.log('formSubmit.trackerTooFewRows', { rows: trackerLastRow });
     return;
   }
 
@@ -169,7 +168,6 @@ function onFormSubmitLocked_(e) {
   var f3NameExists = dataValues.some(function(row) { return row[0] === f3Name; });
 
   if (f3NameExists) {
-    Logger.log('handleFormSubmit_: f3Name already in Tracker — skipping Tracker write, Responses already updated.');
     GasLogger.log('formSubmit.trackerDuplicate', { row: submittedRowNumber, f3Name: f3Name });
   } else {
     // Find first empty slot in column A (rows 4+), falling back to next row after last.
@@ -238,7 +236,7 @@ function removeDuplicateResponseRow_(responsesSheet, rowNumber, responseColumns)
     responsesSheet.getRange(rowNumber, responseColumns.PARTICIPATION + 1).setValue('DELETED');
     return 'marked_deleted';
   } catch (e) {
-    Logger.log('handleFormSubmit_: mark duplicate Responses row failed for row ' + rowNumber + ' — falling back to deleteRow: ' + (e && e.message));
+    GasLogger.log('formSubmit.markDuplicateFailed', { row: rowNumber, error: e && e.message });
     responsesSheet.deleteRow(rowNumber);
     return 'deleted';
   }
@@ -256,16 +254,15 @@ function deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, 
 
   var f3NameColNum = responseColumns.F3_NAME + 1; // 1-based column for getRange
   var keyValues = responsesSheet.getRange(2, f3NameColNum, lastRow - 1, 1).getValues();
-  Logger.log('handleFormSubmit_: dedup scan — rows: ' + keyValues.map(function(row, idx) {
+  GasLogger.log('formSubmit.dedupScan', { rows: keyValues.map(function(row, idx) {
     return (idx + 2) + '="' + String(row[0] || '') + '"';
-  }).join(', '));
+  }) });
   var toDelete = findDuplicateResponseRows_(keyValues, submittedRowNumber, f3Name);
-  Logger.log('handleFormSubmit_: dedup matches — submittedRow: ' + submittedRowNumber + ', f3Name: "' + f3Name + '", toDelete: [' + toDelete.join(', ') + ']');
+  GasLogger.log('formSubmit.dedupMatches', { submittedRow: submittedRowNumber, f3Name: f3Name, toDelete: toDelete });
 
   for (var j = 0; j < toDelete.length; j++) {
     var action = removeDuplicateResponseRow_(responsesSheet, toDelete[j], responseColumns);
-    Logger.log('handleFormSubmit_: ' + action + ' prior Responses row ' + toDelete[j] + ' for F3 Name "' + f3Name + '" (kept: ' + submittedRowNumber + ')');
-    GasLogger.log('formSubmit.responseDeduplicated', { removedRow: toDelete[j], keptRow: submittedRowNumber, action: action });
+    GasLogger.log('formSubmit.responseDeduplicated', { removedRow: toDelete[j], keptRow: submittedRowNumber, action: action, f3Name: f3Name });
   }
 }
 

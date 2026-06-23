@@ -3,9 +3,13 @@
  * Builds the F3 Go30 custom menu. Management items (Copy and Initialize, triggers,
  * reinitialize) are shown only to the spreadsheet owner. About is shown to all users.
  */
-function onOpen()
-{ 
-  var ui = SpreadsheetApp.getUi(); 
+function onOpen() {
+  return GasLogger.run('onOpen', onOpen_);
+}
+
+function onOpen_()
+{
+  var ui = SpreadsheetApp.getUi();
   var email = Session.getActiveUser().getEmail();
   var owner = SpreadsheetApp.getActiveSpreadsheet().getOwner(); // null on Team Drives
   var owneremail = owner ? owner.getEmail() : null;
@@ -29,7 +33,7 @@ function onOpen()
   try {
     logActivity('onOpen','');
   } catch (e) {
-    Logger.log('onOpen: logActivity failed — ' + e.message);
+    GasLogger.log('onOpen.logActivityFailed', { error: e.message });
   }
 }
 
@@ -59,12 +63,14 @@ function showAbout() {
 }
 
 function initializeTriggers() {
-  setupDailyMinusOneTrigger();  // markMinusOne.js
-  setupFormSubmitTrigger(); // addResponseOnSubmit.js
-  // Daily nag emails at 10:00 — sendNagEmail defined in script/nag.js
-  if (typeof setupDailyNagTrigger === 'function') {
-    try { setupDailyNagTrigger(); } catch (e) { Logger.log('initializeTriggers: setupDailyNagTrigger failed — ' + e.message); }
-  }
+  return GasLogger.run('initializeTriggers', function() {
+    setupDailyMinusOneTrigger();  // markMinusOne.js
+    setupFormSubmitTrigger(); // addResponseOnSubmit.js
+    // Daily nag emails at 10:00 — sendNagEmail defined in script/nag.js
+    if (typeof setupDailyNagTrigger === 'function') {
+      try { setupDailyNagTrigger(); } catch (e) { GasLogger.log('initializeTriggers.setupDailyNagTriggerFailed', { error: e.message }); }
+    }
+  });
 }
 
 
@@ -139,25 +145,27 @@ function openNextMonthSignup() {
 // The Inspiration sheet contains a Quote and Author for famous inspirational quotes for F3.
 // InspireNow() will randomly select an inspiration from the inspiration sheet, and populate the cell Tracker!H1 with the value.
 function InspireNow() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName("Inspiration");
-  const trackerSheet = ss.getSheetByName("Tracker");
+  return GasLogger.run('InspireNow', function() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Inspiration");
+    const trackerSheet = ss.getSheetByName("Tracker");
 
-  if (!sheet || !trackerSheet) {
-    Logger.log('InspireNow: Inspiration or Tracker sheet not found');
-    return;
-  }
+    if (!sheet || !trackerSheet) {
+      GasLogger.log('InspireNow.missingSheet', { inspirationFound: !!sheet, trackerFound: !!trackerSheet });
+      return;
+    }
 
-  const data = sheet.getDataRange().getValues();
-  if (data.length < 2) {
-    Logger.log('InspireNow: no inspiration rows found');
-    return;
-  }
-  const randomIndex = Math.floor(Math.random() * (data.length - 1)) + 1; // Exclude header row
-  const randomQuote = data[randomIndex][0];
-  const randomAuthor = data[randomIndex][1];
-  
-  trackerSheet.getRange("H1").setValue(`"${randomQuote}" - ${randomAuthor}`);
+    const data = sheet.getDataRange().getValues();
+    if (data.length < 2) {
+      GasLogger.log('InspireNow.noRowsFound', {});
+      return;
+    }
+    const randomIndex = Math.floor(Math.random() * (data.length - 1)) + 1; // Exclude header row
+    const randomQuote = data[randomIndex][0];
+    const randomAuthor = data[randomIndex][1];
+
+    trackerSheet.getRange("H1").setValue(`"${randomQuote}" - ${randomAuthor}`);
+  });
 }
 
 /**

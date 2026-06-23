@@ -186,13 +186,16 @@ function buildReminderEmailTemplate_(options) {
 }
 
 function sendNagEmail() {
-  GasLogger.init('sendNagEmail');
+  return GasLogger.run('sendNagEmail', sendNagEmail_);
+}
+
+function sendNagEmail_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var tracker = ss.getSheetByName('Tracker');
   var responses = ss.getSheetByName('Responses');
   var configSheet = ss.getSheetByName('Config');
   if (!tracker || !responses) {
-    Logger.log('sendNagEmail: Tracker or Responses sheet missing');
+    GasLogger.log('sendNagEmail.missingSheet', { trackerFound: !!tracker, responsesFound: !!responses });
     return;
   }
 
@@ -220,7 +223,7 @@ function sendNagEmail() {
   }
 
   if (dateCol === -1) {
-    Logger.log('sendNagEmail: date column not found for ' + targetDateString);
+    GasLogger.log('sendNagEmail.dateColumnNotFound', { targetDateString: targetDateString });
     return;
   }
 
@@ -236,7 +239,7 @@ function sendNagEmail() {
   // Load responses to map latest info (email, NAG opt-in, WHO)
   var respData = responses.getDataRange().getValues();
   if (respData.length < 2) {
-    Logger.log('sendNagEmail: Responses has no data');
+    GasLogger.log('sendNagEmail.responsesEmpty', {});
     return;
   }
   var responseColumns = resolveResponseColumns_(respData[0]);
@@ -305,11 +308,11 @@ function sendNagEmail() {
       });
       sentSummary.push({ team: teamName, recipients: recipients.length, missing: missing.length });
     } catch (e) {
-      Logger.log('sendNagEmail: MailApp.sendEmail failed for team ' + teamName + ' — ' + e.message);
+      GasLogger.log('sendNagEmail.sendFailed', { team: teamName, error: e.message });
     }
   }
 
-  GasLogger.log('sendNagEmail', { date: targetDateString, teamsNotified: sentSummary }, true);
+  GasLogger.log('sendNagEmail', { date: targetDateString, teamsNotified: sentSummary });
 }
 
 if (typeof module !== 'undefined' && module.exports) {

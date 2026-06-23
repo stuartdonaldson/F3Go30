@@ -1,0 +1,953 @@
+/** scanTrackers() 
+* Scans the current folder for Google spreadsheets that contain a Tracker sheet with
+* at least 10 rows of Data. and updates the TrackerDB with with data from those sheets.
+* Examines the Tracker sheet and updates the Total PAX, Total Teams and Average score columns.
+* Factors out private functions to _loadTrackerData(sheetId) to load the tracker data from that
+* sheet and _updateTrackerDB(data) to update the TrackerDB with the data from the tracker sheets.
+*
+* The Creates or updates TrackerDB sheet with the following columns:
+*   Date Modified - spreadsheet modified date
+*   StartDate - start date of the tracker
+*   SpreadsheetName - name of the spreadsheet
+*   ShortTracker - shortened URL of the tracker (if known)
+*   TrackerURL - URL of the tracker spreadsheet)
+*   ShortHC - short name of the HC (shortened URL if known)
+*   HC URL - URL of the HC Form
+*   SheetId - ID of the sheet
+*   FormId - ID of the form
+*   TotalPAX - total number of PAX in the tracker
+*   TotalTeams - total number of teams in the tracker
+*   AverageScore - average score of the teams in the tracker
+*/
+
+var TRACKER_DB_SHEET_NAME_ = 'TrackerDB';
+var ALL_GO30_ROOT_FOLDER_ID_ = '1bMf--vyEqu8_F1NskrMbJ0cusRrR-plr';
+var TRACKER_DB_HEADERS_ = [
+	'Date Modified',
+	'StartDate',
+	'SpreadsheetName',
+	'ShortTracker',
+	'TrackerURL',
+	'ShortHC',
+	'HC URL',
+	'SheetId',
+	'FormId',
+	'TotalPAX',
+	'TotalTeams',
+	'AverageScore'
+];
+
+var PAX_DB_SHEET_NAME_ = 'PaxDB';
+var PAX_DB_HEADERS_ = [
+	'SheetId',
+	'Date',
+	'F3 Name',
+	'Team',
+	'WHO',
+	'WHAT',
+	'HOW',
+	'Comments',
+	'Hit',
+	'Miss',
+	'NoCheckin',
+	'Fellowship',
+	'Q Point',
+	'Inspire',
+	'EHing FNG'
+];
+
+/**
+ * Scans sibling tracker spreadsheets in the active spreadsheet folder and refreshes TrackerDB/PaxDB.
+ * @returns {{scanned: number, processed: number, unchanged: number, tracked: number, skipped: number}} Run summary.
+ */
+function scanTrackers() {
+	return GasLogger.run('scanTrackers', function() {
+		var activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+		var parentFolder = _getFirstParentFolder_(activeSpreadsheet.getId());
+		if (!parentFolder) {
+			throw new Error('scanTrackers: active spreadsheet is not in a Drive folder.');
+		}
+		var filesById = _collectSheetFilesInFolder_(parentFolder);
+		return _scanSheetFilesById_(filesById, 'scanTrackers');
+	});
+}
+
+/**
+ * Scans all Go30 tracker spreadsheets under the configured root folder (recursive)
+ * and refreshes TrackerDB/PaxDB.
+ * @returns {{scanned: number, processed: number, unchanged: number, tracked: number, skipped: number}} Run summary.
+ */
+function scanAllGo30() {
+	return GasLogger.run('scanAllGo30', function() {
+		var filesById = _collectSheetFilesInFolderTree_(ALL_GO30_ROOT_FOLDER_ID_);
+		return _scanSheetFilesById_(filesById, 'scanAllGo30');
+	});
+}
+
+function _scanSheetFilesById_(filesById, sourceLabel) {
+	var activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+	var linksBySheetId = _readLinksMetadataBySheetId_(activeSpreadsheet);
+	var trackerState = _readTrackerDbRowsBySheetId_(activeSpreadsheet);
+	var paxState = _readPaxDbRowsBySheetId_(activeSpreadsheet);
+	var fileIds = Object.keys(filesById || {}).sort();
+	var trackerRows = [];
+	var paxRows = [];
+	var scanned = 0;
+	var processed = 0;
+	var unchanged = 0;
+	var skipped = 0;
+
+	for (var f = 0; f < fileIds.length; f++) {
+		var sheetId = fileIds[f];
+		var fileMeta = filesById[sheetId] || {};
+		var fileName = fileMeta.name || 'unknown';
+		var modifiedAt = fileMeta.lastUpdated || null;
+		scanned += 1;
+
+		try {
+			var existingTracker = trackerState.bySheetId[sheetId] || null;
+			var existingModified = _parseDateish_(existingTracker && existingTracker.dateModified);
+			var shouldProcess = !existingModified || (modifiedAt && modifiedAt.getTime() > existingModified.getTime());
+
+			if (!shouldProcess) {
+				unchanged += 1;
+				var unchangedPaxCount = 0;
+				if (existingTracker) trackerRows.push(existingTracker);
+				if (paxState.bySheetId[sheetId]) {
+					Array.prototype.push.apply(paxRows, paxState.bySheetId[sheetId]);
+					unchangedPaxCount = paxState.bySheetId[sheetId].length;
+				}
+				GasLogger.log(sourceLabel + '.fileSkipped', { fileId: sheetId, fileName: fileName, reason: 'unchanged_not_rescanned', fileDate: _formatLogDate_(modifiedAt), pax: unchangedPaxCount });
+				continue;
+			}
+
+			var spreadsheet = SpreadsheetApp.openById(sheetId);
+			var trackerResult = _loadTrackerData(spreadsheet, linksBySheetId[sheetId], modifiedAt);
+			if (!trackerResult.data) {
+				var rejectedPaxCount = 0;
+				if (existingTracker) {
+					trackerRows.push(existingTracker);
+					if (paxState.bySheetId[sheetId]) {
+						Array.prototype.push.apply(paxRows, paxState.bySheetId[sheetId]);
+						rejectedPaxCount = paxState.bySheetId[sheetId].length;
+					}
+				}
+				skipped += 1;
+				GasLogger.log(sourceLabel + '.fileRejected', { fileId: sheetId, fileName: fileName, reason: trackerResult.reason, fileDate: _formatLogDate_(modifiedAt), pax: rejectedPaxCount });
+				continue;
+			}
+
+			processed += 1;
+			var trackerData = trackerResult.data;
+			trackerRows.push(trackerData);
+			var currentPaxRows = _loadPaxData(spreadsheet, sheetId, trackerData.startDate);
+			Array.prototype.push.apply(
+				paxRows,
+				currentPaxRows
+			);
+			GasLogger.log(sourceLabel + '.fileIncluded', { fileId: sheetId, fileName: fileName, fileDate: _formatLogDate_(modifiedAt), pax: currentPaxRows.length });
+		} catch (err) {
+			skipped += 1;
+			var errorPaxCount = 0;
+			if (trackerState.bySheetId[sheetId]) {
+				trackerRows.push(trackerState.bySheetId[sheetId]);
+				if (paxState.bySheetId[sheetId]) {
+					Array.prototype.push.apply(paxRows, paxState.bySheetId[sheetId]);
+					errorPaxCount = paxState.bySheetId[sheetId].length;
+				}
+			}
+			GasLogger.log(sourceLabel + '.fileError', { fileId: sheetId, fileName: fileName, error: err.message, fileDate: _formatLogDate_(modifiedAt), pax: errorPaxCount });
+		} finally {
+			SpreadsheetApp.flush();
+		}
+	}
+
+	_updateTrackerDB(trackerRows);
+	_updatePaxDB(paxRows);
+	GasLogger.log(sourceLabel + '.summary', { scanned: scanned, processed: processed, unchanged: unchanged, tracked: trackerRows.length, skipped: skipped, pax: paxRows.length });
+	return {
+		scanned: scanned,
+		processed: processed,
+		unchanged: unchanged,
+		tracked: trackerRows.length,
+		skipped: skipped
+	};
+}
+
+function _collectSheetFilesInFolder_(folder) {
+	var filesById = {};
+	if (!folder) return filesById;
+
+	var files = folder.getFilesByType(MimeType.GOOGLE_SHEETS);
+	while (files.hasNext()) {
+		var file = files.next();
+		filesById[file.getId()] = {
+			id: file.getId(),
+			name: file.getName(),
+			lastUpdated: file.getLastUpdated()
+		};
+	}
+
+	return filesById;
+}
+
+function _collectSheetFilesInFolderTree_(rootFolderId) {
+	var rootFolder = DriveApp.getFolderById(rootFolderId);
+	var filesById = {};
+	_collectSheetFilesRecursive_(rootFolder, filesById);
+	return filesById;
+}
+
+function _collectSheetFilesRecursive_(folder, filesById) {
+	if (!folder) return;
+
+	var folderFiles = folder.getFilesByType(MimeType.GOOGLE_SHEETS);
+	while (folderFiles.hasNext()) {
+		var file = folderFiles.next();
+		filesById[file.getId()] = {
+			id: file.getId(),
+			name: file.getName(),
+			lastUpdated: file.getLastUpdated()
+		};
+	}
+
+	var childFolders = folder.getFolders();
+	while (childFolders.hasNext()) {
+		_collectSheetFilesRecursive_(childFolders.next(), filesById);
+	}
+}
+
+/**
+ * Loads tracker summary data from a spreadsheet.
+ * Returns null when the spreadsheet does not look like a valid monthly tracker.
+ * @param {Spreadsheet} spreadsheet Spreadsheet object.
+ * @param {Object=} linkMetadata Optional metadata row from Links keyed by SheetId.
+ * @param {Date=} modifiedAt Last modified timestamp from Drive metadata.
+ * @returns {{data: Object|null, reason: string}} Result containing row data or rejection reason.
+ */
+function _loadTrackerData(spreadsheet, linkMetadata, modifiedAt) {
+	var sheetId = spreadsheet.getId();
+	var trackerSheet = spreadsheet.getSheetByName('Tracker');
+	if (!trackerSheet) return { data: null, reason: 'missing_tracker_sheet' };
+
+	var trackerValues = trackerSheet.getDataRange().getValues();
+	if (!trackerValues || trackerValues.length < 4) return { data: null, reason: 'insufficient_tracker_rows' };
+
+	var metrics = _computeTrackerMetrics_(trackerValues);
+	if (metrics.totalPax < 10) return { data: null, reason: 'total_pax_lt_10' };
+
+	var metadata = _buildTrackerMetadata_(spreadsheet, trackerSheet, trackerValues, linkMetadata);
+	return {
+		data: {
+			dateModified: modifiedAt || new Date(),
+			startDate: metadata.startDate,
+			spreadsheetName: spreadsheet.getName(),
+			shortTracker: metadata.shortTracker,
+			trackerUrl: metadata.trackerUrl,
+			shortHc: metadata.shortHc,
+			hcUrl: metadata.hcUrl,
+			sheetId: sheetId,
+			formId: metadata.formId,
+			totalPax: metrics.totalPax,
+			totalTeams: metrics.totalTeams,
+			averageScore: metrics.averageScore
+		},
+		reason: 'included'
+	};
+}
+
+function _formatLogDate_(value) {
+	if (!value) return 'unknown';
+	if (value instanceof Date && !isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+	var parsed = _parseDateish_(value);
+	if (parsed) return parsed.toISOString().slice(0, 10);
+
+	var text = String(value || '');
+	var match = text.match(/\d{4}-\d{2}-\d{2}/);
+	return match ? match[0] : text;
+}
+
+/**
+ * Loads normalized Responses records for PaxDB from a tracker spreadsheet.
+ * @param {Spreadsheet} spreadsheet Spreadsheet object.
+ * @param {string} sheetId Spreadsheet ID.
+ * @param {Date|string=} startDate Sheet-level date used for PaxDB Date column.
+ * @returns {Array<Object>} Pax rows.
+ */
+function _loadPaxData(spreadsheet, sheetId, startDate) {
+	var responsesSheet = spreadsheet.getSheetByName('Responses');
+	if (!responsesSheet) return [];
+	var trackerStatsByName = _buildTrackerPaxStatsByName_(spreadsheet.getSheetByName('Tracker'));
+
+	var values = responsesSheet.getDataRange().getValues();
+	if (!values || values.length < 2) return [];
+
+	var headers = values[0] || [];
+	var indexer = _buildSoftHeaderMatcher_(headers);
+
+	var nameIdx = indexer.find([
+		'F3 Name',
+		'Name'
+	]);
+	var teamIdx = indexer.find([
+		'Team',
+		'Goal / Team',
+		'Goal selection',
+		'What is your goal?',
+		'Other team name'
+	]);
+	var whoIdx = indexer.find([
+		'WHO do you ultimately want to become?',
+		'Who do you ultimately want to become?',
+		'Who'
+	]);
+	var whatIdx = indexer.find([
+		'WHAT is your Go30 Challenge?',
+		'What is your Go30 Challenge?',
+		'What'
+	]);
+	var howIdx = indexer.find([
+		'HOW are you going to be successful this month?',
+		'How are you going to be successful this month?',
+		'How'
+	]);
+	var commentsIndexes = _findAllResponseCommentIndexes_(indexer);
+
+	if (nameIdx === -1) return [];
+
+	var sheetDate = _parseDateish_(startDate) || '';
+	var paxRows = [];
+
+	for (var i = 1; i < values.length; i++) {
+		var row = values[i] || [];
+		if (_isDeletedResponseRow_(row, indexer)) continue;
+
+		var f3Name = _normalizeCellText_(row[nameIdx]);
+		if (!f3Name) continue;
+		var trackerStats = trackerStatsByName[f3Name.toLowerCase()] || _buildEmptyTrackerPaxStats_();
+
+		paxRows.push({
+			sheetId: sheetId,
+			date: sheetDate,
+			f3Name: f3Name,
+			team: teamIdx === -1 ? '' : _normalizeCellText_(row[teamIdx]),
+			who: whoIdx === -1 ? '' : _normalizeCellText_(row[whoIdx]),
+			what: whatIdx === -1 ? '' : _normalizeCellText_(row[whatIdx]),
+			how: howIdx === -1 ? '' : _normalizeCellText_(row[howIdx]),
+			comments: _collectCommentsForRow_(row, commentsIndexes),
+			hit: trackerStats.hit,
+			miss: trackerStats.miss,
+			noCheckin: trackerStats.noCheckin,
+			fellowship: trackerStats.fellowship,
+			qPoint: trackerStats.qPoint,
+			inspire: trackerStats.inspire,
+			ehingFng: trackerStats.ehingFng
+		});
+	}
+
+	return paxRows;
+}
+
+/**
+ * Writes TrackerDB rows, replacing existing body rows while preserving the sheet.
+ * @param {Array<Object>} rows Tracker summary rows.
+ */
+function _updateTrackerDB(rows) {
+	var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+	var sheet = spreadsheet.getSheetByName(TRACKER_DB_SHEET_NAME_);
+	if (!sheet) {
+		sheet = spreadsheet.insertSheet(TRACKER_DB_SHEET_NAME_);
+	}
+
+	if (sheet.getMaxRows() > 1) {
+		sheet.getRange(2, 1, sheet.getMaxRows() - 1, TRACKER_DB_HEADERS_.length).clearContent();
+	}
+
+	var headerRange = sheet.getRange(1, 1, 1, TRACKER_DB_HEADERS_.length);
+	headerRange.setValues([TRACKER_DB_HEADERS_]);
+	headerRange.setFontWeight('bold');
+
+	var outputRows = (rows || []).slice();
+	outputRows.sort(function(a, b) {
+		var aTime = _toSortableTime_(a && a.startDate);
+		var bTime = _toSortableTime_(b && b.startDate);
+		return bTime - aTime;
+	});
+
+	if (!outputRows.length) {
+		return;
+	}
+
+	var values = outputRows.map(function(row) {
+		return [
+			row.dateModified || '',
+			row.startDate || '',
+			row.spreadsheetName || '',
+			row.shortTracker || '',
+			row.trackerUrl || '',
+			row.shortHc || '',
+			row.hcUrl || '',
+			row.sheetId || '',
+			row.formId || '',
+			row.totalPax || 0,
+			row.totalTeams || 0,
+			row.averageScore || 0
+		];
+	});
+
+	sheet.getRange(2, 1, values.length, TRACKER_DB_HEADERS_.length).setValues(values);
+}
+
+/**
+ * Writes PaxDB rows, replacing existing body rows while preserving the sheet.
+ * @param {Array<Object>} rows Pax rows.
+ */
+function _updatePaxDB(rows) {
+	var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+	var sheet = spreadsheet.getSheetByName(PAX_DB_SHEET_NAME_);
+	if (!sheet) {
+		sheet = spreadsheet.insertSheet(PAX_DB_SHEET_NAME_);
+	}
+
+	if (sheet.getMaxRows() > 1) {
+		sheet.getRange(2, 1, sheet.getMaxRows() - 1, PAX_DB_HEADERS_.length).clearContent();
+	}
+
+	var headerRange = sheet.getRange(1, 1, 1, PAX_DB_HEADERS_.length);
+	headerRange.setValues([PAX_DB_HEADERS_]);
+	headerRange.setFontWeight('bold');
+
+	if (!rows || !rows.length) return;
+
+	var outputRows = rows.slice();
+	outputRows.sort(function(a, b) {
+		if (a.sheetId === b.sheetId) {
+			return String(a.f3Name || '').localeCompare(String(b.f3Name || ''));
+		}
+		return String(a.sheetId || '').localeCompare(String(b.sheetId || ''));
+	});
+
+	var values = outputRows.map(function(row) {
+		return [
+			row.sheetId || '',
+			row.date || '',
+			row.f3Name || '',
+			row.team || '',
+			row.who || '',
+			row.what || '',
+			row.how || '',
+			row.comments || '',
+			row.hit || 0,
+			row.miss || 0,
+			row.noCheckin || 0,
+			row.fellowship || 0,
+			row.qPoint || 0,
+			row.inspire || 0,
+			row.ehingFng || 0
+		];
+	});
+
+	sheet.getRange(2, 1, values.length, PAX_DB_HEADERS_.length).setValues(values);
+}
+
+function _readTrackerDbRowsBySheetId_(spreadsheet) {
+	var sheet = spreadsheet.getSheetByName(TRACKER_DB_SHEET_NAME_);
+	if (!sheet) return { bySheetId: {} };
+
+	var values = sheet.getDataRange().getValues();
+	if (!values || values.length < 2) return { bySheetId: {} };
+
+	var headers = values[0] || [];
+	var headerIndex = _buildHeaderIndex_(headers);
+	var out = {};
+
+	for (var i = 1; i < values.length; i++) {
+		var row = values[i] || [];
+		var sheetId = _getCellByHeader_(row, headerIndex, ['SheetId', 'Spreadsheet ID']);
+		if (!sheetId) continue;
+
+		out[sheetId] = {
+			dateModified: _getCellValueByHeader_(row, headerIndex, ['Date Modified', 'Date']),
+			startDate: _getCellValueByHeader_(row, headerIndex, ['StartDate', 'Month']),
+			spreadsheetName: _getCellByHeader_(row, headerIndex, ['SpreadsheetName', 'Spreadsheet Name']),
+			shortTracker: _getCellByHeader_(row, headerIndex, ['ShortTracker']),
+			trackerUrl: _getCellByHeader_(row, headerIndex, ['TrackerURL', 'Tracker URL']),
+			shortHc: _getCellByHeader_(row, headerIndex, ['ShortHC']),
+			hcUrl: _getCellByHeader_(row, headerIndex, ['HC URL', 'Form URL']),
+			sheetId: sheetId,
+			formId: _getCellByHeader_(row, headerIndex, ['FormId', 'Form ID']),
+			totalPax: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['TotalPAX'])]) || 0,
+			totalTeams: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['TotalTeams'])]) || 0,
+			averageScore: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['AverageScore'])]) || 0
+		};
+	}
+
+	return { bySheetId: out };
+}
+
+function _readPaxDbRowsBySheetId_(spreadsheet) {
+	var sheet = spreadsheet.getSheetByName(PAX_DB_SHEET_NAME_);
+	if (!sheet) return { bySheetId: {} };
+
+	var values = sheet.getDataRange().getValues();
+	if (!values || values.length < 2) return { bySheetId: {} };
+
+	var headers = values[0] || [];
+	var headerIndex = _buildHeaderIndex_(headers);
+	var bySheetId = {};
+
+	for (var i = 1; i < values.length; i++) {
+		var row = values[i] || [];
+		var sheetId = _getCellByHeader_(row, headerIndex, ['SheetId', 'Spreadsheet ID']);
+		if (!sheetId) continue;
+
+		if (!bySheetId[sheetId]) bySheetId[sheetId] = [];
+		bySheetId[sheetId].push({
+			sheetId: sheetId,
+			date: _getCellValueByHeader_(row, headerIndex, ['Date']),
+			f3Name: _getCellByHeader_(row, headerIndex, ['F3 Name', 'Name']),
+			team: _getCellByHeader_(row, headerIndex, ['Team']),
+			who: _getCellByHeader_(row, headerIndex, ['WHO', 'Who']),
+			what: _getCellByHeader_(row, headerIndex, ['WHAT', 'What']),
+			how: _getCellByHeader_(row, headerIndex, ['HOW', 'How']),
+			comments: _getCellByHeader_(row, headerIndex, ['Comments']),
+			hit: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['Hit'])]) || 0,
+			miss: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['Miss'])]) || 0,
+			noCheckin: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['NoCheckin', 'No Checkin'])]) || 0,
+			fellowship: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['Fellowship'])]) || 0,
+			qPoint: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['Q Point', 'Q-Point'])]) || 0,
+			inspire: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['Inspire'])]) || 0,
+			ehingFng: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['EHing FNG', 'Ehing FNG'])]) || 0
+		});
+	}
+
+	return { bySheetId: bySheetId };
+}
+
+function _getFirstParentFolder_(fileId) {
+	var file = DriveApp.getFileById(fileId);
+	var parents = file.getParents();
+	return parents.hasNext() ? parents.next() : null;
+}
+
+function _readLinksMetadataBySheetId_(spreadsheet) {
+	var linksSheet = spreadsheet.getSheetByName('Links');
+	if (!linksSheet) return {};
+
+	var values = linksSheet.getDataRange().getValues();
+	if (!values || values.length < 2) return {};
+
+	var headerIndex = _buildHeaderIndex_(values[0]);
+	var bySheetId = {};
+
+	for (var i = 1; i < values.length; i++) {
+		var row = values[i];
+		var id = _getCellByHeader_(row, headerIndex, ['SheetId', 'Spreadsheet ID']);
+		if (!id) continue;
+
+		bySheetId[id] = {
+			startDate: _getCellByHeader_(row, headerIndex, ['StartDate', 'Month']),
+			shortTracker: _getCellByHeader_(row, headerIndex, ['ShortTracker']),
+			trackerUrl: _getCellByHeader_(row, headerIndex, ['TrackerURL', 'Tracker URL']),
+			shortHc: _getCellByHeader_(row, headerIndex, ['ShortHC']),
+			hcUrl: _getCellByHeader_(row, headerIndex, ['HC URL', 'Form URL']),
+			formId: _getCellByHeader_(row, headerIndex, ['FormId', 'Form ID'])
+		};
+	}
+
+	return bySheetId;
+}
+
+function _computeTrackerMetrics_(trackerValues) {
+	var headerRowIndex = _findTrackerHeaderRowIndex_(trackerValues);
+	if (headerRowIndex === -1) {
+		return { totalPax: 0, totalTeams: 0, averageScore: 0 };
+	}
+
+	var headers = trackerValues[headerRowIndex] || [];
+	var headerIndex = _buildHeaderIndex_(headers);
+
+	var nameIndex = _pickHeaderIndex_(headerIndex, ['F3 Name', 'Name']);
+	var teamIndex = _pickHeaderIndex_(headerIndex, ['Goal / Team', 'Team', 'Goal']);
+	var scoreIndex = _pickHeaderIndex_(headerIndex, ['Score']);
+
+	if (nameIndex === -1) {
+		return { totalPax: 0, totalTeams: 0, averageScore: 0 };
+	}
+
+	var paxCount = 0;
+	var teams = {};
+	var scoreSum = 0;
+	var scoreCount = 0;
+
+	for (var r = headerRowIndex + 1; r < trackerValues.length; r++) {
+		var row = trackerValues[r] || [];
+		var name = _normalizeCellText_(row[nameIndex]);
+		if (!name) continue;
+
+		paxCount += 1;
+
+		if (teamIndex !== -1) {
+			var team = _normalizeCellText_(row[teamIndex]);
+			if (team) teams[team.toLowerCase()] = true;
+		}
+
+		if (scoreIndex !== -1) {
+			var score = _toNumber_(row[scoreIndex]);
+			if (score !== null) {
+				scoreSum += score;
+				scoreCount += 1;
+			}
+		}
+	}
+
+	return {
+		totalPax: paxCount,
+		totalTeams: Object.keys(teams).length,
+		averageScore: scoreCount ? (scoreSum / scoreCount) : 0
+	};
+}
+
+function _buildTrackerMetadata_(spreadsheet, trackerSheet, trackerValues, linkMetadata) {
+	var fallbackTrackerUrl = spreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
+	var configInfo = _readTrackerConfigInfo_(spreadsheet);
+	var startDate = _pickTrackerStartDate_(trackerValues, linkMetadata && linkMetadata.startDate, spreadsheet.getName());
+
+	return {
+		startDate: startDate,
+		shortTracker: _normalizeCellText_(linkMetadata && linkMetadata.shortTracker),
+		trackerUrl: _normalizeCellText_(linkMetadata && linkMetadata.trackerUrl) || fallbackTrackerUrl,
+		shortHc: _normalizeCellText_(linkMetadata && linkMetadata.shortHc),
+		hcUrl: _normalizeCellText_(linkMetadata && linkMetadata.hcUrl) || configInfo.hcUrl,
+		formId: _normalizeCellText_(linkMetadata && linkMetadata.formId) || configInfo.formId
+	};
+}
+
+function _readTrackerConfigInfo_(spreadsheet) {
+	var configSheet = spreadsheet.getSheetByName('Config');
+	if (!configSheet) return { hcUrl: '', formId: '' };
+
+	var values = configSheet.getDataRange().getValues();
+	if (!values || !values.length) return { hcUrl: '', formId: '' };
+
+	for (var i = 0; i < values.length; i++) {
+		var key = _normalizeCellText_(values[i][0]).toLowerCase();
+		if (key !== 'signup hc form') continue;
+
+		var url = _normalizeCellText_(values[i][2]);
+		return {
+			hcUrl: url,
+			formId: _extractGoogleFileIdFromUrl_(url)
+		};
+	}
+
+	return { hcUrl: '', formId: '' };
+}
+
+function _pickTrackerStartDate_(trackerValues, linkStartDate, spreadsheetName) {
+	var fromLinks = _parseDateish_(linkStartDate);
+	if (fromLinks) return fromLinks;
+
+	var headerRowIndex = _findTrackerHeaderRowIndex_(trackerValues);
+	if (headerRowIndex !== -1) {
+		var headers = trackerValues[headerRowIndex] || [];
+		for (var c = 0; c < headers.length; c++) {
+			var value = headers[c];
+			if (value instanceof Date && !isNaN(value.getTime())) {
+				return value;
+			}
+			var parsed = _parseDateish_(value);
+			if (parsed) return parsed;
+		}
+	}
+
+	// Fallback: parse YYYY-MM from spreadsheet title.
+	var match = String(spreadsheetName || '').match(/(\d{4})-(\d{2})/);
+	if (match) {
+		var year = Number(match[1]);
+		var month = Number(match[2]);
+		if (year >= 2000 && month >= 1 && month <= 12) {
+			return new Date(year, month - 1, 1);
+		}
+	}
+
+	return '';
+}
+
+function _findTrackerHeaderRowIndex_(trackerValues) {
+	var limit = Math.min(6, trackerValues.length);
+	for (var i = 0; i < limit; i++) {
+		var headerIndex = _buildHeaderIndex_(trackerValues[i] || []);
+		if (_pickHeaderIndex_(headerIndex, ['F3 Name', 'Name']) !== -1) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+function _buildTrackerPaxStatsByName_(trackerSheet) {
+	if (!trackerSheet) return {};
+
+	var trackerValues = trackerSheet.getDataRange().getValues();
+	if (!trackerValues || trackerValues.length < 4) return {};
+
+	var headerRowIndex = _findTrackerHeaderRowIndex_(trackerValues);
+	if (headerRowIndex === -1) return {};
+
+	var headers = trackerValues[headerRowIndex] || [];
+	var headerIndex = _buildHeaderIndex_(headers);
+	var nameIdx = _pickHeaderIndex_(headerIndex, ['F3 Name', 'Name']);
+	if (nameIdx === -1) return {};
+
+	var fellowshipIdx = _pickHeaderIndex_(headerIndex, ['Fellowship']);
+	var qPointIdx = _findHeaderIndexSoft_(headers, ['Q Point', 'Q-Point', 'QPoint']);
+	var inspireIdx = _pickHeaderIndex_(headerIndex, ['Inspire']);
+	var ehingFngIdx = _findHeaderIndexSoft_(headers, ['EHing FNG', 'Ehing FNG', 'EH FNG']);
+
+	var dateColumnIndexes = _findTrackerDateColumnIndexes_(headers);
+	var statsByName = {};
+
+	for (var r = headerRowIndex + 1; r < trackerValues.length; r++) {
+		var row = trackerValues[r] || [];
+		var f3Name = _normalizeCellText_(row[nameIdx]);
+		if (!f3Name) continue;
+
+		var key = f3Name.toLowerCase();
+		if (!statsByName[key]) statsByName[key] = _buildEmptyTrackerPaxStats_();
+		var stats = statsByName[key];
+
+		for (var i = 0; i < dateColumnIndexes.length; i++) {
+			var value = _toNumber_(row[dateColumnIndexes[i]]);
+			if (value === 1) stats.hit += 1;
+			else if (value === 0) stats.miss += 1;
+			else if (value === -1) stats.noCheckin += 1;
+		}
+
+		stats.fellowship += _readTrackerNumericCell_(row, fellowshipIdx);
+		stats.qPoint += _readTrackerNumericCell_(row, qPointIdx);
+		stats.inspire += _readTrackerNumericCell_(row, inspireIdx);
+		stats.ehingFng += _readTrackerNumericCell_(row, ehingFngIdx);
+	}
+
+	return statsByName;
+}
+
+function _buildEmptyTrackerPaxStats_() {
+	return {
+		hit: 0,
+		miss: 0,
+		noCheckin: 0,
+		fellowship: 0,
+		qPoint: 0,
+		inspire: 0,
+		ehingFng: 0
+	};
+}
+
+function _findTrackerDateColumnIndexes_(headers) {
+	var indexes = [];
+	for (var c = 0; c < (headers || []).length; c++) {
+		if (_isTrackerHeaderDate_(headers[c])) indexes.push(c);
+	}
+	return indexes;
+}
+
+function _isTrackerHeaderDate_(value) {
+	if (value instanceof Date && !isNaN(value.getTime())) return true;
+	if (value === undefined || value === null || value === '') return false;
+
+	if (typeof value === 'number' && isFinite(value)) {
+		if (value > 20000 && value < 60000) return true;
+	}
+
+	var parsed = _parseDateish_(value);
+	return !!parsed;
+}
+
+function _readTrackerNumericCell_(row, index) {
+	if (typeof index !== 'number' || index < 0) return 0;
+	return _toNumber_(row[index]) || 0;
+}
+
+function _findHeaderIndexSoft_(headers, candidates) {
+	var indexer = _buildSoftHeaderMatcher_(headers || []);
+	return indexer.find(candidates || []);
+}
+
+function _buildHeaderIndex_(headers) {
+	var map = {};
+	for (var i = 0; i < (headers || []).length; i++) {
+		map[_normalizeCellText_(headers[i]).toLowerCase()] = i;
+	}
+	return map;
+}
+
+function _pickHeaderIndex_(headerIndex, candidates) {
+	for (var i = 0; i < (candidates || []).length; i++) {
+		var key = String(candidates[i] || '').trim().toLowerCase();
+		if (key in headerIndex) return headerIndex[key];
+	}
+	return -1;
+}
+
+function _getCellByHeader_(row, headerIndex, aliases) {
+	var index = _pickHeaderIndex_(headerIndex, aliases || []);
+	if (index === -1) return '';
+	return _normalizeCellText_(row[index]);
+}
+
+function _getCellValueByHeader_(row, headerIndex, aliases) {
+	var index = _pickHeaderIndex_(headerIndex, aliases || []);
+	if (index === -1) return '';
+	return row[index];
+}
+
+function _buildSoftHeaderMatcher_(headers) {
+	var normalizedHeaders = (headers || []).map(function(header) {
+		return _normalizeHeaderSoft_(header);
+	});
+
+	function normalizeCandidate_(value) {
+		return _normalizeHeaderSoft_(value);
+	}
+
+	function softContainsAllTokens_(header, candidate) {
+		if (!header || !candidate) return false;
+		var tokens = candidate.split(' ').filter(function(token) { return !!token; });
+		if (!tokens.length) return false;
+		for (var i = 0; i < tokens.length; i++) {
+			if (header.indexOf(tokens[i]) === -1) return false;
+		}
+		return true;
+	}
+
+	return {
+		headers: normalizedHeaders,
+		find: function(candidates) {
+			for (var c = 0; c < (candidates || []).length; c++) {
+				var normalizedCandidate = normalizeCandidate_(candidates[c]);
+				if (!normalizedCandidate) continue;
+
+				for (var i = 0; i < normalizedHeaders.length; i++) {
+					if (normalizedHeaders[i] === normalizedCandidate) return i;
+				}
+
+				for (var j = 0; j < normalizedHeaders.length; j++) {
+					if (softContainsAllTokens_(normalizedHeaders[j], normalizedCandidate)) return j;
+				}
+			}
+			return -1;
+		}
+	};
+}
+
+function _normalizeHeaderSoft_(value) {
+	return String(value || '')
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+function _isDeletedResponseRow_(row, indexer) {
+	var participationIdx = indexer.find([
+		'Are you currently participating in Go30?',
+		'Participation',
+		'Status'
+	]);
+	if (participationIdx !== -1) {
+		var participationValue = _normalizeCellText_(row[participationIdx]).toLowerCase();
+		if (participationValue === 'deleted' || participationValue.indexOf('deleted') !== -1) {
+			return true;
+		}
+	}
+
+	var explicitDeleteIdx = indexer.find([
+		'Deleted',
+		'Is Deleted',
+		'Delete Flag'
+	]);
+	if (explicitDeleteIdx !== -1) {
+		var deletedValue = _normalizeCellText_(row[explicitDeleteIdx]).toLowerCase();
+		if (deletedValue === 'true' || deletedValue === 'yes' || deletedValue === '1' || deletedValue === 'deleted') {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+function _findAllResponseCommentIndexes_(indexer) {
+	var candidates = [
+		'Constructive Comments',
+		'Comments',
+		'Success Story',
+		'Success Stories'
+	];
+
+	var indexes = [];
+	var seen = {};
+	for (var i = 0; i < candidates.length; i++) {
+		var idx = indexer.find([candidates[i]]);
+		if (idx === -1 || seen[idx]) continue;
+		seen[idx] = true;
+		indexes.push(idx);
+	}
+
+	return indexes;
+}
+
+function _collectCommentsForRow_(row, indexes) {
+	var parts = [];
+	for (var i = 0; i < (indexes || []).length; i++) {
+		var value = _normalizeCellText_(row[indexes[i]]);
+		if (!value) continue;
+		parts.push(value);
+	}
+
+	return parts.join(' | ');
+}
+
+function _normalizeCellText_(value) {
+	if (value === undefined || value === null) return '';
+	return String(value).trim();
+}
+
+function _toNumber_(value) {
+	if (typeof value === 'number' && isFinite(value)) return value;
+
+	var text = _normalizeCellText_(value);
+	if (!text) return null;
+
+	var parsed = Number(text.replace(/,/g, ''));
+	return isFinite(parsed) ? parsed : null;
+}
+
+function _parseDateish_(value) {
+	if (value instanceof Date && !isNaN(value.getTime())) return value;
+	var text = _normalizeCellText_(value);
+	if (!text) return null;
+
+	// Normalize plain YYYY-MM into first day of month for consistent sorting.
+	if (/^\d{4}-\d{2}$/.test(text)) {
+		text += '-01';
+	}
+
+	var parsed = new Date(text);
+	return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function _toSortableTime_(value) {
+	var parsed = _parseDateish_(value);
+	return parsed ? parsed.getTime() : 0;
+}
+
+function _extractGoogleFileIdFromUrl_(url) {
+	var text = _normalizeCellText_(url);
+	if (!text) return '';
+
+	var match = text.match(/\/d\/([a-zA-Z0-9_-]+)/);
+	if (match && match[1]) return match[1];
+	return '';
+}
+

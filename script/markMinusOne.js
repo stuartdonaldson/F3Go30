@@ -21,6 +21,10 @@ function clearDailyMinusOne() {
   }
 }
 function markEmptyCellsAsMinusOne() {
+  return GasLogger.run('markEmptyCellsAsMinusOne', markEmptyCellsAsMinusOne_);
+}
+
+function markEmptyCellsAsMinusOne_() {
   var sheetName = "Tracker";
   var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = spreadsheet.getSheetByName(sheetName);
@@ -50,7 +54,7 @@ function markEmptyCellsAsMinusOne() {
     }
 
     if (thresholddayColumnIndex <= 0) {
-      Logger.log('markEmptyCellsAsMinusOne: threshold day column not found for ' + thresholddayString);
+      GasLogger.log('markEmptyCellsAsMinusOne.thresholdColumnNotFound', { thresholdDay: thresholddayString });
     }
     if (thresholddayColumnIndex > 0) {
       var dataRange = sheet.getRange(4, thresholddayColumnIndex, sheet.getLastRow() - 3, 1);
