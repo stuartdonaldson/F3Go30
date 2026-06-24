@@ -20,17 +20,37 @@ function clearDailyMinusOne() {
     }
   }
 }
-function markEmptyCellsAsMinusOne() {
-  return GasLogger.run('markEmptyCellsAsMinusOne', markEmptyCellsAsMinusOne_);
+/**
+ * Daily −1 marking entry point. Resolves the TrackerDB row active for contextDate
+ * (default: today) and runs the marking logic against that tracker's own spreadsheet —
+ * never the active/bound spreadsheet (ADR-010). Lookup failures (zero or ambiguous
+ * TrackerDB matches) propagate as a thrown/logged error rather than silently no-op'ing.
+ * @param {Date|string=} contextDate Defaults to now.
+ */
+function markEmptyCellsAsMinusOne(contextDate) {
+  return GasLogger.run('markEmptyCellsAsMinusOne', function() {
+    return markEmptyCellsAsMinusOne_(contextDate);
+  });
 }
 
-function markEmptyCellsAsMinusOne_() {
+function markEmptyCellsAsMinusOne_(contextDate) {
+  var trackerRow = resolveTrackerForContextDate(contextDate);
+  var spreadsheet = SpreadsheetApp.openById(trackerRow.sheetId);
+  return applyMinusOneToTrackerSheet_(spreadsheet, contextDate);
+}
+
+/**
+ * Marks empty, non-formula cells as -1 in the given spreadsheet's Tracker sheet, for the
+ * column matching (contextDate - 2 days). Rows with no F3 Name (column A) are left alone.
+ * @param {Spreadsheet} spreadsheet Target tracker spreadsheet, resolved via TrackerDB.
+ * @param {Date|string=} contextDate Defaults to now.
+ */
+function applyMinusOneToTrackerSheet_(spreadsheet, contextDate) {
   var sheetName = "Tracker";
-  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = spreadsheet.getSheetByName(sheetName);
 
   if (sheet) {
-    var currentDate = new Date();
+    var currentDate = contextDate instanceof Date ? contextDate : new Date(contextDate || Date.now());
 
     // Calculate the date for thresholdday - Day before yesterday.
     var thresholdday = new Date(currentDate);
@@ -73,4 +93,11 @@ function markEmptyCellsAsMinusOne_() {
       dataRange.setValues(values);
     }
   }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    markEmptyCellsAsMinusOne_: markEmptyCellsAsMinusOne_,
+    applyMinusOneToTrackerSheet_: applyMinusOneToTrackerSheet_
+  };
 }
