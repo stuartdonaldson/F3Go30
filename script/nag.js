@@ -185,12 +185,31 @@ function buildReminderEmailTemplate_(options) {
   };
 }
 
-function sendNagEmail() {
-  return GasLogger.run('sendNagEmail', sendNagEmail_);
+/**
+ * Daily nag-email entry point. Resolves the TrackerDB row active for contextDate
+ * (default: today) and sends against that tracker's own spreadsheet — never the
+ * active/bound spreadsheet (ADR-010). Lookup failures (zero or ambiguous TrackerDB
+ * matches) propagate as a thrown/logged error rather than silently no-op'ing.
+ * @param {Date|string=} contextDate Defaults to now.
+ */
+function sendNagEmail(contextDate) {
+  return GasLogger.run('sendNagEmail', function() {
+    return sendNagEmail_(contextDate);
+  });
 }
 
-function sendNagEmail_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+function sendNagEmail_(contextDate) {
+  var trackerRow = resolveTrackerForContextDate(contextDate);
+  var ss = SpreadsheetApp.openById(trackerRow.sheetId);
+  return sendNagEmailForSpreadsheet_(ss, contextDate);
+}
+
+/**
+ * Runs the nag-email logic against an already-resolved tracker spreadsheet.
+ * @param {Spreadsheet} ss Target tracker spreadsheet, resolved via TrackerDB.
+ * @param {Date|string=} contextDate Defaults to now.
+ */
+function sendNagEmailForSpreadsheet_(ss, contextDate) {
   var tracker = ss.getSheetByName('Tracker');
   var responses = ss.getSheetByName('Responses');
   var configSheet = ss.getSheetByName('Config');
@@ -202,7 +221,7 @@ function sendNagEmail_() {
   var configData = configSheet ? configSheet.getDataRange().getValues() : [];
 
   var tz = ss.getSpreadsheetTimeZone();
-  var today = new Date();
+  var today = contextDate instanceof Date ? contextDate : new Date(contextDate || Date.now());
   var yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   var targetDateString = Utilities.formatDate(yesterday, tz, 'MM/dd/yyyy');
@@ -323,6 +342,8 @@ if (typeof module !== 'undefined' && module.exports) {
     sanitizeNagRecipientEmail_: sanitizeNagRecipientEmail_,
     sanitizeNagDisplayName_: sanitizeNagDisplayName_,
     buildNagRecipientList_: buildNagRecipientList_,
-    getNagDisplayNameFromResponse_: getNagDisplayNameFromResponse_
+    getNagDisplayNameFromResponse_: getNagDisplayNameFromResponse_,
+    sendNagEmail_: sendNagEmail_,
+    sendNagEmailForSpreadsheet_: sendNagEmailForSpreadsheet_
   };
 }
