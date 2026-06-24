@@ -1,21 +1,27 @@
 # CONTEXT — F3Go30
 
+> **Architecture note:** As of ADR-010, all script execution is centralized in the Go30
+> Template's bound script. Monthly tracker spreadsheets are pure data spreadsheets — they no
+> longer run their own triggers or logic; the template dispatches to them by looking up the
+> target spreadsheet in `TrackerDB` for a given context date. Use cases below describe this
+> target model; see ADR-010 for migration status of any use case not yet fully implemented.
+
 ## Introduction & Goals
 
 ### Purpose
 
 F3Go30 automates the monthly lifecycle of a Go30 fitness challenge tracker in Google Sheets:
-copying a template spreadsheet, linking a Google Form for sign-ups, initializing sheets, setting
-up time and form-submit triggers, and marking missed check-ins nightly. It allows a single Q
-(site leader) to stand up a new month's tracker in minutes without manual sheet or trigger
-configuration.
+copying a template spreadsheet, linking a Google Form for sign-ups, initializing sheets, and —
+from the Template's centrally-dispatched triggers — handling form submissions and marking missed
+check-ins nightly for every active tracker. It allows a single Q (site leader) to stand up a new
+month's tracker in minutes without manual sheet or trigger configuration in the copy itself.
 
 ### Quality Goals
 
 | Priority | Quality Goal | Scenario |
 |----------|-------------|----------|
 | 1 | Operability | A non-technical site Q creates a new monthly tracker using only the custom menu, without touching Apps Script |
-| 2 | Correctness | No PAX entry is duplicated, dropped, or incorrectly marked −1 due to a race condition or range error; the copied spreadsheet requires no manual setup beyond trigger initialization |
+| 2 | Correctness | No PAX entry is duplicated, dropped, or incorrectly marked −1 due to a race condition or range error; a new monthly tracker requires no manual trigger setup — only a `TrackerDB` registration |
 | 3 | Recoverability | If a step in Copy and Initialize fails, the sidebar log surfaces the failure with enough context for the Q to recover manually |
 
 ### Stakeholders
@@ -60,8 +66,9 @@ configuration.
 - Auto-generate next month's tracker and HC form via a scheduled trigger on the 20th of each
   month; email Site Q with links and a ready-to-paste Slack message on success or failure
 - Log all menu-initiated activity to a hidden Activity sheet
-- Append a record (date, start date, name, tracker URL, form URL, spreadsheet ID, form ID) to
-  a Links sheet in the template spreadsheet each time a new tracker is created
+- Upsert a row (date modified, start date, name, tracker URL, form URL, spreadsheet ID, form
+  ID) into the template's `TrackerDB` sheet each time a new tracker is created, keyed by
+  spreadsheet ID — the same row is also the dispatch target for centralized triggers (ADR-010)
 
 ---
 
@@ -92,7 +99,10 @@ A3: Site Q email missing from Config sheet → script exits with an actionable e
 Postconditions:
 - New tracker spreadsheet exists in Drive with initialized sheets and correct sharing
 - Sidebar contains clickable links to the new tracker and HC form, and a ready-to-paste Slack message
-- Links sheet in the template spreadsheet has a new row: date, start date (YYYY-MM-DD), spreadsheet name, tracker URL, form URL, spreadsheet ID, form ID
+- `TrackerDB` sheet in the template spreadsheet has a new row, keyed by spreadsheet ID: date
+  modified, start date (YYYY-MM-DD), spreadsheet name, tracker URL, form URL, spreadsheet ID,
+  form ID — this same row registers the tracker for centralized dispatch (form-submit, nightly
+  −1 marking, nag email) by the Template; no per-spreadsheet trigger setup needed
 
 Constraints:
 - Only the spreadsheet owner sees the F3 Go30 menu
@@ -105,7 +115,7 @@ Actor: PAX (participant)
 
 Preconditions:
 - The HC form is linked to the tracker spreadsheet
-- The form-submit trigger has been initialized on the tracker
+- The tracker's form ID and spreadsheet ID are registered in `TrackerDB`, so the Template's centrally-installed form-submit dispatcher can resolve and open the correct spreadsheet
 
 Primary Flow:
 1. PAX opens the HC form link and submits their goal and F3 name
@@ -130,22 +140,25 @@ Constraints:
 
 ### UC-3: Nightly Miss Marking
 
-Actor: Time-based trigger (1 AM daily)
+Actor: Time-based trigger (1 AM daily, installed once on the Template)
 
 Preconditions:
-- Daily trigger has been initialized on the tracker
+- The daily trigger is installed only on the Template — not on individual tracker copies
+- Every active tracker has a row in `TrackerDB` with a matching date range
 - Tracker sheet has date columns in row 3
 
 Primary Flow:
-1. Trigger fires `markEmptyCellsAsMinusOne` at 1 AM
-2. Script finds the column for two days prior (grace period)
-3. For each PAX row, if the cell is empty, writes −1
+1. Trigger fires the centralized dispatcher at 1 AM with today as the context date
+2. Dispatcher looks up the `TrackerDB` row(s) whose date range covers the context date and opens each target spreadsheet by ID
+3. For each target, script finds the column for two days prior (grace period)
+4. For each PAX row, if the cell is empty, writes −1
 
 Postconditions:
-- All PAX who did not record a value within the grace period have −1 in the appropriate column
+- All PAX who did not record a value within the grace period have −1 in the appropriate column, for every active tracker
 
 Constraints:
 - Only cells in the two-day-prior column are evaluated; current and yesterday columns are not touched
+- A context date matching zero or more than one `TrackerDB` row is a dispatch error and must be logged, not silently skipped
 
 ---
 
@@ -174,7 +187,7 @@ Postconditions:
 - Site Q has received an email with links and Slack message copy-paste
 
 Constraints:
-- Trigger runs in the template spreadsheet context; the new tracker's own triggers must still be initialized manually via "Initialize Triggers" in the new spreadsheet
+- Trigger runs in the template spreadsheet context; the new tracker requires only a `TrackerDB` registration, not its own trigger initialization
 
 ---
 
@@ -211,18 +224,20 @@ Constraints:
 
 ### UC-6: Daily Reminder Email Runs
 
-Actor: Time-based trigger (10 AM daily)
+Actor: Time-based trigger (10 AM daily, installed once on the Template)
 
 Preconditions:
-- The daily nag trigger has been initialized
-- Tracker and Responses sheets exist and contain current-month data
+- The daily nag trigger is installed only on the Template, not on individual tracker copies
+- Every active tracker has a row in `TrackerDB` with a matching date range
+- Tracker and Responses sheets exist and contain current-month data for each active tracker
 - Reminder recipients have explicitly opted in via the HC form reminder-consent field
 
 Primary Flow:
-1. Trigger fires the daily nag email function
-2. Script finds the prior day's column in the Tracker sheet
-3. Script groups PAX by team and identifies members who did not check in
-4. Script emails the opted-in members of each affected team with the missing-member list and tracker reminder text
+1. Trigger fires the centralized nag dispatcher at 10 AM with today as the context date
+2. Dispatcher looks up the `TrackerDB` row(s) matching the context date and opens each target spreadsheet by ID
+3. For each target, script finds the prior day's column in the Tracker sheet
+4. Script groups PAX by team and identifies members who did not check in
+5. Script emails the opted-in members of each affected team with the missing-member list and tracker reminder text
 
 Alternate Flows:
 A1: Prior-day date column not found → function logs and exits without sending
@@ -262,8 +277,10 @@ Constraints:
 | Responses sheet | Google Form response destination sheet; source data for `onFormSubmit` |
 | Help sheet | Sheet containing operational URLs (e.g., Next Month HC Signup link) |
 | Activity sheet | Hidden sheet logging all script-initiated actions with timestamp and user |
-| Template | The canonical Go30 spreadsheet from which new monthly trackers are copied |
+| Template | The canonical Go30 spreadsheet from which new monthly trackers are copied; since ADR-010, also the sole runtime container for all triggers and dispatch logic |
 | NameSpace | Region identifier read from Config (e.g., `F3Waxhaw`); drives spreadsheet naming |
+| TrackerDB | Sheet in the Template recording every monthly tracker's spreadsheet ID, form ID, and active date range; used both to aggregate cross-tracker metrics and, since ADR-010, to resolve which spreadsheet a centrally-dispatched function should operate on for a given context date |
+| Context date | The date a dispatch function is operating "as of" — the real current date for production trigger firings, or an explicit override (e.g. a future date) for tests targeting an isolated `TrackerDB` row |
 
 ## References
 
