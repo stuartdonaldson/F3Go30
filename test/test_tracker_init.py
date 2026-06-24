@@ -492,11 +492,11 @@ def check_log_payload(payload: dict):
 
 
 def check_links_sheet(payload: dict):
-    """Download the template spreadsheet and verify the Links sheet row."""
-    print("\n--- Links sheet (template) ---")
+    """Download the template spreadsheet and verify the TrackerDB sheet row."""
+    print("\n--- TrackerDB sheet (template) ---")
     template_id = payload.get("templateSpreadsheetId")
     if not check("templateSpreadsheetId present in payload", template_id is not None,
-                 "key missing — cannot verify Links sheet"):
+                 "key missing — cannot verify TrackerDB sheet"):
         return
 
     export_url = build_export_url(template_id)
@@ -508,14 +508,14 @@ def check_links_sheet(payload: dict):
         return
 
     wb = load_workbook(io.BytesIO(xlsx_bytes))
-    if not check("Links sheet exists in template", "Links" in wb.sheetnames):
+    if not check("TrackerDB sheet exists in template", "TrackerDB" in wb.sheetnames):
         return None
 
-    ws = wb["Links"]
+    ws = wb["TrackerDB"]
     header_map = build_header_map(ws)
-    required_headers = ["date", "startdate", "shorttracker", "trackerurl", "shorthc", "hc url", "sheetid"]
+    required_headers = ["date modified", "startdate", "shorttracker", "trackerurl", "shorthc", "hc url", "sheetid"]
     missing_headers = [header for header in required_headers if header not in header_map]
-    if not check("Links sheet has lineage headers", len(missing_headers) == 0,
+    if not check("TrackerDB sheet has lineage headers", len(missing_headers) == 0,
                  f"missing headers: {missing_headers}" if missing_headers else ""):
         return None
 
@@ -528,13 +528,13 @@ def check_links_sheet(payload: dict):
     resolved_form = follow_redirect(target_short_form) if target_short_form else ""
 
     matching_rows = [row for row in rows if row.get("sheetid", "").strip() == target_sheet_id]
-    if not check("Links sheet has exactly one authoritative row for this tracker",
+    if not check("TrackerDB sheet has exactly one authoritative row for this tracker",
                  len(matching_rows) == 1,
                  f"rows with sheetId={target_sheet_id!r}: {len(matching_rows)}"):
         return None
 
     found_row = matching_rows[0]
-    row_date = found_row.get("date", "")
+    row_date = found_row.get("date modified", "")
     row_month = found_row.get("startdate", "")
     row_short_tracker = found_row.get("shorttracker", "")
     row_tracker = found_row.get("trackerurl", "")

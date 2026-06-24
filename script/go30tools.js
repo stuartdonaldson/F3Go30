@@ -18,6 +18,10 @@
 *   TotalPAX - total number of PAX in the tracker
 *   TotalTeams - total number of teams in the tracker
 *   AverageScore - average score of the teams in the tracker
+*   LastSignupAt - timestamp of the most recent signup event for this tracker
+*   TriggersInitializedAt - timestamp when trigger initialization last completed
+*   LastMinusOneRunAt - timestamp of the latest minus-one nightly run
+*   LastNagRunAt - timestamp of the latest nag email trigger run
 */
 
 var TRACKER_DB_SHEET_NAME_ = 'TrackerDB';
@@ -34,8 +38,14 @@ var TRACKER_DB_HEADERS_ = [
 	'FormId',
 	'TotalPAX',
 	'TotalTeams',
-	'AverageScore'
+	'AverageScore',
+	'LastSignupAt',
+	'TriggersInitializedAt',
+	'LastMinusOneRunAt',
+	'LastNagRunAt'
 ];
+
+var TRACKER_DB_LIFECYCLE_FIELDS_ = ['lastSignupAt', 'triggersInitializedAt', 'lastMinusOneRunAt', 'lastNagRunAt'];
 
 var PAX_DB_SHEET_NAME_ = 'PaxDB';
 var PAX_DB_HEADERS_ = [
@@ -86,7 +96,6 @@ function scanAllGo30() {
 
 function _scanSheetFilesById_(filesById, sourceLabel) {
 	var activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-	var linksBySheetId = _readLinksMetadataBySheetId_(activeSpreadsheet);
 	var trackerState = _readTrackerDbRowsBySheetId_(activeSpreadsheet);
 	var paxState = _readPaxDbRowsBySheetId_(activeSpreadsheet);
 	var fileIds = Object.keys(filesById || {}).sort();
@@ -122,7 +131,7 @@ function _scanSheetFilesById_(filesById, sourceLabel) {
 			}
 
 			var spreadsheet = SpreadsheetApp.openById(sheetId);
-			var trackerResult = _loadTrackerData(spreadsheet, linksBySheetId[sheetId], modifiedAt);
+			var trackerResult = _loadTrackerData(spreadsheet, existingTracker, modifiedAt);
 			if (!trackerResult.data) {
 				var rejectedPaxCount = 0;
 				if (existingTracker) {
@@ -162,7 +171,7 @@ function _scanSheetFilesById_(filesById, sourceLabel) {
 		}
 	}
 
-	_updateTrackerDB(trackerRows);
+	_updateTrackerDB(_mergeTrackerDbRowsForScan_(trackerState.bySheetId, trackerRows));
 	_updatePaxDB(paxRows);
 	GasLogger.log(sourceLabel + '.summary', { scanned: scanned, processed: processed, unchanged: unchanged, tracked: trackerRows.length, skipped: skipped, pax: paxRows.length });
 	return {
@@ -221,7 +230,7 @@ function _collectSheetFilesRecursive_(folder, filesById) {
  * Loads tracker summary data from a spreadsheet.
  * Returns null when the spreadsheet does not look like a valid monthly tracker.
  * @param {Spreadsheet} spreadsheet Spreadsheet object.
- * @param {Object=} linkMetadata Optional metadata row from Links keyed by SheetId.
+ * @param {Object=} linkMetadata Optional existing TrackerDB row for this SheetId (lineage metadata).
  * @param {Date=} modifiedAt Last modified timestamp from Drive metadata.
  * @returns {{data: Object|null, reason: string}} Result containing row data or rejection reason.
  */
@@ -237,23 +246,26 @@ function _loadTrackerData(spreadsheet, linkMetadata, modifiedAt) {
 	if (metrics.totalPax < 10) return { data: null, reason: 'total_pax_lt_10' };
 
 	var metadata = _buildTrackerMetadata_(spreadsheet, trackerSheet, trackerValues, linkMetadata);
-	return {
-		data: {
-			dateModified: modifiedAt || new Date(),
-			startDate: metadata.startDate,
-			spreadsheetName: spreadsheet.getName(),
-			shortTracker: metadata.shortTracker,
-			trackerUrl: metadata.trackerUrl,
-			shortHc: metadata.shortHc,
-			hcUrl: metadata.hcUrl,
-			sheetId: sheetId,
-			formId: metadata.formId,
-			totalPax: metrics.totalPax,
-			totalTeams: metrics.totalTeams,
-			averageScore: metrics.averageScore
-		},
-		reason: 'included'
+	var lifecycleFields = _carryForwardLifecycleFields_(linkMetadata);
+	var data = {
+		dateModified: modifiedAt || new Date(),
+		startDate: metadata.startDate,
+		spreadsheetName: spreadsheet.getName(),
+		shortTracker: metadata.shortTracker,
+		trackerUrl: metadata.trackerUrl,
+		shortHc: metadata.shortHc,
+		hcUrl: metadata.hcUrl,
+		sheetId: sheetId,
+		formId: metadata.formId,
+		totalPax: metrics.totalPax,
+		totalTeams: metrics.totalTeams,
+		averageScore: metrics.averageScore
 	};
+	TRACKER_DB_LIFECYCLE_FIELDS_.forEach(function(key) {
+		data[key] = lifecycleFields[key];
+	});
+
+	return { data: data, reason: 'included' };
 }
 
 function _formatLogDate_(value) {
@@ -349,6 +361,71 @@ function _loadPaxData(spreadsheet, sheetId, startDate) {
 }
 
 /**
+ * Resolves the single TrackerDB row "active" for a context date. A row is active from
+ * its own StartDate up to (but not including) the next row's StartDate, sorted ascending;
+ * the latest row's range is open-ended. Rows sharing an identical StartDate make that
+ * range ambiguous. Per ADR-010, lookup failures (zero or multiple matches) must fail
+ * loudly — this throws rather than returning null or guessing, so callers must log/handle
+ * the error explicitly instead of silently skipping or picking an arbitrary row.
+ * @param {Array<Object>} rows TrackerDB rows (each with at least a startDate and sheetId).
+ * @param {Date|string} contextDate The date to resolve a tracker for.
+ * @returns {Object} The single matching TrackerDB row.
+ * @throws {Error} When zero or more than one row matches the context date.
+ */
+function resolveTrackerDbRowForContextDate_(rows, contextDate) {
+	var context = contextDate instanceof Date ? contextDate : new Date(contextDate);
+	if (isNaN(context.getTime())) {
+		throw new Error('resolveTrackerDbRowForContextDate_: invalid context date: ' + contextDate);
+	}
+	var contextTime = context.getTime();
+
+	var groupsByTime = {};
+	(rows || []).forEach(function(row) {
+		var startDate = _parseDateish_(row && row.startDate);
+		if (!startDate) return;
+		var time = startDate.getTime();
+		if (!groupsByTime[time]) groupsByTime[time] = [];
+		groupsByTime[time].push(row);
+	});
+
+	var sortedTimes = Object.keys(groupsByTime).map(Number).sort(function(a, b) { return a - b; });
+
+	for (var i = 0; i < sortedTimes.length; i++) {
+		var startTime = sortedTimes[i];
+		var rangeEnd = (i + 1 < sortedTimes.length) ? sortedTimes[i + 1] : Infinity;
+		if (contextTime < startTime || contextTime >= rangeEnd) continue;
+
+		var group = groupsByTime[startTime];
+		if (group.length > 1) {
+			var sheetIds = group.map(function(row) { return row && row.sheetId; }).join(', ');
+			throw new Error('resolveTrackerDbRowForContextDate_: ambiguous match for context date ' +
+				context.toISOString() + ' — multiple TrackerDB rows share StartDate; SheetIds: ' + sheetIds);
+		}
+		return group[0];
+	}
+
+	throw new Error('resolveTrackerDbRowForContextDate_: no TrackerDB row matches context date ' + context.toISOString());
+}
+
+/**
+ * Reads the active spreadsheet's TrackerDB sheet and resolves the row active for a
+ * context date. Thin GAS-facing wrapper around resolveTrackerDbRowForContextDate_ —
+ * dispatch functions (minus-one, nag, form-submit) should call this rather than
+ * implementing their own TrackerDB matching.
+ * @param {Date|string=} contextDate Defaults to now.
+ * @returns {Object} The single matching TrackerDB row.
+ * @throws {Error} When zero or more than one row matches the context date.
+ */
+function resolveTrackerForContextDate(contextDate) {
+	var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+	var trackerState = _readTrackerDbRowsBySheetId_(spreadsheet);
+	var rows = Object.keys(trackerState.bySheetId).map(function(sheetId) {
+		return trackerState.bySheetId[sheetId];
+	});
+	return resolveTrackerDbRowForContextDate_(rows, contextDate || new Date());
+}
+
+/**
  * Writes TrackerDB rows, replacing existing body rows while preserving the sheet.
  * @param {Array<Object>} rows Tracker summary rows.
  */
@@ -391,7 +468,11 @@ function _updateTrackerDB(rows) {
 			row.formId || '',
 			row.totalPax || 0,
 			row.totalTeams || 0,
-			row.averageScore || 0
+			row.averageScore || 0,
+			row.lastSignupAt || '',
+			row.triggersInitializedAt || '',
+			row.lastMinusOneRunAt || '',
+			row.lastNagRunAt || ''
 		];
 	});
 
@@ -478,7 +559,11 @@ function _readTrackerDbRowsBySheetId_(spreadsheet) {
 			formId: _getCellByHeader_(row, headerIndex, ['FormId', 'Form ID']),
 			totalPax: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['TotalPAX'])]) || 0,
 			totalTeams: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['TotalTeams'])]) || 0,
-			averageScore: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['AverageScore'])]) || 0
+			averageScore: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['AverageScore'])]) || 0,
+			lastSignupAt: _getCellValueByHeader_(row, headerIndex, ['LastSignupAt']),
+			triggersInitializedAt: _getCellValueByHeader_(row, headerIndex, ['TriggersInitializedAt']),
+			lastMinusOneRunAt: _getCellValueByHeader_(row, headerIndex, ['LastMinusOneRunAt']),
+			lastNagRunAt: _getCellValueByHeader_(row, headerIndex, ['LastNagRunAt'])
 		};
 	}
 
@@ -530,32 +615,45 @@ function _getFirstParentFolder_(fileId) {
 	return parents.hasNext() ? parents.next() : null;
 }
 
-function _readLinksMetadataBySheetId_(spreadsheet) {
-	var linksSheet = spreadsheet.getSheetByName('Links');
-	if (!linksSheet) return {};
+/**
+ * Picks the lifecycle status fields off an existing TrackerDB row so a re-scan that
+ * rebuilds the row (e.g. a tracker that was modified and reprocessed) carries them
+ * forward unchanged. These fields are written by their own workflows (signup, trigger
+ * init, minus-one, nag), never by the scan itself.
+ * @param {Object=} existingRow Existing TrackerDB row for this SheetId, if any.
+ * @returns {Object} The four lifecycle fields, defaulting to '' when absent.
+ */
+function _carryForwardLifecycleFields_(existingRow) {
+	var fields = {};
+	TRACKER_DB_LIFECYCLE_FIELDS_.forEach(function(key) {
+		fields[key] = (existingRow && existingRow[key]) || '';
+	});
+	return fields;
+}
 
-	var values = linksSheet.getDataRange().getValues();
-	if (!values || values.length < 2) return {};
+/**
+ * Merges this scan's tracker rows with any pre-existing TrackerDB rows whose SheetId
+ * wasn't touched by this scan (e.g. a row upserted directly by CreateNewTracker.js for a
+ * spreadsheet outside the scanned folder). Scanned rows always win for a given SheetId;
+ * untouched rows are carried forward unchanged so a wholesale rewrite of TrackerDB never
+ * silently drops them.
+ * @param {Object} existingBySheetId Map of SheetId -> existing TrackerDB row.
+ * @param {Array<Object>} scannedRows Rows produced by this scan.
+ * @returns {Array<Object>} Merged row set to write back to TrackerDB.
+ */
+function _mergeTrackerDbRowsForScan_(existingBySheetId, scannedRows) {
+	var seen = {};
+	var merged = (scannedRows || []).map(function(row) {
+		if (row && row.sheetId) seen[row.sheetId] = true;
+		return row;
+	});
 
-	var headerIndex = _buildHeaderIndex_(values[0]);
-	var bySheetId = {};
+	Object.keys(existingBySheetId || {}).forEach(function(sheetId) {
+		if (seen[sheetId]) return;
+		merged.push(existingBySheetId[sheetId]);
+	});
 
-	for (var i = 1; i < values.length; i++) {
-		var row = values[i];
-		var id = _getCellByHeader_(row, headerIndex, ['SheetId', 'Spreadsheet ID']);
-		if (!id) continue;
-
-		bySheetId[id] = {
-			startDate: _getCellByHeader_(row, headerIndex, ['StartDate', 'Month']),
-			shortTracker: _getCellByHeader_(row, headerIndex, ['ShortTracker']),
-			trackerUrl: _getCellByHeader_(row, headerIndex, ['TrackerURL', 'Tracker URL']),
-			shortHc: _getCellByHeader_(row, headerIndex, ['ShortHC']),
-			hcUrl: _getCellByHeader_(row, headerIndex, ['HC URL', 'Form URL']),
-			formId: _getCellByHeader_(row, headerIndex, ['FormId', 'Form ID'])
-		};
-	}
-
-	return bySheetId;
+	return merged;
 }
 
 function _computeTrackerMetrics_(trackerValues) {
@@ -949,5 +1047,13 @@ function _extractGoogleFileIdFromUrl_(url) {
 	var match = text.match(/\/d\/([a-zA-Z0-9_-]+)/);
 	if (match && match[1]) return match[1];
 	return '';
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+	module.exports = {
+		_mergeTrackerDbRowsForScan_: _mergeTrackerDbRowsForScan_,
+		_carryForwardLifecycleFields_: _carryForwardLifecycleFields_,
+		resolveTrackerDbRowForContextDate_: resolveTrackerDbRowForContextDate_
+	};
 }
 

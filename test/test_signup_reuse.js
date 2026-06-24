@@ -284,7 +284,7 @@ function makeMockSs(configMap, options) {
     return {
         getFormUrl: function() { return null; },
         getSheetByName: function(name) {
-            if (name === 'Links' && opts.linksValues) {
+            if (name === 'TrackerDB' && opts.linksValues) {
                 return {
                     getDataRange: function() {
                         return {

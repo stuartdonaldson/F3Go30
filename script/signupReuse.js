@@ -81,7 +81,7 @@ function resolveTrackerReferenceFromLinks_(spreadsheet, previousTrackerConfig) {
     var trackerName = String((previousTrackerConfig && previousTrackerConfig.primary) || '').trim();
     if (!trackerName) return '';
 
-    var linksSheet = spreadsheet.getSheetByName('Links');
+    var linksSheet = spreadsheet.getSheetByName('TrackerDB');
     if (!linksSheet || typeof linksSheet.getDataRange !== 'function') return '';
 
     var values = linksSheet.getDataRange().getValues();

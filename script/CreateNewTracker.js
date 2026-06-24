@@ -1,8 +1,8 @@
 
 var MONTH_NAMES_ = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-var LINKS_SHEET_HEADERS_ = ['Date', 'StartDate', 'SpreadsheetName', 'ShortTracker', 'TrackerURL', 'ShortHC', 'HC URL', 'SheetId', 'FormId'];
+var LINKS_SHEET_HEADERS_ = ['Date Modified', 'StartDate', 'SpreadsheetName', 'ShortTracker', 'TrackerURL', 'ShortHC', 'HC URL', 'SheetId', 'FormId', 'TotalPAX', 'TotalTeams', 'AverageScore'];
 var LINKS_SHEET_COLUMN_MAP_ = {
-  date: 'Date',
+  date: { header: 'Date Modified', aliases: ['Date'] },
   startDate: { header: 'StartDate', aliases: ['Month'] },
   spreadsheetName: { header: 'SpreadsheetName', aliases: ['Spreadsheet Name'] },
   shortTracker: 'ShortTracker',
@@ -10,7 +10,10 @@ var LINKS_SHEET_COLUMN_MAP_ = {
   shortHc: 'ShortHC',
   hcUrl: { header: 'HC URL', aliases: ['Form URL'] },
   sheetId: { header: 'SheetId', aliases: ['Spreadsheet ID'] },
-  formId: { header: 'FormId', aliases: ['Form ID'] }
+  formId: { header: 'FormId', aliases: ['Form ID'] },
+  totalPax: { header: 'TotalPAX', optional: true },
+  totalTeams: { header: 'TotalTeams', optional: true },
+  averageScore: { header: 'AverageScore', optional: true }
 };
 
 function buildLinksHeaderIndex_(headers) {
@@ -124,7 +127,7 @@ function ensureLinksSheetSchema_(linksSheet) {
 
 function openLinksSheet_(spreadsheet) {
   const ssManager = new SpreadsheetManager(spreadsheet);
-  const linksSheet = ssManager.openOrCreateManagedSheet('Links', LINKS_SHEET_COLUMN_MAP_, LINKS_SHEET_HEADERS_);
+  const linksSheet = ssManager.openOrCreateManagedSheet('TrackerDB', LINKS_SHEET_COLUMN_MAP_, LINKS_SHEET_HEADERS_);
   return ensureLinksSheetSchema_(linksSheet);
 }
 
@@ -377,7 +380,7 @@ function copyAndInit_() {
     // Modify sheets in the new spreadsheet
     initSheets(newSpreadsheet, startDate);
 
-    // Track all trackers created from this template — create Links sheet on first use
+    // Track all trackers created from this template — upsert into the TrackerDB sheet
     const startDateIso = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay;
     let linksSheet = openLinksSheet_(currentSpreadsheet);
     upsertLinksRow_(linksSheet, {
