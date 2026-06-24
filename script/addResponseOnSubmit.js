@@ -18,21 +18,37 @@ var getResponseEmailValue_ = (addResponseResponseUtilsModule_ && addResponseResp
   || (typeof globalThis !== 'undefined' && globalThis.getResponseEmailValue_)
   || null;
 
-function setupFormSubmitTrigger() {
-  clearFormSubmitTrigger();
+/**
+ * Installs the form-submit trigger for a specific tracker spreadsheet. Callable from any
+ * script project with access to `spreadsheet` (e.g. the Template, for a tracker it just
+ * created) — installable triggers run using the code of the project that creates them, not
+ * the project bound to the watched spreadsheet, so centralizing this call centralizes the
+ * handler code too (ADR-010). Defaults to the active spreadsheet only for the existing
+ * per-copy "Initialize Triggers" menu flow (onOpen.js), which predates centralization.
+ * @param {Spreadsheet=} spreadsheet Target tracker spreadsheet. Defaults to the active spreadsheet.
+ */
+function setupFormSubmitTrigger(spreadsheet) {
+  var ss = spreadsheet || SpreadsheetApp.getActiveSpreadsheet();
+  clearFormSubmitTrigger(ss);
 
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
   ScriptApp.newTrigger(FORM_SUBMIT_HANDLER_)
     .forSpreadsheet(ss)
     .onFormSubmit()
     .create();
 }
 
-function clearFormSubmitTrigger() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+/**
+ * Removes any existing form-submit trigger for a specific tracker spreadsheet only.
+ * Scoped by getTriggerSourceId() so that once trigger setup is centralized on the
+ * Template, clearing one tracker's trigger never touches another tracker's.
+ * @param {Spreadsheet=} spreadsheet Target tracker spreadsheet. Defaults to the active spreadsheet.
+ */
+function clearFormSubmitTrigger(spreadsheet) {
+  var ss = spreadsheet || SpreadsheetApp.getActiveSpreadsheet();
+  var ssId = ss.getId();
   var toRemove = [FORM_SUBMIT_HANDLER_, LEGACY_FORM_SUBMIT_HANDLER_];
   ScriptApp.getProjectTriggers().forEach(function(trigger) {
-    if (toRemove.indexOf(trigger.getHandlerFunction()) !== -1) {
+    if (toRemove.indexOf(trigger.getHandlerFunction()) !== -1 && trigger.getTriggerSourceId() === ssId) {
       ScriptApp.deleteTrigger(trigger);
     }
   });
@@ -107,8 +123,21 @@ function handleFormSubmit_(e) {
   });
 }
 
+/**
+ * Resolves the spreadsheet a form-submit event landed in directly from the event's own
+ * range, rather than assuming the handler runs bound to the target spreadsheet (ADR-010).
+ * This is always unambiguous — e.range belongs to exactly one spreadsheet, the one whose
+ * trigger fired — unlike SpreadsheetApp.getActiveSpreadsheet(), which is meaningless once
+ * the handler runs centrally from the Template's script project.
+ * @param {Object} e Form-submit event object (forSpreadsheet().onFormSubmit()).
+ * @returns {Spreadsheet}
+ */
+function resolveFormSubmitSpreadsheet_(e) {
+  return e.range.getSheet().getParent();
+}
+
 function onFormSubmitLocked_(e) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = resolveFormSubmitSpreadsheet_(e);
   var responsesSheet = sheet.getSheetByName('Responses');
   var destinationSheet = sheet.getSheetByName('Tracker');
 
@@ -274,6 +303,9 @@ if (typeof module !== 'undefined' && module.exports) {
     getTrackerStartDate_,
     formatRegistrationMonth_,
     maybeSendRegistrationConfirmation_,
-    onFormSubmitLocked_
+    onFormSubmitLocked_,
+    resolveFormSubmitSpreadsheet_,
+    setupFormSubmitTrigger,
+    clearFormSubmitTrigger
   };
 }
