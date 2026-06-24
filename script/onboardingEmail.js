@@ -42,7 +42,7 @@ function buildOnboardingEmailTemplate_(options) {
     bodyLines.push('HC Form: ' + options.formUrl);
   }
   bodyLines.push('');
-  bodyLines.push('Next step: open the new spreadsheet and select F3 Go30 > Initialize Triggers.');
+  bodyLines.push('Next step: open the new spreadsheet and verify it looks correct.');
   bodyLines.push('');
   if (options.slackReadyMessage) {
     bodyLines.push('Slack message:');

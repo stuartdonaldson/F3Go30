@@ -18,7 +18,7 @@ function onOpen_()
 
   if (owneremail && email === owneremail) {
     menu.addItem('Copy and Initialize', 'copyAndInit')
-        .addItem('Initialize Triggers', 'initializeTriggers')
+        .addItem('Initialize Template Dispatch Triggers (Template only!)', 'initializeTemplateDispatchTriggers')
         .addItem('Initialize Monthly Trigger', 'initializeMonthlyTrigger')
         .addItem('Reinitialize this spreadsheet', 'reinitializeSheets')
         .addSeparator()
@@ -62,13 +62,24 @@ function showAbout() {
   SpreadsheetApp.getUi().showModalDialog(html, 'About F3 Go30');
 }
 
-function initializeTriggers() {
-  return GasLogger.run('initializeTriggers', function() {
-    setupDailyMinusOneTrigger();  // markMinusOne.js
-    setupFormSubmitTrigger(); // addResponseOnSubmit.js
-    // Daily nag emails at 10:00 — sendNagEmail defined in script/nag.js
+/**
+ * Installs the two daily ADR-010 dispatch triggers — minus-one marking (markMinusOne.js)
+ * and nag email (nag.js) — exactly once, on the Go30 Template only. Both triggers now
+ * resolve their target tracker per run via TrackerDB (resolveTrackerForContextDate), so
+ * they must not be installed per monthly copy; form-submit trigger setup happens
+ * automatically per tracker in CreateNewTracker.js and is not part of this menu item.
+ */
+function initializeTemplateDispatchTriggers() {
+  return GasLogger.run('initializeTemplateDispatchTriggers', function() {
+    if (typeof isTemplateHost_ === 'function' && !isTemplateHost_()) {
+      SpreadsheetApp.getUi().alert(
+        'This installs the daily ADR-010 dispatch triggers (minus-one marking, nag email). ' +
+        'Run this once, on the Go30 Template only — not on a monthly tracker copy.'
+      );
+    }
+    setupDailyMinusOneTrigger();
     if (typeof setupDailyNagTrigger === 'function') {
-      try { setupDailyNagTrigger(); } catch (e) { GasLogger.log('initializeTriggers.setupDailyNagTriggerFailed', { error: e.message }); }
+      try { setupDailyNagTrigger(); } catch (e) { GasLogger.log('initializeTemplateDispatchTriggers.setupDailyNagTriggerFailed', { error: e.message }); }
     }
   });
 }

@@ -395,11 +395,14 @@ function copyAndInit_() {
       hcUrl: formUrl
     });
 
+    // Form-submit dispatch (ADR-010): installed once here, from the Template, targeting
+    // the new tracker directly — no per-copy "Initialize Triggers" step required.
+    setupFormSubmitTrigger(newSpreadsheet);
+
   NoticeLog("-");
   NoticeLog('<b>Next steps:</b>');
   NoticeLog('1. Open the new spreadsheet (link above) and verify it looks correct');
-  NoticeLog('2. F3 Go30 Menu > Initialize Triggers');
-  NoticeLog('3. Open the HC form (link above) and verify it looks correct');
+  NoticeLog('2. Open the HC form (link above) and verify it looks correct');
   NoticeLog("-");
 
   const slackMsg = buildSlackMessage_(startDate.getFullYear(), MONTH_NAMES_[startDate.getMonth()], formShortUrl, trackerSheetShortUrl);
@@ -811,6 +814,10 @@ function autoGenerateNextMonthTracker_() {
       hcUrl: formUrl
     });
 
+    // Form-submit dispatch (ADR-010): installed once here, from the Template, targeting
+    // the new tracker directly — no per-copy "Initialize Triggers" step required.
+    setupFormSubmitTrigger(newSpreadsheet);
+
     const slackMsg = buildSlackMessage_(nextMonthStart.getFullYear(), MONTH_NAMES_[nextMonthStart.getMonth()], formShortUrl, trackerSheetShortUrl);
 
     var message = buildOnboardingEmailTemplate_({
@@ -821,15 +828,13 @@ function autoGenerateNextMonthTracker_() {
       ownerAccount: siteQConfig.primary,
       initSteps: [
         'Open the new spreadsheet and verify it looks correct',
-        'F3 Go30 Menu > Initialize Triggers',
         'Open the HC form and verify it looks correct'
       ],
       postCopyChecklist: [
         'Open new spreadsheet and verify layout',
-        'Run F3 Go30 > Initialize Triggers',
         'Open HC form and verify title + choices',
         'Verify Config rows (Signup HC Form, Sheet Template, Last Month Tracker, Site Q, NameSpace)',
-        'Confirm Links sheet entry for new tracker and form',
+        'Confirm TrackerDB sheet entry for new tracker and form',
         'Verify form sharing, file name and folder placement',
         'Run test reuse flow (Test Reuse menu or submit sample)',
         'Copy Slack message from sidebar and post to channel',
