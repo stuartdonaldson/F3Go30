@@ -6,25 +6,11 @@ _Saved 2026-06-25 for context handoff. Delete this file when work is complete._
 
 ## Current State
 
-Smoke test is mid-run on SIT. A smoke tracker exists with a SmokeTest PAX row but
-`#REF!` errors in Goals by HIM because Responses column order in the new tracker
-doesn't match what the template formulas expect.
+Smoke test re-run pending. Old smoke tracker trashed and smoke mode reactivated on SIT.
+Bug 3 fix deployed to SIT (v2.2.28). Waiting for human to run `copyAndInit` from SIT template.
 
-**Live smoke tracker:** `1iaZ4Udx2oMT5JP-x6oEg1Uc-0Zaxca-N81oBWXVW9xs`  
 **SMOKE_MODE:** active on SIT  
-**SMOKE_TRACKER_ID:** set to above ID  
-
-All commits are pushed except for the uncommitted diffs below.
-
----
-
-## Uncommitted Changes (not yet committed or tested)
-
-| File | Change |
-|------|--------|
-| `script/WebApp.js` | Added `listSheets` action; `getSheet` now accepts optional `sheetId` to read non-template spreadsheets |
-| `script/CreateNewTracker.js` | `autoGenerateNextMonthTracker_` now writes `SMOKE_TRACKER_ID` and appends ` (Smoke)` to nameSpace when smoke mode is active; `copySpreadsheetWithoutScript_` updated to always copy hidden sheets (interim — see work below) |
-| `CLAUDE.md` + `docs/OPERATIONS.md` | Smoke workflow step 5 now passes `sheetId` to `getSheet` |
+**SMOKE_TRACKER_ID:** null (cleared — new tracker not yet created)  
 
 ---
 
@@ -81,72 +67,76 @@ cause `#REF!`.
   (since that's where the submitted row lives for in-place reuse updates)
 
 ---
+## Refactor Note 
+
+`copyAndInit_` and `autoGenerateNextMonthTracker_` share ~150 lines of tracker creation
+logic. Suggested refactor: extract `createTrackerSpreadsheet_(options)` with a `notifyFn`
+callback for the notification difference (sidebar vs email). Consider if doing this now helps optimize any of this plan.
 
 ## Sheet Index — SIT Template (needs your edits)
 
-Edit the **Tracker disposition** column. Options: `Visible`, `Hidden`, `Delete`.
-
+When copying to a new tracker spreadsheet, the Tracker disposition column below identifies what to do with each sheet in the new tracker.
 `Delete` = remove from tracker copy (template-only sheets).  
 `Hidden` = copy but hide in tracker.  
 `Visible` = copy and keep visible.  
+All Tracker disposition is to be deleted from the tracker.
+Make no changes to the SIT or Template sheets based on this.
 
 | # | Sheet | Hidden in template | Tracker disposition | Notes |
 |---|-------|:-----------------:|---------------------|-------|
 | 1 | Tracker | No | Visible | Primary PAX scoring grid |
 | 2 | Config | No | Hidden | Runtime config |
-| 3 | ListDB | No | Hidden | AO/goal lists for signup webapp |
-| 4 | Links | No | ? | Old name for TrackerDB? |
+| 3 | ListDB | No | Delete | AO/goal lists for signup webapp |
+| 4 | Links | No | Delete from template | Old name for TrackerDB? |
 | 5 | TrackerDB | No | Delete | Template-only — all tracker history |
 | 6 | Inspiration | Yes | Hidden | Referenced by onOpen |
 | 7 | Bonus Tracker | No | Visible | Bonus scoring |
-| 8 | Periods | Yes | ? | Unknown — likely formula lookup |
-| 9 | Controls | No | ? | Unknown — formula inputs? |
+| 8 | Periods | Yes | Hidden | Lookup date to week number periods |
+| 9 | Controls | No | Hidden | Bonus Types used in Tracker sheet and Bonus calculation |
 | 10 | Team Score | No | Visible | Derived team scores |
 | 11 | Responses | No | Hidden | Form submission store — copy from template |
-| 12 | PaxDB | No | Delete | Template-only — cross-tracker PAX history |
-| 13 | Pivot Table 22 | No | ? | Old pivot — keep or delete? |
-| 14 | HIM Score | No | Visible | Individual scores |
+| 12 | PaxDB | No | Delete | Template use for cross-tracker PAX history |
+| 13 | Pivot Table 22 | No | Delete | Old pivot — keep or delete? |
+| 14 | HIM Score | No | Visible | Individual chart/progress |
 | 15 | Goals by HIM | No | Visible | Formula sheet; references Responses by column position |
-| 16 | UBonus Tracker | Yes | ? | Hidden in template — likely formula dependency |
-| 17 | Goals by AO | No | Visible | Formula sheet; references Responses |
+| 16 | UBonus Tracker | Yes | Hidden | Formulas for Bonus calculations |
+| 17 | Goals by AO | No | Visible | Goals organized by AO; references Responses |
 | 18 | FunFacts | No | Hidden | Nag email fun facts |
 | 19 | Help | No | Visible | Operator help |
-| 20 | Activity | Yes | Hidden | Audit log |
+| 20 | Activity | Yes | Delete | Audit log |
 
 ---
 
-## Planned Code Changes (not started)
+## Planned Code Changes — DONE (v2.2.28)
 
-### 1. `copySpreadsheetWithoutScript_` — drive from sheet index
-Replace heuristic exclusion logic with the sheet index above.
-- Copy sheets marked `Visible` or `Hidden`; skip sheets marked `Delete`
-- Restore hidden state after copy
-- Responses is now `Hidden` → gets copied (fixes Bug 3)
+### 1. `copySpreadsheetWithoutScript_` ✓ — driven by TRACKER_SHEET_INDEX_
+### 2. `hideInternalSheets_` ✓ — driven by TRACKER_SHEET_INDEX_
+### 3. Delete "Form Responses 1" ✓ — both copyAndInit_ and autoGenerateNextMonthTracker_
+### 4. `addResponseOnSubmit.js` ✓ — appendToResponsesSheet_ maps form row → Responses column order
 
-### 2. `hideInternalSheets_` — replace `visibleAllowList` with sheet index
-Currently hardcoded. Should derive from the same index.
+## Smoke Workflow — Next Steps
 
-### 3. `copyAndInit_` and `autoGenerateNextMonthTracker_` — don't rename "Form Responses 1"
-After `form.setDestination()`, delete "Form Responses 1" instead of renaming to "Responses".
+Smoke mode is active on SIT. Old tracker has been torn down (trashed).
 
-### 4. `addResponseOnSubmit.js` — trigger copies processed row into Responses
-See Trigger change needed section above.
-
-### 5. Smoke workflow — teardown current smoke tracker, re-run after fixes deployed
-After all code changes deployed:
 ```bash
+# Step 3: (MANUAL) Run copyAndInit from SIT template spreadsheet menu
+# Step 4: After tracker is created, get its ID:
+node tools/callWebapp.js getSmokeStatus --env sit
+# Step 5: Sign up a test PAX
+node tools/callWebapp.js identify --cmd signup --env sit \
+  --body '{"f3Name":"SmokeTest","email":"smoke@example.com"}'
+# Step 6: Verify Tracker sheet (replace SMOKE_TRACKER_ID with value from getSmokeStatus)
+node tools/callWebapp.js getSheet --env sit \
+  --body '{"sheetId":"<SMOKE_TRACKER_ID>","sheetName":"Tracker"}'
+# Step 7: Human: confirm spreadsheet + Goals by HIM has no #REF! errors → proceed
+# Step 8: Teardown
 node tools/callWebapp.js cleanupTracker --env sit \
-  --body '{"sheetId":"1iaZ4Udx2oMT5JP-x6oEg1Uc-0Zaxca-N81oBWXVW9xs","trashSpreadsheet":true}'
+  --body '{"sheetId":"<SMOKE_TRACKER_ID>","trashSpreadsheet":true}'
 node tools/callWebapp.js setScriptProperties --env sit \
   --body '{"properties":{"SMOKE_MODE":"","SMOKE_TRACKER_ID":""}}'
-# Then re-run full smoke from step 1
+# Step 9: Confirm clean
+node tools/callWebapp.js getSmokeStatus --env sit
 ```
 
 ---
 
-## Refactor Note (file separately when ready)
-
-`copyAndInit_` and `autoGenerateNextMonthTracker_` share ~150 lines of tracker creation
-logic. Suggested refactor: extract `createTrackerSpreadsheet_(options)` with a `notifyFn`
-callback for the notification difference (sidebar vs email). File as a separate bd issue
-after smoke test passes.

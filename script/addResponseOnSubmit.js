@@ -17,6 +17,9 @@ var getConfigValue_ = (typeof globalThis !== 'undefined' && globalThis.getConfig
 var getResponseEmailValue_ = (addResponseResponseUtilsModule_ && addResponseResponseUtilsModule_.getResponseEmailValue_)
   || (typeof globalThis !== 'undefined' && globalThis.getResponseEmailValue_)
   || null;
+var buildResponseFieldCopyPlan_ = (addResponseResponseUtilsModule_ && addResponseResponseUtilsModule_.buildResponseFieldCopyPlan_)
+  || (typeof globalThis !== 'undefined' && globalThis.buildResponseFieldCopyPlan_)
+  || null;
 
 /**
  * Installs the form-submit trigger for a specific tracker spreadsheet. Callable from any
@@ -136,8 +139,27 @@ function resolveFormSubmitSpreadsheet_(e) {
   return e.range.getSheet().getParent();
 }
 
+/**
+ * Maps a processed form-submission row (form column order) into the Responses sheet
+ * (template column order) and appends it. Returns the 1-based row number of the appended row.
+ */
+function appendToResponsesSheet_(responsesSheet, formResponses, formColumns) {
+  var responsesColumns = resolveResponseColumns(responsesSheet);
+  var responsesRow = new Array(responsesSheet.getLastColumn()).fill('');
+  if (typeof buildResponseFieldCopyPlan_ === 'function') {
+    buildResponseFieldCopyPlan_(formColumns, formResponses, responsesColumns).forEach(function(item) {
+      if (item.targetIndex < responsesRow.length) responsesRow[item.targetIndex] = item.value;
+    });
+  }
+  responsesSheet.appendRow(responsesRow);
+  return responsesSheet.getLastRow();
+}
+
 function onFormSubmitLocked_(e) {
   var sheet = resolveFormSubmitSpreadsheet_(e);
+  // formSubmitSheet: the form destination sheet created by setDestination — resolved from
+  // e.range so this handler works centrally from the Template project (ADR-010).
+  var formSubmitSheet = e.range.getSheet();
   var responsesSheet = sheet.getSheetByName('Responses');
   var destinationSheet = sheet.getSheetByName('Tracker');
 
@@ -146,9 +168,9 @@ function onFormSubmitLocked_(e) {
     return;
   }
 
-  // resolveResponseColumns throws fast if any required header is absent — no silent failures.
-  var responseColumns = resolveResponseColumns(responsesSheet);
-  var responseHeaders = responsesSheet.getRange(1, 1, 1, responsesSheet.getLastColumn()).getValues()[0];
+  // Resolve columns from the form destination sheet — its header order matches the submitted row.
+  var responseColumns = resolveResponseColumns(formSubmitSheet);
+  var responseHeaders = formSubmitSheet.getRange(1, 1, 1, formSubmitSheet.getLastColumn()).getValues()[0];
 
   // Use e.range to identify the exact submitted row, avoiding getLastRow() race with concurrent submissions.
   var submittedRowNumber = e.range.getRow();
@@ -164,25 +186,30 @@ function onFormSubmitLocked_(e) {
   }
 
   // Phase 1 — Reuse last month's goals if the participant requested it.
+  // Passes formSubmitSheet so in-place updates land on the row where e.range lives.
   // Returns formResponses unchanged when reuse was not selected.
-  formResponses = maybeReuseLastMonthsGoals_(sheet, responsesSheet, submittedRowNumber, formResponses);
+  formResponses = maybeReuseLastMonthsGoals_(sheet, formSubmitSheet, submittedRowNumber, formResponses);
   maybeSendRegistrationConfirmation_(sheet, destinationSheet, responseColumns, formResponses, responseHeaders);
-
-  // Phase 2 — Dedup Responses sheet: remove any prior row for the same F3 Name so that
-  // sheets querying Responses (Goals by HIM, Goals by AO) show only the latest submission.
-  // Keyed on F3 Name (not email) per ADR-008 — allows a PAX to change their email address.
-  var f3Name = getResponseValue_(formResponses, responseColumns, 'F3_NAME');
-  GasLogger.log('formSubmit.dedupStart', { submittedRow: submittedRowNumber, f3Name: f3Name });
-  deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, responseColumns);
 
   // Phase 3 — Resolve Team: if TEAM is blank but OTHER_TEAM is set, promote OTHER_TEAM → TEAM.
   // Runs after reuse so it applies whether data came from this submission or last month's.
+  // Writes back to formSubmitSheet (the authoritative submitted row).
   var otherTeamVal = getResponseValue_(formResponses, responseColumns, 'OTHER_TEAM');
   if (!getResponseValue_(formResponses, responseColumns, 'TEAM') && otherTeamVal) {
     formResponses[responseColumns.TEAM] = otherTeamVal;
-    responsesSheet.getRange(submittedRowNumber, responseColumns.TEAM + 1).setValue(otherTeamVal);
+    formSubmitSheet.getRange(submittedRowNumber, responseColumns.TEAM + 1).setValue(otherTeamVal);
     GasLogger.log('formSubmit.teamPromoted', { otherTeam: otherTeamVal });
   }
+
+  // Append the processed row to Responses (template column order) — Goals by HIM/AO read here.
+  var f3Name = getResponseValue_(formResponses, responseColumns, 'F3_NAME');
+  var appendedRowNumber = appendToResponsesSheet_(responsesSheet, formResponses, responseColumns);
+
+  // Phase 2 — Dedup Responses sheet using the just-appended row as the keeper.
+  // Keyed on F3 Name (not email) per ADR-008 — allows a PAX to change their email address.
+  GasLogger.log('formSubmit.dedupStart', { submittedRow: appendedRowNumber, f3Name: f3Name });
+  var responsesColumns = resolveResponseColumns(responsesSheet);
+  deduplicateResponsesSheet_(responsesSheet, appendedRowNumber, f3Name, responsesColumns);
 
   // Phase 4 — Write to Tracker.
   var trackerLastRow = destinationSheet.getLastRow();
@@ -303,6 +330,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getTrackerStartDate_,
     formatRegistrationMonth_,
     maybeSendRegistrationConfirmation_,
+    appendToResponsesSheet_,
     onFormSubmitLocked_,
     resolveFormSubmitSpreadsheet_,
     setupFormSubmitTrigger,

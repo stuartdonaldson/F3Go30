@@ -140,9 +140,10 @@ function makeFakeSheet(name) {
   };
 }
 
-const allowListNames = ['Tracker', 'Bonus Tracker', 'Team Score', 'HIM Score', 'Goals by HIM', 'Goals by AO', 'Help'];
-const otherNames = ['TrackerDB', 'Responses', 'PaxDB', 'Config'];
-const allSheets = allowListNames.concat(otherNames).map(makeFakeSheet);
+const visibleNames  = ['Tracker', 'Bonus Tracker', 'Team Score', 'HIM Score', 'Goals by HIM', 'Goals by AO', 'Help'];
+const hiddenNames   = ['Config', 'Responses'];
+const deleteNames   = ['TrackerDB', 'PaxDB'];
+const allSheets = visibleNames.concat(hiddenNames).concat(deleteNames).map(makeFakeSheet);
 
 const fakeSpreadsheet = {
   getSheets: function() { return allSheets; },
@@ -154,8 +155,9 @@ const fakeSpreadsheet = {
 
 hideInternalSheets_(fakeSpreadsheet);
 
-assert.deepEqual(hiddenSheets.sort(), ['Config', 'Responses', 'TrackerDB']);
-assert.deepEqual(deletedSheets, ['PaxDB']);
+assert.deepEqual(hiddenSheets.sort(), ['Config', 'Responses']);
+assert.deepEqual(deletedSheets.sort(), ['PaxDB', 'TrackerDB']);
+assert.ok(hiddenSheets.indexOf('TrackerDB') === -1);
 assert.ok(hiddenSheets.indexOf('PaxDB') === -1);
 
 console.log('test_create_new_tracker.js: PASS');

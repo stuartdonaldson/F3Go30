@@ -7,7 +7,21 @@ global.SpreadsheetApp = {};
 global.ScriptApp = {};
 global.runWithLock = function(fn) { fn(); return true; };
 global.getResponseValue_ = function(row, cols, key) { return row[cols[key]] || ''; };
-global.resolveResponseColumns = function(sheet) { return {}; };
+global.resolveResponseColumns = function(sheet) {
+  if (sheet && sheet._headers && typeof sheet._headers === 'object' && !Array.isArray(sheet._headers)) {
+    return sheet._headers;
+  }
+  return {};
+};
+global.buildResponseFieldCopyPlan_ = function(srcCols, srcRow, tgtCols) {
+  const plan = [];
+  Object.keys(srcCols).forEach(function(key) {
+    if (typeof tgtCols[key] === 'number') {
+      plan.push({ field: key, targetIndex: tgtCols[key], value: srcRow[srcCols[key]] });
+    }
+  });
+  return plan;
+};
 global.maybeReuseLastMonthsGoals_ = function(ss, respSheet, rowNum, responses) { return responses; };
 global.buildGoalSummaryLinesFromResponse_ = function() { return ['Who: Leader']; };
 global.sendRegistrationConfirmationEmail_ = function(spreadsheet, email, f3Name, trackerUrl, formUrl, summaryLines, registrationMonth) {
@@ -24,7 +38,8 @@ const {
   deduplicateResponsesSheet_,
   getTrackerStartDate_,
   formatRegistrationMonth_,
-  maybeSendRegistrationConfirmation_
+  maybeSendRegistrationConfirmation_,
+  appendToResponsesSheet_
 } = require('../script/addResponseOnSubmit.js');
 
 // Helper: build a single-column values array as getRange().getValues() returns.
@@ -203,6 +218,35 @@ function col(values) {
 
   assert.equal(sent, false, 'reuse path skips generic confirmation');
   assert.deepEqual(global._registrationConfirmationCalls, []);
+}
+
+// appendToResponsesSheet_: maps form-order row to Responses column order and appends.
+{
+  const appended = [];
+  const formHeaders   = ['Timestamp', 'Email Address', 'F3 Name', 'Team', 'WHAT is your Go30 Challenge?'];
+  const responsesHeaders = ['Timestamp', 'Email Address', 'F3 Name', 'WHAT is your Go30 Challenge?', 'Team'];
+  const formSubmitSheet = {
+    _headers: { TIMESTAMP: 0, EMAIL: 1, F3_NAME: 2, TEAM: 3, WHAT: 4 },
+    getLastColumn: function() { return formHeaders.length; },
+    getRange: function() { return { getValues: function() { return [formHeaders]; } }; }
+  };
+  const responsesSheet = {
+    _headers: { TIMESTAMP: 0, EMAIL: 1, F3_NAME: 2, WHAT: 3, TEAM: 4 },
+    getLastColumn: function() { return responsesHeaders.length; },
+    getRange: function() { return { getValues: function() { return [responsesHeaders]; } }; },
+    appendRow: function(row) { appended.push(row); },
+    getLastRow: function() { return 3; }
+  };
+
+  const formRow   = ['2026-06-25', 'anchor@example.com', 'Anchor', 'AO-Team', 'My Challenge'];
+  const formCols  = { TIMESTAMP: 0, EMAIL: 1, F3_NAME: 2, TEAM: 3, WHAT: 4 };
+
+  const rowNum = appendToResponsesSheet_(responsesSheet, formRow, formCols);
+  assert.equal(rowNum, 3, 'returns appended row number');
+  assert.equal(appended.length, 1, 'appendRow called once');
+  assert.equal(appended[0][2], 'Anchor',          'F3_NAME mapped to Responses col 2');
+  assert.equal(appended[0][3], 'My Challenge',     'WHAT mapped to Responses col 3');
+  assert.equal(appended[0][4], 'AO-Team',          'TEAM mapped to Responses col 4');
 }
 
 console.log('test_add_response_on_submit.js: PASS');

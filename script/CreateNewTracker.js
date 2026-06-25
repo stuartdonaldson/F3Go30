@@ -16,6 +16,31 @@ var LINKS_SHEET_COLUMN_MAP_ = {
   averageScore: { header: 'AverageScore', optional: true }
 };
 
+// Sheet disposition for tracker copies. Sheets marked Delete are skipped during copy;
+// Hidden are copied but hidden; Visible are copied and left visible.
+var TRACKER_SHEET_INDEX_ = {
+  'Tracker':         'Visible',
+  'Config':          'Hidden',
+  'ListDB':          'Delete',
+  'Links':           'Delete',
+  'TrackerDB':       'Delete',
+  'Inspiration':     'Hidden',
+  'Bonus Tracker':   'Visible',
+  'Periods':         'Hidden',
+  'Controls':        'Hidden',
+  'Team Score':      'Visible',
+  'Responses':       'Hidden',
+  'PaxDB':           'Delete',
+  'Pivot Table 22':  'Delete',
+  'HIM Score':       'Visible',
+  'Goals by HIM':    'Visible',
+  'UBonus Tracker':  'Hidden',
+  'Goals by AO':     'Visible',
+  'FunFacts':        'Hidden',
+  'Help':            'Visible',
+  'Activity':        'Delete'
+};
+
 function buildLinksHeaderIndex_(headers) {
   const headerIndex = {};
   (headers || []).forEach((header, index) => {
@@ -126,18 +151,13 @@ function writeTrackerConfigRows_(configSheet, formName, formUrl, templateUrl) {
 function hideInternalSheets_(spreadsheet) {
   if (!spreadsheet || typeof spreadsheet.getSheets !== 'function') return;
 
-  var visibleAllowList = ['Tracker', 'Bonus Tracker', 'Team Score', 'HIM Score', 'Goals by HIM', 'Goals by AO', 'Help'];
-
   spreadsheet.getSheets().forEach(function(sheet) {
     var name = sheet.getName();
-    if (name === 'PaxDB') {
-      if (typeof spreadsheet.deleteSheet === 'function') {
-        spreadsheet.deleteSheet(sheet);
-      }
-      return;
-    }
-    if (visibleAllowList.indexOf(name) === -1 && typeof sheet.hideSheet === 'function') {
-      sheet.hideSheet();
+    var disposition = TRACKER_SHEET_INDEX_[name];
+    if (disposition === 'Delete') {
+      if (typeof spreadsheet.deleteSheet === 'function') spreadsheet.deleteSheet(sheet);
+    } else if (disposition !== 'Visible') {
+      if (typeof sheet.hideSheet === 'function') sheet.hideSheet();
     }
   });
 }
@@ -290,11 +310,13 @@ function copyAndInit_() {
       'Questions? Contact ' + siteQConfig.primary + ' (' + siteQEmail + ').';
     form.setConfirmationMessage(confirmationMessage);
 
-    // Link form responses to new spreadsheet — setDestination creates "Form Responses 1"
+    // Link form responses to new spreadsheet — setDestination creates "Form Responses 1".
+    // Delete it: Responses was already copied from the template in template column order.
+    // The onFormSubmit trigger writes processed rows into Responses after each submission.
     form.setDestination(FormApp.DestinationType.SPREADSHEET, newSpreadsheetId);
     SpreadsheetApp.flush();
     newSpreadsheet.getSheets().forEach(function(s) {
-      if (/^Form Responses/.test(s.getName())) s.setName('Responses');
+      if (/^Form Responses/.test(s.getName())) newSpreadsheet.deleteSheet(s);
     });
 
     const formUrl = form.getPublishedUrl();
@@ -467,14 +489,11 @@ function copySpreadsheetWithoutScript_(sourceSpreadsheet, newName) {
   var sourceSheets = sourceSpreadsheet.getSheets();
   for (var i = 0; i < sourceSheets.length; i++) {
     var srcSheet = sourceSheets[i];
-    // Always copy hidden sheets — they carry lookup data that formulas depend on.
-    // Only exclude visible sheets explicitly (currently just Responses, which is
-    // created fresh by form.setDestination to match the live form's column order).
-    if (srcSheet.isSheetHidden() || srcSheet.getName() !== 'Responses') {
-      var copiedSheet = srcSheet.copyTo(newSS);
-      copiedSheet.setName(srcSheet.getName());
-      if (srcSheet.isSheetHidden()) copiedSheet.hideSheet();
-    }
+    var disposition = TRACKER_SHEET_INDEX_[srcSheet.getName()];
+    if (!disposition || disposition === 'Delete') continue;
+    var copiedSheet = srcSheet.copyTo(newSS);
+    copiedSheet.setName(srcSheet.getName());
+    if (disposition === 'Hidden') copiedSheet.hideSheet();
   }
   newSS.deleteSheet(defaultSheet);
 
@@ -857,11 +876,13 @@ function autoGenerateNextMonthTracker_() {
       'Questions? Contact ' + siteQName + ' (' + siteQEmail + ').'
     );
 
-    // Link form responses to new spreadsheet — setDestination creates "Form Responses 1"
+    // Link form responses to new spreadsheet — setDestination creates "Form Responses 1".
+    // Delete it: Responses was already copied from the template in template column order.
+    // The onFormSubmit trigger writes processed rows into Responses after each submission.
     form.setDestination(FormApp.DestinationType.SPREADSHEET, newSpreadsheetId);
     SpreadsheetApp.flush();
     newSpreadsheet.getSheets().forEach(function(s) {
-      if (/^Form Responses/.test(s.getName())) s.setName('Responses');
+      if (/^Form Responses/.test(s.getName())) newSpreadsheet.deleteSheet(s);
     });
 
     const formUrl = form.getPublishedUrl();
