@@ -134,9 +134,9 @@ function shortenUrlWithTinyUrl(longUrl, customAlias) {
     "url": longUrl
   };
 
-  // Add custom alias if provided
+  // Add custom alias if provided — TinyURL requires [a-zA-Z0-9_-] only
   if (customAlias) {
-    payload.alias = customAlias;
+    payload.alias = customAlias.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9_-]/g, '');
   }
 
   const options = {

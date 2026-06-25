@@ -221,31 +221,37 @@ function copyAndInit_() {
   const paddedMonth = String(startDate.getMonth() + 1).padStart(2, '0');
   const newSpreadsheetName = startDate.getFullYear() + '-' + paddedMonth + '-' + nameSpace;
 
+  // Pre-checks before creating any artifacts — fail here so no orphan is created
+  const currentSpreadsheetFile = DriveApp.getFileById(currentSpreadsheet.getId());
+  const parents = currentSpreadsheetFile.getParents();
+  if (!parents.hasNext()) {
+    NoticeLog('Error: cannot determine folder — spreadsheet must be in a Drive folder, not in My Drive root.');
+    return;
+  }
+  const folder = parents.next();
+
+  const templateFormUrl = currentSpreadsheet.getFormUrl();
+  if (!templateFormUrl) {
+    NoticeLog('Error: no form linked to the template spreadsheet — the template must have an associated Google Form.');
+    return;
+  }
+
   NoticeLog('Creating ' + newSpreadsheetName + '. Please wait...');
   let newSpreadsheet;
   let newSpreadsheetId = null;
   try {
-      NoticeLog('Copying spreadsheet...');
-      newSpreadsheet = currentSpreadsheet.copy(newSpreadsheetName);
-      newSpreadsheetId = newSpreadsheet.getId();
-      if (smokeMode) {
-        PropertiesService.getScriptProperties().setProperty('SMOKE_TRACKER_ID', newSpreadsheetId);
-      }
+    NoticeLog('Copying spreadsheet...');
+    newSpreadsheet = copySpreadsheetWithoutScript_(currentSpreadsheet, newSpreadsheetName);
+    newSpreadsheetId = newSpreadsheet.getId();
+    if (smokeMode) {
+      PropertiesService.getScriptProperties().setProperty('SMOKE_TRACKER_ID', newSpreadsheetId);
+    }
 
-      // Move the new spreadsheet to the same folder as the current spreadsheet
-      const currentSpreadsheetFile = DriveApp.getFileById(currentSpreadsheet.getId());
-      const newSpreadsheetFile = DriveApp.getFileById(newSpreadsheetId);
-      const parents = currentSpreadsheetFile.getParents();
-      if (!parents.hasNext()) {
-        NoticeLog('Error: cannot determine folder — spreadsheet must be in a Drive folder, not in My Drive root.');
-        NoticeLog('Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.');
-        return;
-      }
-      const folder = parents.next();
-      newSpreadsheetFile.moveTo(folder);
+    const newSpreadsheetFile = DriveApp.getFileById(newSpreadsheetId);
+    newSpreadsheetFile.moveTo(folder);
 
-      // PAX interact via the Form only — VIEW permission is sufficient and prevents data corruption
-      newSpreadsheetFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    // PAX interact via the Form only — VIEW permission is sufficient and prevents data corruption
+    newSpreadsheetFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
     // Get the URL to the "Tracker" sheet
     const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
@@ -268,32 +274,30 @@ function copyAndInit_() {
 
     NoticeLog('New spreadsheet tracker sheet link: ' + createHtmlLink(newSpreadsheetName, trackerSheetShortUrl));
 
-    // Update the form name and title, and move to the new folder
-    NoticeLog('Updating form...');
+    // Copy form from template and link to new spreadsheet
+    NoticeLog('Copying form...');
+    const formName = newSpreadsheetName + ' HC';
+    const paddedDay = String(startDate.getDate()).padStart(2, '0');
+    const ftitle = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay + ' HC Form';
 
-      const formUrl = newSpreadsheet.getFormUrl();
-      if (!formUrl) {
-        NoticeLog('Error: no form linked to the new spreadsheet — ensure the template has an associated form.');
-        NoticeLog('Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.');
-        return;
-      }
-      const form = FormApp.openByUrl(formUrl);
-      const formName = newSpreadsheetName + " HC";
-      const paddedDay = String(startDate.getDate()).padStart(2, '0');
-      const ftitle = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay + ' HC Form';
-      form.setTitle(ftitle);
-      ensureReuseOptionOnLinkedForm_(form);
-      const confirmationMessage =
-        'Thank you for your Hard Commit!\n\n' +
-        'View the Go30 tracker here: ' + trackerSheetShortUrl + '\n\n' +
-        'Questions? Contact ' + siteQConfig.primary + ' (' + siteQEmail + ').';
-      form.setConfirmationMessage(confirmationMessage);
+    const newFormFile = DriveApp.getFileById(FormApp.openByUrl(templateFormUrl).getId()).makeCopy(formName, folder);
+    const form = FormApp.openById(newFormFile.getId());
+    form.setTitle(ftitle);
+    ensureReuseOptionOnLinkedForm_(form);
+    const confirmationMessage =
+      'Thank you for your Hard Commit!\n\n' +
+      'View the Go30 tracker here: ' + trackerSheetShortUrl + '\n\n' +
+      'Questions? Contact ' + siteQConfig.primary + ' (' + siteQEmail + ').';
+    form.setConfirmationMessage(confirmationMessage);
 
-      // change the filename of the form to formName
-      const formFile = DriveApp.getFileById(form.getId());
-      formFile.setName(formName);
-      formFile.moveTo(folder);
+    // Link form responses to new spreadsheet — setDestination creates "Form Responses 1"
+    form.setDestination(FormApp.DestinationType.SPREADSHEET, newSpreadsheetId);
+    SpreadsheetApp.flush();
+    newSpreadsheet.getSheets().forEach(function(s) {
+      if (/^Form Responses/.test(s.getName())) s.setName('Responses');
+    });
 
+    const formUrl = form.getPublishedUrl();
     const formAlias = newSpreadsheetName + 'HC';
     let formShortUrl = formUrl;
     try {
@@ -301,7 +305,6 @@ function copyAndInit_() {
     } catch (error) {
       NoticeLog('Shorten URL failed for form: ' + error.message);
     }
-
     if (!formShortUrl.startsWith('https://tinyurl.com')) {
       GasLogger.log('copyAndInit.warning', { warning: 'urlShortener failed for HC form', alias: formAlias });
     }
@@ -451,6 +454,43 @@ function initializeConfigSheet() {
  * @param {Spreadsheet} newSpreadsheet - The Google Spreadsheet object containing the sheets to initialize.
  * @param {Date} startDate - The start date used to populate the "Tracker" sheet.
  */
+/**
+ * Creates a new spreadsheet from `sourceSpreadsheet` by copying sheets individually,
+ * so the copy has no container-bound Apps Script. The "Responses" sheet is excluded —
+ * the caller must link a Google Form via setDestination, which auto-creates it.
+ * Named ranges are recreated because sheet.copyTo does not carry spreadsheet-scoped ranges.
+ */
+function copySpreadsheetWithoutScript_(sourceSpreadsheet, newName) {
+  var newSS = SpreadsheetApp.create(newName);
+  var defaultSheet = newSS.getSheets()[0]; // "Sheet1" — removed after all sheets are copied
+
+  var sourceSheets = sourceSpreadsheet.getSheets();
+  for (var i = 0; i < sourceSheets.length; i++) {
+    var srcSheet = sourceSheets[i];
+    if (srcSheet.getName() !== 'Responses') {
+      srcSheet.copyTo(newSS).setName(srcSheet.getName());
+    }
+  }
+  newSS.deleteSheet(defaultSheet);
+
+  // Recreate named ranges (not transferred by sheet.copyTo)
+  var namedRanges = sourceSpreadsheet.getNamedRanges();
+  for (var j = 0; j < namedRanges.length; j++) {
+    var nr = namedRanges[j];
+    try {
+      var srcRange = nr.getRange();
+      var destSheet = newSS.getSheetByName(srcRange.getSheet().getName());
+      if (destSheet) {
+        newSS.setNamedRange(nr.getName(), destSheet.getRange(srcRange.getA1Notation()));
+      }
+    } catch (e) {
+      Logger.log('copySpreadsheetWithoutScript_: named range ' + nr.getName() + ' — ' + e.message);
+    }
+  }
+
+  return newSS;
+}
+
 function initSheets(newSpreadsheet, startDate) {
 
   const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
@@ -760,16 +800,22 @@ function autoGenerateNextMonthTracker_() {
 
   let newSpreadsheetId = null;
   try {
-    const newSpreadsheet = currentSpreadsheet.copy(newSpreadsheetName);
-    newSpreadsheetId = newSpreadsheet.getId();
+    const templateFormUrl = currentSpreadsheet.getFormUrl();
+    if (!templateFormUrl) {
+      throw new Error('No form linked to template spreadsheet — ensure template has an associated form.');
+    }
 
     const currentFile = DriveApp.getFileById(currentSpreadsheet.getId());
-    const newFile = DriveApp.getFileById(newSpreadsheetId);
     const parents = currentFile.getParents();
     if (!parents.hasNext()) {
       throw new Error('Spreadsheet must be in a Drive folder, not in My Drive root.');
     }
     const folder = parents.next();
+
+    const newSpreadsheet = copySpreadsheetWithoutScript_(currentSpreadsheet, newSpreadsheetName);
+    newSpreadsheetId = newSpreadsheet.getId();
+
+    const newFile = DriveApp.getFileById(newSpreadsheetId);
     newFile.moveTo(folder);
     newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
@@ -789,13 +835,11 @@ function autoGenerateNextMonthTracker_() {
       GasLogger.log('autoGenerateNextMonthTracker.warning', { warning: 'urlShortener failed for tracker sheet', alias: newSpreadsheetName });
     }
 
-    const formUrl = newSpreadsheet.getFormUrl();
-    if (!formUrl) {
-      throw new Error('No form linked to new spreadsheet — ensure template has an associated form.');
-    }
-    const form = FormApp.openByUrl(formUrl);
+    // Copy form from template and link to new spreadsheet
     const formName = newSpreadsheetName + ' HC';
     const ftitle = nextMonthStart.getFullYear() + '-' + paddedMonth + '-01 HC Form';
+    const newFormFile = DriveApp.getFileById(FormApp.openByUrl(templateFormUrl).getId()).makeCopy(formName, folder);
+    const form = FormApp.openById(newFormFile.getId());
     form.setTitle(ftitle);
     ensureReuseOptionOnLinkedForm_(form);
     form.setConfirmationMessage(
@@ -804,9 +848,14 @@ function autoGenerateNextMonthTracker_() {
       'Questions? Contact ' + siteQName + ' (' + siteQEmail + ').'
     );
 
-    const formFile = DriveApp.getFileById(form.getId());
-    formFile.setName(formName);
-    formFile.moveTo(folder);
+    // Link form responses to new spreadsheet — setDestination creates "Form Responses 1"
+    form.setDestination(FormApp.DestinationType.SPREADSHEET, newSpreadsheetId);
+    SpreadsheetApp.flush();
+    newSpreadsheet.getSheets().forEach(function(s) {
+      if (/^Form Responses/.test(s.getName())) s.setName('Responses');
+    });
+
+    const formUrl = form.getPublishedUrl();
 
     const newConfigSheet = newSpreadsheet.getSheetByName('Config');
     writeTrackerConfigRows_(newConfigSheet, formName, formUrl, currentSpreadsheet.getUrl());
