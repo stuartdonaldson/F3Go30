@@ -5,6 +5,12 @@ const {
   readEmailDeliveryPolicy_,
 } = require('../script/Utilities.js');
 
+global.PropertiesService = {
+  getScriptProperties: function() {
+    return { getProperty: function() { return null; } };
+  }
+};
+
 global.HtmlService = {
   createTemplateFromFile: function(fileName) {
     assert.equal(fileName, 'ReminderEmailTemplate');

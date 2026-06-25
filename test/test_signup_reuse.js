@@ -314,7 +314,8 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     assert.equal(mailsSent.length, 0, 'non-reuse choice: no email sent');
 }
 
-// Test: reuse choice, no PaxDB record for this F3 Name → sends no-reuse email, returns formResponses unchanged
+// Test: reuse choice, no PaxDB record for this F3 Name → returns formResponses unchanged, no email sent
+// (webapp signup path does not send a no-reuse notification; that email belonged to the form-submit path)
 {
     mailsSent = [];
     loggerMessages = [];
@@ -325,11 +326,10 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
         makeMockResponsesSheet(HEADERS), 2, formRow
     );
     assert.deepEqual(result, formRow, 'no PaxDB record: formResponses unchanged');
-    assert.equal(mailsSent.length, 1, 'no PaxDB record: one email sent');
-    assert.ok(!mailsSent[0].subj.includes('reused'), 'no PaxDB record: email signals no-reuse');
+    assert.equal(mailsSent.length, 0, 'no PaxDB record: no email sent');
 }
 
-// Test: reuse choice, prior PaxDB record found → merges values, sends reuse email
+// Test: reuse choice, prior PaxDB record found → merges values, no email sent
 {
     mailsSent = [];
     loggerMessages = [];
@@ -352,13 +352,12 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     assert.equal(result[responseColumns.WHAT], 'Run hard', 'what merged');
     assert.equal(result[responseColumns.HOW], 'Track daily', 'how merged');
     assert.equal(result[responseColumns.PHONE], '555-9999', 'phone merged');
-    assert.equal(mailsSent.length, 1, 'exactly one email sent');
-    assert.ok(mailsSent[0].subj.includes('reused'), 'email signals goals reused');
+    assert.equal(mailsSent.length, 0, 'no email sent on reuse');
 
     global._mockManagedSheet = null;
 }
 
-// Test: reuse choice, F3 Name not found in PaxDB → sends no-reuse email
+// Test: reuse choice, F3 Name not found in PaxDB → no email sent
 {
     mailsSent = [];
     loggerMessages = [];
@@ -373,13 +372,12 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     );
 
     assert.deepEqual(result, formRow, 'not-found: formResponses unchanged');
-    assert.equal(mailsSent.length, 1, 'not-found: one email');
-    assert.ok(!mailsSent[0].subj.includes('reused'), 'not-found: email signals no-reuse');
+    assert.equal(mailsSent.length, 0, 'not-found: no email sent');
 
     global._mockManagedSheet = null;
 }
 
-// Test: PaxDB lookup throws → logs failure, still sends a graceful no-reuse email
+// Test: PaxDB lookup throws → logs failure, no email sent
 {
     mailsSent = [];
     loggerMessages = [];
@@ -392,8 +390,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     );
 
     assert.deepEqual(result, formRow, 'lookup failure: formResponses unchanged');
-    assert.equal(mailsSent.length, 1, 'lookup failure: one email still sent');
-    assert.ok(!mailsSent[0].subj.includes('reused'), 'lookup failure: email signals no-reuse');
+    assert.equal(mailsSent.length, 0, 'lookup failure: no email sent');
     assert.ok(loggerMessages.some(function(message) {
         return message.includes('PaxDB lookup failed: sheet temporarily unavailable');
     }), 'lookup failure logged');
@@ -401,7 +398,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockPaxDbThrows = null;
 }
 
-// Test: send path sanitizes email recipient and F3 name before sending
+// Test: reuse merge still applies when email and F3 name have dirty whitespace
 {
     mailsSent = [];
     global._mockManagedSheet = {
@@ -416,9 +413,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
         makeMockResponsesSheet(HEADERS), 2, dirtyFormRow
     );
 
-    assert.equal(mailsSent.length, 1, 'sanitized send: one email');
-    assert.equal(mailsSent[0].to, 'F3 New Guy <test.user@example.com>', 'recipient uses F3 name and sanitized email');
-    assert.ok(mailsSent[0].body.includes('F3 Name: F3 New Guy'), 'f3 name sanitized into a single line');
+    assert.equal(mailsSent.length, 0, 'no email sent');
 
     global._mockPrevSs = null;
     global._mockManagedSheet = null;
@@ -463,8 +458,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     assert.equal(result[responseColumns.TEAM_TYPE], 'AO', 'Little John: teamType reused');
     assert.equal(result[responseColumns.TEAM], 'Crucible', 'Little John: team reused');
     assert.equal(result[responseColumns.WHO], 'Best loving father, partner, friend and leader I can be', 'Little John: who reused');
-    assert.equal(mailsSent.length, 1, 'Little John: email sent');
-    assert.ok(mailsSent[0].subj.includes('reused'), 'Little John: email confirms reuse');
+    assert.equal(mailsSent.length, 0, 'Little John: no email sent');
 
     global._mockPrevSs = null;
     global._mockManagedSheet = null;
@@ -513,8 +507,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     assert.equal(result[responseColumns.TEAM_TYPE], 'AO', 'Crazy Ivan: teamType reused');
     assert.equal(result[responseColumns.TEAM], 'Crucible', 'Crazy Ivan: team reused');
     assert.equal(result[responseColumns.WHO], 'A highly intentional, purpose-driven, and effective HIM', 'Crazy Ivan: who reused');
-    assert.equal(mailsSent.length, 1, 'Crazy Ivan: email sent');
-    assert.ok(mailsSent[0].subj.includes('reused'), 'Crazy Ivan: email confirms reuse');
+    assert.equal(mailsSent.length, 0, 'Crazy Ivan: no email sent');
 
     global._mockPrevSs = null;
     global._mockManagedSheet = null;
@@ -609,9 +602,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
 
     assert.equal(result[responseColumns.EMAIL], 'current@example.com', 'current email kept in reused response');
     assert.equal(result[responseColumns.NAG_EMAIL], 'Yes', 'NAG email flag copied into reused response');
-    assert.equal(mailsSent.length, 1, 'still sends single reuse email');
-    assert.match(mailsSent[0].body, /Email: current@example.com/);
-    assert.match(mailsSent[0].body, /NAG Email: Yes/);
+    assert.equal(mailsSent.length, 0, 'no email sent on reuse');
 
     global._mockForm = null;
     global._mockPrevSs = null;
@@ -702,7 +693,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     );
 
     assert.equal(result[responseColumns.TEAM], 'Crucible', 'reuse merge still applies with invalid form choice');
-    assert.equal(mailsSent.length, 1, 'still sends single reuse email');
+    assert.equal(mailsSent.length, 0, 'no email sent on reuse');
 
     global._mockForm = null;
     global._mockPrevSs = null;
