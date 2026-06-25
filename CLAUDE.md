@@ -137,7 +137,7 @@ node tools/callWebapp.js getSmokeStatus --env <env>
 # 4. Sign up a test PAX via signup web app (targetMonth: "current" resolves to smoke tracker)
 node tools/callWebapp.js identify --cmd signup --env <env> --body '{"f3Name":"SmokeTest","email":"smoke@example.com"}'
 # 5. Verify Tracker sheet (get SMOKE_TRACKER_ID from getSmokeStatus output)
-node tools/callWebapp.js getSheet --env <env> --body '{"sheetName":"Tracker"}'
+node tools/callWebapp.js getSheet --env <env> --body '{"sheetId":"<SMOKE_TRACKER_ID>","sheetName":"Tracker"}'
 # 6. Human: confirm spreadsheet looks correct, then proceed to teardown
 # 7. Teardown
 node tools/callWebapp.js cleanupTracker --env <env> --body '{"sheetId":"<SMOKE_TRACKER_ID>","trashSpreadsheet":true}'

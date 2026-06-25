@@ -467,8 +467,13 @@ function copySpreadsheetWithoutScript_(sourceSpreadsheet, newName) {
   var sourceSheets = sourceSpreadsheet.getSheets();
   for (var i = 0; i < sourceSheets.length; i++) {
     var srcSheet = sourceSheets[i];
-    if (srcSheet.getName() !== 'Responses') {
-      srcSheet.copyTo(newSS).setName(srcSheet.getName());
+    // Always copy hidden sheets — they carry lookup data that formulas depend on.
+    // Only exclude visible sheets explicitly (currently just Responses, which is
+    // created fresh by form.setDestination to match the live form's column order).
+    if (srcSheet.isSheetHidden() || srcSheet.getName() !== 'Responses') {
+      var copiedSheet = srcSheet.copyTo(newSS);
+      copiedSheet.setName(srcSheet.getName());
+      if (srcSheet.isSheetHidden()) copiedSheet.hideSheet();
     }
   }
   newSS.deleteSheet(defaultSheet);
@@ -793,10 +798,11 @@ function autoGenerateNextMonthTracker_() {
     });
     return;
   }
-  const nameSpace = nameSpaceConfig.primary;
+  const smokeMode = PropertiesService.getScriptProperties().getProperty('SMOKE_MODE') === 'true';
+  const nameSpace = nameSpaceConfig.primary + (smokeMode ? ' (Smoke)' : '');
   const newSpreadsheetName = nextMonthStart.getFullYear() + '-' + paddedMonth + '-' + nameSpace;
 
-  GasLogger.log('autoGenerateNextMonthTracker.creating', { spreadsheetName: newSpreadsheetName });
+  GasLogger.log('autoGenerateNextMonthTracker.creating', { spreadsheetName: newSpreadsheetName, smokeMode: smokeMode });
 
   let newSpreadsheetId = null;
   try {
@@ -814,6 +820,9 @@ function autoGenerateNextMonthTracker_() {
 
     const newSpreadsheet = copySpreadsheetWithoutScript_(currentSpreadsheet, newSpreadsheetName);
     newSpreadsheetId = newSpreadsheet.getId();
+    if (smokeMode) {
+      PropertiesService.getScriptProperties().setProperty('SMOKE_TRACKER_ID', newSpreadsheetId);
+    }
 
     const newFile = DriveApp.getFileById(newSpreadsheetId);
     newFile.moveTo(folder);

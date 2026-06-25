@@ -150,11 +150,20 @@ function handleAdminPost_(e) {
         smokeTrackerId: props.getProperty('SMOKE_TRACKER_ID') || null
       });
     }
+    if (payload.action === 'listSheets') {
+      var allSheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
+      return jsonOutput_({ ok: true, sheets: allSheets.map(function(s) {
+        return { name: s.getName(), hidden: s.isSheetHidden(), index: s.getIndex() };
+      })});
+    }
     if (payload.action === 'getSheet') {
       if (!payload.sheetName) {
         return jsonOutput_({ ok: false, error: 'sheetName is required' });
       }
-      var targetSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(payload.sheetName);
+      var getSheetSs = payload.sheetId
+        ? SpreadsheetApp.openById(payload.sheetId)
+        : SpreadsheetApp.getActiveSpreadsheet();
+      var targetSheet = getSheetSs.getSheetByName(payload.sheetName);
       if (!targetSheet) {
         return jsonOutput_({ ok: false, error: 'sheet_not_found' });
       }

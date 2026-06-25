@@ -81,8 +81,8 @@ node tools/callWebapp.js getSmokeStatus --env <env>
 node tools/callWebapp.js identify --cmd signup --env <env> --body '{"f3Name":"SmokeTest","email":"smoke@example.com"}'
 # Then complete the save step through the webapp or via a direct save call.
 
-# 5. Verify the Tracker sheet shows the test row
-node tools/callWebapp.js getSheet --env <env> --body '{"sheetName":"Tracker"}'
+# 5. Verify the Tracker sheet shows the test row (use SMOKE_TRACKER_ID from getSmokeStatus)
+node tools/callWebapp.js getSheet --env <env> --body '{"sheetId":"<SMOKE_TRACKER_ID>","sheetName":"Tracker"}'
 # → { ok: true, csv: "<tab-separated rows>" }
 
 # 6. *** HUMAN PAUSE *** — open the smoke spreadsheet and confirm it looks correct.
