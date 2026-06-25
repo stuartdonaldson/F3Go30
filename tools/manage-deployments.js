@@ -53,8 +53,8 @@ function resolveClaspAuthPath_(settings) {
 }
 
 const TARGETS = {
-  template: { scriptIdKey: 'templateScriptId', label: 'TEMPLATE', emoji: '📋' },
-  test:     { scriptIdKey: 'testScriptId',     label: 'TEST',     emoji: '🧪' },
+  template: { scriptIdKey: 'templateScriptId', label: 'TEMPLATE', emoji: '📋', deploymentIdKey: 'templateDeploymentId' },
+  test:     { scriptIdKey: 'testScriptId',     label: 'TEST',     emoji: '🧪',  deploymentIdKey: 'testDeploymentId' },
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -165,6 +165,12 @@ function findActiveDeploymentId_(claspEnv) {
   return match[1];
 }
 
+function saveDeploymentId_(targetKey, deploymentId) {
+  const settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
+  settings[TARGETS[targetKey].deploymentIdKey] = deploymentId;
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Deploy
 // ─────────────────────────────────────────────────────────────────────────
@@ -213,6 +219,9 @@ function deploy(targetKey, options = {}) {
     { stdio: 'inherit', cwd: ROOT, env: claspEnv }
   );
   console.log(`\n✅ ${label} named deployment updated.`);
+
+  saveDeploymentId_(targetKey, deploymentId);
+  console.log(`💾 ${TARGETS[targetKey].deploymentIdKey} saved to local.settings.json`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
