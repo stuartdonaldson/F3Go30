@@ -222,7 +222,9 @@ function prepareOutboundEmailDelivery_(options) {
     return { ok: false, error: 'No intended recipients configured for outbound email.' };
   }
 
-  if (!policy.emailTestMode) {
+  var smokeMode = PropertiesService.getScriptProperties().getProperty('SMOKE_MODE') === 'true';
+
+  if (!policy.emailTestMode && !smokeMode) {
     return {
       ok: true,
       message: {
@@ -233,28 +235,32 @@ function prepareOutboundEmailDelivery_(options) {
       },
       intendedRecipients: intendedRecipients,
       effectiveRecipients: intendedRecipients,
-      testMode: false
+      testMode: false,
+      smokeMode: false
     };
   }
 
   if (!policy.siteQEmail) {
-    return { ok: false, error: 'Email test mode is enabled but Site Q email is missing or invalid.' };
+    var modeLabel = smokeMode ? 'Smoke mode' : 'Email test mode';
+    return { ok: false, error: modeLabel + ' is enabled but Site Q email is missing or invalid.' };
   }
 
   var noticeText = buildTestModeNoticeText_(intendedRecipients);
   var noticeHtml = buildTestModeNoticeHtml_(intendedRecipients);
+  var subjectPrefix = smokeMode ? '[SMOKE] ' : '[TEST MODE] ';
 
   return {
     ok: true,
     message: {
       to: policy.siteQEmail,
-      subject: '[TEST MODE] ' + subject,
+      subject: subjectPrefix + subject,
       body: noticeText + '\n\n' + body,
       htmlBody: prependEmailHtmlNotice_(htmlBody, noticeHtml)
     },
     intendedRecipients: intendedRecipients,
     effectiveRecipients: policy.siteQEmail,
-    testMode: true
+    testMode: policy.emailTestMode,
+    smokeMode: smokeMode
   };
 }
 
