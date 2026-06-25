@@ -68,6 +68,35 @@ function findSignupMatch_(rows, f3Name, email, responseColumns, responseHeaders)
   return null;
 }
 
+/** True when a Responses row has been retired via the DELETED convention (ADR-008). */
+function isDeletedSignupRow_(row, responseColumns) {
+  return String(row && row[responseColumns.PARTICIPATION] || '').trim().toLowerCase() === 'deleted';
+}
+
+/**
+ * Finds an active (non-DELETED) row matching F3 Name alone, ignoring email — used to detect
+ * an email change: same PAX, different email, per ADR-008's "keyed on F3 Name so a PAX can
+ * change their email" convention already used by the Form-submit path's dedup
+ * (deduplicateResponsesSheet_ in addResponseOnSubmit.js).
+ */
+function findSignupMatchByF3NameOnly_(rows, f3Name, responseColumns) {
+  var normName = normalizeIdentityValue_(f3Name);
+  if (!normName) return null;
+  if (!responseColumns || typeof responseColumns.F3_NAME !== 'number') {
+    throw new Error('responseColumns required for findSignupMatchByF3NameOnly_');
+  }
+
+  for (var i = 0; i < (rows || []).length; i++) {
+    var row = rows[i];
+    if (!row) continue;
+    if (isDeletedSignupRow_(row, responseColumns)) continue;
+    var rowName = normalizeIdentityValue_(row[responseColumns.F3_NAME]);
+    if (rowName === normName) return { rowIndex: i, row: row };
+  }
+
+  return null;
+}
+
 /**
  * Reclassifies a stored Team value against the current AO list and goal list (requirements doc
  * §6.4): AO match -> ao, else goal match -> goal, else other (stored value preserved verbatim).
@@ -132,6 +161,22 @@ function trackerHasF3Name_(trackerNameColumnRows, f3Name) {
   });
 }
 
+/**
+ * Finds the 0-based offset (relative to row 4) of the first blank F3 Name slot in the
+ * Tracker's name column. Mirrors handleFormSubmit_'s emptyIdx logic exactly
+ * (addResponseOnSubmit.js Phase 4: `dataValues.findIndex(row => row[0] === '')`) — initSheets
+ * leaves row 4 as a blank template row (formulas intact, F3 Name cleared) for the first real
+ * entry to fill in; skipping straight to trackerLastRow + 1 without checking for this slot
+ * leaves it permanently blank.
+ * @param {Array<Array>} trackerNameColumnRows Column A values from Tracker rows 4+.
+ * @returns {number} 0-based offset of the first empty slot, or -1 if none.
+ */
+function findEmptyTrackerSlotIndex_(trackerNameColumnRows) {
+  return (trackerNameColumnRows || []).findIndex(function(row) {
+    return row && row[0] === '';
+  });
+}
+
 var TEAM_TYPE_LABELS_ = { ao: 'AO-based', goal: 'Goal-based', other: 'Other' };
 
 function maxColumnIndex_(responseColumns) {
@@ -153,19 +198,31 @@ function maxColumnIndex_(responseColumns) {
  *   may be absent (undefined index) on sheets that don't have those columns yet; both are skipped
  *   gracefully rather than erroring or resizing the row.
  * formData: { f3Name, email, teamType ('ao'|'goal'|'other'), team, who, what, how, phone, nag,
- *   feedbackRating, feedbackComment }
+ *   participation ('Yes'|'No'), feedbackRating, feedbackComment }
+ *
+ * Returns { row, skippedFields }: skippedFields lists RESPONSE_COLUMN_MAP keys that formData
+ * supplied a value for but the sheet has no column for (e.g. FEEDBACK_RATING on a tracker
+ * predating that column) — silently dropping that data was an implementation miss; callers
+ * (handleSignupSave_/handleSignupFeedback_) must log a warning when this is non-empty rather
+ * than treat the skip as success.
  */
 function buildResponseRowFromForm_(existingRow, responseColumns, formData) {
   var row = existingRow ? existingRow.slice() : new Array(maxColumnIndex_(responseColumns) + 1).fill('');
+  var skippedFields = [];
 
   // Fields absent from formData (undefined) are left untouched — required for partial updates
   // like handleSignupFeedback_, which only ever sends {feedbackRating, feedbackComment}.
   function setIfMapped(key, value) {
     if (value === undefined) return;
     var idx = responseColumns[key];
-    if (typeof idx === 'number') row[idx] = value;
+    if (typeof idx === 'number') {
+      row[idx] = value;
+    } else {
+      skippedFields.push(key);
+    }
   }
 
+  setIfMapped('PARTICIPATION', formData.participation);
   setIfMapped('F3_NAME', formData.f3Name);
   setIfMapped('EMAIL', formData.email);
   if (formData.teamType !== undefined) {
@@ -182,7 +239,62 @@ function buildResponseRowFromForm_(existingRow, responseColumns, formData) {
   if (formData.feedbackRating !== undefined) setIfMapped('FEEDBACK_RATING', formData.feedbackRating);
   if (formData.feedbackComment !== undefined) setIfMapped('FEEDBACK_COMMENT', formData.feedbackComment);
 
-  return row;
+  return { row: row, skippedFields: skippedFields };
+}
+
+/**
+ * Appends a header column to a Responses sheet if it doesn't already exist, under a script
+ * lock so two concurrent anonymous webapp calls can't double-append. Always appends at the
+ * end — never inserts in the middle — so existing columns (read by other sheets, e.g. Goals
+ * by HIM, the Tracker VLOOKUP) never shift position.
+ * @param {Sheet} sheet
+ * @param {string} headerName
+ * @returns {boolean} true if the column was just added, false if it already existed or the
+ *   lock couldn't be acquired (caller falls back to the un-healed row rather than blocking).
+ */
+function ensureResponseColumn_(sheet, headerName) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch (e) {
+    GasLogger.log('ensureResponseColumn_.lockFailed', { header: headerName, error: e.message });
+    return false;
+  }
+  try {
+    var lastColumn = sheet.getLastColumn();
+    var headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+    if (headers.indexOf(headerName) !== -1) return false; // already there — a concurrent call won the race
+    sheet.getRange(1, lastColumn + 1).setValue(headerName);
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Wraps buildResponseRowFromForm_ with self-healing: a missing column (e.g. FEEDBACK_RATING
+ * on a tracker predating that column) is both logged as a warning AND fixed by appending the
+ * column and rebuilding the row — silently dropping the data was the original implementation
+ * miss (F3Go30 signup webapp feedback gap); warn-only without the fix would leave every other
+ * tracker still broken until someone notices and fixes it by hand.
+ * @returns {Array} The final row, ready to write.
+ */
+function buildResponseRowWithSelfHeal_(sheet, columns, existingRow, formData) {
+  var built = buildResponseRowFromForm_(existingRow, columns, formData);
+  if (built.skippedFields.length === 0) return built.row;
+
+  GasLogger.log('signupWebapp.missingResponseColumns', { fields: built.skippedFields });
+
+  var addedAny = false;
+  built.skippedFields.forEach(function(key) {
+    if (ensureResponseColumn_(sheet, getResponseColumnHeader_(key))) addedAny = true;
+  });
+  if (!addedAny) return built.row;
+
+  var healedColumns = resolveResponseColumns(sheet);
+  var healed = buildResponseRowFromForm_(existingRow, healedColumns, formData);
+  GasLogger.log('signupWebapp.missingResponseColumns.healed', { fields: built.skippedFields });
+  return healed.row;
 }
 
 function monthKey_(date) {
@@ -261,8 +373,8 @@ function resolveSignupMonths_(parsedLinksRows, today) {
   var nextRow = byMonth[nextKey] || null;
 
   return {
-    current: { sheetId: current.sheetId, trackerUrl: current.trackerUrl, label: formatRegistrationMonth_(current.startDate) },
-    next: nextRow ? { sheetId: nextRow.sheetId, trackerUrl: nextRow.trackerUrl, label: formatRegistrationMonth_(nextRow.startDate) } : null,
+    current: { sheetId: current.sheetId, trackerUrl: current.trackerUrl, label: formatRegistrationMonth_(current.startDate), startDate: current.startDate },
+    next: nextRow ? { sheetId: nextRow.sheetId, trackerUrl: nextRow.trackerUrl, label: formatRegistrationMonth_(nextRow.startDate), startDate: nextRow.startDate } : null,
   };
 }
 
@@ -349,7 +461,14 @@ function handleSignupSave_(templateSpreadsheet, payload) {
   var state = readResponsesSheetState_(targetSs);
   var match = findSignupMatch_(state.dataRows, payload.f3Name, payload.email, state.columns, state.headers);
 
+  // "Are you currently participating in Go30?" (PARTICIPATION, §6): Yes if PaxDB has any
+  // prior record for this PAX (excluding the target month itself), No otherwise — including
+  // when there's no prior record at all. PaxDB lives in the Template (this spreadsheet), so
+  // this is a single local sheet read, not a cross-spreadsheet walk-back.
+  var priorPaxRecord = findMostRecentPaxRecordForName_(templateSpreadsheet, payload.f3Name, targetMonth.sheetId);
+
   var formData = {
+    participation: priorPaxRecord ? 'Yes' : 'No',
     f3Name: payload.f3Name,
     email: payload.email,
     teamType: payload.teamType,
@@ -363,15 +482,49 @@ function handleSignupSave_(templateSpreadsheet, payload) {
   if (payload.feedbackRating !== undefined && payload.feedbackRating !== null) formData.feedbackRating = payload.feedbackRating;
   if (payload.feedbackComment) formData.feedbackComment = payload.feedbackComment;
 
+  // Column A (Timestamp) is normally auto-populated by Google Forms on submission — the
+  // webapp save path writes directly to the sheet, bypassing Forms entirely, so nothing
+  // else ever sets it. buildResponseRowFromForm_ deliberately leaves column 0 untouched
+  // (RESPONSE_COLUMN_MAP has no TIMESTAMP entry), so it's set explicitly here instead.
   if (match) {
-    var updatedRow = buildResponseRowFromForm_(match.row, state.columns, formData);
+    var updatedRow = buildResponseRowWithSelfHeal_(state.sheet, state.columns, match.row, formData);
+    updatedRow[0] = new Date();
     state.sheet.getRange(match.rowIndex + 2, 1, 1, updatedRow.length).setValues([updatedRow]);
     GasLogger.log('signupWebapp.save', { mode: 'update', row: match.rowIndex + 2 });
   } else {
-    var newRow = buildResponseRowFromForm_(null, state.columns, formData);
+    // No exact (name+email) match — check whether this is the same PAX under a different
+    // email (ADR-008). If so, retire the old row (DELETED) rather than leaving it sitting
+    // there as an active duplicate; the new row stands on its own, same as the Form path's
+    // deduplicateResponsesSheet_ never merges old + new on an email change.
+    var nameOnlyMatch = findSignupMatchByF3NameOnly_(state.dataRows, payload.f3Name, state.columns);
+    if (nameOnlyMatch) {
+      state.sheet.getRange(nameOnlyMatch.rowIndex + 2, state.columns.PARTICIPATION + 1).setValue('DELETED');
+      GasLogger.log('signupWebapp.save.emailChanged', { oldRow: nameOnlyMatch.rowIndex + 2 });
+    }
+
+    var newRow = buildResponseRowWithSelfHeal_(state.sheet, state.columns, null, formData);
+    newRow[0] = new Date();
     state.sheet.appendRow(newRow);
     GasLogger.log('signupWebapp.save', { mode: 'insert' });
   }
+
+  // Keep PaxDB (Template-resident) current incrementally, rather than depending on a manual
+  // scanTrackers()/scanAllGo30() rescan — this is what makes the PARTICIPATION check above,
+  // and the goal-reuse lookup elsewhere, a single local sheet read instead of a cross-spreadsheet
+  // walk-back.
+  upsertPaxDbRow_(templateSpreadsheet, {
+    sheetId: targetMonth.sheetId,
+    date: targetMonth.startDate,
+    f3Name: payload.f3Name,
+    email: payload.email,
+    team: payload.team,
+    teamType: payload.teamType,
+    who: payload.who,
+    what: payload.what,
+    how: payload.how,
+    phone: payload.phone,
+    nagEmail: payload.nag ? 'Yes' : 'No',
+  });
 
   var trackerSheet = targetSs.getSheetByName('Tracker');
   var trackerLastRow = trackerSheet ? trackerSheet.getLastRow() : 0;
@@ -379,12 +532,32 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     var lastColumn = trackerSheet.getLastColumn();
     var nameColumnRows = trackerSheet.getRange(4, 1, trackerLastRow - 3, 1).getValues();
     if (!trackerHasF3Name_(nameColumnRows, payload.f3Name)) {
-      var nextRow = trackerLastRow + 1;
+      // Fill the first blank slot (e.g. initSheets' row-4 template row) before falling back
+      // to appending past the last row — otherwise that slot is skipped and stays permanently
+      // blank (F3Go30 implementation miss).
+      var emptyIdx = findEmptyTrackerSlotIndex_(nameColumnRows);
+      var nextRow = emptyIdx === -1 ? trackerLastRow + 1 : 4 + emptyIdx;
       trackerSheet.getRange(nextRow, 1).setValue(payload.f3Name);
       if (nextRow > 4) {
         trackerSheet.getRange(nextRow - 1, 2, 1, lastColumn - 1)
           .copyTo(trackerSheet.getRange(nextRow, 2, 1, lastColumn - 1));
       }
+
+      // Clear manually-entered numbers so a copied formula row starts clean (mirrors
+      // handleFormSubmit_'s same cleanup — addResponseOnSubmit.js Phase 4).
+      var rowRange = trackerSheet.getRange(nextRow, 1, 1, lastColumn);
+      var rowValues = rowRange.getValues()[0];
+      var rowFormulas = rowRange.getFormulas()[0];
+      var clearRanges = [];
+      for (var i = 0; i < lastColumn; i++) {
+        if (!rowFormulas[i] && typeof rowValues[i] === 'number') {
+          clearRanges.push(trackerSheet.getRange(nextRow, i + 1).getA1Notation());
+        }
+      }
+      if (clearRanges.length > 0) {
+        trackerSheet.getRangeList(clearRanges).clearContent();
+      }
+
       GasLogger.log('signupWebapp.save', { trackerRowAdded: nextRow });
     }
   }
@@ -398,6 +571,13 @@ function handleSignupSave_(templateSpreadsheet, payload) {
  * Skipping feedback client-side is valid (§5 Step 5) — this handler is simply never called then.
  */
 function handleSignupFeedback_(templateSpreadsheet, payload) {
+  // No rating and no comment means nothing to record — write nothing rather than overwrite
+  // feedback already on file with a blank rating/comment (defense-in-depth alongside the
+  // client-side check, in case this is ever called directly without going through the UI).
+  if (!payload.feedbackRating && !String(payload.feedbackComment || '').trim()) {
+    return { ok: true, skipped: true };
+  }
+
   var months = getCurrentAndNextMonths_(templateSpreadsheet);
   var targetMonth = payload.targetMonth === 'next' ? months.next : months.current;
   if (!targetMonth) return { ok: false, error: 'invalid_target_month' };
@@ -407,7 +587,7 @@ function handleSignupFeedback_(templateSpreadsheet, payload) {
   var match = findSignupMatch_(state.dataRows, payload.f3Name, payload.email, state.columns, state.headers);
   if (!match) return { ok: false, error: 'signup_not_found' };
 
-  var updatedRow = buildResponseRowFromForm_(match.row, state.columns, {
+  var updatedRow = buildResponseRowWithSelfHeal_(state.sheet, state.columns, match.row, {
     feedbackRating: payload.feedbackRating,
     feedbackComment: payload.feedbackComment,
   });
@@ -421,9 +601,12 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     classifyTeam_,
     findSignupMatch_,
+    findSignupMatchByF3NameOnly_,
+    isDeletedSignupRow_,
     parseTeamListsFromListDbRows_,
     readTeamLists_,
     trackerHasF3Name_,
+    findEmptyTrackerSlotIndex_,
     buildResponseRowFromForm_,
     parseLinksRows_,
     resolveSignupMonths_,

@@ -42,6 +42,48 @@ secondary value.
 | `NameSpace` | Region identifier (e.g. `F3Waxhaw`) | — | `copyAndInit()`, `autoGenerateNextMonthTracker()` — drives spreadsheet name (`YYYY-MM-NameSpace`) and URL aliases |
 | `LogFile` | Drive file URL (written automatically on first use) | — | `copyAndInit()` — appends structured JSON log entries for UC-5 developer verification |
 
+### Environments
+
+Two script projects exist. **Default environment is SIT** unless PROD is stated explicitly.
+
+| Label | `local.settings.json` key | Spreadsheet key | Purpose |
+|-------|--------------------------|-----------------|---------|
+| **SIT** (System Integration Test) | `testScriptId` | `testSpreadsheetId` | Development and pre-release testing |
+| **PROD** | `templateScriptId` | `templateSpreadsheetId` | Live production — the real Go30 Template |
+
+Use `npm run deploy:test` for SIT; `npm run push` / `npm run release:*` for PROD. Never push to PROD without first passing SIT validation.
+
+### Smoke Mode
+
+Smoke mode lets you test the full go-live flow (tracker creation, signup, nag, minus-one) using labeled artifacts that are cleaned up afterward. It is activated via Script Properties on the **SIT** environment.
+
+**Activate:**
+```
+setScriptProperties { SMOKE_MODE: 'true' }
+```
+
+**Effect:**
+- `copyAndInit_` appends `" (Smoke)"` to `NameSpace` when naming the new tracker spreadsheet.
+- The new tracker's spreadsheet ID is saved to `SMOKE_TRACKER_ID` in Script Properties.
+- `runScanTrackers` (admin action) is blocked — prevents test data contaminating PaxDB.
+
+**Teardown (admin POST):**
+```json
+{ "action": "cleanupTracker", "sheetId": "<SMOKE_TRACKER_ID>", "trashSpreadsheet": true }
+```
+This removes the TrackerDB row, all PaxDB rows for that sheetId, and optionally trashes the spreadsheet.
+
+**Deactivate:**
+```
+setScriptProperties { SMOKE_MODE: '', SMOKE_TRACKER_ID: '' }
+```
+
+**Confirm environment before starting:**
+```json
+{ "action": "getSmokeStatus" }
+```
+Returns `{ deployTarget, smokeMode, smokeTrackerId }` — use to confirm you're talking to the correct environment.
+
 ### Script Properties
 
 Set in Apps Script Project Settings → Script Properties.
@@ -50,6 +92,9 @@ Set in Apps Script Project Settings → Script Properties.
 |----------|----------|---------|-------------|
 | `TINYURL_ACCESS_TOKEN` | Yes (for URL shortening) | None | TinyURL API token |
 | `BITLY_ACCESS_TOKEN` | No | None | Bitly API token; only needed if switching from TinyURL |
+| `SMOKE_MODE` | No | `''` (inactive) | Set to `'true'` to enable Smoke mode on SIT |
+| `SMOKE_TRACKER_ID` | No | `''` | Written automatically by `copyAndInit_` when Smoke mode is active; cleared during teardown |
+| `ADMIN_SHARED_SECRET` | Yes (for admin POST) | None | Secret required in `adminSecret` field of admin POST payloads |
 
 ---
 
@@ -172,18 +217,14 @@ the five expected Drive entries (AC2–AC5). Passes in ~45s.
 
 ### Testing the Web App (cmd=signup and similar)
 
-**`TEST_APP` shares the live Template spreadsheet — it is not an isolated test environment.**
-`getCurrentAndNextMonths_()` resolves "current month" to whichever tracker is genuinely live and
-in active use by real PAX right now. Any write-capable action (`save`, `feedback`) tested against
-`targetMonth: "current"` writes into that real spreadsheet. **Always live-test write paths against
-`targetMonth: "next"` only.** `identify` is read-only and safe against either.
+Use the **SIT environment** (`testScriptId` / `testSpreadsheetId`) for all web app testing.
+`getCurrentAndNextMonths_()` resolves "current month" against the SIT TrackerDB, so write-capable
+actions (`save`, `feedback`) against `targetMonth: "current"` hit the SIT spreadsheet, not PROD.
+For go-live validation, use Smoke mode (see §Smoke Mode above).
 
-Since ADR-010, *all* centrally-dispatched functions (not just the web app) run against the live
-Template, so this caution applies project-wide, not just to the signup web app. A persistent
-Go30 Test/Dev spreadsheet with its own future-dated `TrackerDB` row(s) is planned as a proper
-isolated test environment — see ADR-010 §Test/Dev spreadsheet — but is not yet provisioned; until
-it exists, continue testing write paths only against `targetMonth: "next"` or other genuinely
-non-live data.
+**Always confirm the environment before writing:** call `{ "action": "getSmokeStatus" }` and
+verify `deployTarget` matches your intended environment. `identify` is read-only and safe against
+either environment.
 
 **curl gotcha:** when POSTing to the deployed `/exec` URL, do not pass an explicit `-X POST` —
 Google's web app endpoint responds with a 302 redirect to a GET-only

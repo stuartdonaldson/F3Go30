@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   buildEmailRecipientList_,
   initializeConfigSheet_,
+  buildSignupSlackMessage_,
 } = require('../script/Utilities.js');
 const {
   getResponseEmailColumnIndexes_,
@@ -71,7 +72,6 @@ assert.deepEqual(findRow('Email Test Mode'), ['Email Test Mode', 'Yes', 'legacy'
 assert.deepEqual(findRow('LogFile'), ['LogFile', '', '']);
 assert.deepEqual(findRow('Signup HC Form'), ['Signup HC Form', '', '']);
 assert.deepEqual(findRow('Sheet Template'), ['Sheet Template', 'https://docs.google.com/spreadsheets/d/template-sheet-id/edit', '']);
-assert.deepEqual(findRow('Last Month Tracker'), ['Last Month Tracker', '', '']);
 
 const defaultedSheet = makeConfigSheet([]);
 const defaultedRows = initializeConfigSheet_(defaultedSheet);
@@ -127,5 +127,19 @@ assert.deepEqual(
   buildGoalSummaryLinesFromResponse_(responseRow, responseColumns, responseHeaders),
   ['Email: stuart.donaldson@gmail.com', 'NAG Email: Yes']
 );
+
+// --- buildSignupSlackMessage_ — signup link is primary, tracker link must always be
+// present (it was dropped along the way once), HC form is mentioned only as an optional
+// fallback, never as the primary instruction ---
+
+const slackMsgWithForm = buildSignupSlackMessage_(2026, 'July', 'https://tinyurl.com/signup', 'https://tinyurl.com/tracker', 'https://docs.google.com/forms/d/old-form');
+assert.ok(slackMsgWithForm.includes('Sign up here: https://tinyurl.com/signup'), 'signup link is the primary instruction');
+assert.ok(slackMsgWithForm.includes('July Tracker: https://tinyurl.com/tracker'), 'tracker link present');
+assert.ok(slackMsgWithForm.includes('Prefer the old HC form?'), 'HC form framed as optional, not primary');
+assert.ok(slackMsgWithForm.includes('https://docs.google.com/forms/d/old-form'));
+
+const slackMsgNoForm = buildSignupSlackMessage_(2026, 'July', 'https://tinyurl.com/signup', 'https://tinyurl.com/tracker');
+assert.ok(!slackMsgNoForm.includes('HC form'), 'no form URL -> no form mention at all');
+assert.ok(slackMsgNoForm.includes('https://tinyurl.com/tracker'));
 
 console.log('test_utilities.js: PASS');

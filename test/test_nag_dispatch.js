@@ -35,7 +35,13 @@ global.SpreadsheetApp = {
 
 sendNagEmail_(FUTURE_CONTEXT_DATE);
 
-assert.deepEqual(resolveCalls, [FUTURE_CONTEXT_DATE], 'lookup is called with the explicit context date, not "now"');
+// Nag checks YESTERDAY's column — must dispatch on contextDate - 1 day, not contextDate
+// itself, or a run on the 1st of a month resolves to the wrong (brand-new) tracker instead
+// of the one that actually has yesterday's data (month-boundary dispatch bug).
+var expectedTargetDate = new Date(FUTURE_CONTEXT_DATE);
+expectedTargetDate.setDate(expectedTargetDate.getDate() - 1);
+assert.equal(resolveCalls.length, 1);
+assert.equal(resolveCalls[0].getTime(), expectedTargetDate.getTime(), 'lookup is called with contextDate - 1 day, not contextDate');
 assert.deepEqual(openByIdCalls, [FUTURE_SHEET_ID], 'opens the SheetId resolved by the TrackerDB lookup, not the active spreadsheet');
 
 // Lookup failures (handled by F3Go30-vr80) propagate rather than being swallowed.

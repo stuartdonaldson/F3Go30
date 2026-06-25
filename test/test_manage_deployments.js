@@ -3,7 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { replaceConst, stampVersion } = require('../tools/manage-deployments');
+const { replaceConst, stampVersion, bumpPatchVersion_ } = require('../tools/manage-deployments');
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f3go30-deploy-test-'));
@@ -55,9 +55,38 @@ function testStampVersionUpdatesAllFields() {
   });
 }
 
+function testBumpPatchVersionIncrementsPatchOnly() {
+  withTempDir((dir) => {
+    const pkgPath = path.join(dir, 'package.json');
+    fs.writeFileSync(pkgPath, JSON.stringify({ name: 'f3go30', version: '2.2.1' }, null, 2) + '\n', 'utf8');
+
+    const newVersion = bumpPatchVersion_(pkgPath);
+
+    assert.equal(newVersion, '2.2.2');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    assert.equal(pkg.version, '2.2.2');
+    assert.equal(pkg.name, 'f3go30'); // other fields untouched
+  });
+}
+
+function testBumpPatchVersionIsIdempotentAcrossCalls() {
+  withTempDir((dir) => {
+    const pkgPath = path.join(dir, 'package.json');
+    fs.writeFileSync(pkgPath, JSON.stringify({ version: '0.0.1' }), 'utf8');
+
+    bumpPatchVersion_(pkgPath);
+    bumpPatchVersion_(pkgPath);
+    const newVersion = bumpPatchVersion_(pkgPath);
+
+    assert.equal(newVersion, '0.0.4');
+  });
+}
+
 function run() {
   testReplaceConstAppendsWhenMissing();
   testStampVersionUpdatesAllFields();
+  testBumpPatchVersionIncrementsPatchOnly();
+  testBumpPatchVersionIsIdempotentAcrossCalls();
   console.log('test_manage_deployments: all tests passed');
 }
 

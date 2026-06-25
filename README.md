@@ -17,7 +17,7 @@ About
 - Google account that owns the Go30 tracker spreadsheet
 - Go30 Template spreadsheet created and accessible (the bound script is deployed on this template)
 - [clasp](https://github.com/google/clasp) installed: `npm install -g @google/clasp`
-- `.clasprc.json` configured by running `clasp login` from the `script/` folder. (`clasp` will create this file automatically.)
+- F3Go30's credential file configured by running `clasp_config_auth=~/.clasprc-f3go30.json clasp login`. This same env var (or the `--auth <file>` flag) is required by every other clasp command too — see the project CLAUDE.md §clasp and the `claspAuth` field in `local.settings.json`.
 - `TINYURL_ACCESS_TOKEN` Script Property configured (see [OPERATIONS.md](docs/OPERATIONS.md))
 
 ### Deploy

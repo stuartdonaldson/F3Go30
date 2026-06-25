@@ -34,7 +34,15 @@ function markEmptyCellsAsMinusOne(contextDate) {
 }
 
 function markEmptyCellsAsMinusOne_(contextDate) {
-  var trackerRow = resolveTrackerForContextDate(contextDate);
+  // Marking happens on (contextDate - 2 days), not today — must dispatch on that date, or a
+  // run on the 1st/2nd of a month resolves to the brand-new (wrong) tracker instead of the
+  // one that actually has that day's column (month-boundary dispatch bug).
+  var today = contextDate instanceof Date ? contextDate : new Date(contextDate || Date.now());
+  var thresholdDate = new Date(today);
+  thresholdDate.setDate(thresholdDate.getDate() - 2);
+
+  var trackerRow = resolveTrackerForContextDate(thresholdDate);
+  GasLogger.log('markEmptyCellsAsMinusOne.dispatch', { contextDate: today.toISOString(), targetDate: thresholdDate.toISOString(), sheetId: trackerRow.sheetId });
   var spreadsheet = SpreadsheetApp.openById(trackerRow.sheetId);
   return applyMinusOneToTrackerSheet_(spreadsheet, contextDate);
 }

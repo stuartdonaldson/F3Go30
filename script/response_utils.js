@@ -4,6 +4,12 @@ var libSheetsModule_ = (typeof module !== 'undefined' && module.exports)
 var responseUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./Utilities.js')
   : null;
+var responseUtilsGo30ToolsModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./go30tools.js')
+  : null;
+var responseUtilsCreateNewTrackerModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./CreateNewTracker.js')
+  : null;
 
 var resolveManagedHeaderMap_ = (libSheetsModule_ && libSheetsModule_.resolveManagedHeaderMap_)
   || (typeof globalThis !== 'undefined' && globalThis.resolveManagedHeaderMap_);
@@ -11,6 +17,10 @@ var findRowIndexByNormalizedValue_ = (libSheetsModule_ && libSheetsModule_.findR
   || (typeof globalThis !== 'undefined' && globalThis.findRowIndexByNormalizedValue_);
 var sendConfiguredEmail_ = (responseUtilitiesModule_ && responseUtilitiesModule_.sendConfiguredEmail_)
   || (typeof globalThis !== 'undefined' && globalThis.sendConfiguredEmail_);
+var findMostRecentPaxRecordForEmail_ = (responseUtilsGo30ToolsModule_ && responseUtilsGo30ToolsModule_.findMostRecentPaxRecordForEmail_)
+  || (typeof globalThis !== 'undefined' && globalThis.findMostRecentPaxRecordForEmail_);
+var getTemplateSpreadsheetForInit_ = (responseUtilsCreateNewTrackerModule_ && responseUtilsCreateNewTrackerModule_.getTemplateSpreadsheetForInit_)
+  || (typeof globalThis !== 'undefined' && globalThis.getTemplateSpreadsheetForInit_);
 
 var RESPONSE_COLUMN_MAP = {
   EMAIL: { header: 'Email Address', aliases: ['Email'] },
@@ -41,6 +51,17 @@ var RESPONSE_COLUMN_MAP = {
   NAG_EMAIL: {
     header: 'NAG Email?',
     aliases: ['NAG Email', 'Nag Email?', 'NAG'],
+    optional: true
+  },
+  // Written only by the webapp signup form's feedback step (signup-webapp-requirements.md §11).
+  // Optional: the comment column already existed unused; the rating column is new and may not
+  // exist yet on older trackers — both are skipped gracefully when absent, never required.
+  FEEDBACK_RATING: {
+    header: 'Feedback Rating',
+    optional: true
+  },
+  FEEDBACK_COMMENT: {
+    header: 'Constructive Comments',
     optional: true
   }
 };
@@ -210,43 +231,24 @@ function buildGoalSummaryLinesFromResponse_(responseRow, responseColumns, respon
 }
 
 /**
- * Manual admin utility — copies one participant's responses from last month's
- * tracker into the current tracker and emails them a summary.
+ * Manual admin utility — reads a PAX's most recent PaxDB record and writes their prior
+ * goal settings (Team/WHO/WHAT/HOW/TeamType/OtherTeam/Phone/NagEmail) into the current
+ * tracker's Responses sheet, then emails them a summary.
  *
- * NOT called from the automated reuse flow (maybeReuseLastMonthsGoals_ handles
- * that). Use this when a PAX needs their data backfilled manually outside the
- * normal form-submit path.
+ * Use when a PAX needs their settings backfilled manually outside the normal form-submit
+ * path (which handles this automatically via maybeReuseLastMonthsGoals_). Looks up by
+ * email via PaxDB's Email column since only an email address is known at call time.
  *
- * Usage: copyResponsesToCurrentTracker('foo@example.com')
+ * Usage: applyPaxDbSettingsToCurrentTracker('foo@example.com')
  */
-function copyResponsesToCurrentTracker(email) {
+function applyPaxDbSettingsToCurrentTracker(email) {
   if (!email) throw new Error('email required');
 
   const currentSs = SpreadsheetApp.getActiveSpreadsheet();
 
-  const prevTrackerConfig = getConfigValue_(currentSs, 'Last Month Tracker');
-  const prevTrackerReference = String((prevTrackerConfig && (prevTrackerConfig.secondary || prevTrackerConfig.primary)) || '').trim();
-  if (!prevTrackerReference) throw new Error('Previous tracker URL not found in Config sheet Last Month Tracker');
-
-  const trackerIdMatch = prevTrackerReference.match(/\/d\/([a-zA-Z0-9_-]+)/);
-  const trackerId = trackerIdMatch
-    ? trackerIdMatch[1]
-    : (/^[a-zA-Z0-9_-]{20,}$/.test(prevTrackerReference) ? prevTrackerReference : '');
-  const prevSs = trackerId
-    ? SpreadsheetApp.openById(trackerId)
-    : SpreadsheetApp.openByUrl(prevTrackerReference);
-  const prevResponses = prevSs.getSheetByName('Responses');
-  if (!prevResponses) throw new Error('Responses sheet not found in previous tracker');
-
-  const prevData = prevResponses.getDataRange().getValues();
-  if (prevData.length < 2) throw new Error('No responses in previous tracker');
-
-  const prevHeaders = prevData[0].map(h => String(h || '').trim());
-  const prevResponseColumns = resolveResponseColumns_(prevHeaders);
-  let prevRowIndex = findResponseRowIndexByEmail_(prevData, email, prevResponseColumns, prevHeaders, 1);
-  if (prevRowIndex === -1) throw new Error('Email not found in previous Responses');
-
-  const prevRowValues = prevData[prevRowIndex];
+  const templateSpreadsheet = getTemplateSpreadsheetForInit_(currentSs, currentSs.getSheetByName('Config'));
+  const priorRecord = findMostRecentPaxRecordForEmail_(templateSpreadsheet, email, currentSs.getId());
+  if (!priorRecord) throw new Error('No PaxDB record found for email: ' + email);
 
   // Current Responses sheet
   const curResponses = currentSs.getSheetByName('Responses');
@@ -264,9 +266,18 @@ function copyResponsesToCurrentTracker(email) {
     curRowIndex = newRowIdx - 1; // zero-based index into curData-like arrays for later +1 conversion
   }
 
+  // Synthesize a source row/column map from the PaxDB record so the existing generic
+  // copy-plan logic (buildResponseFieldCopyPlan_) stays unchanged — only the source
+  // acquisition method (PaxDB instead of a previous tracker's Responses sheet) changed.
+  const sourceColumns = { EMAIL: 0, TEAM_TYPE: 1, TEAM: 2, OTHER_TEAM: 3, WHO: 4, WHAT: 5, HOW: 6, PHONE: 7, NAG_EMAIL: 8 };
+  const sourceRow = [
+    priorRecord.email || '', priorRecord.teamType || '', priorRecord.team || '', priorRecord.otherTeam || '',
+    priorRecord.who || '', priorRecord.what || '', priorRecord.how || '', priorRecord.phone || '', priorRecord.nagEmail || ''
+  ];
+
   // Copy values for headers that exist in both
   const copiedPairs = [];
-  const copyPlan = buildResponseFieldCopyPlan_(prevResponseColumns, prevRowValues, curResponseColumns);
+  const copyPlan = buildResponseFieldCopyPlan_(sourceColumns, sourceRow, curResponseColumns);
   copyPlan.forEach((entry) => {
     curResponses.getRange(curRowIndex + 1, entry.targetIndex + 1).setValue(entry.value);
     copiedPairs.push({ header: entry.header, value: entry.value });
@@ -274,13 +285,12 @@ function copyResponsesToCurrentTracker(email) {
 
   // Notify via helper
   try {
-    const paxName = String(prevRowValues[prevResponseColumns.F3_NAME] || '').trim();
-    sendResponseSettingsEmail(currentSs, email, paxName, copiedPairs);
+    sendResponseSettingsEmail(currentSs, email, priorRecord.f3Name || '', copiedPairs);
   } catch (e) {
-    GasLogger.log('copyResponsesToCurrentTracker.emailFailed', { error: e.message });
+    GasLogger.log('applyPaxDbSettingsToCurrentTracker.emailFailed', { error: e.message });
   }
 
-  GasLogger.log('copyResponsesToCurrentTracker', { copied: copiedPairs.length, prevTracker: prevTrackerUrl });
+  GasLogger.log('applyPaxDbSettingsToCurrentTracker', { copied: copiedPairs.length, sourceSheetId: priorRecord.sheetId });
 
   return { copied: copiedPairs.length, details: copiedPairs };
 }

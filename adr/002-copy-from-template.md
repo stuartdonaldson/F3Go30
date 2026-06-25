@@ -1,6 +1,6 @@
 # ADR-002: Copy-From-Template Approach
 
-Status: Accepted
+Status: Superseded by ADR-010
 Date: 2026-03-02
 
 ## Context

@@ -63,7 +63,12 @@ var PAX_DB_HEADERS_ = [
 	'Fellowship',
 	'Q Point',
 	'Inspire',
-	'EHing FNG'
+	'EHing FNG',
+	'Email',
+	'Team Type',
+	'Other Team',
+	'Phone',
+	'NAG Email'
 ];
 
 /**
@@ -83,14 +88,21 @@ function scanTrackers() {
 }
 
 /**
- * Scans all Go30 tracker spreadsheets under the configured root folder (recursive)
- * and refreshes TrackerDB/PaxDB.
- * @returns {{scanned: number, processed: number, unchanged: number, tracked: number, skipped: number}} Run summary.
+ * Recursively scans ALL Go30 tracker spreadsheets under the configured root folder and
+ * completely rebuilds TrackerDB/PaxDB from scratch.
+ *
+ * DANGEROUS — not part of normal operation. Use scanTrackers() (sibling-folder, incremental)
+ * for routine maintenance. This function walks every historical folder, overwrites PaxDB with
+ * whatever it finds, and can corrupt live data if run while incremental upserts are active.
+ * Reserved for disaster recovery or one-off historical data extraction only.
+ * @returns {{scanned: number, processed: number, unchanged: number, tracked: number, skipped: number}}
  */
-function scanAllGo30() {
-	return GasLogger.run('scanAllGo30', function() {
+function paxDbHistoricalRebuild() {
+	return GasLogger.run('paxDbHistoricalRebuild', function() {
+		Logger.log('[paxDbHistoricalRebuild] WARNING: full recursive rebuild — overwrites all of ' +
+			'TrackerDB and PaxDB. Do not run during normal operation.');
 		var filesById = _collectSheetFilesInFolderTree_(ALL_GO30_ROOT_FOLDER_ID_);
-		return _scanSheetFilesById_(filesById, 'scanAllGo30');
+		return _scanSheetFilesById_(filesById, 'paxDbHistoricalRebuild');
 	});
 }
 
@@ -323,6 +335,11 @@ function _loadPaxData(spreadsheet, sheetId, startDate) {
 		'How are you going to be successful this month?',
 		'How'
 	]);
+	var emailIdx = indexer.find(['Email Address', 'Email']);
+	var teamTypeIdx = indexer.find(['Team type']);
+	var otherTeamIdx = indexer.find(['Goal or other team name', 'Other team name']);
+	var phoneIdx = indexer.find(['Cell Phone Number', 'Phone']);
+	var nagEmailIdx = indexer.find(['NAG email?', 'NAG Email']);
 	var commentsIndexes = _findAllResponseCommentIndexes_(indexer);
 
 	if (nameIdx === -1) return [];
@@ -353,7 +370,12 @@ function _loadPaxData(spreadsheet, sheetId, startDate) {
 			fellowship: trackerStats.fellowship,
 			qPoint: trackerStats.qPoint,
 			inspire: trackerStats.inspire,
-			ehingFng: trackerStats.ehingFng
+			ehingFng: trackerStats.ehingFng,
+			email: emailIdx === -1 ? '' : _normalizeCellText_(row[emailIdx]),
+			teamType: teamTypeIdx === -1 ? '' : _normalizeCellText_(row[teamTypeIdx]),
+			otherTeam: otherTeamIdx === -1 ? '' : _normalizeCellText_(row[otherTeamIdx]),
+			phone: phoneIdx === -1 ? '' : _normalizeCellText_(row[phoneIdx]),
+			nagEmail: nagEmailIdx === -1 ? '' : _normalizeCellText_(row[nagEmailIdx])
 		});
 	}
 
@@ -480,11 +502,38 @@ function _updateTrackerDB(rows) {
 }
 
 /**
+ * Removes a single TrackerDB row by sheetId from the active spreadsheet's TrackerDB sheet,
+ * preserving every other row. Exact sheetId match only — never a wildcard or name-based
+ * match — so this can't accidentally remove the wrong tracker. Used for cleaning up
+ * orphaned rows left behind by a failed/aborted autoGenerateNextMonthTracker_ run
+ * (F3Go30-w6y3).
+ * @param {string} sheetId
+ * @returns {boolean} true if a matching row was found and removed, false otherwise.
+ */
+function removeTrackerDbRow_(sheetId) {
+	if (!sheetId) {
+		throw new Error('removeTrackerDbRow_: sheetId is required');
+	}
+	var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+	var trackerState = _readTrackerDbRowsBySheetId_(spreadsheet);
+	if (!trackerState.bySheetId[sheetId]) {
+		return false;
+	}
+	delete trackerState.bySheetId[sheetId];
+
+	var rows = Object.keys(trackerState.bySheetId).map(function(id) {
+		return trackerState.bySheetId[id];
+	});
+	_updateTrackerDB(rows);
+	return true;
+}
+
+/**
  * Writes PaxDB rows, replacing existing body rows while preserving the sheet.
  * @param {Array<Object>} rows Pax rows.
  */
-function _updatePaxDB(rows) {
-	var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+function _updatePaxDB(rows, spreadsheet) {
+	if (!spreadsheet) spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 	var sheet = spreadsheet.getSheetByName(PAX_DB_SHEET_NAME_);
 	if (!sheet) {
 		sheet = spreadsheet.insertSheet(PAX_DB_SHEET_NAME_);
@@ -524,7 +573,12 @@ function _updatePaxDB(rows) {
 			row.fellowship || 0,
 			row.qPoint || 0,
 			row.inspire || 0,
-			row.ehingFng || 0
+			row.ehingFng || 0,
+			row.email || '',
+			row.teamType || '',
+			row.otherTeam || '',
+			row.phone || '',
+			row.nagEmail || ''
 		];
 	});
 
@@ -602,11 +656,238 @@ function _readPaxDbRowsBySheetId_(spreadsheet) {
 			fellowship: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['Fellowship'])]) || 0,
 			qPoint: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['Q Point', 'Q-Point'])]) || 0,
 			inspire: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['Inspire'])]) || 0,
-			ehingFng: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['EHing FNG', 'Ehing FNG'])]) || 0
+			ehingFng: _toNumber_(row[_pickHeaderIndex_(headerIndex, ['EHing FNG', 'Ehing FNG'])]) || 0,
+			email: _getCellByHeader_(row, headerIndex, ['Email']),
+			teamType: _getCellByHeader_(row, headerIndex, ['Team Type']),
+			otherTeam: _getCellByHeader_(row, headerIndex, ['Other Team']),
+			phone: _getCellByHeader_(row, headerIndex, ['Phone']),
+			nagEmail: _getCellByHeader_(row, headerIndex, ['NAG Email'])
 		});
 	}
 
 	return { bySheetId: bySheetId };
+}
+
+var PAX_DB_FIELD_ALIASES_ = {
+	sheetId: ['SheetId', 'Spreadsheet ID'],
+	date: ['Date'],
+	f3Name: ['F3 Name', 'Name'],
+	team: ['Team'],
+	who: ['WHO', 'Who'],
+	what: ['WHAT', 'What'],
+	how: ['HOW', 'How'],
+	comments: ['Comments'],
+	hit: ['Hit'],
+	miss: ['Miss'],
+	noCheckin: ['NoCheckin', 'No Checkin'],
+	fellowship: ['Fellowship'],
+	qPoint: ['Q Point', 'Q-Point'],
+	inspire: ['Inspire'],
+	ehingFng: ['EHing FNG', 'Ehing FNG'],
+	email: ['Email'],
+	teamType: ['Team Type'],
+	otherTeam: ['Other Team'],
+	phone: ['Phone'],
+	nagEmail: ['NAG Email']
+};
+
+/** Opens the given spreadsheet's PaxDB sheet, creating it with headers if missing. */
+function _openOrCreatePaxDbSheet_(spreadsheet) {
+	var sheet = spreadsheet.getSheetByName(PAX_DB_SHEET_NAME_);
+	if (!sheet) {
+		sheet = spreadsheet.insertSheet(PAX_DB_SHEET_NAME_);
+		sheet.getRange(1, 1, 1, PAX_DB_HEADERS_.length).setValues([PAX_DB_HEADERS_]).setFontWeight('bold');
+	}
+	return sheet;
+}
+
+/**
+ * Incrementally upserts a single PaxDB row, keyed on (SheetId, F3 Name) — F3 Name matched
+ * case-insensitively. Only the fields explicitly present in `fields` are written; any other
+ * column on an existing row is left untouched. Creates the row if no match exists. This is
+ * the live-write counterpart to the historical full-rebuild done by scanTrackers()/paxDbHistoricalRebuild()
+ * — called directly from signup save (goal fields) and mark-minus-one (Hit/Miss/NoCheckin)
+ * so PaxDB stays current without depending on a manual rescan.
+ * @param {Spreadsheet} spreadsheet The spreadsheet whose PaxDB sheet should be updated
+ *   (the Template — PaxDB only lives there).
+ * @param {Object} fields Must include sheetId and f3Name; any other PAX_DB_FIELD_ALIASES_
+ *   key may be included to write that column.
+ * @returns {{created: boolean, row: number}} Whether a new row was appended, and its row number.
+ */
+/**
+ * Appends a missing PaxDB column at the end, lock-guarded against a concurrent caller
+ * racing to add the same column — same convention as signupWebapp.js's ensureResponseColumn_
+ * for the Responses sheet.
+ * @returns {boolean} true if this call added the column, false if it was already there.
+ */
+function _appendPaxDbColumn_(sheet, headerName) {
+	var lock = LockService.getScriptLock();
+	try {
+		lock.waitLock(10000);
+	} catch (e) {
+		GasLogger.log('_appendPaxDbColumn_.lockFailed', { header: headerName, error: e.message });
+		return false;
+	}
+	try {
+		var lastColumn = sheet.getLastColumn();
+		var headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+		if (headers.indexOf(headerName) !== -1) return false; // already there — concurrent call won the race
+		sheet.getRange(1, lastColumn + 1).setValue(headerName);
+		return true;
+	} finally {
+		lock.releaseLock();
+	}
+}
+
+function upsertPaxDbRow_(spreadsheet, fields) {
+	var startedAt = Date.now();
+	if (!fields || !fields.sheetId || !fields.f3Name) {
+		throw new Error('upsertPaxDbRow_: sheetId and f3Name are required');
+	}
+
+	var sheet = _openOrCreatePaxDbSheet_(spreadsheet);
+	var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+	var headerIndex = _buildHeaderIndex_(headers);
+
+	function colFor(field) {
+		return _pickHeaderIndex_(headerIndex, PAX_DB_FIELD_ALIASES_[field] || [field]);
+	}
+
+	// Self-heal: a field with no matching column (e.g. an older PaxDB sheet predating Email/
+	// Team Type/Other Team/Phone/NAG Email) must not be silently dropped — warn and add the
+	// column, same convention as signupWebapp.js's ensureResponseColumn_ for the Responses sheet.
+	var fieldsToWrite = Object.keys(fields).filter(function(field) { return fields[field] !== undefined; });
+	var missingFields = fieldsToWrite.filter(function(field) { return colFor(field) === -1; });
+	if (missingFields.length) {
+		GasLogger.log('upsertPaxDbRow_.missingColumns', { sheetId: fields.sheetId, fields: missingFields });
+		missingFields.forEach(function(field) {
+			var headerName = (PAX_DB_FIELD_ALIASES_[field] || [field])[0];
+			if (_appendPaxDbColumn_(sheet, headerName)) {
+				GasLogger.log('upsertPaxDbRow_.missingColumns.healed', { header: headerName });
+			}
+		});
+		headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+		headerIndex = _buildHeaderIndex_(headers);
+	}
+
+	var lastColumn = sheet.getLastColumn();
+	var lastRow = sheet.getLastRow();
+	var sheetIdCol = colFor('sheetId');
+	var f3NameCol = colFor('f3Name');
+	var normName = String(fields.f3Name).trim().toLowerCase();
+
+	var matchedRowNumber = -1;
+	if (lastRow > 1) {
+		var existingValues = sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues();
+		for (var i = 0; i < existingValues.length; i++) {
+			var rowName = String(existingValues[i][f3NameCol] || '').trim().toLowerCase();
+			if (existingValues[i][sheetIdCol] === fields.sheetId && rowName === normName) {
+				matchedRowNumber = i + 2;
+				break;
+			}
+		}
+	}
+
+	var targetRowNumber = matchedRowNumber === -1 ? lastRow + 1 : matchedRowNumber;
+	var rowRange = sheet.getRange(targetRowNumber, 1, 1, lastColumn);
+	var rowValues = matchedRowNumber === -1 ? new Array(lastColumn).fill('') : rowRange.getValues()[0];
+
+	fieldsToWrite.forEach(function(field) {
+		var col = colFor(field);
+		rowValues[col] = fields[field];
+	});
+
+	rowRange.setValues([rowValues]);
+
+	GasLogger.log('upsertPaxDbRow_', {
+		sheetId: fields.sheetId,
+		created: matchedRowNumber === -1,
+		row: targetRowNumber,
+		elapsedMs: Date.now() - startedAt
+	});
+
+	return { created: matchedRowNumber === -1, row: targetRowNumber };
+}
+
+/**
+ * Finds the most recent PaxDB row for f3Name (case-insensitive), optionally excluding one
+ * sheetId (the caller's own target month, when it may already have a row there). Replaces
+ * the old Config 'Last Month Tracker' + cross-spreadsheet walk-back entirely: one read of
+ * one sheet (PaxDB, in the Template), sorted by Date descending — no other spreadsheet is
+ * opened. Logs start-to-finish timing so we have real numbers if this ever needs to become
+ * an indexed/cached lookup instead.
+ * @param {Spreadsheet} spreadsheet The Template spreadsheet (where PaxDB lives).
+ * @param {string} f3Name
+ * @param {string=} excludeSheetId
+ * @returns {Object|null} The matching PaxDB row (shape per _readPaxDbRowsBySheetId_), or null.
+ */
+function _findMostRecentPaxRecordByPredicate_(logTag, spreadsheet, excludeSheetId, predicate) {
+	var startedAt = Date.now();
+	GasLogger.log(logTag + '.start', { excludeSheetId: excludeSheetId || null });
+
+	var paxState = _readPaxDbRowsBySheetId_(spreadsheet);
+	var candidates = [];
+	Object.keys(paxState.bySheetId).forEach(function(sheetId) {
+		if (excludeSheetId && sheetId === excludeSheetId) return;
+		paxState.bySheetId[sheetId].forEach(function(row) {
+			if (predicate(row)) candidates.push(row);
+		});
+	});
+
+	candidates.sort(function(a, b) { return _toSortableTime_(b.date) - _toSortableTime_(a.date); });
+	var result = candidates.length ? candidates[0] : null;
+
+	GasLogger.log(logTag + '.done', {
+		found: !!result,
+		candidateSheets: Object.keys(paxState.bySheetId).length,
+		matchesFound: candidates.length,
+		elapsedMs: Date.now() - startedAt
+	});
+
+	return result;
+}
+
+function findMostRecentPaxRecordForName_(spreadsheet, f3Name, excludeSheetId) {
+	var normName = String(f3Name || '').trim().toLowerCase();
+	if (!normName) return null;
+	return _findMostRecentPaxRecordByPredicate_('findMostRecentPaxRecordForName_', spreadsheet, excludeSheetId, function(row) {
+		return String(row.f3Name || '').trim().toLowerCase() === normName;
+	});
+}
+
+/**
+ * Same as findMostRecentPaxRecordForName_ but matched on Email instead of F3 Name — for
+ * admin utilities (e.g. applyPaxDbSettingsToCurrentTracker) that only have an email address to
+ * work with, not the PAX's F3 Name.
+ */
+function findMostRecentPaxRecordForEmail_(spreadsheet, email, excludeSheetId) {
+	var normEmail = String(email || '').trim().toLowerCase();
+	if (!normEmail) return null;
+	return _findMostRecentPaxRecordByPredicate_('findMostRecentPaxRecordForEmail_', spreadsheet, excludeSheetId, function(row) {
+		return String(row.email || '').trim().toLowerCase() === normEmail;
+	});
+}
+
+/**
+ * Removes all PaxDB rows whose SheetId matches the given sheetId and rewrites the sheet.
+ * Used by the cleanupTracker admin action to purge smoke-test or erroneously-created
+ * tracker data from PaxDB alongside its TrackerDB row and spreadsheet.
+ * @param {Spreadsheet} spreadsheet The Template spreadsheet (where PaxDB lives).
+ * @param {string} sheetId
+ * @returns {number} Number of PaxDB rows removed.
+ */
+function deletePaxDbRowsBySheetId_(spreadsheet, sheetId) {
+	if (!sheetId) throw new Error('deletePaxDbRowsBySheetId_: sheetId required');
+	var paxState = _readPaxDbRowsBySheetId_(spreadsheet);
+	if (!paxState.bySheetId[sheetId]) return 0;
+	var count = paxState.bySheetId[sheetId].length;
+	delete paxState.bySheetId[sheetId];
+	var rows = [];
+	Object.keys(paxState.bySheetId).forEach(function(id) {
+		paxState.bySheetId[id].forEach(function(row) { rows.push(row); });
+	});
+	_updatePaxDB(rows, spreadsheet);
+	return count;
 }
 
 function _getFirstParentFolder_(fileId) {
@@ -1053,7 +1334,12 @@ if (typeof module !== 'undefined' && module.exports) {
 	module.exports = {
 		_mergeTrackerDbRowsForScan_: _mergeTrackerDbRowsForScan_,
 		_carryForwardLifecycleFields_: _carryForwardLifecycleFields_,
-		resolveTrackerDbRowForContextDate_: resolveTrackerDbRowForContextDate_
+		resolveTrackerDbRowForContextDate_: resolveTrackerDbRowForContextDate_,
+		upsertPaxDbRow_: upsertPaxDbRow_,
+		findMostRecentPaxRecordForName_: findMostRecentPaxRecordForName_,
+		findMostRecentPaxRecordForEmail_: findMostRecentPaxRecordForEmail_,
+		deletePaxDbRowsBySheetId_: deletePaxDbRowsBySheetId_,
+		_readPaxDbRowsBySheetId_: _readPaxDbRowsBySheetId_
 	};
 }
 

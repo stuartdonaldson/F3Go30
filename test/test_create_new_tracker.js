@@ -1,71 +1,42 @@
 const assert = require('node:assert/strict');
 
 const {
+  decideSignupShortUrlAction_,
   ensureLinksSheetSchema_,
-  findPreviousTrackerFromLinks_,
-  formatLinksStartDateValue_,
-  formatTrackerMonthKey_,
   hideInternalSheets_,
-  resolvePreviousTrackerReference_,
   upsertLinksRow_,
 } = require('../script/CreateNewTracker.js');
 
-assert.equal(formatTrackerMonthKey_(new Date(2026, 4, 30)), '2026-05');
-assert.equal(formatLinksStartDateValue_(new Date(2026, 3, 1)), '2026-04-01');
-
+// decideSignupShortUrlAction_ — first run ever, no Config row yet: create, no warning.
 assert.deepEqual(
-  findPreviousTrackerFromLinks_(
-    [
-      { startDate: '2026-03-01', trackerUrl: 'https://example.com/march' },
-      { startDate: '2026-04-01', trackerUrl: 'https://example.com/april-old' },
-      { startDate: '2026-04-07', trackerUrl: 'https://example.com/april-current' },
-      { startDate: '2026-05-01', trackerUrl: 'https://example.com/may' },
-    ],
-    new Date(2026, 4, 1)
-  ),
-  {
-    name: '2026-04-07',
-    url: 'https://example.com/april-current'
-  }
+  decideSignupShortUrlAction_(null, null, 'https://script.google.com/.../exec?cmd=signup'),
+  { action: 'create', warn: false }
 );
 
-assert.equal(
-  findPreviousTrackerFromLinks_(
-    [
-      { startDate: '2026-05-01', trackerUrl: 'https://example.com/may' }
-    ],
-    new Date(2026, 6, 1)
-  ),
-  null
-);
-
+// Existing short URL already redirects to the expected target: reuse, no warning.
 assert.deepEqual(
-  findPreviousTrackerFromLinks_(
-    [
-      { startDate: new Date(2026, 4, 1), trackerUrl: '', sheetId: 'sheet-may-id' },
-      { startDate: new Date(2026, 5, 1), trackerUrl: 'https://example.com/june' }
-    ],
-    new Date(2026, 5, 1)
+  decideSignupShortUrlAction_(
+    'https://tinyurl.com/Go30Signup',
+    'https://script.google.com/.../exec?cmd=signup',
+    'https://script.google.com/.../exec?cmd=signup'
   ),
-  {
-    name: '2026-05-01',
-    url: 'sheet-may-id'
-  }
+  { action: 'reuse', warn: false }
 );
 
-assert.equal(
-  resolvePreviousTrackerReference_({ sheetId: 'sheet-123', trackerUrl: 'https://example.com/tracker', shortTracker: 'https://tinyurl.com/x' }),
-  'sheet-123'
+// Existing short URL redirects somewhere else (e.g. deployment ID changed): repair, warn.
+assert.deepEqual(
+  decideSignupShortUrlAction_(
+    'https://tinyurl.com/Go30Signup',
+    'https://script.google.com/.../old-deployment?cmd=signup',
+    'https://script.google.com/.../exec?cmd=signup'
+  ),
+  { action: 'repair', warn: true }
 );
 
-assert.equal(
-  resolvePreviousTrackerReference_({ trackerUrl: 'https://example.com/tracker', shortTracker: 'https://tinyurl.com/x' }),
-  'https://example.com/tracker'
-);
-
-assert.equal(
-  resolvePreviousTrackerReference_({ shortTracker: 'https://tinyurl.com/x' }),
-  'https://tinyurl.com/x'
+// Existing short URL on file but redirect could not be resolved (fetch failure): repair, warn.
+assert.deepEqual(
+  decideSignupShortUrlAction_('https://tinyurl.com/Go30Signup', null, 'https://script.google.com/.../exec?cmd=signup'),
+  { action: 'repair', warn: true }
 );
 
 const updateCalls = [];

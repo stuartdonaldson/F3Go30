@@ -7,17 +7,20 @@
 
 ## Context
 
-F3Go30 is a Google Apps Script project bound to a Google Sheets spreadsheet (the **Template**). Every month a new tracker spreadsheet is created by running `copyAndInit()` in the template — this copies the spreadsheet (including its bound script) and initialises the copy for the new month. The owner then opens the copy and runs **Initialize Triggers** from the custom menu to set up form-submit and time-based triggers under the f3go30@gmail.com account.
+F3Go30 is a Google Apps Script project bound to a Google Sheets spreadsheet (the **Template**). Every month a new tracker spreadsheet is created by running `copyAndInit()` in the template — this copies the spreadsheet and registers it in `TrackerDB`.
 
-This creates three distinct deployment targets:
+**Since ADR-010, the copy does not run its own script.** All triggers and dispatch logic — form-submit handling, nightly −1 marking, nag email — run exclusively in the Template's bound script project and resolve which spreadsheet to operate on by looking up a context date in `TrackerDB`. A monthly tracker copy is a pure data spreadsheet; there is nothing to push or initialize on it.
+
+This reduces deployment to effectively one live target, plus a planned isolated test target:
 
 | Target | Description | When pushed |
 |--------|-------------|------------|
-| **template** | The Go30 Template spreadsheet. New month trackers are copied from here. | Active development and releases |
-| **month** | The current live month's tracker spreadsheet. | Patch delivery to a running month |
-| **test** | A dev/test copy used for end-to-end testing without touching live data. | Developer testing |
+| **template** | The Go30 Template spreadsheet. New month trackers are copied from here, and **all production logic runs here** for every past, current, and future tracker. | Active development and releases |
+| **test** | A persistent dev/test spreadsheet, registered in `TrackerDB` with future-dated row(s), used for end-to-end testing without touching live data. Planned per ADR-010; not yet provisioned. | Developer testing |
 
-Each target has its own Google Apps Script **project** (a different `scriptId`), even though they all run the same code. Pushing to one target does not affect the others.
+> **Retired:** the **month** deployment target (a separate script project pushed to the live month's tracker copy) is no longer needed — there is no code running in the copy to patch. It has been removed from `local.settings.json.example` and `manage-deployments.js` (F3Go30-shsx).
+
+Each remaining target has its own Google Apps Script **project** (a different `scriptId`), even though they run the same code. Pushing to one target does not affect the others. Because **template** is now always live production, it is no longer a safe place to test changes against real data — use the **test** target once provisioned.
 
 ---
 
@@ -29,7 +32,7 @@ The pattern is borrowed from the canonical reference in `GAS-Practices/best-prac
 tools/manage-deployments.js  # single deployment entry point
 local.settings.json          # per-machine IDs — NOT committed to git
 .clasp.json                  # written dynamically by manage-deployments.js before each push
-package.json                 # npm scripts: push / deploy:month / deploy:test / release:*
+package.json                 # npm scripts: push / deploy:test / release:*
 script/version.js            # stamped on every push with version, date, target
 ```
 
@@ -39,15 +42,16 @@ script/version.js            # stamped on every push with version, date, target
 {
   "templateScriptId":      "...",
   "templateSpreadsheetId": "...",
-  "monthScriptId":         "...",
-  "monthSpreadsheetId":    "...",
   "testScriptId":          "...",
   "testSpreadsheetId":     "..."
 }
 ```
 
+> `monthScriptId` / `monthSpreadsheetId` are retired per ADR-010 — there is no separate script
+> project for the live month tracker anymore (F3Go30-shsx removed them from
+> `local.settings.json.example` and `manage-deployments.js`).
+
 **Maintenance:** These IDs must be updated manually when:
-- A new month tracker is created (`copyAndInit`) → update `monthScriptId` / `monthSpreadsheetId` to the new spreadsheet's values.
 - The template spreadsheet is re-created or migrated → update `templateScriptId` / `templateSpreadsheetId`.
 - A new test spreadsheet is provisioned → update `testScriptId` / `testSpreadsheetId`.
 
@@ -60,7 +64,6 @@ Find a spreadsheet's spreadsheet ID from its URL: `/spreadsheets/d/<ID>/`.
 {
   "scripts": {
     "push":           "node manage-deployments.js --deploy-template",
-    "deploy:month":   "node manage-deployments.js --deploy-month",
     "deploy:test":    "node manage-deployments.js --deploy-test",
     "release:patch":  "npm version patch && npm run push && git push --follow-tags",
     "release:minor":  "npm version minor && npm run push && git push --follow-tags",
@@ -85,12 +88,12 @@ For current F3Go30 use (installable triggers, no Web App), `clasp push` is the p
 ```js
 const APP_VERSION        = '2.2.1';          // from package.json
 const APP_VERSION_DATE   = '2026-05-31T14:22:00Z';  // ISO timestamp of push
-const APP_DEPLOY_TARGET  = 'TEMPLATE';        // TEMPLATE | MONTH | TEST
+const APP_DEPLOY_TARGET  = 'TEMPLATE';        // TEMPLATE | TEST
 const APP_AUTHOR         = 'Stuart Donaldson (F3 Little John)';
 const APP_CONTACT        = 'stu@asyn.com';
 ```
 
-When a new month tracker is created by `copyAndInit`, `version.js` in the copied spreadsheet reflects the template's version at copy time — no push required. Subsequent patches to that month tracker are delivered via `npm run deploy:month`.
+When a new month tracker is created by `copyAndInit`, `version.js` in the copied spreadsheet reflects the template's version at copy time — no push required. Since ADR-010 the copy runs no logic of its own, so there is nothing to patch on it; subsequent fixes are delivered with `npm run push` to the template, which takes effect immediately for every tracker dispatched to.
 
 ---
 
@@ -115,14 +118,12 @@ https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec
 To update an **existing** named deployment without changing its URL:
 
 ```
-clasp deploy --deploymentId <id> --description "v2.3.0 TEMPLATE"
+clasp deploy --deploymentId <id> --description "v2.3.0 GO30-APP"
 ```
 
 > **Important:** omitting `--deploymentId` creates a *new* deployment with a new ID and a new URL, breaking any clients that hold the old URL.
 
-**For F3Go30 currently:** installable triggers execute `@HEAD`, so `clasp push` alone is sufficient. Named deployments are only required when adding Web App endpoints.
-
-**When Web App features arrive:** `local.settings.json` will need deployment ID fields (e.g. `templateDeploymentId`, `testDeploymentId`), and `manage-deployments.js` will call `clasp deploy --deploymentId` after each push for those targets.
+**Both the template and test script projects now have a live Web App deployment** (the signup webapp). Each project is expected to carry exactly **one** active named deployment besides the always-present `@HEAD` entry. `manage-deployments.js` does not store deployment IDs in `local.settings.json` — they go stale the moment a deployment is recreated. Instead, after every `clasp push`, it runs `clasp deployments` against the target's scriptId and looks up the single non-`@HEAD` entry itself (`findActiveDeploymentId_`), then updates it with `clasp deploy --deploymentId <id> --description "v<VERSION> GO30-APP"`. If a project ever has zero or more than one active deployment, the deploy script fails loudly rather than guessing.
 
 ### Testing via the WebApp deployment URL
 
@@ -159,13 +160,14 @@ The authoritative sequence for any push. Following this order ensures `version.j
 2. Stamp version.js  (automated by manage-deployments.js)
    APP_VERSION        ← package.json version
    APP_VERSION_DATE   ← ISO timestamp of push
-   APP_DEPLOY_TARGET  ← TEMPLATE | MONTH | TEST
+   APP_DEPLOY_TARGET  ← TEMPLATE | TEST
 
 3. Push code to @HEAD
    clasp push -f                          # via manage-deployments.js
 
-4. Update named deployment  [Web App targets only — not yet in use]
-   clasp deploy --deploymentId <id> --description "v<VERSION> <TARGET>"
+4. Update named deployment (manage-deployments.js looks up the target's single active
+   deployment ID itself via `clasp deployments` — never stored in local.settings.json)
+   clasp deploy --deploymentId <id> --description "v<VERSION> GO30-APP"
 
 5. Git commit with version and deployment type
    git add script/version.js
@@ -177,36 +179,49 @@ The authoritative sequence for any push. Following this order ensures `version.j
 - Stamping before pushing keeps `version.js` in GAS consistent with the git commit.
 - Including the deploy target in the commit message means any `version.js` in a live GAS environment can be cross-referenced directly to a git commit, confirming exactly what code is running and where it was intended to run.
 
-The `npm run release:patch/minor/major` scripts will automate steps 1–3 and 5 for the template target. `npm run deploy:month` and `npm run deploy:test` automate steps 2–3 for those targets; step 5 is a manual commit for mid-month patches.
+The `npm run release:patch/minor/major` scripts will automate steps 1–3 and 5 for the template target. `npm run deploy:test` automates steps 2–3 for the test target; step 5 is a manual commit for mid-month patches.
+
+### Go-live sequence (SIT → PROD)
+
+```
+1. Deploy to SIT:         npm run deploy:test
+2. UAT on SIT:            confirm core flows against testSpreadsheetId
+3. Smoke test on SIT:     setScriptProperties {SMOKE_MODE:'true'}
+                          copyAndInit → signup → nag/minus-one
+                          cleanupTracker (admin POST, trashSpreadsheet:true)
+                          setScriptProperties {SMOKE_MODE:'', SMOKE_TRACKER_ID:''}
+4. Deploy to PROD:        npm run push   (or npm run release:patch/minor/major)
+5. runScanTrackers PROD:  admin POST { action:'runScanTrackers' }  — refreshes TrackerDB/PaxDB
+6. Smoke test on PROD:    repeat step 3 against templateSpreadsheetId
+7. Confirm clean:         getSmokeStatus → smokeMode:false, smokeTrackerId:null
+```
 
 ---
 
 ## Month Tracker Lifecycle
 
 ```
-Template (v2.x)
+Template (v2.x) — sole runtime container (ADR-010)
      │
      │  copyAndInit() — runs in template
      ▼
 Month Tracker copy created
-     │  version.js = template's version at copy time
-     │  bound script = copy of template's script project
-     │
-     │  Owner opens month tracker
-     │  Menu → Initialize Triggers (manual — Google security requirement)
-     │  Triggers installed under f3go30@gmail.com
+     │  pure data spreadsheet — no bound logic
+     │  TrackerDB row registered: spreadsheet ID, form ID, active date range
      │
      │  ... live month in progress ...
+     │  Template's centrally-installed triggers dispatch to this tracker
+     │  whenever today's date falls in its TrackerDB range
      │
      │  Patch needed mid-month?
-     │    update monthScriptId / monthSpreadsheetId in local.settings.json
-     │    npm run deploy:month
-     │    Menu → Initialize Triggers again (if triggers change)
+     │    push to template only — takes effect immediately for this tracker
      ▼
 End of month — new copyAndInit for next month
 ```
 
-**Why triggers require a manual step:** Google Apps Script installable triggers must be created by the account that will run them. Because form-submit and time-based triggers need to run as f3go30@gmail.com (the account that owns the spreadsheet), the owner must open the spreadsheet with that account and call `initializeTriggers()` from the menu. This cannot be automated by a push.
+**Trigger installation is now a one-time step on the Template**, not a per-copy manual step.
+Form-submit and time-based triggers run as f3go30@gmail.com against the Template's bound script
+and dispatch by `TrackerDB` lookup; individual tracker copies need no trigger setup at all.
 
 ---
 
@@ -218,7 +233,7 @@ End of month — new copyAndInit for next month
 | Target selection | Manual — edit `.clasp.json` or `cd` to right dir | `tools/manage-deployments.js` with flag |
 | Version stamping | Manual edit of `script/version.js` | Automated by `manage-deployments.js` |
 | Deploy target in version | Not tracked | `APP_DEPLOY_TARGET` field |
-| Month tracker IDs | `local.settings.json` has stub | Full schema as described above |
+| Test tracker IDs | `local.settings.json` has stub | Full schema as described above |
 | `.clasp.json` location | None at root; push from `script/` | Root-level, written dynamically |
 | Release workflow | Manual tag + commit | `npm run release:patch/minor/major` |
 
@@ -293,8 +308,8 @@ In the Apps Script editor: *Deploy → New deployment → API executable*. This 
 #### Step F — Verify `clasp run` works
 
 ```bash
-clasp login   # ensure credentials are fresh
-clasp run 'getVersion'   # or any lightweight GAS function
+clasp_config_auth=~/.clasprc-f3go30.json clasp login   # ensure credentials are fresh
+clasp_config_auth=~/.clasprc-f3go30.json clasp run 'getVersion'   # or any lightweight GAS function
 ```
 
 If this returns the function output, the setup is complete. Record the GCP project ID in `local.settings.json` as `gcpProjectId` for reference.
@@ -334,7 +349,6 @@ If this returns the function output, the setup is complete. Record the GCP proje
 
 | Event | Field(s) to update |
 |-------|--------------------|
-| New month tracker created (`copyAndInit`) | `monthScriptId`, `monthSpreadsheetId` |
 | Template spreadsheet migrated or re-created | `templateScriptId`, `templateSpreadsheetId` |
 | New test spreadsheet provisioned | `testScriptId`, `testSpreadsheetId` |
 

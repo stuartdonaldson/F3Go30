@@ -87,23 +87,6 @@ def read_sheet_rows(ws, header_map: dict[str, int]) -> list[dict[str, str]]:
     return rows
 
 
-def find_previous_tracker_from_links(rows: list[dict[str, str]], start_date_iso: str):
-    start_date = date.fromisoformat(start_date_iso)
-    previous_month = date(start_date.year, start_date.month, 1) - timedelta(days=1)
-    previous_month_key = previous_month.strftime("%Y-%m")
-
-    for row in reversed(rows):
-        row_start_date = row.get("startdate", "").strip()
-        if row_start_date[:7] != previous_month_key:
-            continue
-        return {
-            "name": row_start_date,
-            "url": row.get("trackerurl", "").strip(),
-        }
-
-    return None
-
-
 def find_sheet_url_from_log(log_url: str) -> tuple[str, dict]:
     """
     Download the LogFile, find the most recent successful copyAndInit entry,
@@ -558,11 +541,10 @@ def check_links_sheet(payload: dict):
 
     return {
         "template_sheet_id": str(template_id).strip(),
-        "previous_tracker": find_previous_tracker_from_links(rows, target_month),
     }
 
 
-def check_config(wb, payload: dict | None = None, template_lineage: dict | None = None):
+def check_config(wb, payload: dict | None = None):
     print("\n--- Config sheet ---")
     sheet_name = next((s for s in wb.sheetnames if s.lower() == "config"), None)
     if sheet_name is None:
@@ -623,20 +605,8 @@ def check_config(wb, payload: dict | None = None, template_lineage: dict | None 
                   config_template_id == str(payload.get("templateSpreadsheetId") or "").strip(),
                   f"got={config_template_id!r} expected={payload.get('templateSpreadsheetId')!r}")
 
-    last_month = config_rows.get("Last Month Tracker")
-    check("Config has Last Month Tracker row",
-          last_month is not None,
-          "row not found")
-    if template_lineage is not None and last_month is not None:
-        expected_previous = template_lineage.get("previous_tracker")
-        expected_name = expected_previous["name"] if expected_previous else ""
-        expected_url = expected_previous["url"] if expected_previous else ""
-        check("Last Month Tracker name matches template Links lookup",
-              stringify_cell(last_month[0]) == expected_name,
-              f"got={stringify_cell(last_month[0])!r} expected={expected_name!r}")
-        check("Last Month Tracker URL matches template Links lookup",
-              stringify_cell(last_month[1]) == expected_url,
-              f"got={stringify_cell(last_month[1])!r} expected={expected_url!r}")
+    # 'Last Month Tracker' Config row was removed — goal reuse now resolves prior values
+    # from PaxDB (Template-resident), not a Config reference to the previous tracker.
 
 
 # ---------------------------------------------------------------------------
@@ -698,11 +668,10 @@ def main():
     check_bonus_tracker(wb)
     check_responses(wb)
     check_activity(wb)
-    template_lineage = None
     if log_entry_payload is not None:
         check_log_payload(log_entry_payload)
-        template_lineage = check_links_sheet(log_entry_payload)
-    check_config(wb, log_entry_payload, template_lineage)
+        check_links_sheet(log_entry_payload)
+    check_config(wb, log_entry_payload)
 
     print(f"\nResults: {RESULT['pass']} passed, {RESULT['fail']} failed")
     sys.exit(0 if RESULT["fail"] == 0 else 1)

@@ -1,11 +1,10 @@
 {
   "name": "f3go30",
-  "version": "2.2.1",
+  "version": "2.2.21",
   "private": true,
   "scripts": {
-    "push":          "node tools/manage-deployments.js --deploy-template",
-    "deploy:month":  "node tools/manage-deployments.js --deploy-month",
-    "deploy:test":   "node tools/manage-deployments.js --deploy-test",
+    "push": "node tools/manage-deployments.js --deploy-template",
+    "deploy:test": "node tools/manage-deployments.js --deploy-test",
     "release:patch": "npm version patch && npm run push && git push --follow-tags",
     "release:minor": "npm version minor && npm run push && git push --follow-tags",
     "release:major": "npm version major && npm run push && git push --follow-tags",

@@ -32,6 +32,7 @@ global.SpreadsheetApp = {
     }
 };
 global.getConfigValue_ = function(ss, key) { return (global._mockConfig && global._mockConfig[key]) || null; };
+global.GasLogger = { log: function() {}, run: function(name, fn) { return fn(); } };
 global.SpreadsheetManager = function(ss) {
     this.openExistingSheet = function() {
         if (global._mockManagedSheet) return global._mockManagedSheet;
@@ -55,7 +56,6 @@ const {
     buildReuseSummaryLines,
     sanitizeTextForEmailLine_,
     sanitizeEmailAddressForSend_,
-    resolveTrackerReferenceFromLinks_,
     maybeReuseLastMonthsGoals_
 } = require('../script/signupReuse.js');
 
@@ -251,20 +251,8 @@ assert.deepEqual(buildReuseSummaryLines({ email: '', nagEmail: '', teamType: '',
 assert.equal(sanitizeTextForEmailLine_('  F3\nNew\tGuy\u0007  '), 'F3 New Guy');
 assert.equal(sanitizeEmailAddressForSend_('  Test<User>@Example.com\n'), '', 'invalid address characters are rejected');
 assert.equal(sanitizeEmailAddressForSend_(' Test.User+go30@example.com\n'), 'test.user+go30@example.com');
-assert.equal(
-    resolveTrackerReferenceFromLinks_(
-        makeMockSs({}, {
-            linksValues: [
-                ['Date', 'StartDate', 'TrackerURL', 'ShortTracker', 'SheetId'],
-                ['2026-05-31', '2026-05-01', 'https://tinyurl.com/fake-tracker', 'https://tinyurl.com/fake-short', '1SheetIdFromLinks1234567890abcDEF']
-            ]
-        }),
-        { primary: '2026-05-01', secondary: 'https://tinyurl.com/fake-tracker' }
-    ),
-    '1SheetIdFromLinks1234567890abcDEF'
-);
-
-// -- maybeReuseLastMonthsGoals_ --
+// -- maybeReuseLastMonthsGoals_ — now resolves prior values via PaxDB (Template-resident),
+// not a Config 'Last Month Tracker' reference. --
 
 function makeMockResponsesSheet(headersRow) {
     return {
@@ -278,21 +266,34 @@ function makeMockResponsesSheet(headersRow) {
     };
 }
 
+const PAX_DB_TEST_HEADERS_ = ['SheetId', 'Date', 'F3 Name', 'Team', 'WHO', 'WHAT', 'HOW', 'Comments', 'Hit', 'Miss', 'NoCheckin', 'Fellowship', 'Q Point', 'Inspire', 'EHing FNG', 'Email', 'Team Type', 'Other Team', 'Phone', 'NAG Email'];
+
+// Bridges the pre-existing global._mockManagedSheet fixture shape (object rows keyed by
+// RESPONSE_COLUMN_MAP names — F3_NAME, TEAM_TYPE, etc., as authored throughout this file)
+// into PaxDB's row-array shape, so the many fixtures below didn't need rewriting when the
+// reuse lookup moved from "open a previous tracker's Responses sheet" to "read PaxDB".
+function makeMockPaxDbSheetFromManagedRows_() {
+    if (global._mockPaxDbThrows) {
+        return { getDataRange: function() { throw new Error(global._mockPaxDbThrows); } };
+    }
+    var objRows = (global._mockManagedSheet && global._mockManagedSheet.getAllRows) ? global._mockManagedSheet.getAllRows() : [];
+    var dataRows = objRows.map(function(r) {
+        return [
+            'prev-sheet-id', '2026-05-01', r.F3_NAME || '', r.TEAM || '', r.WHO || '', r.WHAT || '', r.HOW || '', '',
+            0, 0, 0, 0, 0, 0, 0,
+            r.EMAIL || '', r.TEAM_TYPE || '', r.OTHER_TEAM || '', r.PHONE || '', r.NAG_EMAIL || ''
+        ];
+    });
+    return { getDataRange: function() { return { getValues: function() { return [PAX_DB_TEST_HEADERS_].concat(dataRows); } }; } };
+}
+
 function makeMockSs(configMap, options) {
     global._mockConfig = configMap || {};
-    const opts = options || {};
     return {
+        getId: function() { return 'current-sheet-id'; },
         getFormUrl: function() { return null; },
         getSheetByName: function(name) {
-            if (name === 'TrackerDB' && opts.linksValues) {
-                return {
-                    getDataRange: function() {
-                        return {
-                            getValues: function() { return opts.linksValues; }
-                        };
-                    }
-                };
-            }
+            if (name === 'PaxDB') return makeMockPaxDbSheetFromManagedRows_();
             return null;
         },
         getUrl: function() { return 'https://mock-ss.example.com'; }
@@ -313,28 +314,25 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     assert.equal(mailsSent.length, 0, 'non-reuse choice: no email sent');
 }
 
-// Test: reuse choice, 'Last Month Tracker' absent → sends no-reuse email, returns formResponses unchanged
+// Test: reuse choice, no PaxDB record for this F3 Name → sends no-reuse email, returns formResponses unchanged
 {
     mailsSent = [];
     loggerMessages = [];
+    global._mockManagedSheet = null;
     const formRow = reusableFormRow();
     const result = maybeReuseLastMonthsGoals_(
-        makeMockSs({ 'Last Month Tracker': null }),
+        makeMockSs(),
         makeMockResponsesSheet(HEADERS), 2, formRow
     );
-    assert.deepEqual(result, formRow, 'no tracker config: formResponses unchanged');
-    assert.equal(mailsSent.length, 1, 'no tracker config: one email sent');
-    assert.ok(!mailsSent[0].subj.includes('reused'), 'no tracker config: email signals no-reuse');
+    assert.deepEqual(result, formRow, 'no PaxDB record: formResponses unchanged');
+    assert.equal(mailsSent.length, 1, 'no PaxDB record: one email sent');
+    assert.ok(!mailsSent[0].subj.includes('reused'), 'no PaxDB record: email signals no-reuse');
 }
 
-// Test: reuse choice, prior tracker found → merges values, sends reuse email
+// Test: reuse choice, prior PaxDB record found → merges values, sends reuse email
 {
     mailsSent = [];
     loggerMessages = [];
-    openByIdCalls = [];
-    openByUrlCalls = [];
-    openByUrlFailures = {};
-    global._mockPrevSs = {};
     global._mockManagedSheet = {
         getAllRows: function() {
             return [{ F3_NAME: 'TestPax', TEAM_TYPE: 'AO-based', TEAM: 'Team C', OTHER_TEAM: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
@@ -343,7 +341,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
 
     const formRow = reusableFormRow();
     const result = maybeReuseLastMonthsGoals_(
-        makeMockSs({ 'Last Month Tracker': { primary: 'https://docs.google.com/spreadsheets/d/abc123/edit' } }),
+        makeMockSs(),
         makeMockResponsesSheet(HEADERS), 2, formRow
     );
 
@@ -356,90 +354,21 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     assert.equal(result[responseColumns.PHONE], '555-9999', 'phone merged');
     assert.equal(mailsSent.length, 1, 'exactly one email sent');
     assert.ok(mailsSent[0].subj.includes('reused'), 'email signals goals reused');
-    assert.deepEqual(openByIdCalls, ['abc123'], 'URL-backed config opens by extracted spreadsheet ID');
-    assert.deepEqual(openByUrlCalls, [], 'URL-backed config does not fall through to openByUrl');
 
-    global._mockPrevSs = null;
     global._mockManagedSheet = null;
 }
 
-// Test: reuse choice, bare spreadsheet ID in config → opens with openById
+// Test: reuse choice, F3 Name not found in PaxDB → sends no-reuse email
 {
     mailsSent = [];
     loggerMessages = [];
-    openByIdCalls = [];
-    openByUrlCalls = [];
-    openByUrlFailures = {};
-    global._mockPrevSs = {};
-    global._mockManagedSheet = {
-        getAllRows: function() {
-            return [{ F3_NAME: 'TestPax', TEAM_TYPE: 'AO-based', TEAM: 'Team C', OTHER_TEAM: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
-        }
-    };
-
-    const formRow = reusableFormRow();
-    const result = maybeReuseLastMonthsGoals_(
-        makeMockSs({ 'Last Month Tracker': { primary: '1AbcDefGhIJklMNopQRstuVWxyZ0123456789' } }),
-        makeMockResponsesSheet(HEADERS), 2, formRow
-    );
-
-    assert.equal(result[responseColumns.TEAM_TYPE], 'AO-based', 'bare-id config still reuses prior values');
-    assert.deepEqual(openByIdCalls, ['1AbcDefGhIJklMNopQRstuVWxyZ0123456789'], 'bare spreadsheet ID opens by ID');
-    assert.deepEqual(openByUrlCalls, [], 'bare spreadsheet ID never reaches openByUrl');
-
-    global._mockPrevSs = null;
-    global._mockManagedSheet = null;
-}
-
-// Test: reuse choice, bad config URL but Links sheet has SheetId → falls back to Links
-{
-    mailsSent = [];
-    loggerMessages = [];
-    openByIdCalls = [];
-    openByUrlCalls = [];
-    openByUrlFailures = { 'https://tinyurl.com/not-a-sheet': 'Invalid argument: url' };
-    global._mockPrevSs = {};
-    global._mockManagedSheet = {
-        getAllRows: function() {
-            return [{ F3_NAME: 'TestPax', TEAM_TYPE: 'AO-based', TEAM: 'Team C', OTHER_TEAM: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
-        }
-    };
-
-    const formRow = reusableFormRow();
-    const result = maybeReuseLastMonthsGoals_(
-        makeMockSs(
-            { 'Last Month Tracker': { primary: '2026-05-01', secondary: 'https://tinyurl.com/not-a-sheet' } },
-            {
-                linksValues: [
-                    ['Date', 'StartDate', 'TrackerURL', 'ShortTracker', 'SheetId'],
-                    ['2026-05-31', '2026-05-01', 'https://tinyurl.com/not-a-sheet', 'https://tinyurl.com/short', '1SheetIdFromLinks1234567890abcDEF']
-                ]
-            }
-        ),
-        makeMockResponsesSheet(HEADERS), 2, formRow
-    );
-
-    assert.equal(result[responseColumns.TEAM_TYPE], 'AO-based', 'Links fallback still reuses prior values');
-    assert.deepEqual(openByUrlCalls, ['https://tinyurl.com/not-a-sheet'], 'first tries the configured reference');
-    assert.deepEqual(openByIdCalls, ['1SheetIdFromLinks1234567890abcDEF'], 'then falls back to Links sheet ID');
-
-    global._mockPrevSs = null;
-    global._mockManagedSheet = null;
-    openByUrlFailures = {};
-}
-
-// Test: reuse choice, F3 Name not found in prior tracker → sends no-reuse email
-{
-    mailsSent = [];
-    loggerMessages = [];
-    global._mockPrevSs = {};
     global._mockManagedSheet = {
         getAllRows: function() { return []; }
     };
 
     const formRow = reusableFormRow();
     const result = maybeReuseLastMonthsGoals_(
-        makeMockSs({ 'Last Month Tracker': { primary: 'https://docs.google.com/spreadsheets/d/abc123/edit' } }),
+        makeMockSs(),
         makeMockResponsesSheet(HEADERS), 2, formRow
     );
 
@@ -447,65 +376,34 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     assert.equal(mailsSent.length, 1, 'not-found: one email');
     assert.ok(!mailsSent[0].subj.includes('reused'), 'not-found: email signals no-reuse');
 
-    global._mockPrevSs = null;
     global._mockManagedSheet = null;
 }
 
-// Test: lookup failure logs spreadsheet and Responses-sheet context.
+// Test: PaxDB lookup throws → logs failure, still sends a graceful no-reuse email
 {
     mailsSent = [];
     loggerMessages = [];
-    global._mockPrevSs = {
-        getId: function() { return 'prev-sheet-id'; },
-        getName: function() { return '2026-05-F3-Go30'; },
-        getUrl: function() { return 'https://docs.google.com/spreadsheets/d/prev-sheet-id/edit'; },
-        getSheetByName: function(name) {
-            if (name !== 'Responses') return null;
-            return {
-                getDataRange: function() {
-                    return {
-                        getValues: function() {
-                            return [['Timestamp', 'Email Address']];
-                        }
-                    };
-                }
-            };
-        }
-    };
-    global._mockManagedSheet = null;
-    global.SpreadsheetManager = function() {
-        this.openExistingSheet = function() {
-            throw new Error('No headers defined for sheet Responses');
-        };
-    };
+    global._mockPaxDbThrows = 'sheet temporarily unavailable';
 
     const formRow = reusableFormRow();
-    maybeReuseLastMonthsGoals_(
-        makeMockSs({ 'Last Month Tracker': { primary: '2026-05-01', secondary: 'prev-sheet-id' } }),
+    const result = maybeReuseLastMonthsGoals_(
+        makeMockSs(),
         makeMockResponsesSheet(HEADERS), 2, formRow
     );
 
+    assert.deepEqual(result, formRow, 'lookup failure: formResponses unchanged');
+    assert.equal(mailsSent.length, 1, 'lookup failure: one email still sent');
+    assert.ok(!mailsSent[0].subj.includes('reused'), 'lookup failure: email signals no-reuse');
     assert.ok(loggerMessages.some(function(message) {
-        return message.includes('prior tracker lookup failed: No headers defined for sheet Responses')
-            && message.includes('reference="prev-sheet-id"')
-            && message.includes('spreadsheetName="2026-05-F3-Go30"')
-            && message.includes('responsesSheet=present')
-            && message.includes('responsesHeaders=["Timestamp","Email Address"]');
-    }), 'lookup failure log includes prior spreadsheet context');
+        return message.includes('PaxDB lookup failed: sheet temporarily unavailable');
+    }), 'lookup failure logged');
 
-    global.SpreadsheetManager = function(ss) {
-        this.openExistingSheet = function() {
-            if (global._mockManagedSheet) return global._mockManagedSheet;
-            throw new Error('No mock ManagedSheet configured');
-        };
-    };
-    global._mockPrevSs = null;
+    global._mockPaxDbThrows = null;
 }
 
 // Test: send path sanitizes email recipient and F3 name before sending
 {
     mailsSent = [];
-    global._mockPrevSs = {};
     global._mockManagedSheet = {
         getAllRows: function() {
             return [{ F3_NAME: 'F3 New Guy', TEAM_TYPE: 'AO-based', TEAM: 'Team C', OTHER_TEAM: 'Strength', WHO: 'Leader', WHAT: 'Run hard', HOW: 'Track daily', PHONE: '555-9999' }];
@@ -514,7 +412,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
 
     const dirtyFormRow = ['ts', ' Test.User@example.com\n', REUSE_ANSWER, 'F3\nNew\tGuy', '', '', '', '', '', '', ''];
     maybeReuseLastMonthsGoals_(
-        makeMockSs({ 'Last Month Tracker': { primary: 'https://docs.google.com/spreadsheets/d/abc123/edit' } }),
+        makeMockSs(),
         makeMockResponsesSheet(HEADERS), 2, dirtyFormRow
     );
 
@@ -549,7 +447,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
 
     const littleJohnFormRow = ['ts', 'littlejohn@example.com', REUSE_ANSWER, 'Little John', '', '', '', '', '', '', ''];
     const result = maybeReuseLastMonthsGoals_(
-        makeMockSs({ 'Last Month Tracker': { primary: 'https://docs.google.com/spreadsheets/d/abc123/edit' } }),
+        makeMockSs(),
         makeMockResponsesSheet(HEADERS), 2, littleJohnFormRow
     );
 
@@ -572,58 +470,9 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockManagedSheet = null;
 }
 
-// Test: deleted prior-month rows are ignored when selecting the reusable response.
-{
-    mailsSent = [];
-    global._mockPrevSs = {};
-    global._mockManagedSheet = {
-        getAllRows: function() {
-            return [
-                {
-                    F3_NAME: 'TestPax',
-                    PARTICIPATION: 'Yes',
-                    EMAIL: 'older@example.com',
-                    TEAM_TYPE: 'AO-based',
-                    TEAM: 'Team Old',
-                    OTHER_TEAM: 'Strength',
-                    WHO: 'Leader Old',
-                    WHAT: 'Run old',
-                    HOW: 'Track old',
-                    PHONE: '555-0000',
-                    NAG_EMAIL: 'No'
-                },
-                {
-                    F3_NAME: 'TestPax',
-                    PARTICIPATION: 'DELETED',
-                    EMAIL: 'deleted@example.com',
-                    TEAM_TYPE: 'goal-based',
-                    TEAM: 'Team Deleted',
-                    OTHER_TEAM: 'Should Ignore',
-                    WHO: 'Deleted Leader',
-                    WHAT: 'Deleted goal',
-                    HOW: 'Deleted how',
-                    PHONE: '555-9999',
-                    NAG_EMAIL: 'Yes'
-                }
-            ];
-        }
-    };
-
-    const result = maybeReuseLastMonthsGoals_(
-        makeMockSs({ 'Last Month Tracker': { primary: 'https://docs.google.com/spreadsheets/d/abc123/edit' } }),
-        makeMockResponsesSheet(HEADERS),
-        2,
-        ['ts', 'current@example.com', REUSE_ANSWER, 'TestPax', '', '', '', '', '', '', '', '']
-    );
-
-    assert.equal(result[responseColumns.TEAM], 'Team Old', 'deleted prior row ignored and older live row reused');
-    assert.equal(result[responseColumns.EMAIL], 'current@example.com', 'current email still preserved');
-    assert.equal(result[responseColumns.NAG_EMAIL], 'No', 'live prior row NAG flag reused');
-    assert.equal(mailsSent.length, 1, 'single reuse email sent');
-
-    global._mockPrevSs = null;
-    global._mockManagedSheet = null;
-}
+// Note: a prior "deleted rows ignored" test lived here. PaxDB never stores DELETED Responses
+// rows in the first place (filtered out upstream when written via upsertPaxDbRow_/the scan),
+// so there's nothing for the reuse lookup itself to filter — removed rather than ported.
 
 // Test: Crazy Ivan reuse from actual Last Month data
 {
@@ -648,7 +497,7 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
 
     const crazyIvanFormRow = ['ts', 'crazyivan@example.com', REUSE_ANSWER, 'Crazy Ivan', '', '', '', '', '', '', ''];
     const result = maybeReuseLastMonthsGoals_(
-        makeMockSs({ 'Last Month Tracker': { primary: 'https://docs.google.com/spreadsheets/d/abc123/edit' } }),
+        makeMockSs(),
         makeMockResponsesSheet(HEADERS), 2, crazyIvanFormRow
     );
 
@@ -749,7 +598,8 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     const result = maybeReuseLastMonthsGoals_(
         {
             getFormUrl: function() { return 'https://docs.google.com/forms/d/mock/viewform'; },
-            getSheetByName: function() { return null; },
+            getId: function() { return 'current-sheet-id'; },
+            getSheetByName: function(name) { return name === 'PaxDB' ? makeMockPaxDbSheetFromManagedRows_() : null; },
             getUrl: function() { return 'https://mock-ss.example.com'; }
         },
         makeMockResponsesSheet(HEADERS),
@@ -842,7 +692,8 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     const result = maybeReuseLastMonthsGoals_(
         {
             getFormUrl: function() { return 'https://docs.google.com/forms/d/mock/viewform'; },
-            getSheetByName: function() { return null; },
+            getId: function() { return 'current-sheet-id'; },
+            getSheetByName: function(name) { return name === 'PaxDB' ? makeMockPaxDbSheetFromManagedRows_() : null; },
             getUrl: function() { return 'https://mock-ss.example.com'; }
         },
         makeMockResponsesSheet(HEADERS),
@@ -941,7 +792,8 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     maybeReuseLastMonthsGoals_(
         {
             getFormUrl: function() { return 'https://docs.google.com/forms/d/mock/viewform'; },
-            getSheetByName: function() { return null; },
+            getId: function() { return 'current-sheet-id'; },
+            getSheetByName: function(name) { return name === 'PaxDB' ? makeMockPaxDbSheetFromManagedRows_() : null; },
             getUrl: function() { return 'https://mock-ss.example.com'; }
         },
         makeMockResponsesSheet(HEADERS),
@@ -1046,7 +898,8 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     maybeReuseLastMonthsGoals_(
         {
             getFormUrl: function() { return 'https://docs.google.com/forms/d/mock/viewform'; },
-            getSheetByName: function() { return null; },
+            getId: function() { return 'current-sheet-id'; },
+            getSheetByName: function(name) { return name === 'PaxDB' ? makeMockPaxDbSheetFromManagedRows_() : null; },
             getUrl: function() { return 'https://mock-ss.example.com'; }
         },
         makeMockResponsesSheet(HEADERS),

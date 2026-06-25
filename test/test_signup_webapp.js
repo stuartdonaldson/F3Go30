@@ -3,11 +3,14 @@ const assert = require('node:assert/strict');
 const {
   classifyTeam_,
   findSignupMatch_,
+  findSignupMatchByF3NameOnly_,
   parseTeamListsFromListDbRows_,
   trackerHasF3Name_,
+  findEmptyTrackerSlotIndex_,
   buildResponseRowFromForm_,
   parseLinksRows_,
   resolveSignupMonths_,
+  handleSignupFeedback_,
 } = require('../script/signupWebapp.js');
 
 const { resolveResponseColumns } = require('../script/response_utils.js');
@@ -108,6 +111,14 @@ assert.equal(trackerHasF3Name_(TRACKER_NAME_ROWS, 'splinter'), false); // exact 
 assert.equal(trackerHasF3Name_(TRACKER_NAME_ROWS, ' Splinter '), false); // no trim, like the trigger
 assert.equal(trackerHasF3Name_(TRACKER_NAME_ROWS, 'Nobody'), false);
 
+// --- findEmptyTrackerSlotIndex_ — fills initSheets' blank row-4 template row instead of
+// skipping past it (F3Go30 implementation miss: webapp save left row 4 permanently blank) ---
+
+assert.equal(findEmptyTrackerSlotIndex_([['']]), 0, 'fresh tracker — row 4 itself is the empty slot');
+assert.equal(findEmptyTrackerSlotIndex_(TRACKER_NAME_ROWS), 2, 'first blank slot among occupied rows');
+assert.equal(findEmptyTrackerSlotIndex_([['Splinter'], ['Anchor']]), -1, 'no empty slot — caller must append');
+assert.equal(findEmptyTrackerSlotIndex_([]), -1);
+
 // --- buildResponseRowFromForm_ — maps webapp form fields into a Responses row array ---
 
 const FULL_HEADERS = [
@@ -118,14 +129,38 @@ const FULL_HEADERS = [
 ];
 const FULL_COLUMNS = resolveResponseColumns(FULL_HEADERS);
 
+// --- findSignupMatchByF3NameOnly_ — detects an email change (ADR-008: keyed on F3 Name so a
+// PAX can change their email) so handleSignupSave_ can retire the old row instead of leaving
+// it sitting as an active duplicate alongside the new one ---
+
+function buildFullRow(overrides) {
+  var row = new Array(FULL_HEADERS.length).fill('');
+  Object.keys(overrides || {}).forEach(function(key) { row[FULL_COLUMNS[key]] = overrides[key]; });
+  return row;
+}
+
+const EMAIL_CHANGE_ROWS = [
+  buildFullRow({ F3_NAME: 'Splinter', EMAIL: 'old@example.com', PARTICIPATION: 'Yes' }),
+  buildFullRow({ F3_NAME: 'Anchor', EMAIL: 'anchor@example.com', PARTICIPATION: 'Yes' }),
+  buildFullRow({ F3_NAME: 'Sapper', EMAIL: 'sapper-old@example.com', PARTICIPATION: 'DELETED' }),
+];
+
+const emailChangeMatch = findSignupMatchByF3NameOnly_(EMAIL_CHANGE_ROWS, 'Splinter', FULL_COLUMNS);
+assert.equal(emailChangeMatch.rowIndex, 0);
+assert.equal(findSignupMatchByF3NameOnly_(EMAIL_CHANGE_ROWS, 'splinter', FULL_COLUMNS).rowIndex, 0, 'case-insensitive');
+assert.equal(findSignupMatchByF3NameOnly_(EMAIL_CHANGE_ROWS, 'Sapper', FULL_COLUMNS), null, 'a DELETED row is never matched');
+assert.equal(findSignupMatchByF3NameOnly_(EMAIL_CHANGE_ROWS, 'Nobody', FULL_COLUMNS), null);
+
 const AO_FORM_DATA = {
+  participation: 'Yes',
   f3Name: 'Splinter', email: 'splinter@example.com',
   teamType: 'ao', team: 'Crucible',
   who: 'A leader', what: 'A challenge', how: 'Daily effort', phone: '555-1234', nag: true,
 };
 
 // New row (no existing row) — AO-based: TEAM holds the AO name, OTHER_TEAM blank
-const newRow = buildResponseRowFromForm_(null, FULL_COLUMNS, AO_FORM_DATA);
+const newRow = buildResponseRowFromForm_(null, FULL_COLUMNS, AO_FORM_DATA).row;
+assert.equal(newRow[FULL_COLUMNS.PARTICIPATION], 'Yes');
 assert.equal(newRow[FULL_COLUMNS.F3_NAME], 'Splinter');
 assert.equal(newRow[FULL_COLUMNS.EMAIL], 'splinter@example.com');
 assert.equal(newRow[FULL_COLUMNS.TEAM_TYPE], 'AO-based');
@@ -140,14 +175,14 @@ assert.equal(newRow[FULL_COLUMNS.NAG_EMAIL], 'Yes');
 // Other-based: team value goes into OTHER_TEAM, TEAM is blank
 const otherRow = buildResponseRowFromForm_(null, FULL_COLUMNS, {
   ...AO_FORM_DATA, teamType: 'other', team: 'My Custom Team',
-});
+}).row;
 assert.equal(otherRow[FULL_COLUMNS.TEAM_TYPE], 'Other');
 assert.equal(otherRow[FULL_COLUMNS.TEAM], '');
 assert.equal(otherRow[FULL_COLUMNS.OTHER_TEAM], 'My Custom Team');
 
 // Update in place — existing row's untouched columns (e.g. Timestamp at index 0) are preserved
 const existingRow = ['2026-01-01 00:00:00', 'old@example.com', 'Yes', 'Splinter', 'Other', '', 'Old Team', 'old who', 'old what', 'old how', '111', 'No', 'old comment'];
-const updatedRow = buildResponseRowFromForm_(existingRow, FULL_COLUMNS, AO_FORM_DATA);
+const updatedRow = buildResponseRowFromForm_(existingRow, FULL_COLUMNS, AO_FORM_DATA).row;
 assert.equal(updatedRow[0], '2026-01-01 00:00:00', 'untouched/unmapped column preserved');
 assert.equal(updatedRow[FULL_COLUMNS.TEAM], 'Crucible', 'team overwritten');
 assert.equal(updatedRow[FULL_COLUMNS.NAG_EMAIL], 'Yes', 'nag overwritten');
@@ -157,20 +192,31 @@ assert.equal(updatedRow[FULL_COLUMNS.NAG_EMAIL], 'Yes', 'nag overwritten');
 // {feedbackRating, feedbackComment}, never re-sends f3Name/team/who/etc.
 const feedbackOnlyRow = buildResponseRowFromForm_(existingRow, FULL_COLUMNS, {
   feedbackRating: 4, feedbackComment: 'Loved it',
-});
+}).row;
 assert.equal(feedbackOnlyRow[FULL_COLUMNS.F3_NAME], 'Splinter', 'F3 Name untouched by partial update');
 assert.equal(feedbackOnlyRow[FULL_COLUMNS.TEAM_TYPE], 'Other', 'Team type untouched by partial update');
 assert.equal(feedbackOnlyRow[FULL_COLUMNS.WHO], 'old who', 'WHO untouched by partial update');
 assert.equal(feedbackOnlyRow[FULL_COLUMNS.NAG_EMAIL], 'No', 'NAG untouched by partial update');
 assert.equal(feedbackOnlyRow[FULL_COLUMNS.FEEDBACK_COMMENT], 'Loved it', 'feedback comment applied');
 
-// Feedback fields are skipped gracefully when the sheet has no Feedback Rating column
+// Feedback fields are skipped gracefully when the sheet has no Feedback Rating column — but
+// the skip is reported, not silently dropped (F3Go30 implementation-miss fix). The caller
+// (buildResponseRowWithSelfHeal_, GAS-only) is responsible for warning + self-healing.
 assert.equal(FULL_COLUMNS.FEEDBACK_RATING, undefined);
-const noFeedbackColumnRow = buildResponseRowFromForm_(null, FULL_COLUMNS, {
+const noFeedbackColumnResult = buildResponseRowFromForm_(null, FULL_COLUMNS, {
   ...AO_FORM_DATA, feedbackRating: 5, feedbackComment: 'Great program',
 });
-assert.equal(noFeedbackColumnRow[FULL_COLUMNS.FEEDBACK_COMMENT], 'Great program'); // comment column exists
-assert.equal(noFeedbackColumnRow.length, FULL_HEADERS.length); // no extra column appended for the missing rating
+assert.equal(noFeedbackColumnResult.row[FULL_COLUMNS.FEEDBACK_COMMENT], 'Great program'); // comment column exists
+assert.equal(noFeedbackColumnResult.row.length, FULL_HEADERS.length); // no extra column appended for the missing rating
+assert.deepEqual(noFeedbackColumnResult.skippedFields, ['FEEDBACK_RATING']);
+
+// The success case (column present) reports no skips.
+const FULL_COLUMNS_WITH_RATING = resolveResponseColumns(FULL_HEADERS.concat('Feedback Rating'));
+const withRatingResult = buildResponseRowFromForm_(null, FULL_COLUMNS_WITH_RATING, {
+  ...AO_FORM_DATA, feedbackRating: 5, feedbackComment: 'Great program',
+});
+assert.deepEqual(withRatingResult.skippedFields, []);
+assert.equal(withRatingResult.row[FULL_COLUMNS_WITH_RATING.FEEDBACK_RATING], 5);
 
 // --- parseLinksRows_ / resolveSignupMonths_ — §6.3 current/next month resolution from Links ---
 
@@ -201,5 +247,13 @@ const onlyThroughJune = parseLinksRows_(LINKS_VALUES.slice(0, 4));
 const monthsNoNext = resolveSignupMonths_(onlyThroughJune, today);
 assert.equal(monthsNoNext.current.sheetId, 'sheet-june');
 assert.equal(monthsNoNext.next, null);
+
+// --- handleSignupFeedback_ — blank rating + blank comment must not touch the sheet at all,
+// since writing them would overwrite feedback already on file. The guard runs before any
+// SpreadsheetApp call, so passing null as the spreadsheet proves nothing was touched. ---
+
+assert.deepEqual(handleSignupFeedback_(null, { feedbackRating: 0, feedbackComment: '' }), { ok: true, skipped: true });
+assert.deepEqual(handleSignupFeedback_(null, { feedbackRating: 0, feedbackComment: '   ' }), { ok: true, skipped: true }, 'whitespace-only comment counts as blank');
+assert.deepEqual(handleSignupFeedback_(null, {}), { ok: true, skipped: true }, 'fields entirely absent counts as blank');
 
 console.log('test_signup_webapp.js: PASS');

@@ -1,13 +1,14 @@
 /*
  * signupReuse.js
  *
- * Implements the "reuse last month's goals" flow used by the Go30 HC signup.
+ * Implements the "reuse prior goals" flow used by the Go30 HC signup.
  * Key exported function: maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNumber, formResponses)
- * - When the participant selected the reuse option, this function locates the
- *   most recent prior response for the same email in the previous tracker (as
- *   configured in the Config sheet), copies the relevant goal fields into the
- *   current Responses row, merges them into the in-memory formResponses, and
- *   emails the participant a summary with a prefilled edit link.
+ * - When the participant selects the reuse option, this function looks up their
+ *   most recent PaxDB record (in the Template spreadsheet) via getPriorResponse(),
+ *   merges the goal fields into the current Responses row, and emails the participant
+ *   a summary with a prefilled edit link.
+ * - Prior to PaxDB, this walked back to the previous tracker via Config 'Last Month
+ *   Tracker'. That mechanism is gone; PaxDB is now the single source of prior values.
  */
 var responseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
     ? require('./response_utils.js')
@@ -15,6 +16,17 @@ var responseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
 var signupReuseUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
     ? require('./Utilities.js')
     : null;
+var signupReuseGo30ToolsModule_ = (typeof module !== 'undefined' && module.exports)
+    ? require('./go30tools.js')
+    : null;
+var signupReuseCreateNewTrackerModule_ = (typeof module !== 'undefined' && module.exports)
+    ? require('./CreateNewTracker.js')
+    : null;
+
+var findMostRecentPaxRecordForName_ = (signupReuseGo30ToolsModule_ && signupReuseGo30ToolsModule_.findMostRecentPaxRecordForName_)
+    || (typeof globalThis !== 'undefined' && globalThis.findMostRecentPaxRecordForName_);
+var getTemplateSpreadsheetForInit_ = (signupReuseCreateNewTrackerModule_ && signupReuseCreateNewTrackerModule_.getTemplateSpreadsheetForInit_)
+    || (typeof globalThis !== 'undefined' && globalThis.getTemplateSpreadsheetForInit_);
 
 var RESPONSE_COLUMN_MAP = (responseUtilsModule_ && responseUtilsModule_.RESPONSE_COLUMN_MAP)
     || (typeof globalThis !== 'undefined' && globalThis.RESPONSE_COLUMN_MAP);
@@ -54,111 +66,6 @@ function setResponseValue_(responseRow, columnMap, key, value) {
 
 function normalizeEmailAddress(email) {
     return String(email || '').trim().toLowerCase();
-}
-
-function formatTrackerReferenceDate_(value) {
-    if (value instanceof Date && !isNaN(value.getTime())) {
-        return value.getFullYear()
-            + '-' + String(value.getMonth() + 1).padStart(2, '0')
-            + '-' + String(value.getDate()).padStart(2, '0');
-    }
-    return String(value || '').trim();
-}
-
-function extractSpreadsheetIdFromReference_(trackerReference) {
-    var reference = String(trackerReference || '').trim();
-    if (!reference) return '';
-
-    var trackerIdMatch = reference.match(/\/d\/([a-zA-Z0-9_-]+)/);
-    if (trackerIdMatch) return trackerIdMatch[1];
-    if (/^[a-zA-Z0-9_-]{20,}$/.test(reference)) return reference;
-    return '';
-}
-
-function resolveTrackerReferenceFromLinks_(spreadsheet, previousTrackerConfig) {
-    if (!spreadsheet || typeof spreadsheet.getSheetByName !== 'function') return '';
-
-    var trackerName = String((previousTrackerConfig && previousTrackerConfig.primary) || '').trim();
-    if (!trackerName) return '';
-
-    var linksSheet = spreadsheet.getSheetByName('TrackerDB');
-    if (!linksSheet || typeof linksSheet.getDataRange !== 'function') return '';
-
-    var values = linksSheet.getDataRange().getValues();
-    if (!values || values.length < 2) return '';
-
-    var headers = values[0].map(function(header) {
-        return String(header || '').trim().toLowerCase();
-    });
-    var startDateIndex = headers.indexOf('startdate');
-    if (startDateIndex === -1) startDateIndex = headers.indexOf('month');
-    if (startDateIndex === -1) return '';
-
-    var sheetIdIndex = headers.indexOf('sheetid');
-    var trackerUrlIndex = headers.indexOf('trackerurl');
-    if (trackerUrlIndex === -1) trackerUrlIndex = headers.indexOf('tracker url');
-    var shortTrackerIndex = headers.indexOf('shorttracker');
-
-    for (var i = values.length - 1; i >= 1; i--) {
-        var row = values[i] || [];
-        if (formatTrackerReferenceDate_(row[startDateIndex]) !== trackerName) continue;
-
-        var sheetId = sheetIdIndex >= 0 ? String(row[sheetIdIndex] || '').trim() : '';
-        if (sheetId) return sheetId;
-
-        var trackerUrl = trackerUrlIndex >= 0 ? String(row[trackerUrlIndex] || '').trim() : '';
-        if (trackerUrl) return trackerUrl;
-
-        return shortTrackerIndex >= 0 ? String(row[shortTrackerIndex] || '').trim() : '';
-    }
-
-    return '';
-}
-
-function openSpreadsheetFromReference_(trackerReference) {
-    var trackerId = extractSpreadsheetIdFromReference_(trackerReference);
-    if (trackerId) return SpreadsheetApp.openById(trackerId);
-    return SpreadsheetApp.openByUrl(String(trackerReference || '').trim());
-}
-
-function describePriorTrackerContext_(prevSs, trackerReference) {
-    var parts = ['reference=' + JSON.stringify(String(trackerReference || '').trim())];
-    if (!prevSs) return parts.join(', ');
-
-    try {
-        if (typeof prevSs.getName === 'function') {
-            parts.push('spreadsheetName=' + JSON.stringify(prevSs.getName()));
-        }
-    } catch (e) {}
-
-    try {
-        if (typeof prevSs.getId === 'function') {
-            parts.push('spreadsheetId=' + JSON.stringify(prevSs.getId()));
-        }
-    } catch (e) {}
-
-    try {
-        if (typeof prevSs.getUrl === 'function') {
-            parts.push('spreadsheetUrl=' + JSON.stringify(prevSs.getUrl()));
-        }
-    } catch (e) {}
-
-    try {
-        if (typeof prevSs.getSheetByName === 'function') {
-            var responsesSheet = prevSs.getSheetByName('Responses');
-            parts.push('responsesSheet=' + (responsesSheet ? 'present' : 'missing'));
-            if (responsesSheet && typeof responsesSheet.getDataRange === 'function') {
-                var values = responsesSheet.getDataRange().getValues();
-                var headerRow = values && values.length ? values[0] : [];
-                parts.push('responsesHeaders=' + JSON.stringify(headerRow));
-                parts.push('responsesRowCount=' + (values ? values.length : 0));
-            }
-        }
-    } catch (e) {
-        parts.push('responsesInspectError=' + JSON.stringify(e && e.message));
-    }
-
-    return parts.join(', ');
 }
 
 function isReuseLastMonthsGoalsChoice(answer) {
@@ -418,54 +325,40 @@ function buildPrefilledGoalUpdateUrl(form, currentResponseRow, reusedValues, res
 }
 
 /**
- * getPriorResponse
- * - prevSs: Spreadsheet object for previous tracker
- * - f3Name: F3 Name to lookup
- *
- * Returns { ok: true, reusedValues: {...} }
- * or { ok: false, error: 'reason', message: 'human message' }
+ * Resolves the prior reusable values for f3Name via PaxDB (Template-resident), instead of
+ * opening a previous tracker's Responses sheet directly. PaxDB already carries the goal
+ * fields (Team/WHO/WHAT/HOW/TeamType/OtherTeam/Phone/NagEmail/Email) from whichever month
+ * last wrote them — via the webapp's incremental upsert, mark-minus-one, or a backfill scan —
+ * so this is one local sheet read in the Template, not a cross-spreadsheet walk-back through
+ * Config's old 'Last Month Tracker' reference.
+ * @param {Spreadsheet} templateSpreadsheet
+ * @param {string} f3Name
+ * @param {string} excludeSheetId The calling tracker's own sheetId — never reuse from itself.
+ * @returns {{ok: true, reusedValues: Object}|{ok: false, error: string, message: string}}
  */
-function getPriorResponse(prevSs, f3Name, trackerReference) {
-    if (!prevSs) return { ok: false, error: 'no-ss', message: 'previous spreadsheet not provided' };
+function getPriorResponse(templateSpreadsheet, f3Name, excludeSheetId) {
+    if (!templateSpreadsheet) return { ok: false, error: 'no-template', message: 'Template spreadsheet not resolved' };
     try {
-        var prevManager = new SpreadsheetManager(prevSs);
-        var prevMs = prevManager.openExistingSheet('Responses', RESPONSE_COLUMN_MAP);
-        var prevRowsObj = prevMs.getAllRows();
-        var foundObj = null;
-        var normF3Name = String(f3Name || '').trim().toLowerCase();
-        for (var i = prevRowsObj.length - 1; i >= 0; i--) {
-            var r = prevRowsObj[i];
-            if (!r) continue;
-            if (isDeletedResponseRow_(r)) continue;
-            if (String(r.F3_NAME || '').trim().toLowerCase() === normF3Name) { foundObj = r; break; }
-        }
-        if (!foundObj) {
-            var ssName = ''; var ssId = '';
-            try { ssName = prevSs.getName(); } catch (e) {}
-            try { ssId = prevSs.getId(); } catch (e) {}
-            var sampleNames = prevRowsObj.slice(0, 5).map(function(r) { return r && r.F3_NAME || '(blank)'; });
-            return { ok: false, error: 'not-found', message: 'no previous response found for F3 Name: ' + f3Name + ' — prevSs=' + JSON.stringify(ssName) + ' id=' + JSON.stringify(ssId) + ' rowCount=' + prevRowsObj.length + ' sampleNames=' + JSON.stringify(sampleNames) };
+        var record = findMostRecentPaxRecordForName_(templateSpreadsheet, f3Name, excludeSheetId);
+        if (!record) {
+            return { ok: false, error: 'not-found', message: 'no PaxDB record found for F3 Name: ' + f3Name };
         }
         return {
             ok: true,
             reusedValues: {
-                email: foundObj.EMAIL || '',
-                teamType: foundObj.TEAM_TYPE || '',
-                team: foundObj.TEAM || '',
-                otherTeam: foundObj.OTHER_TEAM || '',
-                who: foundObj.WHO || '',
-                what: foundObj.WHAT || '',
-                how: foundObj.HOW || '',
-                phone: foundObj.PHONE || '',
-                nagEmail: foundObj.NAG_EMAIL || ''
+                email: record.email || '',
+                teamType: record.teamType || '',
+                team: record.team || '',
+                otherTeam: record.otherTeam || '',
+                who: record.who || '',
+                what: record.what || '',
+                how: record.how || '',
+                phone: record.phone || '',
+                nagEmail: record.nagEmail || ''
             }
         };
     } catch (err) {
-        return {
-            ok: false,
-            error: 'lookup-failed',
-            message: 'prior tracker lookup failed: ' + (err && err.message) + ' (' + describePriorTrackerContext_(prevSs, trackerReference) + ')'
-        };
+        return { ok: false, error: 'lookup-failed', message: 'PaxDB lookup failed: ' + (err && err.message) };
     }
 }
 
@@ -554,28 +447,15 @@ function maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNum
     var form = spreadsheet.getFormUrl() ? FormApp.openByUrl(spreadsheet.getFormUrl()) : null;
     var prefilledUrl = spreadsheet.getFormUrl() || '';
 
-    // Resolve previous tracker reference from Config — exit early if absent.
-    var previousTrackerConfig = getConfigValue_(spreadsheet, 'Last Month Tracker');
-    var trackerReference = String((previousTrackerConfig && (previousTrackerConfig.secondary || previousTrackerConfig.primary)) || '').trim();
-    if (!trackerReference) {
-        Logger.log('maybeReuseLastMonthsGoals_: no previous tracker found in Config sheet');
-        sendGoalReuseEmail(spreadsheet, emailAddress, f3Name, trackerUrl, prefilledUrl, [], false);
-        return formResponses;
-    }
+    // Resolve the Template (PaxDB lives there, not in this monthly tracker) via the 'Sheet
+    // Template' Config row — exit gracefully if it can't be resolved.
+    var templateSpreadsheet = getTemplateSpreadsheetForInit_(spreadsheet, spreadsheet.getSheetByName('Config'));
 
     var priorResult;
     try {
-        var prevSs;
-        try {
-            prevSs = openSpreadsheetFromReference_(trackerReference);
-        } catch (openErr) {
-            var linksFallbackReference = resolveTrackerReferenceFromLinks_(spreadsheet, previousTrackerConfig);
-            if (!linksFallbackReference || linksFallbackReference === trackerReference) throw openErr;
-            prevSs = openSpreadsheetFromReference_(linksFallbackReference);
-        }
-        priorResult = getPriorResponse(prevSs, f3Name, trackerReference);
+        priorResult = getPriorResponse(templateSpreadsheet, f3Name, spreadsheet.getId());
     } catch (e) {
-        priorResult = { ok: false, error: 'open-failed', message: 'failed to open previous tracker: ' + (e && e.message) };
+        priorResult = { ok: false, error: 'lookup-failed', message: 'PaxDB lookup failed: ' + (e && e.message) };
     }
     if (!priorResult.ok) {
         Logger.log('maybeReuseLastMonthsGoals_: ' + priorResult.message);
@@ -617,7 +497,7 @@ if (typeof module !== 'undefined' && module.exports) {
         sendRegistrationConfirmationEmail_,
         sanitizeTextForEmailLine_,
         sanitizeEmailAddressForSend_,
-        resolveTrackerReferenceFromLinks_,
+        getPriorResponse,
         getResponseValue_,
         getOptionalResponseValue_,
         setResponseValue_

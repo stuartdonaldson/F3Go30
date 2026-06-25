@@ -24,48 +24,6 @@ function buildLinksHeaderIndex_(headers) {
   return headerIndex;
 }
 
-function formatTrackerMonthKey_(date) {
-  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0');
-}
-
-function formatLinksStartDateValue_(value) {
-  if (value instanceof Date && !isNaN(value.getTime())) {
-    return value.getFullYear()
-      + '-' + String(value.getMonth() + 1).padStart(2, '0')
-      + '-' + String(value.getDate()).padStart(2, '0');
-  }
-
-  return String(value || '').trim();
-}
-
-function resolvePreviousTrackerReference_(row) {
-  const sheetId = String((row && row.sheetId) || '').trim();
-  if (sheetId) return sheetId;
-
-  const trackerUrl = String((row && row.trackerUrl) || '').trim();
-  if (trackerUrl) return trackerUrl;
-
-  return String((row && row.shortTracker) || '').trim();
-}
-
-function findPreviousTrackerFromLinks_(linksRows, startDate) {
-  const previousMonth = new Date(startDate.getFullYear(), startDate.getMonth() - 1, 1);
-  const previousMonthKey = formatTrackerMonthKey_(previousMonth);
-
-  for (let i = linksRows.length - 1; i >= 0; i--) {
-    const row = linksRows[i] || {};
-    const rowStartDate = formatLinksStartDateValue_(row.startDate);
-    if (!rowStartDate || rowStartDate.slice(0, 7) !== previousMonthKey) continue;
-
-    return {
-      name: rowStartDate,
-      url: resolvePreviousTrackerReference_(row)
-    };
-  }
-
-  return null;
-}
-
 function ensureLinksSheetSchema_(linksSheet) {
   if (!linksSheet || !linksSheet.sheet) return linksSheet;
 
@@ -131,12 +89,6 @@ function openLinksSheet_(spreadsheet) {
   return ensureLinksSheetSchema_(linksSheet);
 }
 
-function getPreviousTrackerConfigFromLinks_(spreadsheet, startDate) {
-  const linksSheet = openLinksSheet_(spreadsheet);
-  const linksRows = typeof linksSheet.getAllRows === 'function' ? linksSheet.getAllRows() : [];
-  return findPreviousTrackerFromLinks_(linksRows, startDate);
-}
-
 function upsertLinksRow_(linksSheet, rowData) {
   if (!linksSheet) return 'skipped';
 
@@ -169,27 +121,6 @@ function writeTrackerConfigRows_(configSheet, formName, formUrl, templateUrl) {
 
   upsertConfigRow(configSheet, cfgValues, 'Signup HC Form', formName, formUrl);
   upsertConfigRow(configSheet, cfgValues, 'Sheet Template', templateUrl || '', '');
-}
-
-function writeLastMonthTrackerConfig_(configSheet, lastMonthTracker) {
-  if (!configSheet) return;
-
-  const cfgRange = configSheet.getDataRange();
-  const cfgValues = cfgRange ? cfgRange.getValues() : [];
-
-  for (let r = 0; r < cfgValues.length; r++) {
-    if (String(cfgValues[r][0]).trim() === 'Last Month Tracker') {
-      configSheet.getRange(r + 1, 2).setValue(lastMonthTracker ? lastMonthTracker.name : '');
-      configSheet.getRange(r + 1, 3).setValue(lastMonthTracker ? lastMonthTracker.url : '');
-      return;
-    }
-  }
-
-  configSheet.appendRow([
-    'Last Month Tracker',
-    lastMonthTracker ? lastMonthTracker.name : '',
-    lastMonthTracker ? lastMonthTracker.url : ''
-  ]);
 }
 
 function hideInternalSheets_(spreadsheet) {
@@ -284,7 +215,8 @@ function copyAndInit_() {
     }
     NoticeLog('Config: NameSpace was not set — wrote default "' + DEFAULT_NAMESPACE + '". Update the Config sheet NameSpace row to change the region identifier.');
   }
-  const nameSpace = nameSpaceConfig.primary;
+  const smokeMode = PropertiesService.getScriptProperties().getProperty('SMOKE_MODE') === 'true';
+  const nameSpace = nameSpaceConfig.primary + (smokeMode ? ' (Smoke)' : '');
 
   const paddedMonth = String(startDate.getMonth() + 1).padStart(2, '0');
   const newSpreadsheetName = startDate.getFullYear() + '-' + paddedMonth + '-' + nameSpace;
@@ -296,6 +228,9 @@ function copyAndInit_() {
       NoticeLog('Copying spreadsheet...');
       newSpreadsheet = currentSpreadsheet.copy(newSpreadsheetName);
       newSpreadsheetId = newSpreadsheet.getId();
+      if (smokeMode) {
+        PropertiesService.getScriptProperties().setProperty('SMOKE_TRACKER_ID', newSpreadsheetId);
+      }
 
       // Move the new spreadsheet to the same folder as the current spreadsheet
       const currentSpreadsheetFile = DriveApp.getFileById(currentSpreadsheet.getId());
@@ -399,13 +334,18 @@ function copyAndInit_() {
     // the new tracker directly — no per-copy "Initialize Triggers" step required.
     setupFormSubmitTrigger(newSpreadsheet);
 
+    // Stable, NameSpace-derived signup short URL — same mechanism as autoGenerateNextMonthTracker_.
+    // Previously missing from this manual path, so a tracker created here never got a working
+    // 'Signup Short URL' Config row.
+    const signupShortUrl = ensureSignupShortUrl_(configSheet, configData, nameSpace);
+
   NoticeLog("-");
   NoticeLog('<b>Next steps:</b>');
   NoticeLog('1. Open the new spreadsheet (link above) and verify it looks correct');
   NoticeLog('2. Open the HC form (link above) and verify it looks correct');
   NoticeLog("-");
 
-  const slackMsg = buildSlackMessage_(startDate.getFullYear(), MONTH_NAMES_[startDate.getMonth()], formShortUrl, trackerSheetShortUrl);
+  const slackMsg = buildSignupSlackMessage_(startDate.getFullYear(), MONTH_NAMES_[startDate.getMonth()], signupShortUrl, trackerSheetShortUrl, formShortUrl);
   NoticeLog('<b>Slack channel message:</b>');
   NoticeLog('<textarea rows="5" style="width:100%;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;" readonly onclick="this.select()">' + escapeHtml_(slackMsg) + '</textarea>');
   NoticeLog("-");
@@ -418,6 +358,7 @@ function copyAndInit_() {
     startDateIso: startDateIso,
     trackerUrl: trackerSheetShortUrl,
     formUrl: formShortUrl,
+    signupShortUrl: signupShortUrl,
     templateSpreadsheetId: currentSpreadsheet.getId()
   });
 
@@ -523,8 +464,6 @@ function initSheets(newSpreadsheet, startDate) {
   }
 
   initializeConfigSheet_(configSheet);
-  const templateSpreadsheet = getTemplateSpreadsheetForInit_(newSpreadsheet, configSheet);
-  writeLastMonthTrackerConfig_(configSheet, getPreviousTrackerConfigFromLinks_(templateSpreadsheet, startDate));
 
   NoticeLog('Resetting Tracker sheet...');
     if (trackerSheet.getLastRow() > 4) {
@@ -687,6 +626,89 @@ function autoGenerateNextMonthTracker() {
   return GasLogger.run('autoGenerateNextMonthTracker', autoGenerateNextMonthTracker_);
 }
 
+/**
+ * Decides what to do with the persisted "Signup Short URL" Config row given a redirect
+ * verification result. Pure decision logic, kept free of UrlFetchApp/shortenUrl so it is
+ * unit-testable — callers perform the actual redirect check and shortening.
+ *
+ * Only the very first run (no existingShortUrl yet) is expected to create one; any mismatch
+ * after that is unexpected (e.g. the web app deployment ID changed) and must be escalated.
+ *
+ * @param {string|null} existingShortUrl  Current 'Signup Short URL' Config value, if any.
+ * @param {string|null} actualRedirectTarget Where existingShortUrl currently redirects, or null if unchecked/missing.
+ * @param {string} expectedTarget The webapp cmd=signup URL the short URL should point to.
+ * @returns {{action: 'reuse'|'create'|'repair', warn: boolean}}
+ */
+function decideSignupShortUrlAction_(existingShortUrl, actualRedirectTarget, expectedTarget) {
+  if (!existingShortUrl) {
+    return { action: 'create', warn: false };
+  }
+  if (actualRedirectTarget === expectedTarget) {
+    return { action: 'reuse', warn: false };
+  }
+  return { action: 'repair', warn: true };
+}
+
+/**
+ * Resolves the redirect target of a short URL without following it, via UrlFetchApp.
+ * Returns null (rather than throwing) on any non-redirect response or fetch failure, so
+ * callers treat "can't verify" the same as "needs repair".
+ * @param {string} shortUrl
+ * @returns {string|null} The Location header value, or null.
+ */
+function resolveShortUrlRedirectTarget_(shortUrl) {
+  try {
+    var response = UrlFetchApp.fetch(shortUrl, { followRedirects: false, muteHttpExceptions: true });
+    var headers = response.getAllHeaders() || {};
+    return headers.Location || headers.location || null;
+  } catch (e) {
+    GasLogger.log('resolveShortUrlRedirectTarget_.error', { shortUrl: shortUrl, error: e.message });
+    return null;
+  }
+}
+
+/**
+ * Ensures the stable, NameSpace-derived signup short URL (Config row 'Signup Short URL')
+ * points at the web app's cmd=signup URL, creating or repairing it as needed.
+ * @param {Sheet} configSheet
+ * @param {Array<Array>} configRows Mutable rows array kept in sync by upsertConfigSheetRow_.
+ * @param {string} nameSpace
+ * @returns {string} The verified/created signup short URL.
+ */
+function ensureSignupShortUrl_(configSheet, configRows, nameSpace) {
+  var expectedTarget = ScriptApp.getService().getUrl() + '?cmd=signup';
+  var existing = getConfigValue_(null, 'Signup Short URL', configRows);
+  var existingShortUrl = existing && existing.primary ? existing.primary : null;
+  var actualTarget = existingShortUrl ? resolveShortUrlRedirectTarget_(existingShortUrl) : null;
+
+  var decision = decideSignupShortUrlAction_(existingShortUrl, actualTarget, expectedTarget);
+
+  if (decision.action === 'reuse') {
+    return existingShortUrl;
+  }
+
+  if (decision.warn) {
+    GasLogger.log('ensureSignupShortUrl_.mismatch', {
+      existingShortUrl: existingShortUrl,
+      actualTarget: actualTarget,
+      expectedTarget: expectedTarget
+    });
+  }
+
+  var alias = nameSpace + 'Signup';
+  var newShortUrl = expectedTarget;
+  try {
+    newShortUrl = shortenUrl(expectedTarget, alias, 5, 'tinyurl');
+  } catch (e) {
+    GasLogger.log('ensureSignupShortUrl_.shortenUrlFailed', { error: e.message });
+  }
+
+  upsertConfigSheetRow_(configSheet, configRows, 'Signup Short URL', newShortUrl, '');
+
+  GasLogger.log('ensureSignupShortUrl_.' + decision.action, { shortUrl: newShortUrl });
+  return newShortUrl;
+}
+
 function autoGenerateNextMonthTracker_() {
   const today = new Date();
   const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
@@ -786,16 +808,6 @@ function autoGenerateNextMonthTracker_() {
     formFile.setName(formName);
     formFile.moveTo(folder);
 
-    let formShortUrl = formUrl;
-    try {
-      formShortUrl = shortenUrl(formUrl, newSpreadsheetName + 'HC', 5, 'tinyurl');
-    } catch (e) {
-      GasLogger.log('autoGenerateNextMonthTracker.shortenUrlFailed', { target: 'form', error: e.message });
-    }
-    if (!formShortUrl.startsWith('https://tinyurl.com')) {
-      GasLogger.log('autoGenerateNextMonthTracker.warning', { warning: 'urlShortener failed for HC form', alias: newSpreadsheetName + 'HC' });
-    }
-
     const newConfigSheet = newSpreadsheet.getSheetByName('Config');
     writeTrackerConfigRows_(newConfigSheet, formName, formUrl, currentSpreadsheet.getUrl());
 
@@ -810,7 +822,7 @@ function autoGenerateNextMonthTracker_() {
       formId: form.getId(),
       shortTracker: trackerSheetShortUrl,
       trackerUrl: trackerSheetUrl,
-      shortHc: formShortUrl,
+      shortHc: formUrl,
       hcUrl: formUrl
     });
 
@@ -818,13 +830,20 @@ function autoGenerateNextMonthTracker_() {
     // the new tracker directly — no per-copy "Initialize Triggers" step required.
     setupFormSubmitTrigger(newSpreadsheet);
 
-    const slackMsg = buildSlackMessage_(nextMonthStart.getFullYear(), MONTH_NAMES_[nextMonthStart.getMonth()], formShortUrl, trackerSheetShortUrl);
+    // Stable, NameSpace-derived signup short URL — same one every month, pointing at the
+    // web app's cmd=signup page. Verified/repaired here rather than re-shortened per month.
+    const signupShortUrl = ensureSignupShortUrl_(configSheet, configData, nameSpace);
+
+    const slackMsg = buildSignupSlackMessage_(
+      nextMonthStart.getFullYear(), MONTH_NAMES_[nextMonthStart.getMonth()],
+      signupShortUrl, trackerSheetShortUrl, formUrl
+    );
 
     var message = buildOnboardingEmailTemplate_({
       trackerName: newSpreadsheetName,
       siteName: siteQName,
       trackerUrl: trackerSheetShortUrl,
-      formUrl: formShortUrl,
+      formUrl: formUrl,
       ownerAccount: siteQConfig.primary,
       initSteps: [
         'Open the new spreadsheet and verify it looks correct',
@@ -833,7 +852,7 @@ function autoGenerateNextMonthTracker_() {
       postCopyChecklist: [
         'Open new spreadsheet and verify layout',
         'Open HC form and verify title + choices',
-        'Verify Config rows (Signup HC Form, Sheet Template, Last Month Tracker, Site Q, NameSpace)',
+        'Verify Config rows (Signup HC Form, Sheet Template, Site Q, NameSpace)',
         'Confirm TrackerDB sheet entry for new tracker and form',
         'Verify form sharing, file name and folder placement',
         'Run test reuse flow (Test Reuse menu or submit sample)',
@@ -862,7 +881,8 @@ function autoGenerateNextMonthTracker_() {
       spreadsheetId: newSpreadsheetId,
       spreadsheetName: newSpreadsheetName,
       trackerUrl: trackerSheetShortUrl,
-      formUrl: formShortUrl,
+      formUrl: formUrl,
+      signupShortUrl: signupShortUrl,
       emailSent: true
     });
 
@@ -893,12 +913,10 @@ function autoGenerateNextMonthTracker_() {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    decideSignupShortUrlAction_: decideSignupShortUrlAction_,
     ensureLinksSheetSchema_: ensureLinksSheetSchema_,
-    findPreviousTrackerFromLinks_: findPreviousTrackerFromLinks_,
-    formatLinksStartDateValue_: formatLinksStartDateValue_,
-    formatTrackerMonthKey_: formatTrackerMonthKey_,
+    getTemplateSpreadsheetForInit_: getTemplateSpreadsheetForInit_,
     hideInternalSheets_: hideInternalSheets_,
-    resolvePreviousTrackerReference_: resolvePreviousTrackerReference_,
     upsertLinksRow_: upsertLinksRow_
   };
 }

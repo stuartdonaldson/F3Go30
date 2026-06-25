@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Go30 Hard Commit Signup</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #f4f1ea; font-family: Arial, Helvetica, sans-serif; color: #2b2b2b; }
+  input::placeholder, textarea::placeholder { color: #a99; opacity: .7; }
+  .wrap { max-width: 480px; margin: 0 auto; padding: 0 18px 48px; }
+  .header { background: #2f5d50; color: #f8f4ea; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; }
+  .header .brand { font-size: 12px; letter-spacing: .28em; opacity: .75; font-weight: bold; }
+  .header .title { font-size: 19px; font-weight: bold; margin-left: 8px; }
+  .header .step-label { font-size: 12px; opacity: .75; margin-left: 4px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-left: 6px; }
+  .card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 26px; box-shadow: 0 2px 10px rgba(47,93,80,.07); margin-top: 18px; }
+  .card h1, .card h2 { margin: 0 0 6px; color: #2f5d50; }
+  .card h1 { font-size: 23px; }
+  .card h2 { font-size: 20px; }
+  .card p.muted { color: #555; font-size: 14px; line-height: 1.55; }
+  label.field-label { display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px; }
+  input[type=text], input[type=email], input[type=tel], select, textarea {
+    width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px;
+    font-size: 15px; font-family: inherit; margin-bottom: 16px; background: #fff;
+  }
+  textarea { resize: vertical; }
+  button.primary { width: 100%; padding: 14px; border: none; border-radius: 9px; background: #2f5d50; color: #f8f4ea; font-size: 16px; font-weight: bold; cursor: pointer; font-family: inherit; }
+  button.gold { background: #b8860b; color: #fff; }
+  button.secondary { width: 100%; margin-top: 10px; padding: 10px; border: none; border-radius: 9px; background: transparent; color: #0b5c86; font-size: 14px; cursor: pointer; font-family: inherit; }
+  .readonly-box { padding: 9px 11px; background: #f0ece2; border: 1px solid #e0d8c8; border-radius: 7px; font-size: 14px; color: #555; overflow-wrap: anywhere; word-break: break-word; }
+  .identity-row { display: flex; gap: 12px; margin-bottom: 18px; }
+  .identity-row > div { flex: 1; min-width: 0; }
+  .callout { background: #fdf7e3; border-left: 3px solid #b8860b; padding: 10px 12px; border-radius: 4px; font-size: 13px; line-height: 1.5; margin-bottom: 18px; color: #6b5410; }
+  .error-text { font-size: 13px; color: #a3401a; margin-bottom: 8px; }
+  .team-type-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .team-type-option { flex: 1; display: flex; align-items: center; gap: 7px; padding: 10px 12px; border: 1px solid #d8cfbf; border-radius: 8px; cursor: pointer; font-size: 14px; background: #fff; }
+  .team-type-option.selected { border-color: #2f5d50; background: #eef3f0; }
+  .month-option { display: flex; align-items: center; gap: 11px; padding: 15px 16px; border: 2px solid #d8cfbf; border-radius: 10px; cursor: pointer; font-size: 16px; margin-bottom: 12px; background: #fff; }
+  .month-option.selected { border-color: #b8860b; background: #fdf7e3; }
+  .month-option span { font-weight: bold; color: #2f5d50; }
+  .checkmark { width: 56px; height: 56px; border-radius: 50%; background: #2f5d50; color: #f8f4ea; font-size: 30px; line-height: 56px; margin: 0 auto 16px; text-align: center; }
+  .stars { display: flex; gap: 6px; justify-content: center; margin-bottom: 18px; }
+  .stars button { font-size: 28px; background: none; border: none; cursor: pointer; padding: 2px 4px; line-height: 1; }
+  .hidden { display: none; }
+  .center { text-align: center; }
+  .api-error-banner { background: #fdeceb; border-bottom: 3px solid #a3401a; color: #6b1f0a; padding: 12px 18px; font-size: 14px; line-height: 1.5; }
+  .api-error-banner strong { display: block; margin-bottom: 2px; }
+  .api-error-detail { margin-top: 6px; font-family: monospace; font-size: 12px; background: #fff; border: 1px solid #e3b8af; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div><span class="brand">F3</span><span class="title">Go30 Hard Commit</span></div>
+    <div id="stepDots"></div>
+  </div>
+
+  <div id="apiErrorBanner" class="api-error-banner hidden">
+    <strong>Something went wrong.</strong>
+    <span>Please screenshot this message and send it to your Site Q.</span>
+    <div id="apiErrorDetail" class="api-error-detail"></div>
+  </div>
+
+  <div class="wrap">
+
+    <div id="step-intro" class="card">
+      <h1>Welcome to Go30</h1>
+      <p class="muted">Sign up or update your Go30 Hard Commit. It takes about two minutes — tell us who you want to become, your challenge, and how you'll get there.</p>
+      <p class="muted">Already signed up? Enter the same F3 name and email and we'll load your info so you can edit it.</p>
+      <button class="primary" id="introNextBtn">Get Started</button>
+    </div>
+
+    <div id="step-identify" class="card hidden">
+      <h2>Identify yourself</h2>
+      <p class="muted">Enter your F3 name and email so we can find any existing signup.</p>
+      <label class="field-label">F3 Name</label>
+      <input type="text" id="idF3Name" placeholder="e.g. Splinter">
+      <label class="field-label">Email</label>
+      <input type="email" id="idEmail" placeholder="you@example.com">
+      <div id="idError" class="error-text hidden"></div>
+      <button class="primary" id="identifyBtn">Continue</button>
+      <button class="secondary" id="identifyBackBtn">Back</button>
+    </div>
+
+    <div id="step-info" class="card hidden">
+      <h2 id="infoHeading">Welcome! Let's get your info</h2>
+      <div id="infoMatchedCallout" class="callout hidden">We found your previous signup — review and update below.</div>
+
+      <div class="identity-row">
+        <div>
+          <label class="field-label">F3 Name</label>
+          <div class="readonly-box" id="infoF3Name"></div>
+        </div>
+        <div>
+          <label class="field-label">Email</label>
+          <div class="readonly-box" id="infoEmail"></div>
+        </div>
+      </div>
+
+      <label class="field-label">Team type</label>
+      <div class="team-type-row">
+        <label class="team-type-option" id="ttAoOption"><input type="radio" name="tt" value="ao"> AO-based</label>
+        <label class="team-type-option" id="ttGoalOption"><input type="radio" name="tt" value="goal"> Goal-based</label>
+        <label class="team-type-option" id="ttOtherOption"><input type="radio" name="tt" value="other"> Other</label>
+      </div>
+
+      <div id="ttAoBlock" class="hidden">
+        <label class="field-label">AO Team</label>
+        <select id="teamAoSelect"></select>
+      </div>
+      <div id="ttGoalBlock" class="hidden">
+        <label class="field-label">Goal-based Team</label>
+        <select id="teamGoalSelect"></select>
+      </div>
+      <div id="ttOtherBlock" class="hidden">
+        <label class="field-label">Team name</label>
+        <input type="text" id="teamOtherInput" placeholder="Type your team name">
+      </div>
+
+      <label class="field-label">WHO do you ultimately want to become?</label>
+      <textarea id="whoInput" rows="2"></textarea>
+      <label class="field-label">WHAT is your Go30 Challenge?</label>
+      <textarea id="whatInput" rows="2"></textarea>
+      <label class="field-label">HOW are you going to be successful this month?</label>
+      <textarea id="howInput" rows="2"></textarea>
+      <label class="field-label">Cell Phone Number</label>
+      <input type="tel" id="phoneInput" placeholder="(555) 555-5555">
+      <label style="display:flex;align-items:flex-start;gap:9px;font-size:14px;line-height:1.45;cursor:pointer;margin-bottom:22px;color:#444;">
+        <input type="checkbox" id="nagInput" style="margin-top:2px;">
+        Send me reminder ("nag") emails during the month.
+      </label>
+
+      <button class="primary" id="infoNextBtn">Continue</button>
+      <button class="secondary" id="infoBackBtn">Back</button>
+    </div>
+
+    <div id="step-choose" class="card hidden">
+      <h2>Which month?</h2>
+      <p class="muted">Choose which Go30 tracker to save your Hard Commit into.</p>
+      <div id="monthChoices"></div>
+      <button class="primary gold" id="saveBtn">Save Signup</button>
+      <button class="secondary" id="chooseBackBtn">Back</button>
+    </div>
+
+    <div id="step-done" class="card hidden center">
+      <div class="checkmark">&#10003;</div>
+      <h2>You're committed!</h2>
+      <p>Your Hard Commit is saved for <strong id="savedMonthLabel"></strong>.</p>
+      <p class="muted">A confirmation email is on its way to <span id="savedEmailLabel"></span>.</p>
+      <a id="savedTrackerLink" href="#" target="_blank" style="display:inline-block;color:#0b5c86;font-weight:bold;font-size:15px;text-decoration:none;border-bottom:1px solid #0b5c86;padding-bottom:1px;">Open the tracker &rarr;</a>
+      <div style="margin-top:26px;">
+        <button id="restartBtn" style="padding:11px 22px;border:1px solid #d8cfbf;border-radius:9px;background:transparent;color:#2f5d50;font-size:14px;font-weight:bold;cursor:pointer;font-family:inherit;">Start over</button>
+      </div>
+    </div>
+
+    <div id="step-feedback" class="card hidden">
+      <div id="feedbackNotSent">
+        <h2 style="font-size:16px;">Quick feedback</h2>
+        <p class="muted" style="font-size:13px;color:#777;">Optional — takes 10 seconds.</p>
+        <label class="field-label">How is Go30 working for you?</label>
+        <div class="stars" id="feedbackStars"></div>
+        <label class="field-label">Is there anything we can improve?</label>
+        <textarea id="feedbackComment" rows="3" placeholder="About the signup process, the program, anything... (optional)"></textarea>
+        <button class="primary" id="sendFeedbackBtn">Send Feedback</button>
+      </div>
+      <div id="feedbackSent" class="hidden center" style="padding:8px 0;color:#2f5d50;font-weight:bold;font-size:15px;">Thanks for the feedback!</div>
+    </div>
+
+  </div>
+
+<script>
+  var WEBAPP_URL = <?!= webAppUrl ?>;
+  var AO_LIST = <?!= aoListJson ?>;
+  var GOAL_LIST = <?!= goalListJson ?>;
+  var MONTHS = <?!= monthsJson ?>;
+
+  var IDENTITY_STORAGE_KEY = 'go30SignupIdentity';
+
+  /** Remembers F3 Name/Email locally so a returning user doesn't have to retype them. */
+  function saveIdentityToStorage_(f3Name, email) {
+    try {
+      localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify({ f3Name: f3Name, email: email }));
+    } catch (e) { /* localStorage unavailable (private browsing, etc.) — not fatal */ }
+  }
+
+  function loadIdentityFromStorage_() {
+    try {
+      var raw = localStorage.getItem(IDENTITY_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  var savedIdentity = loadIdentityFromStorage_();
+
+  var state = {
+    step: 'intro',
+    wasMatched: false,
+    f3Name: (savedIdentity && savedIdentity.f3Name) || '',
+    email: (savedIdentity && savedIdentity.email) || '',
+    teamType: '', team: '',
+    who: '', what: '', how: '', phone: '', nag: false,
+    // Default to next month once it's available — most signups are for the upcoming
+    // month, not the one already in progress.
+    targetMonth: MONTHS && MONTHS.next ? 'next' : 'current',
+    feedbackRating: 0,
+    savedMonthLabel: '', savedTrackerUrl: '',
+  };
+
+  var STEP_ORDER = ['intro', 'identify', 'info', 'choose', 'done'];
+
+  function $(id) { return document.getElementById(id); }
+
+  function showStep(name) {
+    state.step = name;
+    ['intro', 'identify', 'info', 'choose', 'done'].forEach(function(s) {
+      $('step-' + s).classList.toggle('hidden', s !== name);
+    });
+    $('step-feedback').classList.toggle('hidden', name !== 'done');
+    renderStepDots();
+  }
+
+  function renderStepDots() {
+    var idx = STEP_ORDER.indexOf(state.step);
+    var html = '';
+    for (var i = 0; i < 4; i++) {
+      html += '<span class="dot" style="background:' + (i <= idx ? '#2f5d50' : '#d8cfbf') + ';"></span>';
+    }
+    $('stepDots').innerHTML = html;
+  }
+
+  /**
+   * Rejects (rather than resolving with an error payload) on any failure — a non-2xx HTTP
+   * response, a body that isn't valid JSON, or a {ok:false} application error — so every
+   * caller can handle all three the same way with one .catch(), instead of some call sites
+   * checking res.ok and others not (the gap that left a failed call looking like it just
+   * hung with nothing displayed to the user).
+   */
+  function callApi(action, payload) {
+    var body = Object.assign({ action: action }, payload);
+    return fetch(WEBAPP_URL + '?cmd=signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(body),
+    }).then(function(res) {
+      if (!res.ok) throw new Error('Server returned HTTP ' + res.status);
+      return res.json();
+    }).then(function(json) {
+      if (!json.ok) throw new Error(json.error || 'Server reported an error with no detail');
+      return json;
+    });
+  }
+
+  /**
+   * Shows a sticky, screenshot-friendly error banner with enough detail (time, action,
+   * error message) for the user to send to their Site Q.
+   */
+  function showApiError_(action, err) {
+    $('apiErrorDetail').textContent =
+      'Time: ' + new Date().toISOString() + '\n' +
+      'Action: ' + action + '\n' +
+      'Error: ' + (err && err.message ? err.message : String(err));
+    $('apiErrorBanner').classList.remove('hidden');
+  }
+
+  function hideApiError_() {
+    $('apiErrorBanner').classList.add('hidden');
+  }
+
+  /**
+   * Disables a button and swaps its label while an async callApi() call is in flight, so a
+   * click is never left looking like it didn't register during the round-trip to the server.
+   */
+  function setButtonLoading_(btn, isLoading, loadingText) {
+    if (isLoading) {
+      btn.dataset.originalText = btn.textContent;
+      btn.textContent = loadingText || 'Working…';
+      btn.disabled = true;
+    } else {
+      btn.textContent = btn.dataset.originalText || btn.textContent;
+      btn.disabled = false;
+    }
+  }
+
+  function populateTeamSelect(selectEl, list) {
+    selectEl.innerHTML = '<option value=""></option>' + list.map(function(t) {
+      return '<option value="' + t.replace(/"/g, '&quot;') + '">' + t + '</option>';
+    }).join('');
+  }
+
+  function renderTeamTypeUI() {
+    ['ao', 'goal', 'other'].forEach(function(t) {
+      var optionEl = $('tt' + t.charAt(0).toUpperCase() + t.slice(1) + 'Option');
+      optionEl.classList.toggle('selected', state.teamType === t);
+      optionEl.querySelector('input').checked = state.teamType === t;
+    });
+    $('ttAoBlock').classList.toggle('hidden', state.teamType !== 'ao');
+    $('ttGoalBlock').classList.toggle('hidden', state.teamType !== 'goal');
+    $('ttOtherBlock').classList.toggle('hidden', state.teamType !== 'other');
+  }
+
+  function fillInfoStep() {
+    $('infoHeading').textContent = state.wasMatched ? 'Review your signup' : "Welcome! Let's get your info";
+    $('infoMatchedCallout').classList.toggle('hidden', !state.wasMatched);
+    $('infoF3Name').textContent = state.f3Name;
+    $('infoEmail').textContent = state.email;
+    populateTeamSelect($('teamAoSelect'), AO_LIST);
+    populateTeamSelect($('teamGoalSelect'), GOAL_LIST);
+    $('teamAoSelect').value = state.teamType === 'ao' ? state.team : '';
+    $('teamGoalSelect').value = state.teamType === 'goal' ? state.team : '';
+    $('teamOtherInput').value = state.teamType === 'other' ? state.team : '';
+    $('whoInput').value = state.who;
+    $('whatInput').value = state.what;
+    $('howInput').value = state.how;
+    $('phoneInput').value = state.phone;
+    $('nagInput').checked = state.nag;
+    renderTeamTypeUI();
+  }
+
+  function renderMonthChoices() {
+    var months = [{ key: 'current', label: MONTHS.current && MONTHS.current.label }];
+    if (MONTHS.next) months.push({ key: 'next', label: MONTHS.next.label });
+    if (!months.some(function(m) { return m.key === state.targetMonth; })) state.targetMonth = 'current';
+
+    $('monthChoices').innerHTML = months.map(function(m) {
+      var selected = state.targetMonth === m.key;
+      return '<label class="month-option' + (selected ? ' selected' : '') + '" data-key="' + m.key + '">' +
+        '<input type="radio" name="month" value="' + m.key + '"' + (selected ? ' checked' : '') + '>' +
+        '<span>Save for ' + m.label + '</span></label>';
+    }).join('');
+
+    Array.prototype.forEach.call($('monthChoices').querySelectorAll('.month-option'), function(el) {
+      el.addEventListener('click', function() {
+        state.targetMonth = el.getAttribute('data-key');
+        renderMonthChoices();
+      });
+    });
+  }
+
+  function renderFeedbackStars() {
+    var html = '';
+    for (var n = 1; n <= 5; n++) {
+      html += '<button type="button" data-n="' + n + '">' + (n <= state.feedbackRating ? '★' : '☆') + '</button>';
+    }
+    $('feedbackStars').innerHTML = html;
+    Array.prototype.forEach.call($('feedbackStars').querySelectorAll('button'), function(btn) {
+      btn.addEventListener('click', function() {
+        state.feedbackRating = parseInt(btn.getAttribute('data-n'), 10);
+        renderFeedbackStars();
+      });
+    });
+  }
+
+  // --- Step transitions ---
+
+  $('introNextBtn').addEventListener('click', function() { showStep('identify'); });
+  $('identifyBackBtn').addEventListener('click', function() { showStep('intro'); });
+  $('infoBackBtn').addEventListener('click', function() { showStep('identify'); });
+  $('chooseBackBtn').addEventListener('click', function() { showStep('info'); });
+
+  $('identifyBtn').addEventListener('click', function() {
+    var f3Name = $('idF3Name').value.trim();
+    var email = $('idEmail').value.trim();
+    if (!f3Name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      $('idError').textContent = 'Enter your F3 name and a valid email.';
+      $('idError').classList.remove('hidden');
+      return;
+    }
+    $('idError').classList.add('hidden');
+    hideApiError_();
+
+    var identifyBtn = $('identifyBtn');
+    setButtonLoading_(identifyBtn, true, 'Checking…');
+
+    callApi('identify', { f3Name: f3Name, email: email }).then(function(res) {
+      state.f3Name = f3Name;
+      state.email = email;
+      saveIdentityToStorage_(f3Name, email);
+      if (res.months) MONTHS = res.months;
+      if (res.aoList) AO_LIST = res.aoList;
+      if (res.goalList) GOAL_LIST = res.goalList;
+
+      state.wasMatched = !!res.matched;
+      if (res.matched && res.data) {
+        state.teamType = res.data.teamType || '';
+        state.team = res.data.team || '';
+        state.who = res.data.who || '';
+        state.what = res.data.what || '';
+        state.how = res.data.how || '';
+        state.phone = res.data.phone || '';
+        state.nag = !!res.data.nag;
+      } else {
+        state.teamType = ''; state.team = ''; state.who = ''; state.what = ''; state.how = ''; state.phone = ''; state.nag = false;
+      }
+      fillInfoStep();
+      showStep('info');
+    }).catch(function(err) {
+      showApiError_('identify', err);
+    }).finally(function() { setButtonLoading_(identifyBtn, false); });
+  });
+
+  ['ao', 'goal', 'other'].forEach(function(t) {
+    $('tt' + t.charAt(0).toUpperCase() + t.slice(1) + 'Option').addEventListener('click', function() {
+      state.teamType = t;
+      state.team = '';
+      renderTeamTypeUI();
+    });
+  });
+  $('teamAoSelect').addEventListener('change', function() { state.team = this.value; });
+  $('teamGoalSelect').addEventListener('change', function() { state.team = this.value; });
+  $('teamOtherInput').addEventListener('input', function() { state.team = this.value; });
+  $('whoInput').addEventListener('input', function() { state.who = this.value; });
+  $('whatInput').addEventListener('input', function() { state.what = this.value; });
+  $('howInput').addEventListener('input', function() { state.how = this.value; });
+  $('phoneInput').addEventListener('input', function() { state.phone = this.value; });
+  $('nagInput').addEventListener('change', function() { state.nag = this.checked; });
+
+  $('infoNextBtn').addEventListener('click', function() {
+    renderMonthChoices();
+    showStep('choose');
+  });
+
+  $('saveBtn').addEventListener('click', function() {
+    hideApiError_();
+    var saveBtn = $('saveBtn');
+    setButtonLoading_(saveBtn, true, 'Saving…');
+
+    callApi('save', {
+      f3Name: state.f3Name, email: state.email,
+      targetMonth: state.targetMonth,
+      teamType: state.teamType, team: state.team,
+      who: state.who, what: state.what, how: state.how, phone: state.phone, nag: state.nag,
+    }).then(function(res) {
+      state.savedMonthLabel = res.savedMonth;
+      state.savedTrackerUrl = res.trackerUrl || '#';
+      $('savedMonthLabel').textContent = res.savedMonth;
+      $('savedEmailLabel').textContent = state.email;
+      $('savedTrackerLink').href = state.savedTrackerUrl;
+      $('savedTrackerLink').textContent = 'Open the ' + res.savedMonth + ' tracker →';
+      $('feedbackNotSent').classList.remove('hidden');
+      $('feedbackSent').classList.add('hidden');
+      renderFeedbackStars();
+      showStep('done');
+    }).catch(function(err) {
+      showApiError_('save', err);
+    }).finally(function() { setButtonLoading_(saveBtn, false); });
+  });
+
+  $('sendFeedbackBtn').addEventListener('click', function() {
+    hideApiError_();
+
+    var feedbackComment = $('feedbackComment').value.trim();
+    if (!state.feedbackRating && !feedbackComment) {
+      // Nothing provided — skip the call entirely rather than sending a blank rating/comment
+      // that could overwrite feedback already on file for this PAX.
+      $('feedbackNotSent').classList.add('hidden');
+      $('feedbackSent').classList.remove('hidden');
+      return;
+    }
+
+    var sendFeedbackBtn = $('sendFeedbackBtn');
+    setButtonLoading_(sendFeedbackBtn, true, 'Sending…');
+
+    // Only include fields the PAX actually provided — omitting an unprovided one (rather than
+    // sending 0 / '') means the server leaves any existing rating/comment untouched instead
+    // of overwriting it.
+    var feedbackPayload = { f3Name: state.f3Name, email: state.email, targetMonth: state.targetMonth };
+    if (state.feedbackRating) feedbackPayload.feedbackRating = state.feedbackRating;
+    if (feedbackComment) feedbackPayload.feedbackComment = feedbackComment;
+
+    callApi('feedback', feedbackPayload).then(function() {
+      $('feedbackNotSent').classList.add('hidden');
+      $('feedbackSent').classList.remove('hidden');
+    }).catch(function(err) {
+      showApiError_('feedback', err);
+    }).finally(function() { setButtonLoading_(sendFeedbackBtn, false); });
+  });
+
+  $('restartBtn').addEventListener('click', function() {
+    var rememberedIdentity = loadIdentityFromStorage_();
+    state = {
+      step: 'intro', wasMatched: false,
+      f3Name: (rememberedIdentity && rememberedIdentity.f3Name) || '',
+      email: (rememberedIdentity && rememberedIdentity.email) || '',
+      teamType: '', team: '', who: '', what: '', how: '', phone: '', nag: false,
+      targetMonth: MONTHS && MONTHS.next ? 'next' : 'current', feedbackRating: 0,
+    };
+    $('idF3Name').value = state.f3Name; $('idEmail').value = state.email; $('idError').classList.add('hidden');
+    showStep('intro');
+  });
+
+  $('idF3Name').value = state.f3Name;
+  $('idEmail').value = state.email;
+  showStep('intro');
+</script>
+</body>
+</html>

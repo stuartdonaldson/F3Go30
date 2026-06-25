@@ -36,23 +36,84 @@
  * writes are skipped silently. Logger.log() always fires regardless of sink
  * availability.
  *
- * PII rule: never pass email addresses or PAX names in the data object.
+ * Every entry is stamped by log() itself with `version` (APP_VERSION) and `target`
+ * (APP_DEPLOY_TARGET, e.g. TEMPLATE/TEST) from version.js, so Template and SIT-test runs
+ * stay distinguishable in one shared Axiom dataset without depending on every call site
+ * to add it (same pattern as GActionSheet's GasLogger).
+ *
+ * PII rule: never pass a raw email address or PAX name in the data object — use
+ * maskPiiForLog_() / maskRecipientListForLog_() below when an address must be logged.
  */
 /**
  * Maps GasLogger entries to Axiom ingest rows. Pure — no GAS globals — so it's
  * unit testable in Node. execId/runId are this project's correlation fields
- * (set by GasLogger.init()); included only when present on the entry.
- * @param {Array<Object>} entries - Entries as built by GasLogger.log() (ts, tag, data, execId, runId?).
- * @param {string} version - Stamped onto every row (e.g. APP_VERSION).
- * @returns {Array<Object>} Axiom rows: { _time, name, side, version, ...data, execId?, runId? }.
+ * (set by GasLogger.init()); included only when present on the entry. version/target
+ * are stamped by GasLogger.log() onto every entry (so Template vs TEST runs are always
+ * distinguishable in a shared dataset, without depending on every call site to add it);
+ * fallbackVersion only covers entries built before that existed.
+ * @param {Array<Object>} entries - Entries as built by GasLogger.log() (ts, tag, data, execId, runId?, version?, target?).
+ * @param {string=} fallbackVersion - Used only when an entry has no version of its own.
+ * @returns {Array<Object>} Axiom rows: { _time, name, side, version, target, ...data, execId?, runId? }.
  */
-function buildAxiomRows_(entries, version) {
+function buildAxiomRows_(entries, fallbackVersion) {
   return (entries || []).map(function(e) {
-    var row = Object.assign({ _time: e.ts, name: e.tag, side: 'gas', version: version }, e.data || {});
+    var row = Object.assign({
+      _time: e.ts,
+      name: e.tag,
+      side: 'gas',
+      version: e.version || fallbackVersion,
+      target: e.target || 'unknown'
+    }, e.data || {});
     if (e.execId) row.execId = e.execId;
     if (e.runId) row.runId = e.runId;
     return row;
   });
+}
+
+/**
+ * Masks a name or email so it is safe to include in a GasLogger entry (data passed to
+ * GasLogger.log() must never contain a raw PAX name or email address). Keeps the first and
+ * last character — an email's domain stays fully visible — replacing everything between
+ * with '...'. E.g. 'Little John' -> 'L...n', 'stuart.donaldson@gmail.com' -> 's...n@gmail.com'.
+ * @param {string} value
+ * @returns {string}
+ */
+function maskPiiForLog_(value) {
+  var text = String(value || '').trim();
+  if (!text) return '';
+
+  var atIndex = text.indexOf('@');
+  if (atIndex > 0) {
+    return maskMiddleChars_(text.slice(0, atIndex)) + text.slice(atIndex);
+  }
+  return maskMiddleChars_(text);
+}
+
+function maskMiddleChars_(s) {
+  if (s.length <= 1) return s;
+  return s[0] + '...' + s[s.length - 1];
+}
+
+/**
+ * Masks each address in a comma-separated recipient list (as built by
+ * buildEmailRecipientList_), handling the optional 'Display Name <email>' form.
+ * @param {string} recipientList
+ * @returns {string}
+ */
+function maskRecipientListForLog_(recipientList) {
+  return String(recipientList || '').split(',').map(function(entry) {
+    var trimmed = entry.trim();
+    if (!trimmed) return '';
+    var match = trimmed.match(/^(.*)<(.+)>$/);
+    if (match) {
+      var name = match[1].trim();
+      var email = match[2].trim();
+      return (name ? maskPiiForLog_(name) + ' ' : '') + '<' + maskPiiForLog_(email) + '>';
+    }
+    return maskPiiForLog_(trimmed);
+  }).filter(function(entry) {
+    return !!entry;
+  }).join(',');
 }
 
 var GasLogger = {
@@ -110,8 +171,7 @@ var GasLogger = {
 
   _postToAxiom: function(entries) {
     var config = this._getAxiomConfig();
-    var version = (typeof APP_VERSION !== 'undefined' && APP_VERSION) || 'unknown';
-    var rows = buildAxiomRows_(entries, version);
+    var rows = buildAxiomRows_(entries);
     try {
       var resp = UrlFetchApp.fetch(
         'https://api.axiom.co/v1/datasets/' + config.dataset + '/ingest',
@@ -143,7 +203,12 @@ var GasLogger = {
    */
   log: function(tag, data, flush, newLog) {
     if (!this._execId) this.init('auto');
-    var entry = { ts: new Date().toISOString(), tag: tag, data: data, execId: this._execId };
+    // version/target stamped here (not just at Axiom-export time) so every entry — Drive
+    // or Axiom — always carries which build and which deployment target produced it,
+    // without depending on ~190 call sites to remember to add it (GActionSheet precedent).
+    var version = (typeof APP_VERSION !== 'undefined' && APP_VERSION) || 'unknown';
+    var target = (typeof APP_DEPLOY_TARGET !== 'undefined' && APP_DEPLOY_TARGET) || 'unknown';
+    var entry = { ts: new Date().toISOString(), tag: tag, data: data, execId: this._execId, version: version, target: target };
     if (this._runId) entry.runId = this._runId;
     Logger.log('[GasLogger] ' + JSON.stringify(entry));
     if (this._enabled) this._entries.push(entry);
@@ -232,6 +297,8 @@ function getScriptProperty(key) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    buildAxiomRows_: buildAxiomRows_
+    buildAxiomRows_: buildAxiomRows_,
+    maskPiiForLog_: maskPiiForLog_,
+    maskRecipientListForLog_: maskRecipientListForLog_
   };
 }

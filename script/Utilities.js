@@ -88,7 +88,6 @@ function initializeConfigSheet_(configSheet) {
   var logFile = getConfigValue_(null, 'LogFile', rows) || { primary: '', secondary: '' };
   var signupHcForm = getConfigValue_(null, 'Signup HC Form', rows) || { primary: '', secondary: '' };
   var sheetTemplate = getConfigValue_(null, 'Sheet Template', rows) || { primary: '', secondary: '' };
-  var lastMonthTracker = getConfigValue_(null, 'Last Month Tracker', rows) || { primary: '', secondary: '' };
   var emailTestMode = getConfigValue_(null, 'Email Test Mode', rows);
   var legacyEmailTest = getConfigValue_(null, 'Email Test', rows);
 
@@ -113,7 +112,6 @@ function initializeConfigSheet_(configSheet) {
   upsertConfigSheetRow_(configSheet, rows, 'LogFile', logFile.primary, logFile.secondary);
   upsertConfigSheetRow_(configSheet, rows, 'Signup HC Form', signupHcForm.primary, signupHcForm.secondary);
   upsertConfigSheetRow_(configSheet, rows, 'Sheet Template', sheetTemplatePrimary, sheetTemplate.secondary);
-  upsertConfigSheetRow_(configSheet, rows, 'Last Month Tracker', lastMonthTracker.primary, lastMonthTracker.secondary);
   upsertConfigSheetRow_(configSheet, rows, 'Email Test Mode', emailPrimary, emailSecondary);
 
   return rows;
@@ -278,6 +276,15 @@ function sendConfiguredEmail_(options) {
     delivery.fellBackToPlainText = true;
   }
 
+  // Metadata only — never subject/body, which may contain PAX names. Recipients are
+  // masked (see GasLogger.js maskRecipientListForLog_) since GasLogger.log() data must
+  // never contain a raw email address.
+  GasLogger.log((options && options.logLabel || 'sendConfiguredEmail_') + '.sent', {
+    testMode: delivery.testMode,
+    effectiveRecipients: maskRecipientListForLog_(delivery.effectiveRecipients),
+    fellBackToPlainText: !!delivery.fellBackToPlainText
+  });
+
   return delivery;
 }
 
@@ -292,6 +299,34 @@ function sendConfiguredEmail_(options) {
 function buildSlackMessage_(year, month, formUrl, trackerUrl) {
   const prefix = year + ' ' + month;
   return prefix + ' Hard Commit Signup form is up:\n' + formUrl + '\n\n' + prefix + ' Tracker:\n' + trackerUrl;
+}
+
+/**
+ * Builds the Slack copy-paste message for autoGenerateNextMonthTracker_. The signup web app
+ * URL is the primary, stable entry point PAX should use to sign up themselves; the tracker
+ * link lets them see where their commit will land. The HC form link is included only as an
+ * optional fallback for PAX who prefer it — it is not the primary instruction.
+ * @param {number} year - Full year (e.g. 2026).
+ * @param {string} month - Long month name (e.g. 'April').
+ * @param {string} signupUrl - Stable, NameSpace-derived signup short URL.
+ * @param {string} trackerUrl - Tracker sheet URL (TinyURL preferred).
+ * @param {string=} formUrl - HC form URL, mentioned only as an optional alternative.
+ * @returns {string} Slack message text.
+ */
+function buildSignupSlackMessage_(year, month, signupUrl, trackerUrl, formUrl) {
+  const prefix = year + ' ' + month;
+  var lines = [
+    prefix + ' Hard Commit Signup is open!',
+    '',
+    'Sign up here: ' + signupUrl,
+    '',
+    prefix + ' Tracker: ' + trackerUrl
+  ];
+  if (formUrl) {
+    lines.push('');
+    lines.push('(Prefer the old HC form? You can still use it: ' + formUrl + ')');
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -343,6 +378,7 @@ if (typeof module !== 'undefined' && module.exports) {
     readEmailDeliveryPolicy_: readEmailDeliveryPolicy_,
     prepareOutboundEmailDelivery_: prepareOutboundEmailDelivery_,
     sendConfiguredEmail_: sendConfiguredEmail_,
-    buildSlackMessage_: buildSlackMessage_
+    buildSlackMessage_: buildSlackMessage_,
+    buildSignupSlackMessage_: buildSignupSlackMessage_
   };
 }

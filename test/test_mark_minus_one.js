@@ -68,8 +68,11 @@ const trackerRows = [
 const fakeSheet = makeFakeTrackerSheet(dateRow, trackerRows);
 const fakeFutureSpreadsheet = makeFakeSpreadsheet({ Tracker: fakeSheet });
 
-global.resolveTrackerForContextDate = function(contextDate) {
-  assert.equal(contextDate, FUTURE_CONTEXT_DATE, 'lookup is called with the explicit context date, not "now"');
+global.resolveTrackerForContextDate = function(targetDate) {
+  // Must dispatch on (contextDate - 2 days) — the date actually being marked — not
+  // contextDate itself, or a run on the 1st/2nd of a month resolves to the wrong
+  // (brand-new) tracker instead of the one with that day's column (month-boundary bug).
+  assert.equal(targetDate.getTime(), THRESHOLD_DATE.getTime(), 'lookup is called with contextDate - 2 days, not contextDate');
   return { sheetId: FUTURE_SHEET_ID, startDate: '2028-09-01' };
 };
 global.SpreadsheetApp = {
