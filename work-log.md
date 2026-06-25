@@ -243,3 +243,36 @@ Process note: committed in small scoped commits using `git commit -- <pathspec>`
 - `.forSpreadsheet().onFormSubmit()` gives `e.range`/`e.values` (a row reference); `.forForm().onFormSubmit()` gives `e.response` (a FormResponse object, no row reference at all) — these are not interchangeable event shapes, and switching trigger type means rewriting the entire downstream row-reading logic.
 - `SpreadsheetApp.copy()` always duplicates the bound script along with the spreadsheet — there is no way to copy a spreadsheet without copying its Apps Script project. ADR-010's "pure data spreadsheet" framing is about behavior (nothing should run from there) not literal code absence; every monthly tracker copy still carries a full, inert duplicate of the Template's code.
 - Before any `git commit`, check `git diff --cached --stat` against what you actually intend to commit — `git add <specific files>` followed by `git commit` (no pathspec) will sweep in *any* already-staged content on unrelated files too. Use `git commit -m "..." -- <pathspec>` to commit only the intended paths and leave the rest of the index untouched.
+
+## 2026-06-25 09:47:28
+
+### Summary
+Resumed mid-session (session-2026-06-25-smoke-mode-midpoint). Completed remaining tasks from PaxDB refactor + Smoke mode feature: finished rename cleanup, added unit tests for `deletePaxDbRowsBySheetId_`, updated OPERATIONS.md and deployment-model.md for SIT/PROD/Smoke lifecycle, deployed v2.2.21 to SIT, and verified all three smoke-mode behaviors live. Committed as d37aaef.
+
+### Details
+- **Task 9 (finish):** Renamed final `copyResponsesToCurrentTracker` references to `applyPaxDbSettingsToCurrentTracker` in `response_utils.js` GasLogger call, `go30tools.js` JSDoc, and `test_go30tools.js` comment
+- **Task 10:** Added `deletePaxDbRowsBySheetId_` unit tests; fixed bug — `_updatePaxDB` now accepts optional spreadsheet arg so `deletePaxDbRowsBySheetId_` can pass through the caller's spreadsheet instead of falling back to `SpreadsheetApp.getActiveSpreadsheet()`; added `getMaxRows`/`clearContent` to fake sheet helper
+- **Task 11:** `OPERATIONS.md` — added §Environments (SIT/PROD table), §Smoke Mode (activate/teardown/confirm lifecycle), expanded Script Properties table (`SMOKE_MODE`, `SMOKE_TRACKER_ID`, `ADMIN_SHARED_SECRET`); `deployment-model.md` — added SIT→PROD go-live sequence with smoke test gate
+- **Task 12:** Deployed v2.2.21 to SIT (`npm run deploy:test`); verified `getSmokeStatus` returns correct environment, `setScriptProperties {SMOKE_MODE:true}` activates smoke mode, `runScanTrackers` returns `smoke_mode_active` error while active, and deactivation restores clean state
+
+### Key Learnings
+- `_updatePaxDB` was written with `SpreadsheetApp.getActiveSpreadsheet()` (GAS global pattern) but `deletePaxDbRowsBySheetId_` receives a spreadsheet arg — the mismatch only surfaces in unit tests where the GAS global is absent. Adding an optional arg to `_updatePaxDB` fixes both the test and the production path.
+- Fake sheet `clearContent` must splice the rows array, not just zero-fill, or trailing empty rows survive into `getDataRange()` and corrupt read-back assertions.
+
+## 2026-06-25 18:20:00
+
+### Summary
+Fixed four issues discovered during smoke test run; added callAdmin tool and deployment ID persistence.
+
+### Changes
+- **`script/Utilities.js`** — `prepareOutboundEmailDelivery_`: redirect emails to Site Q when `SMOKE_MODE=true`, same as `emailTestMode`; `[SMOKE]` subject prefix; distinct `smokeMode`/`testMode` flags in return value
+- **`script/urlShortener.js`** — sanitize TinyURL alias to `[a-zA-Z0-9_-]` before API call; spaces become hyphens, parentheses and other special chars stripped; fixes alias rejection when NameSpace includes " (Smoke)"
+- **`script/CreateNewTracker.js`** — `copySpreadsheetWithoutScript_`: new helper copies sheets individually via `sheet.copyTo()` + recreates named ranges; no container-bound script in tracker copy; `copyAndInit_` and `autoGenerateNextMonthTracker_` both updated to: (a) pre-check folder and template form URL before creating any artifacts, (b) use the new helper, (c) explicitly copy form from template via `DriveApp.makeCopy` + `form.setDestination`, (d) rename auto-created "Form Responses 1" → "Responses"
+- **`tools/callAdmin.js`** — new CLI tool; resolves deployment ID and admin secret for env (SIT default, `--env prod`), constructs web app URL, POSTs action payload, follows GAS 302 redirect, prints JSON; moved from `tests/` to `tools/`
+- **`tools/manage-deployments.js`** — writes `testDeploymentId` / `templateDeploymentId` back to `local.settings.json` after each deploy so `callAdmin` and other tools can read the ID directly
+
+### Key Learnings
+- `spreadsheet.copy()` always includes the container-bound script; the only GAS-native way to avoid this is to create a blank spreadsheet and copy sheets individually with `sheet.copyTo()`, then recreate named ranges separately
+- `form.setDestination(FormApp.DestinationType.SPREADSHEET, id)` creates "Form Responses 1" automatically — rename it to "Responses" post-flush
+- Pre-checking the template form URL before any artifact is created prevents orphaned spreadsheets on early return
+- TinyURL aliases must be `[a-zA-Z0-9_-]`; the GAS script was passing the spreadsheet name directly (spaces, parentheses) which caused silent failures caught by the retry loop but never resolved
