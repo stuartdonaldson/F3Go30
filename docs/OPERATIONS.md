@@ -5,7 +5,7 @@
 ### Model
 
 The script is bound to the Go30 Template spreadsheet and has no standalone deployment. Script
-files live in `script/` and are pushed to Google Apps Script via `clasp push`.
+files live in `script/` and are pushed to Google Apps Script via `npm run deploy:prod` (which invokes `tools/manage-deployments.js`).
 
 Since ADR-010, the Template is the **only** runtime container — all triggers and dispatch logic
 run there. Monthly tracker copies are pure data spreadsheets with no bound logic of their own, so
@@ -21,9 +21,12 @@ production, not a safe test environment** — see §Testing for the dev/test spr
 ### Installation
 
 ```bash
-cd script
-clasp push
+npm run deploy:prod   # full deploy: push code + update named deployment URL
 ```
+
+`tools/manage-deployments.js` writes `.clasp.json` automatically before each push — do not
+edit `.clasp.json` by hand. Both `deploy:prod` and `deploy:sit` do a full deploy (code push
+plus named deployment URL update); `npm run push` is a kept alias for `deploy:prod`.
 
 ---
 
@@ -51,38 +54,55 @@ Two script projects exist. **Default environment is SIT** unless PROD is stated 
 | **SIT** (System Integration Test) | `testScriptId` | `testSpreadsheetId` | Development and pre-release testing |
 | **PROD** | `templateScriptId` | `templateSpreadsheetId` | Live production — the real Go30 Template |
 
-Use `npm run deploy:test` for SIT; `npm run push` / `npm run release:*` for PROD. Never push to PROD without first passing SIT validation.
+Use `npm run deploy:sit` for SIT; `npm run deploy:prod` / `npm run release:*` for PROD. (`deploy:test` and `push` are kept as aliases.) Never push to PROD without first passing SIT validation.
 
 ### Smoke Mode
 
-Smoke mode lets you test the full go-live flow (tracker creation, signup, nag, minus-one) using labeled artifacts that are cleaned up afterward. It is activated via Script Properties on the **SIT** environment.
+Smoke mode lets you test the full go-live flow (tracker creation, signup, nag, minus-one) using
+labeled artifacts that are cleaned up afterward. Run on SIT first; repeat on PROD before go-live.
 
-**Activate:**
-```
-setScriptProperties { SMOKE_MODE: 'true' }
+All smoke workflow commands use `node tools/callWebapp.js` — never raw curl. The tool handles
+auth, environment selection, and the GAS 302-redirect quirk automatically.
+
+**Full sequence:**
+
+```bash
+# 1. Activate smoke mode
+node tools/callWebapp.js setScriptProperties --env <env> --body '{"properties":{"SMOKE_MODE":"true"}}'
+
+# 2. Confirm environment and smoke state
+node tools/callWebapp.js getSmokeStatus --env <env>
+# → { deployTarget, smokeMode: true, smokeTrackerId: null }
+
+# 3. Run copyAndInit (monthly menu or auto-generate trigger)
+#    copyAndInit_ appends " (Smoke)" to NameSpace and writes SMOKE_TRACKER_ID to Script Properties.
+
+# 4. Sign up a test PAX via the signup web app
+node tools/callWebapp.js identify --cmd signup --env <env> --body '{"f3Name":"SmokeTest","email":"smoke@example.com"}'
+# Then complete the save step through the webapp or via a direct save call.
+
+# 5. Verify the Tracker sheet shows the test row
+node tools/callWebapp.js getSheet --env <env> --body '{"sheetName":"Tracker"}'
+# → { ok: true, csv: "<tab-separated rows>" }
+
+# 6. *** HUMAN PAUSE *** — open the smoke spreadsheet and confirm it looks correct.
+#    Get SMOKE_TRACKER_ID: re-run getSmokeStatus if needed.
+#    Do not proceed to teardown until sign-off.
+
+# 7. Teardown — remove TrackerDB row, PaxDB rows, and trash the spreadsheet
+node tools/callWebapp.js cleanupTracker --env <env> --body '{"sheetId":"<SMOKE_TRACKER_ID>","trashSpreadsheet":true}'
+
+# 8. Clear smoke properties and confirm clean state
+node tools/callWebapp.js setScriptProperties --env <env> --body '{"properties":{"SMOKE_MODE":"","SMOKE_TRACKER_ID":""}}'
+node tools/callWebapp.js getSmokeStatus --env <env>
+# → { smokeMode: false, smokeTrackerId: null }
 ```
 
-**Effect:**
+**Effect of SMOKE_MODE=true:**
 - `copyAndInit_` appends `" (Smoke)"` to `NameSpace` when naming the new tracker spreadsheet.
 - The new tracker's spreadsheet ID is saved to `SMOKE_TRACKER_ID` in Script Properties.
-- `runScanTrackers` (admin action) is blocked — prevents test data contaminating PaxDB.
-
-**Teardown (admin POST):**
-```json
-{ "action": "cleanupTracker", "sheetId": "<SMOKE_TRACKER_ID>", "trashSpreadsheet": true }
-```
-This removes the TrackerDB row, all PaxDB rows for that sheetId, and optionally trashes the spreadsheet.
-
-**Deactivate:**
-```
-setScriptProperties { SMOKE_MODE: '', SMOKE_TRACKER_ID: '' }
-```
-
-**Confirm environment before starting:**
-```json
-{ "action": "getSmokeStatus" }
-```
-Returns `{ deployTarget, smokeMode, smokeTrackerId }` — use to confirm you're talking to the correct environment.
+- `runScanTrackers` admin action is blocked — prevents test data contaminating PaxDB.
+- Outbound emails redirect to Site Q address (same as Email Test Mode) with `[SMOKE]` subject prefix.
 
 ### Script Properties
 

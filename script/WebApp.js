@@ -150,6 +150,23 @@ function handleAdminPost_(e) {
         smokeTrackerId: props.getProperty('SMOKE_TRACKER_ID') || null
       });
     }
+    if (payload.action === 'getSheet') {
+      if (!payload.sheetName) {
+        return jsonOutput_({ ok: false, error: 'sheetName is required' });
+      }
+      var targetSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(payload.sheetName);
+      if (!targetSheet) {
+        return jsonOutput_({ ok: false, error: 'sheet_not_found' });
+      }
+      var rows = targetSheet.getDataRange().getValues();
+      var csv = rows.map(function(row) {
+        return row.map(function(cell) {
+          var s = String(cell == null ? '' : cell);
+          return s.indexOf('\t') !== -1 ? '"' + s.replace(/"/g, '""') + '"' : s;
+        }).join('\t');
+      }).join('\n');
+      return jsonOutput_({ ok: true, csv: csv });
+    }
     if (payload.action === 'runScanTrackers') {
       // Scans sibling tracker spreadsheets and refreshes TrackerDB/PaxDB. Blocked during
       // Smoke mode — scanning while smoke signups exist would write test data into PaxDB,

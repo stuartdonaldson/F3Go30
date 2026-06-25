@@ -97,3 +97,52 @@ Either environment can be in **Smoke mode** (testing go-live flows with labeled 
 ## clasp - command line tool for google apps script credentials.
 The local.settings.json file claspAuth setting contains the clasp auth credentials file which must be passed in to clasp with the "--auth" arguent or via the "clasp_config_auth" environment variable.
 
+## Developer CLI Tools
+
+### clasp auth (required on every manual clasp command)
+Do NOT use bare `clasp` — it silently falls back to wrong credentials. `CLASP_CONFIG` is not a
+real clasp variable; only `clasp_config_auth` (lowercase exact match) works.
+```
+clasp_config_auth=~/.clasprc-f3go30.json clasp <subcommand>
+```
+
+### Deploying
+Environment switching is managed by `tools/manage-deployments.js`, which writes `.clasp.json`
+before each push. Do not edit `.clasp.json` manually. Both npm scripts do a full deploy
+(push + named deployment URL update).
+```
+npm run deploy:sit    # push to SIT (testScriptId)       — alias: npm run deploy:test
+npm run deploy:prod   # push to PROD (templateScriptId)  — alias: npm run push
+npm run release:patch # bump version + deploy:prod + git push --follow-tags
+```
+
+### Web app calls (all environments, all endpoints)
+```
+node tools/callWebapp.js <action> [--cmd admin|signup|...] [--env sit|prod] [--body '{"key":"val"}']
+```
+Reads deployment ID from local.settings.json. For `--cmd admin` (the default), also reads and
+injects the admin secret automatically. Default: `--cmd admin --env sit`.
+
+Common admin actions: `getSmokeStatus`, `setScriptProperties`, `cleanupTracker`,
+`runScanTrackers`, `getSheet`
+
+### Smoke mode workflow (run on SIT first; repeat on PROD before go-live)
+See docs/OPERATIONS.md §Smoke Mode for the full numbered sequence. Quick reference:
+```bash
+# 1. Activate
+node tools/callWebapp.js setScriptProperties --env <env> --body '{"properties":{"SMOKE_MODE":"true"}}'
+# 2. Confirm
+node tools/callWebapp.js getSmokeStatus --env <env>
+# 3. Run copyAndInit (monthly menu or auto-generate trigger)
+# 4. Sign up a test PAX via signup web app (targetMonth: "current" resolves to smoke tracker)
+node tools/callWebapp.js identify --cmd signup --env <env> --body '{"f3Name":"SmokeTest","email":"smoke@example.com"}'
+# 5. Verify Tracker sheet (get SMOKE_TRACKER_ID from getSmokeStatus output)
+node tools/callWebapp.js getSheet --env <env> --body '{"sheetName":"Tracker"}'
+# 6. Human: confirm spreadsheet looks correct, then proceed to teardown
+# 7. Teardown
+node tools/callWebapp.js cleanupTracker --env <env> --body '{"sheetId":"<SMOKE_TRACKER_ID>","trashSpreadsheet":true}'
+node tools/callWebapp.js setScriptProperties --env <env> --body '{"properties":{"SMOKE_MODE":"","SMOKE_TRACKER_ID":""}}'
+# 8. Confirm clean
+node tools/callWebapp.js getSmokeStatus --env <env>
+```
+
