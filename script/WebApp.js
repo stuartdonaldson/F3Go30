@@ -225,6 +225,20 @@ function handleAdminPost_(e) {
       var sheetHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
       return jsonOutput_({ ok: true, headers: sheetHeaders });
     }
+    if (payload.action === 'runMinusOneCheck') {
+      // Runs the daily minus-one marking for a specific context date (default: today).
+      // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload.
+      var contextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
+      var result = markEmptyCellsAsMinusOne_(contextDate);
+      return jsonOutput_({ ok: true, result: result });
+    }
+    if (payload.action === 'runNagCheck') {
+      // Runs the daily nag email dispatch for a specific context date (default: today).
+      // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload.
+      var contextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
+      var result = sendNagEmail_(contextDate);
+      return jsonOutput_({ ok: true, result: result });
+    }
     return jsonOutput_({ ok: false, error: 'unknown_action' });
   } catch (err) {
     GasLogger.log('handleAdminPost_.error', { error: err && err.message, action: payload.action });
