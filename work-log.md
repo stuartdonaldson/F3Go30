@@ -276,3 +276,75 @@ Fixed four issues discovered during smoke test run; added callAdmin tool and dep
 - `form.setDestination(FormApp.DestinationType.SPREADSHEET, id)` creates "Form Responses 1" automatically — rename it to "Responses" post-flush
 - Pre-checking the template form URL before any artifact is created prevents orphaned spreadsheets on early return
 - TinyURL aliases must be `[a-zA-Z0-9_-]`; the GAS script was passing the spreadsheet name directly (spaces, parentheses) which caused silent failures caught by the retry loop but never resolved
+
+## 2026-06-25 16:00:48
+
+### Summary
+Fixed Bug 3 (#REF! errors in Goals by HIM on new tracker copies): sheet-index-driven copy logic, onFormSubmit trigger rewrite to separate form destination sheet from Responses. Deployed to SIT v2.2.28. Smoke mode reactivated; waiting on human to run copyAndInit from SIT template to verify fix.
+
+### Details
+- Created bd issue F3Go30-v5fw for the Responses column mismatch fix
+- Added `TRACKER_SHEET_INDEX_` constant in CreateNewTracker.js (20 sheets, Visible/Hidden/Delete dispositions); filled in from user-updated OPEN.md
+- `copySpreadsheetWithoutScript_`: replaced heuristic copy logic with index-driven loop — Responses (Hidden) now copied from template preserving stable column order
+- `hideInternalSheets_`: replaced `visibleAllowList` + hardcoded PaxDB delete with index-driven loop
+- `copyAndInit_` + `autoGenerateNextMonthTracker_`: delete "Form Responses 1" after `form.setDestination()` instead of renaming — Responses already present from template copy
+- `addResponseOnSubmit.js`: new `appendToResponsesSheet_` maps processed form row (form column order) into Responses (template column order) using `buildResponseFieldCopyPlan_`; rewrote `onFormSubmitLocked_` to resolve columns from `e.range.getSheet()`, pass form destination sheet to `maybeReuseLastMonthsGoals_`, run Phase 3 on form sheet, append mapped row to Responses, then dedup
+- Tests updated: `hideInternalSheets_` assertions (TrackerDB now Delete, not Hidden); new `appendToResponsesSheet_` test
+- All 15 tests pass; deployed to SIT (v2.2.28); old smoke tracker trashed; smoke mode cleared and reactivated
+
+### Key Learnings
+- Separating the form destination sheet from the Responses store is the correct architecture: form question order can drift from template column order; the trigger is the reconciliation point, not the sheet name
+- `buildResponseFieldCopyPlan_` in response_utils.js was already available and handles the field-by-field mapping cleanly — no custom mapper needed
+
+## 2026-06-25 16:40:36
+
+### Summary
+Diagnosed and fixed `copyAndInit` crash during SIT smoke run; added `query_axiom.py` tooling; deployed v2.2.29 to SIT.
+
+### Details
+- **Smoke run failure:** `copyAndInit` from the menu produced "Orphaned spreadsheet ID" error. Initial read suggested the Tracker sheet was missing, but inspecting the spreadsheet directly showed it existed.
+- **Root cause via Axiom:** Used new `tools/query_axiom.py` to query Axiom logs. Found the real error: `"You cannot delete a sheet with a linked form. Please unlink the form first."` The code calls `form.setDestination()` (which auto-creates "Form Responses 1" linked to the form), then immediately tries to delete that sheet — GAS blocks the delete.
+- **Fix:** Added `form.removeDestination()` before the `forEach` delete loop at both occurrences in `CreateNewTracker.js` (manual `copyAndInit` path ~line 319 and auto-generate path ~line 885). The form destination is still routed correctly because `onFormSubmitLocked_` finds the Responses sheet by name, not by the auto-created sheet link.
+- **Deployed:** v2.2.29 to SIT.
+
+### Key Learnings
+- `form.setDestination()` always creates a "Form Responses 1" sheet linked to the form; GAS will not let you delete that sheet while the link exists — `form.removeDestination()` must precede the delete.
+- `tools/query_axiom.py` (new this session) provides fast CLI access to Axiom logs without re-deriving APL syntax each time. Filter with `--name <substring>` or `--since <duration>`.
+
+## 2026-06-25 23:57:18
+
+### Summary
+Refactored tracker creation logic to use direct Drive copy (preserves formulas); extracted shared `createTrackerSpreadsheet_()` called by both manual and auto-generate paths; both now send onboarding email. Updated cleanup to unlink and delete forms before trashing spreadsheets. Deployed v2.2.30–31 to SIT.
+
+### Details
+- **Tracker refactor (F3Go30-kohs):** Replaced sheet-by-sheet copy with `DriveApp.getFileById(...).makeCopy()` to preserve cross-sheet formula integrity. Extracted 150+ lines into `createTrackerSpreadsheet_(options)` taking a `logFn` callback for notification differences (sidebar vs email). Both `copyAndInit_` and `autoGenerateNextMonthTracker_` now delegate to it; both send onboarding email on success.
+- **Form lifecycle fix:** `setDestination()` auto-creates "Form Responses 1" linked to the form. Cannot delete while linked, so now hiding it instead (required for `forSpreadsheet().onFormSubmit()` trigger to work). Removed incorrect `removeDestination()` call from earlier fix.
+- **Cleanup teardown:** `cleanupTracker` now unlinks form (`.removeDestination()`), trashes the form, then trashes the spreadsheet. GAS blocks spreadsheet trash while a form destination points at it.
+- **Removed:** `copySpreadsheetWithoutScript_()` — no longer used.
+- **Bug fix:** `autoGenerateNextMonthTracker_` was passing `formUrl` instead of `formShortUrl` to upsertLinksRow_ for `shortHc` field.
+- **All tests pass, deployed v2.2.30 and v2.2.31 to SIT.**
+
+### Key Learnings
+- `setDestination(DestinationType.SPREADSHEET, ssId)` auto-creates a new sheet and links the form to it; the trigger system requires that link, so the sheet cannot be deleted. Hiding is the right approach.
+- Form lifecycle in tracker cleanup: form must be unlinked before the spreadsheet can be trashed (undocumented GAS constraint).
+- Direct Drive copy (`.makeCopy()`) is simpler and preserves formula integrity better than sheet-by-sheet copy with manual named-range recreation.
+
+## 2026-06-26 01:52:00
+
+### Summary
+Diagnosed and fixed signup short URL pointing to stale webapp deployment. Root cause: bound script's `ScriptApp.getService().getUrl()` returns bound script deployment ID, not webapp deployment ID—critical distinction when they run under different deployments.
+
+**Fixes:**
+- Added deployment URL display to About dialog for debugging bound script execution context
+- Created `setWebappUrl` admin action to capture webapp's actual deployment URL
+- Updated `ensureSignupShortUrl_()` to read WEBAPP_URL script property instead of trusting `getService().getUrl()`
+- Deployed v2.2.33 with fixes; signup URLs now correctly point to current webapp
+
+### Key Learnings
+When a Google Apps Script project has both bound script (attached to spreadsheet) and webapp enabled: `ScriptApp.getService().getUrl()` returns the deployment URL of whichever context the code is running in, not a canonical "current" webapp URL. If bound and webapp execute under different deployments (happens with stale execution contexts or separate deploy cycles), URLs will not match. Solution: explicitly store webapp URL as a Script Property when webapp runs; bound script reads from that property. Created design note: **GAS-Core-q2b**.
+
+### Files Changed
+- script/WebApp.js — added setWebappUrl admin action
+- script/CreateNewTracker.js — updated ensureSignupShortUrl_ to use WEBAPP_URL script property
+- script/onOpen.js — added deployment URL display to About dialog (for debugging)
+

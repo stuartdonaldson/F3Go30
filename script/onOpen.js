@@ -41,12 +41,16 @@ function onOpen_()
  * Displays an About dialog with version info and author contact.
  */
 function showAbout() {
+  const serviceUrl = ScriptApp.getService().getUrl();
+  const deploymentId = serviceUrl ? serviceUrl.match(/\/d\/([^\/]+)/)?.[1] : 'unknown';
+
   const html = HtmlService.createHtmlOutput(
     '<style>' +
     '  body { font-family: Arial, sans-serif; padding: 16px; font-size: 13px; color: #333; }' +
     '  h2 { margin-top: 0; }' +
     '  p { margin: 6px 0; }' +
     '  .label { font-weight: bold; }' +
+    '  .code { font-family: monospace; font-size: 11px; word-break: break-all; background: #f5f5f5; padding: 4px; border-radius: 3px; }' +
     '  hr { border: none; border-top: 1px solid #ddd; margin: 12px 0; }' +
     '</style>' +
     '<h2>F3 Go30 Tracker</h2>' +
@@ -56,8 +60,13 @@ function showAbout() {
     '<hr>' +
     '<p><span class="label">Version:</span> ' + APP_VERSION + ' (' + APP_VERSION_DATE + ')</p>' +
     '<p><span class="label">Author:</span> ' + APP_AUTHOR + '</p>' +
-    '<p><span class="label">Contact:</span> <a href="mailto:' + APP_CONTACT + '">' + APP_CONTACT + '</a></p>'
-  ).setWidth(420).setHeight(230);
+    '<p><span class="label">Contact:</span> <a href="mailto:' + APP_CONTACT + '">' + APP_CONTACT + '</a></p>' +
+    '<hr>' +
+    '<p><span class="label">Deployment ID:</span></p>' +
+    '<p class="code">' + deploymentId + '</p>' +
+    '<p><span class="label">Service URL:</span></p>' +
+    '<p class="code">' + (serviceUrl || 'unknown') + '</p>'
+  ).setWidth(480).setHeight(320);
 
   SpreadsheetApp.getUi().showModalDialog(html, 'About F3 Go30');
 }

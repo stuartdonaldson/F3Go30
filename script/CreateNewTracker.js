@@ -186,13 +186,171 @@ function copyAndInit() {
   return GasLogger.run('copyAndInit', copyAndInit_);
 }
 
+/**
+ * Shared tracker-creation core used by both copyAndInit_ (manual, sidebar) and
+ * autoGenerateNextMonthTracker_ (automated, trigger). Performs the Drive file copy,
+ * sheet cleanup, form copy + link, config writes, initSheets, TrackerDB upsert,
+ * trigger installation, and signup URL resolution.
+ *
+ * @param {Object} options
+ * @param {Spreadsheet} options.sourceSpreadsheet  Template spreadsheet
+ * @param {Date}        options.startDate           First day of the new tracker month
+ * @param {string}      options.newSpreadsheetName  Name for the new spreadsheet
+ * @param {Folder}      options.folder              Drive folder for the new artifacts
+ * @param {boolean}     options.smokeMode
+ * @param {string}      options.nameSpace           e.g. "F3 Go30" or "F3 Go30 (Smoke)"
+ * @param {Object}      options.siteQConfig         { primary: name, secondary: email }
+ * @param {Sheet|null}  options.configSheet         Config sheet of sourceSpreadsheet
+ * @param {Array[]|null} options.configData         Config sheet values
+ * @param {Function}    [options.logFn]             Progress logger — defaults to no-op
+ * @returns {{ newSpreadsheet, newSpreadsheetId, newSpreadsheetName, trackerSheetUrl,
+ *             trackerSheetShortUrl, formUrl, formShortUrl, formName, formId,
+ *             signupShortUrl, slackMsg, startDateIso }}
+ */
+function createTrackerSpreadsheet_(options) {
+  var logFn = options.logFn || function() {};
+  var sourceSpreadsheet = options.sourceSpreadsheet;
+  var startDate = options.startDate;
+  var newSpreadsheetName = options.newSpreadsheetName;
+  var folder = options.folder;
+  var smokeMode = options.smokeMode;
+  var nameSpace = options.nameSpace;
+  var siteQConfig = options.siteQConfig;
+  var configSheet = options.configSheet;
+  var configData = options.configData;
+  var siteQEmail = siteQConfig.secondary;
+  var siteQName = siteQConfig.primary || 'Site Q';
+  var paddedMonth = String(startDate.getMonth() + 1).padStart(2, '0');
+  var paddedDay = String(startDate.getDate()).padStart(2, '0');
+  var startDateIso = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay;
+
+  var templateFormUrl = sourceSpreadsheet.getFormUrl();
+  if (!templateFormUrl) {
+    throw new Error('No form linked to the template spreadsheet — the template must have an associated Google Form.');
+  }
+
+  var newSpreadsheetId = null;
+  try {
+    logFn('Copying spreadsheet...');
+    // Direct Drive file copy preserves cross-sheet formulas (sheet-by-sheet copy breaks them)
+    var newFile = DriveApp.getFileById(sourceSpreadsheet.getId()).makeCopy(newSpreadsheetName, folder);
+    newSpreadsheetId = newFile.getId();
+    var newSpreadsheet = SpreadsheetApp.openById(newSpreadsheetId);
+
+    if (smokeMode) {
+      PropertiesService.getScriptProperties().setProperty('SMOKE_TRACKER_ID', newSpreadsheetId);
+    }
+
+    // PAX interact via the Form only — VIEW permission is sufficient and prevents data corruption
+    newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+    // Remove template-only sheets and any Form Responses inherited from the template copy
+    newSpreadsheet.getSheets().forEach(function(s) {
+      var name = s.getName();
+      if (TRACKER_SHEET_INDEX_[name] === 'Delete' || /^Form Responses/.test(name)) {
+        newSpreadsheet.deleteSheet(s);
+      }
+    });
+
+    var trackerSheet = newSpreadsheet.getSheetByName('Tracker');
+    if (!trackerSheet) {
+      throw new Error('Tracker sheet not found in new spreadsheet.');
+    }
+
+    var trackerSheetUrl = newSpreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
+    var trackerSheetShortUrl = trackerSheetUrl;
+    try {
+      trackerSheetShortUrl = shortenUrl(trackerSheetUrl, newSpreadsheetName, 5, 'tinyurl');
+    } catch (e) {
+      GasLogger.log('createTrackerSpreadsheet.shortenUrlFailed', { target: 'tracker', error: e.message });
+    }
+
+    logFn('Copying form...');
+    var formName = newSpreadsheetName + ' HC';
+    var ftitle = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay + ' HC Form';
+    var newFormFile = DriveApp.getFileById(FormApp.openByUrl(templateFormUrl).getId()).makeCopy(formName, folder);
+    var form = FormApp.openById(newFormFile.getId());
+    form.setTitle(ftitle);
+    ensureReuseOptionOnLinkedForm_(form);
+    form.setConfirmationMessage(
+      'Thank you for your Hard Commit!\n\n' +
+      'View the Go30 tracker here: ' + trackerSheetShortUrl + '\n\n' +
+      'Questions? Contact ' + siteQName + ' (' + siteQEmail + ').'
+    );
+
+    // Link form to new spreadsheet — required for forSpreadsheet().onFormSubmit() trigger.
+    // setDestination auto-creates "Form Responses 1"; hide it since Responses was already
+    // copied from the template with the correct column order.
+    form.setDestination(FormApp.DestinationType.SPREADSHEET, newSpreadsheetId);
+    SpreadsheetApp.flush();
+    newSpreadsheet.getSheets().forEach(function(s) {
+      if (/^Form Responses/.test(s.getName())) s.hideSheet();
+    });
+
+    var formUrl = form.getPublishedUrl();
+    var formShortUrl = formUrl;
+    try {
+      formShortUrl = shortenUrl(formUrl, formName, 5, 'tinyurl');
+    } catch (e) {
+      GasLogger.log('createTrackerSpreadsheet.shortenUrlFailed', { target: 'form', error: e.message });
+    }
+
+    var newConfigSheet = newSpreadsheet.getSheetByName('Config');
+    writeTrackerConfigRows_(newConfigSheet, formName, formUrl, sourceSpreadsheet.getUrl());
+
+    initSheets(newSpreadsheet, startDate);
+
+    var linksSheet = openLinksSheet_(sourceSpreadsheet);
+    upsertLinksRow_(linksSheet, {
+      date: new Date(),
+      startDate: startDateIso,
+      spreadsheetName: newSpreadsheetName,
+      sheetId: newSpreadsheetId,
+      formId: form.getId(),
+      shortTracker: trackerSheetShortUrl,
+      trackerUrl: trackerSheetUrl,
+      shortHc: formShortUrl,
+      hcUrl: formUrl
+    });
+
+    // Form-submit dispatch (ADR-010): installed once here, from the Template, targeting
+    // the new tracker directly — no per-copy "Initialize Triggers" step required.
+    setupFormSubmitTrigger(newSpreadsheet);
+
+    var signupShortUrl = ensureSignupShortUrl_(configSheet, configData, nameSpace);
+
+    var slackMsg = buildSignupSlackMessage_(
+      startDate.getFullYear(), MONTH_NAMES_[startDate.getMonth()],
+      signupShortUrl, trackerSheetShortUrl, formShortUrl
+    );
+
+    return {
+      newSpreadsheet: newSpreadsheet,
+      newSpreadsheetId: newSpreadsheetId,
+      newSpreadsheetName: newSpreadsheetName,
+      trackerSheetUrl: trackerSheetUrl,
+      trackerSheetShortUrl: trackerSheetShortUrl,
+      formUrl: formUrl,
+      formShortUrl: formShortUrl,
+      formName: formName,
+      formId: form.getId(),
+      signupShortUrl: signupShortUrl,
+      slackMsg: slackMsg,
+      startDateIso: startDateIso
+    };
+  } catch (e) {
+    e.orphanedSpreadsheetId = newSpreadsheetId;
+    throw e;
+  }
+}
+
 function copyAndInit_() {
   NoticeLogInit("Create New Tracker", "This script will create a new monthly tracker. Enter the start date when prompted.");
 
   const response = NoticePrompt("Enter start date YYYY-MM-DD");
   if (!response) {
-      NoticeLog('Operation canceled.');
-      return;
+    NoticeLog('Operation canceled.');
+    return;
   }
   const startDate = new Date(response + 'T00:00:00'); // local time to avoid UTC offset shifting the date
 
@@ -210,7 +368,6 @@ function copyAndInit_() {
   }
 
   const currentSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-
   const configSheet = currentSpreadsheet.getSheetByName('Config');
   const configData = configSheet ? configSheet.getDataRange().getValues() : null;
 
@@ -237,7 +394,6 @@ function copyAndInit_() {
   }
   const smokeMode = PropertiesService.getScriptProperties().getProperty('SMOKE_MODE') === 'true';
   const nameSpace = nameSpaceConfig.primary + (smokeMode ? ' (Smoke)' : '');
-
   const paddedMonth = String(startDate.getMonth() + 1).padStart(2, '0');
   const newSpreadsheetName = startDate.getFullYear() + '-' + paddedMonth + '-' + nameSpace;
 
@@ -250,159 +406,103 @@ function copyAndInit_() {
   }
   const folder = parents.next();
 
-  const templateFormUrl = currentSpreadsheet.getFormUrl();
-  if (!templateFormUrl) {
-    NoticeLog('Error: no form linked to the template spreadsheet — the template must have an associated Google Form.');
-    return;
+  NoticeLog('Creating ' + newSpreadsheetName + '. Please wait...');
+
+  let result;
+  try {
+    result = createTrackerSpreadsheet_({
+      sourceSpreadsheet: currentSpreadsheet,
+      startDate: startDate,
+      newSpreadsheetName: newSpreadsheetName,
+      folder: folder,
+      smokeMode: smokeMode,
+      nameSpace: nameSpace,
+      siteQConfig: siteQConfig,
+      configSheet: configSheet,
+      configData: configData,
+      logFn: NoticeLog
+    });
+  } catch (err) {
+    const orphanId = err.orphanedSpreadsheetId || null;
+    if (orphanId) {
+      NoticeLog('Error during initialization: ' + err.message);
+      NoticeLog('Orphaned spreadsheet ID: ' + orphanId + ' — please delete it from Drive.');
+    } else {
+      NoticeLog('Error: ' + err.message);
+    }
+    GasLogger.log('copyAndInit.error', {
+      error: err.message,
+      spreadsheetName: newSpreadsheetName,
+      orphanedSpreadsheetId: orphanId
+    });
+    throw err;
   }
 
-  NoticeLog('Creating ' + newSpreadsheetName + '. Please wait...');
-  let newSpreadsheet;
-  let newSpreadsheetId = null;
-  try {
-    NoticeLog('Copying spreadsheet...');
-    newSpreadsheet = copySpreadsheetWithoutScript_(currentSpreadsheet, newSpreadsheetName);
-    newSpreadsheetId = newSpreadsheet.getId();
-    if (smokeMode) {
-      PropertiesService.getScriptProperties().setProperty('SMOKE_TRACKER_ID', newSpreadsheetId);
-    }
-
-    const newSpreadsheetFile = DriveApp.getFileById(newSpreadsheetId);
-    newSpreadsheetFile.moveTo(folder);
-
-    // PAX interact via the Form only — VIEW permission is sufficient and prevents data corruption
-    newSpreadsheetFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-
-    // Get the URL to the "Tracker" sheet
-    const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
-    if (!trackerSheet) {
-      NoticeLog('Error: Tracker sheet not found in new spreadsheet.');
-      NoticeLog('Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.');
-      return;
-    }
-    const trackerSheetUrl = newSpreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
-    const trackerAlias = newSpreadsheetName;
-    let trackerSheetShortUrl = trackerSheetUrl;
-    try {
-      trackerSheetShortUrl = shortenUrl(trackerSheetUrl, trackerAlias, 5, "tinyurl");
-    } catch (error) {
-      NoticeLog('Shorten URL failed for tracker sheet: ' + error.message);
-    }
-    if (!trackerSheetShortUrl.startsWith('https://tinyurl.com')) {
-      GasLogger.log('copyAndInit.warning', { warning: 'urlShortener failed for tracker sheet', alias: trackerAlias });
-    }
-
-    NoticeLog('New spreadsheet tracker sheet link: ' + createHtmlLink(newSpreadsheetName, trackerSheetShortUrl));
-
-    // Copy form from template and link to new spreadsheet
-    NoticeLog('Copying form...');
-    const formName = newSpreadsheetName + ' HC';
-    const paddedDay = String(startDate.getDate()).padStart(2, '0');
-    const ftitle = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay + ' HC Form';
-
-    const newFormFile = DriveApp.getFileById(FormApp.openByUrl(templateFormUrl).getId()).makeCopy(formName, folder);
-    const form = FormApp.openById(newFormFile.getId());
-    form.setTitle(ftitle);
-    ensureReuseOptionOnLinkedForm_(form);
-    const confirmationMessage =
-      'Thank you for your Hard Commit!\n\n' +
-      'View the Go30 tracker here: ' + trackerSheetShortUrl + '\n\n' +
-      'Questions? Contact ' + siteQConfig.primary + ' (' + siteQEmail + ').';
-    form.setConfirmationMessage(confirmationMessage);
-
-    // Link form responses to new spreadsheet — setDestination creates "Form Responses 1".
-    // Delete it: Responses was already copied from the template in template column order.
-    // The onFormSubmit trigger writes processed rows into Responses after each submission.
-    form.setDestination(FormApp.DestinationType.SPREADSHEET, newSpreadsheetId);
-    SpreadsheetApp.flush();
-    newSpreadsheet.getSheets().forEach(function(s) {
-      if (/^Form Responses/.test(s.getName())) newSpreadsheet.deleteSheet(s);
-    });
-
-    const formUrl = form.getPublishedUrl();
-    const formAlias = newSpreadsheetName + 'HC';
-    let formShortUrl = formUrl;
-    try {
-      formShortUrl = shortenUrl(formUrl, formAlias, 5, "tinyurl");
-    } catch (error) {
-      NoticeLog('Shorten URL failed for form: ' + error.message);
-    }
-    if (!formShortUrl.startsWith('https://tinyurl.com')) {
-      GasLogger.log('copyAndInit.warning', { warning: 'urlShortener failed for HC form', alias: formAlias });
-    }
-
-    NoticeLog('New HC Form: ' + createHtmlLink(formName, formShortUrl));
-
-    // Persist canonical URLs into the created spreadsheet's Config sheet
-    const newConfigSheet = newSpreadsheet.getSheetByName('Config');
-    writeTrackerConfigRows_(newConfigSheet, formName, formUrl, currentSpreadsheet.getUrl());
-
-    // Modify sheets in the new spreadsheet
-    initSheets(newSpreadsheet, startDate);
-
-    // Track all trackers created from this template — upsert into the TrackerDB sheet
-    const startDateIso = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay;
-    let linksSheet = openLinksSheet_(currentSpreadsheet);
-    upsertLinksRow_(linksSheet, {
-      date: new Date(),
-      startDate: startDateIso,
-      spreadsheetName: newSpreadsheetName,
-      sheetId: newSpreadsheetId,
-      formId: form.getId(),
-      shortTracker: trackerSheetShortUrl,
-      trackerUrl: trackerSheetUrl,
-      shortHc: formShortUrl,
-      hcUrl: formUrl
-    });
-
-    // Form-submit dispatch (ADR-010): installed once here, from the Template, targeting
-    // the new tracker directly — no per-copy "Initialize Triggers" step required.
-    setupFormSubmitTrigger(newSpreadsheet);
-
-    // Stable, NameSpace-derived signup short URL — same mechanism as autoGenerateNextMonthTracker_.
-    // Previously missing from this manual path, so a tracker created here never got a working
-    // 'Signup Short URL' Config row.
-    const signupShortUrl = ensureSignupShortUrl_(configSheet, configData, nameSpace);
-
+  NoticeLog('New spreadsheet tracker sheet link: ' + createHtmlLink(result.newSpreadsheetName, result.trackerSheetShortUrl));
+  NoticeLog('New HC Form: ' + createHtmlLink(result.formName, result.formShortUrl));
   NoticeLog("-");
   NoticeLog('<b>Next steps:</b>');
   NoticeLog('1. Open the new spreadsheet (link above) and verify it looks correct');
   NoticeLog('2. Open the HC form (link above) and verify it looks correct');
   NoticeLog("-");
-
-  const slackMsg = buildSignupSlackMessage_(startDate.getFullYear(), MONTH_NAMES_[startDate.getMonth()], signupShortUrl, trackerSheetShortUrl, formShortUrl);
   NoticeLog('<b>Slack channel message:</b>');
-  NoticeLog('<textarea rows="5" style="width:100%;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;" readonly onclick="this.select()">' + escapeHtml_(slackMsg) + '</textarea>');
+  NoticeLog('<textarea rows="5" style="width:100%;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;" readonly onclick="this.select()">' + escapeHtml_(result.slackMsg) + '</textarea>');
   NoticeLog("-");
-
   NoticeLog('You can now close this sidebar.');
 
   GasLogger.log('copyAndInit', {
-    spreadsheetId: newSpreadsheetId,
-    spreadsheetName: newSpreadsheetName,
-    startDateIso: startDateIso,
-    trackerUrl: trackerSheetShortUrl,
-    formUrl: formShortUrl,
-    signupShortUrl: signupShortUrl,
+    spreadsheetId: result.newSpreadsheetId,
+    spreadsheetName: result.newSpreadsheetName,
+    startDateIso: result.startDateIso,
+    trackerUrl: result.trackerSheetShortUrl,
+    formUrl: result.formShortUrl,
+    signupShortUrl: result.signupShortUrl,
     templateSpreadsheetId: currentSpreadsheet.getId()
   });
 
-  noticeLogDone_();
-
-  } catch (err) {
-    if (newSpreadsheetId) {
-      NoticeLog('Error during initialization: ' + err.message);
-      NoticeLog('Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.');
-    } else {
-      NoticeLog('Error: failed to copy spreadsheet — ' + err.message);
-    }
-    GasLogger.log('copyAndInit.error', {
-      error: err.message,
-      spreadsheetName: newSpreadsheetName,
-      orphanedSpreadsheetId: newSpreadsheetId || null
+  const emailMessage = buildOnboardingEmailTemplate_({
+    trackerName: result.newSpreadsheetName,
+    siteName: siteQConfig.primary || 'Site Q',
+    trackerUrl: result.trackerSheetShortUrl,
+    formUrl: result.formShortUrl,
+    ownerAccount: siteQConfig.primary,
+    initSteps: [
+      'Open the new spreadsheet and verify it looks correct',
+      'Open the HC form and verify it looks correct'
+    ],
+    postCopyChecklist: [
+      'Open new spreadsheet and verify layout',
+      'Open HC form and verify title + choices',
+      'Verify Config rows (Signup HC Form, Sheet Template, Site Q, NameSpace)',
+      'Confirm TrackerDB sheet entry for new tracker and form',
+      'Verify form sharing, file name and folder placement',
+      'Run test reuse flow (Test Reuse menu or submit sample)',
+      'Copy Slack message from sidebar and post to channel',
+      'Verify Help sheet Next Month signup link (optional)',
+      'Verify Config sheet hidden and sensitive values protected'
+    ],
+    slackReadyMessage: result.slackMsg,
+    operatorName: null,
+    contactEmail: siteQEmail,
+    appVersion: APP_VERSION
+  });
+  try {
+    sendConfiguredEmail_({
+      spreadsheet: currentSpreadsheet,
+      configData: configData,
+      recipientList: siteQEmail,
+      subject: emailMessage.subject,
+      body: emailMessage.body,
+      htmlBody: emailMessage.htmlBody,
+      allowPlainTextFallback: true,
+      logLabel: 'copyAndInit'
     });
-    throw err;
+  } catch (mailErr) {
+    GasLogger.log('copyAndInit.emailFailed', { error: mailErr.message });
+    NoticeLog('Note: email notification failed — ' + mailErr.message);
   }
+
+  noticeLogDone_();
 }
 
 /**
@@ -476,44 +576,6 @@ function initializeConfigSheet() {
  * @param {Spreadsheet} newSpreadsheet - The Google Spreadsheet object containing the sheets to initialize.
  * @param {Date} startDate - The start date used to populate the "Tracker" sheet.
  */
-/**
- * Creates a new spreadsheet from `sourceSpreadsheet` by copying sheets individually,
- * so the copy has no container-bound Apps Script. The "Responses" sheet is excluded —
- * the caller must link a Google Form via setDestination, which auto-creates it.
- * Named ranges are recreated because sheet.copyTo does not carry spreadsheet-scoped ranges.
- */
-function copySpreadsheetWithoutScript_(sourceSpreadsheet, newName) {
-  var newSS = SpreadsheetApp.create(newName);
-  var defaultSheet = newSS.getSheets()[0]; // "Sheet1" — removed after all sheets are copied
-
-  var sourceSheets = sourceSpreadsheet.getSheets();
-  for (var i = 0; i < sourceSheets.length; i++) {
-    var srcSheet = sourceSheets[i];
-    var disposition = TRACKER_SHEET_INDEX_[srcSheet.getName()];
-    if (!disposition || disposition === 'Delete') continue;
-    var copiedSheet = srcSheet.copyTo(newSS);
-    copiedSheet.setName(srcSheet.getName());
-    if (disposition === 'Hidden') copiedSheet.hideSheet();
-  }
-  newSS.deleteSheet(defaultSheet);
-
-  // Recreate named ranges (not transferred by sheet.copyTo)
-  var namedRanges = sourceSpreadsheet.getNamedRanges();
-  for (var j = 0; j < namedRanges.length; j++) {
-    var nr = namedRanges[j];
-    try {
-      var srcRange = nr.getRange();
-      var destSheet = newSS.getSheetByName(srcRange.getSheet().getName());
-      if (destSheet) {
-        newSS.setNamedRange(nr.getName(), destSheet.getRange(srcRange.getA1Notation()));
-      }
-    } catch (e) {
-      Logger.log('copySpreadsheetWithoutScript_: named range ' + nr.getName() + ' — ' + e.message);
-    }
-  }
-
-  return newSS;
-}
 
 function initSheets(newSpreadsheet, startDate) {
 
@@ -740,7 +802,12 @@ function resolveShortUrlRedirectTarget_(shortUrl) {
  * @returns {string} The verified/created signup short URL.
  */
 function ensureSignupShortUrl_(configSheet, configRows, nameSpace) {
-  var expectedTarget = ScriptApp.getService().getUrl() + '?cmd=signup';
+  // Use stored WEBAPP_URL if available (set by webapp's setWebappUrl action),
+  // otherwise fall back to ScriptApp.getService().getUrl()
+  var webappUrl = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL');
+  var serviceUrl = webappUrl || ScriptApp.getService().getUrl();
+  var expectedTarget = serviceUrl + '?cmd=signup';
+
   var existing = getConfigValue_(null, 'Signup Short URL', configRows);
   var existingShortUrl = existing && existing.primary ? existing.primary : null;
   var actualTarget = existingShortUrl ? resolveShortUrlRedirectTarget_(existingShortUrl) : null;
@@ -823,13 +890,8 @@ function autoGenerateNextMonthTracker_() {
 
   GasLogger.log('autoGenerateNextMonthTracker.creating', { spreadsheetName: newSpreadsheetName, smokeMode: smokeMode });
 
-  let newSpreadsheetId = null;
+  let result;
   try {
-    const templateFormUrl = currentSpreadsheet.getFormUrl();
-    if (!templateFormUrl) {
-      throw new Error('No form linked to template spreadsheet — ensure template has an associated form.');
-    }
-
     const currentFile = DriveApp.getFileById(currentSpreadsheet.getId());
     const parents = currentFile.getParents();
     if (!parents.hasNext()) {
@@ -837,92 +899,23 @@ function autoGenerateNextMonthTracker_() {
     }
     const folder = parents.next();
 
-    const newSpreadsheet = copySpreadsheetWithoutScript_(currentSpreadsheet, newSpreadsheetName);
-    newSpreadsheetId = newSpreadsheet.getId();
-    if (smokeMode) {
-      PropertiesService.getScriptProperties().setProperty('SMOKE_TRACKER_ID', newSpreadsheetId);
-    }
-
-    const newFile = DriveApp.getFileById(newSpreadsheetId);
-    newFile.moveTo(folder);
-    newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-
-    const trackerSheet = newSpreadsheet.getSheetByName('Tracker');
-    if (!trackerSheet) {
-      throw new Error('Tracker sheet not found in new spreadsheet.');
-    }
-    const trackerSheetUrl = newSpreadsheet.getUrl() + '#gid=' + trackerSheet.getSheetId();
-
-    let trackerSheetShortUrl = trackerSheetUrl;
-    try {
-      trackerSheetShortUrl = shortenUrl(trackerSheetUrl, newSpreadsheetName, 5, 'tinyurl');
-    } catch (e) {
-      GasLogger.log('autoGenerateNextMonthTracker.shortenUrlFailed', { target: 'tracker', error: e.message });
-    }
-    if (!trackerSheetShortUrl.startsWith('https://tinyurl.com')) {
-      GasLogger.log('autoGenerateNextMonthTracker.warning', { warning: 'urlShortener failed for tracker sheet', alias: newSpreadsheetName });
-    }
-
-    // Copy form from template and link to new spreadsheet
-    const formName = newSpreadsheetName + ' HC';
-    const ftitle = nextMonthStart.getFullYear() + '-' + paddedMonth + '-01 HC Form';
-    const newFormFile = DriveApp.getFileById(FormApp.openByUrl(templateFormUrl).getId()).makeCopy(formName, folder);
-    const form = FormApp.openById(newFormFile.getId());
-    form.setTitle(ftitle);
-    ensureReuseOptionOnLinkedForm_(form);
-    form.setConfirmationMessage(
-      'Thank you for your Hard Commit!\n\n' +
-      'View the Go30 tracker here: ' + trackerSheetShortUrl + '\n\n' +
-      'Questions? Contact ' + siteQName + ' (' + siteQEmail + ').'
-    );
-
-    // Link form responses to new spreadsheet — setDestination creates "Form Responses 1".
-    // Delete it: Responses was already copied from the template in template column order.
-    // The onFormSubmit trigger writes processed rows into Responses after each submission.
-    form.setDestination(FormApp.DestinationType.SPREADSHEET, newSpreadsheetId);
-    SpreadsheetApp.flush();
-    newSpreadsheet.getSheets().forEach(function(s) {
-      if (/^Form Responses/.test(s.getName())) newSpreadsheet.deleteSheet(s);
+    result = createTrackerSpreadsheet_({
+      sourceSpreadsheet: currentSpreadsheet,
+      startDate: nextMonthStart,
+      newSpreadsheetName: newSpreadsheetName,
+      folder: folder,
+      smokeMode: smokeMode,
+      nameSpace: nameSpace,
+      siteQConfig: siteQConfig,
+      configSheet: configSheet,
+      configData: configData
     });
 
-    const formUrl = form.getPublishedUrl();
-
-    const newConfigSheet = newSpreadsheet.getSheetByName('Config');
-    writeTrackerConfigRows_(newConfigSheet, formName, formUrl, currentSpreadsheet.getUrl());
-
-    initSheets(newSpreadsheet, nextMonthStart);
-
-    const linksSheet = openLinksSheet_(currentSpreadsheet);
-    upsertLinksRow_(linksSheet, {
-      date: new Date(),
-      startDate: nextMonthStart.getFullYear() + '-' + paddedMonth + '-01',
-      spreadsheetName: newSpreadsheetName,
-      sheetId: newSpreadsheetId,
-      formId: form.getId(),
-      shortTracker: trackerSheetShortUrl,
-      trackerUrl: trackerSheetUrl,
-      shortHc: formUrl,
-      hcUrl: formUrl
-    });
-
-    // Form-submit dispatch (ADR-010): installed once here, from the Template, targeting
-    // the new tracker directly — no per-copy "Initialize Triggers" step required.
-    setupFormSubmitTrigger(newSpreadsheet);
-
-    // Stable, NameSpace-derived signup short URL — same one every month, pointing at the
-    // web app's cmd=signup page. Verified/repaired here rather than re-shortened per month.
-    const signupShortUrl = ensureSignupShortUrl_(configSheet, configData, nameSpace);
-
-    const slackMsg = buildSignupSlackMessage_(
-      nextMonthStart.getFullYear(), MONTH_NAMES_[nextMonthStart.getMonth()],
-      signupShortUrl, trackerSheetShortUrl, formUrl
-    );
-
-    var message = buildOnboardingEmailTemplate_({
+    const emailMessage = buildOnboardingEmailTemplate_({
       trackerName: newSpreadsheetName,
       siteName: siteQName,
-      trackerUrl: trackerSheetShortUrl,
-      formUrl: formUrl,
+      trackerUrl: result.trackerSheetShortUrl,
+      formUrl: result.formShortUrl,
       ownerAccount: siteQConfig.primary,
       initSteps: [
         'Open the new spreadsheet and verify it looks correct',
@@ -939,7 +932,7 @@ function autoGenerateNextMonthTracker_() {
         'Verify Help sheet Next Month signup link (optional)',
         'Verify Config sheet hidden and sensitive values protected'
       ],
-      slackReadyMessage: slackMsg,
+      slackReadyMessage: result.slackMsg,
       operatorName: null,
       contactEmail: siteQEmail,
       appVersion: APP_VERSION
@@ -949,27 +942,28 @@ function autoGenerateNextMonthTracker_() {
       spreadsheet: currentSpreadsheet,
       configData: configData,
       recipientList: siteQEmail,
-      subject: message.subject,
-      body: message.body,
-      htmlBody: message.htmlBody,
+      subject: emailMessage.subject,
+      body: emailMessage.body,
+      htmlBody: emailMessage.htmlBody,
       allowPlainTextFallback: true,
       logLabel: 'autoGenerateNextMonthTracker'
     });
 
     GasLogger.log('autoGenerateNextMonthTracker', {
-      spreadsheetId: newSpreadsheetId,
+      spreadsheetId: result.newSpreadsheetId,
       spreadsheetName: newSpreadsheetName,
-      trackerUrl: trackerSheetShortUrl,
-      formUrl: formUrl,
-      signupShortUrl: signupShortUrl,
+      trackerUrl: result.trackerSheetShortUrl,
+      formUrl: result.formShortUrl,
+      signupShortUrl: result.signupShortUrl,
       emailSent: true
     });
 
   } catch (err) {
+    const orphanId = err.orphanedSpreadsheetId || null;
     GasLogger.log('autoGenerateNextMonthTracker.error', {
       error: err.message,
       spreadsheetName: newSpreadsheetName || '(unknown)',
-      spreadsheetId: newSpreadsheetId || null
+      spreadsheetId: orphanId
     });
     try {
       sendConfiguredEmail_({
@@ -980,7 +974,7 @@ function autoGenerateNextMonthTracker_() {
         body: 'autoGenerateNextMonthTracker failed.\n\n' +
           'Error: ' + err.message + '\n\n' +
           (err.stack ? 'Stack:\n' + err.stack + '\n\n' : '') +
-          (newSpreadsheetId ? 'Orphaned spreadsheet ID: ' + newSpreadsheetId + ' — please delete it from Drive.' : ''),
+          (orphanId ? 'Orphaned spreadsheet ID: ' + orphanId + ' — please delete it from Drive.' : ''),
         logLabel: 'autoGenerateNextMonthTracker.error'
       });
     } catch (mailErr) {
