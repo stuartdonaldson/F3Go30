@@ -229,6 +229,32 @@ function createTrackerSpreadsheet_(options) {
     throw new Error('No form linked to the template spreadsheet — the template must have an associated Google Form.');
   }
 
+  // Check for an existing tracker with the same name before creating any artifacts.
+  // If found, rename it (and its form) to "(Expired)" — non-destructive, reversible.
+  var linksSheet = openLinksSheet_(sourceSpreadsheet);
+  var expiredTracker = null;
+  var existingRow = linksSheet.findRow('spreadsheetName', newSpreadsheetName);
+  if (existingRow) {
+    var expiredName = newSpreadsheetName + ' (Expired)';
+    logFn('⚠️ Warning: tracker "' + newSpreadsheetName + '" already exists — renaming to "' + expiredName + '"...');
+    try {
+      DriveApp.getFileById(existingRow.sheetId).setName(expiredName);
+      SpreadsheetApp.openById(existingRow.sheetId).rename(expiredName);
+    } catch (e) {
+      logFn('Note: could not rename old spreadsheet (may already be trashed): ' + e.message);
+    }
+    if (existingRow.formId) {
+      try {
+        DriveApp.getFileById(existingRow.formId).setName(expiredName + ' HC');
+        FormApp.openById(existingRow.formId).setTitle(expiredName + ' HC Form');
+      } catch (e) {
+        logFn('Note: could not rename old form: ' + e.message);
+      }
+    }
+    linksSheet.updateRowByValue('spreadsheetName', newSpreadsheetName, { spreadsheetName: expiredName });
+    expiredTracker = { name: newSpreadsheetName, sheetId: existingRow.sheetId };
+  }
+
   var newSpreadsheetId = null;
   try {
     logFn('Copying spreadsheet...');
@@ -301,7 +327,6 @@ function createTrackerSpreadsheet_(options) {
 
     initSheets(newSpreadsheet, startDate);
 
-    var linksSheet = openLinksSheet_(sourceSpreadsheet);
     upsertLinksRow_(linksSheet, {
       date: new Date(),
       startDate: startDateIso,
@@ -337,7 +362,8 @@ function createTrackerSpreadsheet_(options) {
       formId: form.getId(),
       signupShortUrl: signupShortUrl,
       slackMsg: slackMsg,
-      startDateIso: startDateIso
+      startDateIso: startDateIso,
+      expiredTracker: expiredTracker
     };
   } catch (e) {
     e.orphanedSpreadsheetId = newSpreadsheetId;
@@ -439,6 +465,10 @@ function copyAndInit_() {
     throw err;
   }
 
+  if (result.expiredTracker) {
+    NoticeLog('<b style="color:#b05000;">⚠️ Previous tracker expired:</b> "' + result.expiredTracker.name + '" was renamed to "' + result.expiredTracker.name + ' (Expired)". It remains accessible in Drive.');
+    NoticeLog("-");
+  }
   NoticeLog('New spreadsheet tracker sheet link: ' + createHtmlLink(result.newSpreadsheetName, result.trackerSheetShortUrl));
   NoticeLog('New HC Form: ' + createHtmlLink(result.formName, result.formShortUrl));
   NoticeLog("-");
@@ -467,6 +497,7 @@ function copyAndInit_() {
     trackerUrl: result.trackerSheetShortUrl,
     formUrl: result.formShortUrl,
     ownerAccount: siteQConfig.primary,
+    expiredTrackerName: result.expiredTracker ? result.expiredTracker.name : null,
     initSteps: [
       'Open the new spreadsheet and verify it looks correct',
       'Open the HC form and verify it looks correct'
@@ -918,6 +949,7 @@ function autoGenerateNextMonthTracker_() {
       trackerUrl: result.trackerSheetShortUrl,
       formUrl: result.formShortUrl,
       ownerAccount: siteQConfig.primary,
+      expiredTrackerName: result.expiredTracker ? result.expiredTracker.name : null,
       initSteps: [
         'Open the new spreadsheet and verify it looks correct',
         'Open the HC form and verify it looks correct'

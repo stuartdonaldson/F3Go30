@@ -17,6 +17,13 @@
 
           <p style="margin:0 0 16px;">A new tracker has been created for <?= siteName ?>. Please validate the tracker before it goes live using the steps below.</p>
 
+          <? if (expiredTrackerName) { ?>
+            <div style="margin:0 0 16px;padding:12px 16px;background:#fff3cd;border-left:4px solid #b05000;border-radius:6px;">
+              <strong style="color:#b05000;">⚠️ Previous tracker expired</strong><br>
+              &ldquo;<?= expiredTrackerName ?>&rdquo; was renamed to &ldquo;<?= expiredTrackerName ?> (Expired)&rdquo; and remains accessible in Drive.
+            </div>
+          <? } ?>
+
           <p style="margin:0 0 10px;font-weight:bold;">Account to open the tracker with:</p>
           <p style="margin:0 0 16px;color:#0b5c86;font-weight:bold;"> <?= ownerAccount || '(owner account not provided)' ?></p>
 

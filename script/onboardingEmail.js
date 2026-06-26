@@ -22,6 +22,7 @@ function renderOnboardingEmailHtml_(options) {
   template.ownerAccount = options.ownerAccount;
   template.initSteps = options.initSteps || [];
   template.postCopyChecklist = options.postCopyChecklist || [];
+  template.expiredTrackerName = options.expiredTrackerName || null;
   template.slackReadyMessage = options.slackReadyMessage;
   template.operatorName = options.operatorName;
   template.contactEmail = options.contactEmail;
@@ -34,6 +35,10 @@ function buildOnboardingEmailTemplate_(options) {
   var subject = 'F3 Go30: ' + (options.trackerName || 'New tracker') + ' is ready';
   var bodyLines = [];
   bodyLines.push((options.trackerName || 'A new tracker') + ' has been created.');
+  if (options.expiredTrackerName) {
+    bodyLines.push('');
+    bodyLines.push('⚠️ Note: a previous tracker "' + options.expiredTrackerName + '" was renamed to "' + options.expiredTrackerName + ' (Expired)" and remains accessible in Drive.');
+  }
   bodyLines.push('');
   if (options.trackerUrl) {
     bodyLines.push('Tracker: ' + options.trackerUrl);
