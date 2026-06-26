@@ -439,3 +439,15 @@ Deployed to SIT (v2.2.42), ran smoke test, discovered and fixed phone/nag prefil
 - PaxDB confirmed to have `Phone` and `NAG Email` columns (populated by `scanTrackers` / `upsertPaxDbRow_`)
 - Fix: added `phone` and `nagEmail` to `findPaxDbMatch_` return object; removed Responses-sheet fallback in `handleSignupIdentify_`; removed stale comment
 - Created and closed F3Go30-p8gd; deployed v2.2.43; confirmed via direct API call (`phone: 2067797808, nag: true`) and user verification in form
+
+## 2026-06-26 05:48:00
+
+### Summary
+Deployed v2.2.44 to PROD; bootstrapped PROD admin secret; fixed missing WEBAPP_URL post-deploy; ran scan trackers on PROD.
+
+### Details
+- **deploy:prod** — pushed 28 files, updated named deployment to v2.2.44
+- **templateAdminSecret** — generated random 48-char hex secret, saved to local.settings.json; user manually bootstrapped ADMIN_SHARED_SECRET on PROD via the pre-auth `bootstrapSecret` action
+- **WEBAPP_URL fix** — discovered WEBAPP_URL script property was not being set on prod deploys, causing broken signup links; called `setWebappUrl` manually to recover
+- **Auto-set WEBAPP_URL** — added `setWebappUrl` call to `manage-deployments.js` `deploy()` function (template target only) so WEBAPP_URL stays in sync after every future prod deploy
+- **runScanTrackers** — PROD: 27 scanned, 2 processed, 4 unchanged, 6 tracked, 21 skipped

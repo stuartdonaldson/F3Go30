@@ -222,6 +222,14 @@ function deploy(targetKey, options = {}) {
 
   saveDeploymentId_(targetKey, deploymentId);
   console.log(`💾 ${TARGETS[targetKey].deploymentIdKey} saved to local.settings.json`);
+
+  if (targetKey === 'template') {
+    console.log('\n🔗 Setting WEBAPP_URL script property on PROD…');
+    execSync('node tools/callWebapp.js setWebappUrl --env prod', {
+      stdio: 'inherit',
+      cwd: ROOT,
+    });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
