@@ -61,10 +61,25 @@ Use `npm run deploy:sit` for SIT; `npm run deploy:prod` / `npm run release:*` fo
 Smoke mode lets you test the full go-live flow (tracker creation, signup, nag, minus-one) using
 labeled artifacts that are cleaned up afterward. Run on SIT first; repeat on PROD before go-live.
 
-All smoke workflow commands use `node tools/callWebapp.js` — never raw curl. The tool handles
-auth, environment selection, and the GAS 302-redirect quirk automatically.
+**Automated workflow (recommended):**
 
-**Full sequence:**
+```bash
+# Full automation: steps 1–5, human review pause, then teardown
+node tools/smokeTest.js [--env sit|prod]
+# Default: --env sit
+# Pauses after tracker creation and sheet verification for human review.
+# Press Enter at the prompt to complete teardown; Ctrl+C to abort.
+```
+
+If smoke mode is left active (due to error), clean up with:
+```bash
+node tools/smokeTest.js --teardown [--env sit|prod]
+```
+
+**Manual workflow (if needed):**
+
+Use `node tools/callWebapp.js` for each step. The tool handles auth, environment selection, and
+the GAS 302-redirect quirk automatically.
 
 ```bash
 # 1. Activate smoke mode
@@ -74,20 +89,19 @@ node tools/callWebapp.js setScriptProperties --env <env> --body '{"properties":{
 node tools/callWebapp.js getSmokeStatus --env <env>
 # → { deployTarget, smokeMode: true, smokeTrackerId: null }
 
-# 3. Run copyAndInit (monthly menu or auto-generate trigger)
-#    copyAndInit_ appends " (Smoke)" to NameSpace and writes SMOKE_TRACKER_ID to Script Properties.
+# 3. Create tracker via auto-generate (or use the menu in Sheets for copyAndInit)
+node tools/callWebapp.js runAutoGenerate --env <env>
+# copyAndInit_ appends " (Smoke)" to NameSpace and writes SMOKE_TRACKER_ID to Script Properties.
 
 # 4. Sign up a test PAX via the signup web app
 node tools/callWebapp.js identify --cmd signup --env <env> --body '{"f3Name":"SmokeTest","email":"smoke@example.com"}'
-# Then complete the save step through the webapp or via a direct save call.
 
 # 5. Verify the Tracker sheet shows the test row (use SMOKE_TRACKER_ID from getSmokeStatus)
 node tools/callWebapp.js getSheet --env <env> --body '{"sheetId":"<SMOKE_TRACKER_ID>","sheetName":"Tracker"}'
 # → { ok: true, csv: "<tab-separated rows>" }
 
 # 6. *** HUMAN PAUSE *** — open the smoke spreadsheet and confirm it looks correct.
-#    Get SMOKE_TRACKER_ID: re-run getSmokeStatus if needed.
-#    Do not proceed to teardown until sign-off.
+#    Open: https://docs.google.com/spreadsheets/d/<SMOKE_TRACKER_ID>/edit
 
 # 7. Teardown — remove TrackerDB row, PaxDB rows, and trash the spreadsheet
 node tools/callWebapp.js cleanupTracker --env <env> --body '{"sheetId":"<SMOKE_TRACKER_ID>","trashSpreadsheet":true}'

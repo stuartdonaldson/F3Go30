@@ -176,4 +176,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs_, buildPayload_ };
+module.exports = { parseArgs_, buildPayload_, post, loadSettings, ENV_MAP };
