@@ -90,10 +90,11 @@ Two environments exist. **Default is SIT** unless PROD is stated explicitly.
 | **SIT** | `testScriptId` | `testSpreadsheetId` |
 | **PROD** | `templateScriptId` | `templateSpreadsheetId` |
 
-Any action that is environment-scoped — deploy, admin webapp POST, log/Axiom query, smoke mode toggle, `runScanTrackers`, creating a tracker month, cleanup — must name the environment. If unspecified, assume SIT and proceed. If the user says "prod", "production", "template", or "go live", switch to PROD context and proceed.
+Any action that is environment-scoped — deploy, admin webapp POST, log/ query, smoke mode toggle, `runScanTrackers`, creating a tracker month, cleanup — must name the environment. If unspecified, assume SIT and proceed. If the user says "prod", "production", "template", or "go live", switch to PROD context and proceed.
 
 Either environment can be in **Smoke mode** (testing go-live flows with labeled artifacts that are cleaned up afterward). Smoke mode is activated via `SMOKE_MODE` Script Property; artifacts are named by appending `" (Smoke)"` to NameSpace.
 
+Runtime GAS logs are sent to the Axiom service, use the tools/query_axiom.py 
 ## clasp - command line tool for google apps script credentials.
 The local.settings.json file claspAuth setting contains the clasp auth credentials file which must be passed in to clasp with the "--auth" arguent or via the "clasp_config_auth" environment variable.
 

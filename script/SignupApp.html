@@ -47,6 +47,9 @@
   .api-error-banner { background: #fdeceb; border-bottom: 3px solid #a3401a; color: #6b1f0a; padding: 12px 18px; font-size: 14px; line-height: 1.5; }
   .api-error-banner strong { display: block; margin-bottom: 2px; }
   .api-error-detail { margin-top: 6px; font-family: monospace; font-size: 12px; background: #fff; border: 1px solid #e3b8af; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .how-btn { width: 100%; padding: 14px 18px; border: none; background: transparent; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-family: inherit; font-size: 15px; font-weight: bold; color: #2f5d50; }
+  .how-section-head { margin: 14px 0 6px; font-size: 13px; font-weight: bold; color: #2f5d50; letter-spacing: .04em; }
+  .how-badge { min-width: 28px; height: 28px; border-radius: 50%; background: #2f5d50; color: #f8f4ea; font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center; }
 </style>
 </head>
 <body>
@@ -63,11 +66,50 @@
 
   <div class="wrap">
 
-    <div id="step-intro" class="card">
-      <h1>Welcome to Go30</h1>
-      <p class="muted">Sign up or update your Go30 Hard Commit. It takes about two minutes — tell us who you want to become, your challenge, and how you'll get there.</p>
-      <p class="muted">Already signed up? Enter the same F3 name and email and we'll load your info so you can edit it.</p>
-      <button class="primary" id="introNextBtn">Get Started</button>
+    <div id="step-intro">
+      <div class="card">
+        <h1>Accelerate Your Life</h1>
+        <p class="muted">A monthly habit system for F3 Puget Sound PAX. Pick one small daily challenge, track it, and let accountability do the rest. Small and consistent beats big and sporadic every time.</p>
+        <button class="primary" id="introNextBtn">Sign Up / Update My Commit</button>
+        <p class="muted" style="font-size:12px;text-align:center;margin-bottom:0;">Already signed up? We'll load your info when you enter your F3 name and email.</p>
+      </div>
+
+      <div class="card" style="margin-top:10px;padding:0;overflow:hidden;">
+        <button class="how-btn" id="howBtn">
+          <span>How it Works</span>
+          <span id="howChevron">&#9660;</span>
+        </button>
+        <div id="howBody" class="hidden" style="padding:0 18px 20px;font-size:14px;line-height:1.6;color:#333;border-top:1px solid #e8e0d0;">
+          <p class="how-section-head">THE CORE MISSION</p>
+          <p style="margin:0 0 14px;">Execute a Daily Challenge that aligns with your Ultimate Goals, supported by the accountability of your fellow HIMs.</p>
+
+          <p class="how-section-head">THREE LAYERS OF CHANGE</p>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+            <div style="display:flex;gap:10px;align-items:flex-start;">
+              <div class="how-badge">W</div>
+              <div><strong>Identity (Who)</strong> — Change your beliefs about who you are.</div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:flex-start;">
+              <div class="how-badge">H</div>
+              <div><strong>Processes (How)</strong> — Change your daily habits and systems.</div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:flex-start;">
+              <div class="how-badge">W</div>
+              <div><strong>Outcomes (What)</strong> — Change your specific results.</div>
+            </div>
+          </div>
+
+          <p class="how-section-head">YOUR DAILY MISSION</p>
+          <ol style="margin:0 0 14px;padding-left:18px;display:flex;flex-direction:column;gap:6px;">
+            <li><strong>Choose your challenge</strong> — small, specific, actionable (e.g. 15 min stretching, daily journaling).</li>
+            <li><strong>Record your score</strong> in the Go30 Google Sheet in #go30 Slack. Enter <strong>1</strong> for success, <strong>0</strong> for a miss.</li>
+            <li><strong>Beat the deadline</strong> — report by 10:00 AM the next day or receive a &minus;1.</li>
+          </ol>
+
+          <p class="how-section-head">STRENGTH IN NUMBERS</p>
+          <p style="margin:0;">You can go it alone — but you won't go as far. Work with 3–5 fellow HIMs who share your drive: hold each other to the standard, call out the misses, celebrate the wins. Men who pursue hard things together become men who achieve them.</p>
+        </div>
+      </div>
     </div>
 
     <div id="step-identify" class="card hidden">
@@ -355,6 +397,13 @@
   // --- Step transitions ---
 
   $('introNextBtn').addEventListener('click', function() { showStep('identify'); });
+
+  var howOpen = false;
+  $('howBtn').addEventListener('click', function() {
+    howOpen = !howOpen;
+    $('howBody').classList.toggle('hidden', !howOpen);
+    $('howChevron').innerHTML = howOpen ? '&#9650;' : '&#9660;';
+  });
   $('identifyBackBtn').addEventListener('click', function() { showStep('intro'); });
   $('infoBackBtn').addEventListener('click', function() { showStep('identify'); });
   $('chooseBackBtn').addEventListener('click', function() { showStep('info'); });

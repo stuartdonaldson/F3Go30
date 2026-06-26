@@ -1,3 +1,24 @@
+Results of work last session OPEN.md 2026-06-25 16:04:03
+
+All code changes are committed and deployed to SIT (v2.2.28).
+
+What's done:
+- TRACKER_SHEET_INDEX_ drives both copy and hide/delete logic — no more hardcoded lists
+- Responses is now copied from the template (Hidden), preserving template column order
+- "Form Responses 1" is deleted after setDestination instead of being renamed
+- onFormSubmitLocked_ resolves columns from the form destination sheet, then maps the processed row into Responses column order via new appendToResponsesSheet_, then deduplicates Responses
+- All 15 tests pass
+
+Waiting on you: Open the SIT template spreadsheet and run Extensions → Go30 Admin → Create New Tracker (the copyAndInit menu item) to create a new smoke tracker. Once it's created, run:
+
+node tools/callWebapp.js getSmokeStatus --env sit
+
+to get the smokeTrackerId, then continue from step 5 in OPEN.md which is below in this file
+
+in other session, script/SignupApp.html was updated with additional details on 'How it works' which should go in the next commit stage.
+in another session, we reverted and went back from copySpreadsheetwithoutScript to simply copying the spreadsheet, and living with the bound script being bound to the new spreadsheet.  We also refactored `copyAndInit_` and `autoGenerateNextMonthTracker_`.
+in another session we made trash cleanup connected forms.
+
 # Open Work — F3Go30
 
 _Saved 2026-06-25 for context handoff. Delete this file when work is complete._
@@ -67,11 +88,6 @@ cause `#REF!`.
   (since that's where the submitted row lives for in-place reuse updates)
 
 ---
-## Refactor Note 
-
-`copyAndInit_` and `autoGenerateNextMonthTracker_` share ~150 lines of tracker creation
-logic. Suggested refactor: extract `createTrackerSpreadsheet_(options)` with a `notifyFn`
-callback for the notification difference (sidebar vs email). Consider if doing this now helps optimize any of this plan.
 
 ## Sheet Index — SIT Template (needs your edits)
 

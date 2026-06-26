@@ -348,3 +348,33 @@ When a Google Apps Script project has both bound script (attached to spreadsheet
 - script/CreateNewTracker.js — updated ensureSignupShortUrl_ to use WEBAPP_URL script property
 - script/onOpen.js — added deployment URL display to About dialog (for debugging)
 
+
+## 2026-06-25 20:28:19
+
+### Summary
+Fixed three bugs in signup and tracker creation; restored form-from-spreadsheet-copy pattern; added duplicate tracker detection with expiry rename.
+
+### Changes
+
+**Fix: web app "Other" team not populating TEAM column (script/signupWebapp.js)**
+- `buildResponseRowFromForm_` was writing `''` to TEAM when `teamType === 'other'`; the Google Form path has Phase 3 promotion but the webapp path did not
+- Changed `setIfMapped('TEAM', ...)` to always write `formData.team` regardless of teamType — custom team name now lands in both TEAM and OTHER_TEAM, matching form path behavior
+- Updated `test/test_signup_webapp.js` assertion to expect the promoted value
+
+**Fix: tracker creation form handling (script/CreateNewTracker.js)**
+- Root cause: `copySpreadsheetWithoutScript_` era introduced an explicit separate form copy + `setDestination`; this was never cleaned up when we reverted to `makeCopy`
+- Result: new tracker had TWO forms, "Tools > Manage form" was broken, and the auto-copied form was "not published" (not accepting responses)
+- Fix: removed explicit form `makeCopy` + `setDestination`; reverted to old pattern — `makeCopy` auto-copies the linked form, then `newSpreadsheet.getFormUrl()` accesses it for rename/move/configure
+- Added `form.setAcceptingResponses(true)` as defensive guard
+- Stopped deleting "Form Responses 1" — it must remain visible for "Tools > Manage form" to work
+
+**Feature: duplicate tracker detection (script/CreateNewTracker.js, script/onboardingEmail.js, script/OnboardingEmailTemplate.html)**
+- Before creating any artifacts, `createTrackerSpreadsheet_` checks TrackerDB for an existing row with the same spreadsheet name
+- If found: renames the old spreadsheet (Drive file + internal name), its form (Drive file + title), and the TrackerDB entry to `[name] (Expired)` / `[name] HC (Expired)`
+- Graceful fallback if old spreadsheet is already trashed
+- Expiry notice surfaces in: copyAndInit sidebar (bold amber warning), onboarding email plain text, and HTML email (amber banner)
+- Both `copyAndInit_` and `autoGenerateNextMonthTracker_` covered via shared `createTrackerSpreadsheet_` path
+
+### Deployed
+v2.2.36 to SIT
+
