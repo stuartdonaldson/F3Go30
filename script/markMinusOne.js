@@ -56,6 +56,7 @@ function markEmptyCellsAsMinusOne_(contextDate) {
 function applyMinusOneToTrackerSheet_(spreadsheet, contextDate) {
   var sheetName = "Tracker";
   var sheet = spreadsheet.getSheetByName(sheetName);
+  var markedCount = 0;
 
   if (sheet) {
     var currentDate = contextDate instanceof Date ? contextDate : new Date(contextDate || Date.now());
@@ -64,7 +65,7 @@ function applyMinusOneToTrackerSheet_(spreadsheet, contextDate) {
     var thresholdday = new Date(currentDate);
     thresholdday.setDate(thresholdday.getDate() - 2);
     var thresholddayString = Utilities.formatDate(thresholdday, sheet.getParent().getSpreadsheetTimeZone(), "MM/dd/yyyy");
-    
+
     // Find the column index with thresholdday's date
     var lastColumnIndex = sheet.getLastColumn();
     var thresholddayColumnIndex = -1;
@@ -82,25 +83,32 @@ function applyMinusOneToTrackerSheet_(spreadsheet, contextDate) {
     }
 
     if (thresholddayColumnIndex <= 0) {
-      GasLogger.log('markEmptyCellsAsMinusOne.thresholdColumnNotFound', { thresholdDay: thresholddayString });
+      GasLogger.log('markEmptyCellsAsMinusOne.thresholdColumnNotFound', { spreadsheetId: spreadsheet.getId(), thresholdDay: thresholddayString });
+      return markedCount;
     }
-    if (thresholddayColumnIndex > 0) {
-      var dataRange = sheet.getRange(4, thresholddayColumnIndex, sheet.getLastRow() - 3, 1);
-      var values = dataRange.getValues();
-      var formulas = dataRange.getFormulas();
 
-      // Iterate through the data in thresholdday's column and mark empty cells as -1 for rows with F3 Name
-      // Skip formula cells — they may evaluate to '' for future dates but must not be overwritten
-      var columnAValues = sheet.getRange(4, 1, values.length, 1).getValues();
-      for (var j = 0; j < values.length; j++) {
-        if (values[j][0] === '' && formulas[j][0] === '' && columnAValues[j][0] !== '') {
-          values[j][0] = -1;
-        }
+    var dataRange = sheet.getRange(4, thresholddayColumnIndex, sheet.getLastRow() - 3, 1);
+    var values = dataRange.getValues();
+    var formulas = dataRange.getFormulas();
+
+    // Iterate through the data in thresholdday's column and mark empty cells as -1 for rows with F3 Name
+    // Skip formula cells — they may evaluate to '' for future dates but must not be overwritten
+    var columnAValues = sheet.getRange(4, 1, values.length, 1).getValues();
+    for (var j = 0; j < values.length; j++) {
+      if (values[j][0] === '' && formulas[j][0] === '' && columnAValues[j][0] !== '') {
+        values[j][0] = -1;
+        markedCount++;
       }
+    }
 
+    if (markedCount > 0) {
       dataRange.setValues(values);
     }
+
+    GasLogger.log('markEmptyCellsAsMinusOne.complete', { spreadsheetId: spreadsheet.getId(), thresholdDay: thresholddayString, cellsMarked: markedCount });
   }
+
+  return markedCount;
 }
 
 if (typeof module !== 'undefined' && module.exports) {

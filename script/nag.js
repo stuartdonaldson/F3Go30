@@ -250,7 +250,7 @@ function sendNagEmailForSpreadsheet_(ss, contextDate) {
   }
 
   if (dateCol === -1) {
-    GasLogger.log('sendNagEmail.dateColumnNotFound', { targetDateString: targetDateString });
+    GasLogger.log('sendNagEmail.dateColumnNotFound', { spreadsheetId: ss.getId(), targetDateString: targetDateString });
     return;
   }
 
@@ -303,6 +303,7 @@ function sendNagEmailForSpreadsheet_(ss, contextDate) {
   var funFact = readRandomFunFact_(ss);
 
   var sentSummary = [];
+  var totalEmailsSent = 0;
   for (var teamName in teams) {
     var group = teams[teamName];
     var missing = group.members.filter(function(m){ return !m.checked; });
@@ -334,12 +335,14 @@ function sendNagEmailForSpreadsheet_(ss, contextDate) {
       logLabel: 'sendNagEmail'
       });
       sentSummary.push({ team: teamName, recipients: recipients.length, missing: missing.length });
+      totalEmailsSent += recipients.length;
     } catch (e) {
       GasLogger.log('sendNagEmail.sendFailed', { team: teamName, error: e.message });
     }
   }
 
-  GasLogger.log('sendNagEmail', { date: targetDateString, teamsNotified: sentSummary });
+  GasLogger.log('sendNagEmail.complete', { spreadsheetId: ss.getId(), date: targetDateString, emailsSent: totalEmailsSent, teamsNotified: sentSummary });
+  return totalEmailsSent;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
