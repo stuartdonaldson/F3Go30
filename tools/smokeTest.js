@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const { spawn } = require('child_process');
-const { post, loadSettings, ENV_MAP } = require('./callWebapp');
+const { post, loadSettings, ENV_MAP } = require('./callWebapp.js');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -184,19 +184,21 @@ async function main() {
 
     // Step 1: Activate
     console.log('1️⃣  Activating smoke mode...');
+    console.log(`   $ node tools/callWebapp.js setScriptProperties --env ${env} --body '{"properties":{"SMOKE_MODE":"true"}}'`);
     const activate = await callAdmin_(
       'setScriptProperties',
       { properties: { SMOKE_MODE: 'true' } },
       { env, settings }
     );
-    if (!activate?.ok) {
-      throw new Error(`Failed to activate smoke mode: ${activate?.error || 'unknown error'}`);
+    if (!activate || !activate.ok) {
+      throw new Error(`Failed to activate smoke mode: ${activate?.error || 'no response'}`);
     }
     console.log('   ✓ Smoke mode activated');
 
     // Step 2: Confirm
     console.log('');
     console.log('2️⃣  Confirming smoke environment...');
+    console.log(`   $ node tools/callWebapp.js getSmokeStatus --env ${env}`);
     const status = await callAdmin_('getSmokeStatus', {}, { env, settings });
     if (!status?.smokeMode) {
       throw new Error('getSmokeStatus returned smokeMode !== true');
@@ -207,6 +209,8 @@ async function main() {
     // Step 3: Generate tracker via auto-generate
     console.log('');
     console.log('3️⃣  Creating tracker via auto-generate...');
+    console.log(`   $ node tools/callWebapp.js runAutoGenerate --env ${env}`);
+    console.log('   (waiting for response — this can take 60+ seconds if TinyURL is slow)');
     const autoGen = await callAdmin_('runAutoGenerate', {}, { env, settings });
     if (!autoGen?.ok) {
       console.error(
@@ -221,27 +225,34 @@ async function main() {
 
     // Step 4: Poll for tracker ID
     console.log('');
-    console.log('4️⃣  Waiting for tracker spreadsheet to be created...');
-    const trackerId = await pollForTrackerId_(12, 5000, { env, settings });
+    console.log('4️⃣  Waiting for tracker spreadsheet to be created (polling every 10s)...');
+    console.log(`   $ node tools/callWebapp.js getSmokeStatus --env ${env}`);
+    const trackerId = await pollForTrackerId_(12, 10000, { env, settings });
     if (!trackerId) {
-      console.error('❌ Timeout waiting for SMOKE_TRACKER_ID. Check Axiom logs for errors.');
+      console.error('❌ Timeout waiting for SMOKE_TRACKER_ID. Checking Axiom logs for errors...');
       console.error('');
-      console.error('   Aborting without cleanup (smoke mode still active for debugging).');
 
       // Try to pull error logs from Axiom
-      await queryAxisomForErrors_(env, settings, '10m');
+      await queryAxisomForErrors_(env, settings, '5m');
+
+      console.error('');
+      console.error('   Aborting without cleanup (smoke mode still active for debugging).');
       process.exit(1);
     }
     console.log(`   ✓ Tracker created: ${trackerId}`);
 
-    // Step 5a: Sign up test PAX
+    // Step 5a: Sign up test PAX (uses signup endpoint, not admin)
     console.log('');
-    console.log('5️⃣  Signing up test PAX...');
-    const signup = await callAdmin_(
-      'identify',
-      { f3Name: 'SmokeTest', email: 'smoke@example.com' },
-      { env, settings }
-    );
+    console.log('5️⃣a Signing up test PAX...');
+    console.log(`   $ node tools/callWebapp.js identify --cmd signup --env ${env} --body '{"f3Name":"SmokeTest","email":"smoke@example.com"}'`);
+
+    // Call signup endpoint directly (not via admin callAdmin_)
+    const { deploymentIdKey } = ENV_MAP[env];
+    const deploymentId = settings[deploymentIdKey];
+    const signupUrl = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=signup`;
+    const signupPayload = { action: 'identify', f3Name: 'SmokeTest', email: 'smoke@example.com' };
+
+    const signup = await post(signupUrl, signupPayload);
     if (!signup?.ok) {
       console.error(`❌ Signup failed: ${signup?.error || 'unknown error'}`);
       process.exit(1);
@@ -250,7 +261,8 @@ async function main() {
 
     // Step 5b: Verify Tracker sheet
     console.log('');
-    console.log('5️⃣  Verifying Tracker sheet...');
+    console.log('5️⃣b Verifying Tracker sheet...');
+    console.log(`   $ node tools/callWebapp.js getSheet --env ${env} --body '{"sheetId":"${trackerId}","sheetName":"Tracker"}'`);
     const sheet = await callAdmin_(
       'getSheet',
       { sheetId: trackerId, sheetName: 'Tracker' },
@@ -316,7 +328,7 @@ async function main() {
     console.log('='.repeat(80));
   } catch (err) {
     console.error('');
-    console.error(`❌ ${err.message}`);
+    console.error(`❌ ${err.message || JSON.stringify(err)}`);
     console.error('');
     console.error('Smoke mode may still be active. To clean up manually:');
     console.error(`  node tools/smokeTest.js --teardown --env ${parseArgs_(process.argv).env}`);
@@ -326,7 +338,7 @@ async function main() {
 
 if (require.main === module) {
   main().catch((err) => {
-    console.error('Fatal error:', err);
+    console.error('Fatal error:', err.message || JSON.stringify(err));
     process.exit(1);
   });
 }

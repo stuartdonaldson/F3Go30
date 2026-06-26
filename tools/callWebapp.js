@@ -85,6 +85,7 @@ function post(url, body) {
   return new Promise((resolve, reject) => {
     const bodyStr = JSON.stringify(body);
     const parsed  = new URL(url);
+    let timedOut = false;
 
     const req = https.request(
       {
@@ -95,9 +96,9 @@ function post(url, body) {
           'Content-Type':   'text/plain',
           'Content-Length': Buffer.byteLength(bodyStr),
         },
-        timeout: 60000,
       },
       res => {
+        if (timedOut) return;
         if (res.statusCode === 301 || res.statusCode === 302) {
           res.resume();
           return get(res.headers['location']).then(resolve, reject);
@@ -105,8 +106,12 @@ function post(url, body) {
         collectBody(res).then(resolve, reject);
       }
     );
+    req.setTimeout(120000, () => {
+      timedOut = true;
+      req.destroy();
+      reject(new Error('Request timeout'));
+    });
     req.on('error', reject);
-    req.setTimeout(60000);
     req.write(bodyStr);
     req.end();
   });
@@ -114,15 +119,21 @@ function post(url, body) {
 
 function get(url) {
   return new Promise((resolve, reject) => {
+    let timedOut = false;
     const req = https.get(url, res => {
+      if (timedOut) return;
       if (res.statusCode === 301 || res.statusCode === 302) {
         res.resume();
         return get(res.headers['location']).then(resolve, reject);
       }
       collectBody(res).then(resolve, reject);
     });
+    req.setTimeout(120000, () => {
+      timedOut = true;
+      req.destroy();
+      reject(new Error('Request timeout'));
+    });
     req.on('error', reject);
-    req.setTimeout(60000);
   });
 }
 
