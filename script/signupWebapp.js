@@ -402,30 +402,75 @@ function readResponsesSheetState_(spreadsheet) {
 }
 
 /**
- * cmd=signup identify action: looks up an existing signup in the CURRENT month's Responses sheet
+ * Searches PaxDB for a matching PAX by F3 Name + Email (case-insensitive, trimmed).
+ * Returns the most recent PaxDB row for that PAX if found, or null.
+ * @param {Spreadsheet} templateSpreadsheet The Template spreadsheet (contains PaxDB)
+ * @param {string} f3Name F3 Name to search for
+ * @param {string} email Email to search for
+ * @returns {Object|null} Matching PaxDB row or null
+ */
+function findPaxDbMatch_(templateSpreadsheet, f3Name, email) {
+  var paxDbSheet = templateSpreadsheet.getSheetByName('PaxDB');
+  if (!paxDbSheet) return null;
+
+  var data = paxDbSheet.getDataRange().getValues();
+  if (data.length < 2) return null; // header + at least one row
+
+  var headers = data[0];
+  var f3NameIdx = headers.indexOf('F3 Name');
+  var emailIdx = headers.indexOf('Email');
+  if (f3NameIdx === -1 || emailIdx === -1) return null;
+
+  var normName = normalizeIdentityValue_(f3Name);
+  var normEmail = normalizeIdentityValue_(email);
+  if (!normName || !normEmail) return null;
+
+  // Search for matching row (scan backwards to get most recent entry for this PAX)
+  for (var i = data.length - 1; i >= 1; i--) {
+    var row = data[i];
+    var rowName = normalizeIdentityValue_(row[f3NameIdx]);
+    var rowEmail = normalizeIdentityValue_(row[emailIdx]);
+    if (rowName === normName && rowEmail === normEmail) {
+      // Build a simplified match object from PaxDB row
+      return {
+        f3Name: row[f3NameIdx],
+        email: row[emailIdx],
+        team: row[headers.indexOf('Team')] || '',
+        who: row[headers.indexOf('WHO')] || '',
+        what: row[headers.indexOf('WHAT')] || '',
+        how: row[headers.indexOf('HOW')] || '',
+        teamType: row[headers.indexOf('Team Type')] || '',
+        otherTeam: row[headers.indexOf('Other Team')] || ''
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * cmd=signup identify action: looks up an existing signup in PaxDB (canonical source of truth)
  * by F3 Name + Email (§6.1). Returns prefill data (with Team reclassified per §6.4) when matched,
  * or a blank-state response when not — callers must render both identically except for the
- * prefilled values (anti-enumeration, §6.1/§5 Step 2).
+ * prefilled values (anti-enumeration, §6.1/§5 Step 2). Uses PaxDB rather than current month's
+ * Responses sheet for faster lookup and canonical data (PaxDB is updated by scanTrackers).
  */
 function handleSignupIdentify_(templateSpreadsheet, payload) {
   var months = getCurrentAndNextMonths_(templateSpreadsheet);
   if (!months.current) return { ok: false, error: 'no_current_month' };
 
-  var currentSs = SpreadsheetApp.openById(months.current.sheetId);
-  var state = readResponsesSheetState_(currentSs);
-  var match = findSignupMatch_(state.dataRows, payload.f3Name, payload.email, state.columns, state.headers);
   var lists = readTeamLists_(templateSpreadsheet);
+  var match = findPaxDbMatch_(templateSpreadsheet, payload.f3Name, payload.email);
 
   if (!match) {
     GasLogger.log('signupWebapp.identify', { matched: false });
     return { ok: true, matched: false, months: months, aoList: lists.aoList, goalList: lists.goalList };
   }
 
-  var row = match.row;
-  var storedTeam = (row[state.columns.TEAM] || row[state.columns.OTHER_TEAM] || '');
+  var storedTeam = match.team || match.otherTeam || '';
   var classified = classifyTeam_(storedTeam, lists.aoList, lists.goalList);
 
-  GasLogger.log('signupWebapp.identify', { matched: true });
+  GasLogger.log('signupWebapp.identify', { matched: true, f3Name: match.f3Name });
   return {
     ok: true,
     matched: true,
@@ -433,13 +478,13 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
     aoList: lists.aoList,
     goalList: lists.goalList,
     data: {
-      f3Name: row[state.columns.F3_NAME] || '',
-      email: row[state.columns.EMAIL] || '',
+      f3Name: match.f3Name || '',
+      email: match.email || '',
       teamType: classified.teamType,
       team: classified.team,
-      who: row[state.columns.WHO] || '',
-      what: row[state.columns.WHAT] || '',
-      how: row[state.columns.HOW] || '',
+      who: match.who || '',
+      what: match.what || '',
+      how: match.how || '',
       phone: row[state.columns.PHONE] || '',
       nag: String(row[state.columns.NAG_EMAIL] || '').trim().toLowerCase() === 'yes',
     },
