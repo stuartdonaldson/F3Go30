@@ -79,6 +79,7 @@ function renderSignupReuseEmailHtml_(options) {
   template.trackerUrl = options.trackerUrl;
   template.prefilledUrl = options.prefilledUrl;
   template.summaryLines = options.summaryLines || [];
+  template.appVersion = typeof APP_VERSION !== 'undefined' ? APP_VERSION : '';
   return template.evaluate().getContent();
 }
 

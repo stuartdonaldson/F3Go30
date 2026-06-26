@@ -25,6 +25,7 @@ function renderResponseSettingsEmailHtml_(options) {
   var template = HtmlService.createTemplateFromFile('ResponseSettingsEmailTemplate');
   template.recipientName = options.recipientName || 'there';
   template.copiedSettings = options.copiedSettings || [];
+  template.appVersion = typeof APP_VERSION !== 'undefined' ? APP_VERSION : '';
   return template.evaluate().getContent();
 }
 

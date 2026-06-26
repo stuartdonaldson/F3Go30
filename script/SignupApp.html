@@ -210,11 +210,14 @@
 
   </div>
 
+  <div style="text-align:center;padding:12px 0 24px;font-size:11px;color:#aaa;" id="versionFooter"></div>
+
 <script>
   var WEBAPP_URL = <?!= webAppUrl ?>;
   var AO_LIST = <?!= aoListJson ?>;
   var GOAL_LIST = <?!= goalListJson ?>;
   var MONTHS = <?!= monthsJson ?>;
+  var APP_VERSION = <?!= JSON.stringify(appVersion) ?>;
 
   var IDENTITY_STORAGE_KEY = 'go30SignupIdentity';
 
@@ -548,6 +551,7 @@
 
   $('idF3Name').value = state.f3Name;
   $('idEmail').value = state.email;
+  $('versionFooter').textContent = 'v' + APP_VERSION;
   showStep('intro');
 </script>
 </body>

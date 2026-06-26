@@ -40,6 +40,7 @@ function renderSignupPage_() {
   template.aoListJson = JSON.stringify(lists.aoList);
   template.goalListJson = JSON.stringify(lists.goalList);
   template.monthsJson = JSON.stringify(months);
+  template.appVersion = APP_VERSION;
   return template.evaluate().setTitle('Go30 Hard Commit Signup');
 }
 

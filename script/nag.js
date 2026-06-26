@@ -148,6 +148,7 @@ function renderReminderEmailHtml_(options) {
   template.trackerUrl = options.trackerUrl;
   template.funFact = options.funFact;
   template.missing = options.missing || [];
+  template.appVersion = typeof APP_VERSION !== 'undefined' ? APP_VERSION : '';
   return template.evaluate().getContent();
 }
 
