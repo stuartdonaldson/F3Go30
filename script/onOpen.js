@@ -35,22 +35,24 @@ function onOpen_()
 }
 
 /**
- * Removes all project triggers from the current spreadsheet.
+ * Removes all project triggers from the entire Apps Script project.
+ * Useful for cleanup after deleting spreadsheets/forms or transitioning deployments.
  */
 function clearAllTriggers() {
   return GasLogger.run('clearAllTriggers', function() {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var ssId = ss.getId();
     var deletedCount = 0;
+    var triggers = ScriptApp.getProjectTriggers();
 
-    ScriptApp.getProjectTriggers().forEach(function(trigger) {
-      if (trigger.getTriggerSourceId() === ssId) {
+    triggers.forEach(function(trigger) {
+      try {
         ScriptApp.deleteTrigger(trigger);
         deletedCount++;
+      } catch (e) {
+        GasLogger.log('clearAllTriggers.deleteFailed', { error: e.message });
       }
     });
 
-    SpreadsheetApp.getUi().alert('Cleared ' + deletedCount + ' trigger(s) from this spreadsheet.');
+    SpreadsheetApp.getUi().alert('Cleared ' + deletedCount + ' trigger(s) from the Apps Script project.');
   });
 }
 
