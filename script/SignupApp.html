@@ -169,7 +169,7 @@
       <input type="tel" id="phoneInput" placeholder="(555) 555-5555">
       <label style="display:flex;align-items:flex-start;gap:9px;font-size:14px;line-height:1.45;cursor:pointer;margin-bottom:22px;color:#444;">
         <input type="checkbox" id="nagInput" style="margin-top:2px;">
-        Send me reminder ("nag") emails during the month.
+        Ok to send me reminder emails when it looks like I'm late.
       </label>
 
       <button class="primary" id="infoNextBtn">Continue</button>
@@ -465,16 +465,9 @@
   $('phoneInput').addEventListener('input', function() { state.phone = this.value; });
   $('nagInput').addEventListener('change', function() { state.nag = this.checked; });
 
-  $('infoNextBtn').addEventListener('click', function() {
-    renderMonthChoices();
-    showStep('choose');
-  });
-
-  $('saveBtn').addEventListener('click', function() {
+  function performSave_(triggerBtn) {
     hideApiError_();
-    var saveBtn = $('saveBtn');
-    setButtonLoading_(saveBtn, true, 'Saving…');
-
+    setButtonLoading_(triggerBtn, true, 'Saving…');
     callApi('save', {
       f3Name: state.f3Name, email: state.email,
       targetMonth: state.targetMonth,
@@ -493,7 +486,21 @@
       showStep('done');
     }).catch(function(err) {
       showApiError_('save', err);
-    }).finally(function() { setButtonLoading_(saveBtn, false); });
+    }).finally(function() { setButtonLoading_(triggerBtn, false); });
+  }
+
+  $('infoNextBtn').addEventListener('click', function() {
+    if (!MONTHS || !MONTHS.next) {
+      state.targetMonth = 'current';
+      performSave_($('infoNextBtn'));
+    } else {
+      renderMonthChoices();
+      showStep('choose');
+    }
+  });
+
+  $('saveBtn').addEventListener('click', function() {
+    performSave_($('saveBtn'));
   });
 
   $('sendFeedbackBtn').addEventListener('click', function() {

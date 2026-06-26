@@ -451,3 +451,14 @@ Deployed v2.2.44 to PROD; bootstrapped PROD admin secret; fixed missing WEBAPP_U
 - **WEBAPP_URL fix** — discovered WEBAPP_URL script property was not being set on prod deploys, causing broken signup links; called `setWebappUrl` manually to recover
 - **Auto-set WEBAPP_URL** — added `setWebappUrl` call to `manage-deployments.js` `deploy()` function (template target only) so WEBAPP_URL stays in sync after every future prod deploy
 - **runScanTrackers** — PROD: 27 scanned, 2 processed, 4 unchanged, 6 tracked, 21 skipped
+
+## 2026-06-26 14:48:08
+
+### Summary
+Skip month-choose step when no next-month tracker exists in TrackerDB.
+
+### Details
+- Modified `script/SignupApp.html`: extracted save API call into `performSave_(triggerBtn)` shared function
+- `infoNextBtn` now checks `MONTHS.next` — if absent, sets `targetMonth='current'` and saves directly, bypassing the choose step
+- When `MONTHS.next` exists, behavior unchanged (choose step shown with both month options)
+- `saveBtn` delegates to same `performSave_` — no duplicate logic
