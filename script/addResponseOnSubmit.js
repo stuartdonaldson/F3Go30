@@ -221,7 +221,8 @@ function onFormSubmitLocked_(e) {
   var lastColumn = destinationSheet.getLastColumn();
   var dataRange = destinationSheet.getRange(4, 1, trackerLastRow - 3, 1);
   var dataValues = dataRange.getValues();
-  var f3NameExists = dataValues.some(function(row) { return row[0] === f3Name; });
+  var normF3Name = String(f3Name || '').trim().toLowerCase();
+  var f3NameExists = dataValues.some(function(row) { return String(row[0] || '').trim().toLowerCase() === normF3Name; });
 
   if (f3NameExists) {
     GasLogger.log('formSubmit.trackerDuplicate', { row: submittedRowNumber, f3Name: f3Name });

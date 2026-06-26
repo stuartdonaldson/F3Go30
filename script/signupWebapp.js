@@ -151,13 +151,14 @@ function readTeamLists_(spreadsheet) {
 }
 
 /**
- * Mirrors handleFormSubmit_'s Tracker dedup check exactly (addResponseOnSubmit.js Phase 4:
- * `dataValues.some(row => row[0] === f3Name)`) — exact match, no trim/case-fold — so the webapp's
- * independent save path produces the same net effect (requirements doc §8, §11).
+ * Mirrors handleFormSubmit_'s Tracker dedup check exactly (addResponseOnSubmit.js Phase 4)
+ * — case-insensitive, trim/case-fold normalized — so the webapp's independent save path
+ * produces the same net effect (requirements doc §8, §11).
  */
 function trackerHasF3Name_(trackerNameColumnRows, f3Name) {
+  var norm = String(f3Name || '').trim().toLowerCase();
   return (trackerNameColumnRows || []).some(function(row) {
-    return row && row[0] === f3Name;
+    return row && String(row[0] || '').trim().toLowerCase() === norm;
   });
 }
 
