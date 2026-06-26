@@ -227,7 +227,7 @@ function buildResponseRowFromForm_(existingRow, responseColumns, formData) {
   setIfMapped('EMAIL', formData.email);
   if (formData.teamType !== undefined) {
     setIfMapped('TEAM_TYPE', TEAM_TYPE_LABELS_[formData.teamType] || '');
-    setIfMapped('TEAM', formData.teamType === 'other' ? '' : (formData.team || ''));
+    setIfMapped('TEAM', formData.team || '');
     setIfMapped('OTHER_TEAM', formData.teamType === 'other' ? (formData.team || '') : '');
   }
   setIfMapped('WHO', formData.who);

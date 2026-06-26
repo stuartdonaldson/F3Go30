@@ -172,12 +172,12 @@ assert.equal(newRow[FULL_COLUMNS.HOW], 'Daily effort');
 assert.equal(newRow[FULL_COLUMNS.PHONE], '555-1234');
 assert.equal(newRow[FULL_COLUMNS.NAG_EMAIL], 'Yes');
 
-// Other-based: team value goes into OTHER_TEAM, TEAM is blank
+// Other-based: team value goes into both TEAM and OTHER_TEAM (Phase 3 promotion)
 const otherRow = buildResponseRowFromForm_(null, FULL_COLUMNS, {
   ...AO_FORM_DATA, teamType: 'other', team: 'My Custom Team',
 }).row;
 assert.equal(otherRow[FULL_COLUMNS.TEAM_TYPE], 'Other');
-assert.equal(otherRow[FULL_COLUMNS.TEAM], '');
+assert.equal(otherRow[FULL_COLUMNS.TEAM], 'My Custom Team');
 assert.equal(otherRow[FULL_COLUMNS.OTHER_TEAM], 'My Custom Team');
 
 // Update in place — existing row's untouched columns (e.g. Timestamp at index 0) are preserved
