@@ -271,6 +271,7 @@ function createTrackerSpreadsheet_(options) {
     var newFormFile = DriveApp.getFileById(FormApp.openByUrl(templateFormUrl).getId()).makeCopy(formName, folder);
     var form = FormApp.openById(newFormFile.getId());
     form.setTitle(ftitle);
+    form.setAcceptingResponses(true);
     ensureReuseOptionOnLinkedForm_(form);
     form.setConfirmationMessage(
       'Thank you for your Hard Commit!\n\n' +
