@@ -279,12 +279,12 @@ function createTrackerSpreadsheet_(options) {
     );
 
     // Link form to new spreadsheet — required for forSpreadsheet().onFormSubmit() trigger.
-    // setDestination auto-creates "Form Responses 1"; hide it since Responses was already
+    // setDestination auto-creates "Form Responses 1"; delete it since Responses was already
     // copied from the template with the correct column order.
     form.setDestination(FormApp.DestinationType.SPREADSHEET, newSpreadsheetId);
     SpreadsheetApp.flush();
     newSpreadsheet.getSheets().forEach(function(s) {
-      if (/^Form Responses/.test(s.getName())) s.hideSheet();
+      if (/^Form Responses/.test(s.getName())) newSpreadsheet.deleteSheet(s);
     });
 
     var formUrl = form.getPublishedUrl();
