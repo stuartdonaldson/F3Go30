@@ -244,10 +244,11 @@ function createTrackerSpreadsheet_(options) {
     // PAX interact via the Form only — VIEW permission is sufficient and prevents data corruption
     newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
-    // Remove template-only sheets and any Form Responses inherited from the template copy
+    // Remove template-only sheets. Leave "Form Responses 1" — it arrived with the spreadsheet
+    // copy already linked to the auto-copied form, so deleting it breaks "Tools > Manage form".
     newSpreadsheet.getSheets().forEach(function(s) {
       var name = s.getName();
-      if (TRACKER_SHEET_INDEX_[name] === 'Delete' || /^Form Responses/.test(name)) {
+      if (TRACKER_SHEET_INDEX_[name] === 'Delete') {
         newSpreadsheet.deleteSheet(s);
       }
     });
@@ -265,11 +266,19 @@ function createTrackerSpreadsheet_(options) {
       GasLogger.log('createTrackerSpreadsheet.shortenUrlFailed', { target: 'tracker', error: e.message });
     }
 
-    logFn('Copying form...');
+    // The spreadsheet makeCopy auto-copies the linked form and keeps it associated.
+    // Use getFormUrl() to access that copy — no separate form copy or setDestination needed.
+    logFn('Updating form...');
     var formName = newSpreadsheetName + ' HC';
     var ftitle = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay + ' HC Form';
-    var newFormFile = DriveApp.getFileById(FormApp.openByUrl(templateFormUrl).getId()).makeCopy(formName, folder);
-    var form = FormApp.openById(newFormFile.getId());
+    var newFormUrl = newSpreadsheet.getFormUrl();
+    if (!newFormUrl) {
+      throw new Error('Form was not auto-copied with the spreadsheet — ensure the template spreadsheet has a linked Google Form.');
+    }
+    var form = FormApp.openByUrl(newFormUrl);
+    var newFormFile = DriveApp.getFileById(form.getId());
+    newFormFile.setName(formName);
+    newFormFile.moveTo(folder);
     form.setTitle(ftitle);
     form.setAcceptingResponses(true);
     ensureReuseOptionOnLinkedForm_(form);
@@ -278,13 +287,6 @@ function createTrackerSpreadsheet_(options) {
       'View the Go30 tracker here: ' + trackerSheetShortUrl + '\n\n' +
       'Questions? Contact ' + siteQName + ' (' + siteQEmail + ').'
     );
-
-    // Link form to new spreadsheet — required for forSpreadsheet().onFormSubmit() trigger.
-    // setDestination auto-creates "Form Responses 1"; leave it visible so that Sheets shows
-    // "Tools > Manage form" and the form can write raw submissions here. onFormSubmit reads
-    // from e.range (this sheet) and writes the processed row into Responses (template columns).
-    form.setDestination(FormApp.DestinationType.SPREADSHEET, newSpreadsheetId);
-    SpreadsheetApp.flush();
 
     var formUrl = form.getPublishedUrl();
     var formShortUrl = formUrl;
