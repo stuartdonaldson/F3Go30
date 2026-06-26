@@ -40,6 +40,14 @@ function onOpen_()
  */
 function clearAllTriggers() {
   return GasLogger.run('clearAllTriggers', function() {
+    var ui = SpreadsheetApp.getUi();
+    var response = ui.alert(
+      'Clear All Triggers',
+      'This will delete ALL project triggers (dispatch, nag, minus-one, monthly). Proceed?',
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (response !== ui.Button.OK) return;
+
     var deletedCount = 0;
     var triggers = ScriptApp.getProjectTriggers();
 
@@ -52,7 +60,7 @@ function clearAllTriggers() {
       }
     });
 
-    SpreadsheetApp.getUi().alert('Cleared ' + deletedCount + ' trigger(s) from the Apps Script project.');
+    ui.alert('Cleared ' + deletedCount + ' trigger(s) from the Apps Script project.');
   });
 }
 

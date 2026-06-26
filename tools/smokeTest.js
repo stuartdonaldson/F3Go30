@@ -104,7 +104,7 @@ async function humanPause_(spreadsheetUrl) {
   });
 }
 
-async function queryAxisomForErrors_(env, settings, since = '5m') {
+async function queryAxiomForErrors_(env, settings, since = '5m') {
   const axPath = path.join(ROOT, 'tools', 'query_axiom.py');
   const axiomToken = settings.axiomQueryToken;
 
@@ -123,13 +123,16 @@ async function queryAxisomForErrors_(env, settings, since = '5m') {
     ]);
 
     let stdout = '';
-    python.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
+    let stderr = '';
+    python.stdout.on('data', (data) => { stdout += data.toString(); });
+    python.stderr.on('data', (data) => { stderr += data.toString(); });
     python.on('close', (code) => {
       if (code === 0) {
         console.log('📊 Recent error logs:');
         console.log(stdout);
+      } else {
+        console.log(`⚠️  Axiom query exited ${code}:`);
+        if (stderr) console.log(stderr);
       }
       resolve();
     });
@@ -233,7 +236,7 @@ async function main() {
       console.error('');
 
       // Try to pull error logs from Axiom
-      await queryAxisomForErrors_(env, settings, '5m');
+      await queryAxiomForErrors_(env, settings, '5m');
 
       console.error('');
       console.error('   Aborting without cleanup (smoke mode still active for debugging).');
@@ -241,27 +244,50 @@ async function main() {
     }
     console.log(`   ✓ Tracker created: ${trackerId}`);
 
-    // Step 5a: Sign up test PAX (uses signup endpoint, not admin)
+    // Step 5a: Identify (prefill lookup — tests the read path)
     console.log('');
-    console.log('5️⃣a Signing up test PAX...');
+    console.log('5️⃣a Testing identify (prefill lookup)...');
     console.log(`   $ node tools/callWebapp.js identify --cmd signup --env ${env} --body '{"f3Name":"SmokeTest","email":"smoke@example.com"}'`);
 
     // Call signup endpoint directly (not via admin callAdmin_)
     const { deploymentIdKey } = ENV_MAP[env];
     const deploymentId = settings[deploymentIdKey];
     const signupUrl = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=signup`;
-    const signupPayload = { action: 'identify', f3Name: 'SmokeTest', email: 'smoke@example.com' };
 
-    const signup = await post(signupUrl, signupPayload);
-    if (!signup?.ok) {
-      console.error(`❌ Signup failed: ${signup?.error || 'unknown error'}`);
+    const identify = await post(signupUrl, { action: 'identify', f3Name: 'SmokeTest', email: 'smoke@example.com' });
+    if (!identify?.ok) {
+      console.error(`❌ Identify failed: ${identify?.error || 'unknown error'}`);
       process.exit(1);
     }
-    console.log('   ✓ Test PAX signed up');
+    console.log('   ✓ Identify returned ok');
 
-    // Step 5b: Verify Tracker sheet
+    // Step 5b: Save test PAX signup (tests the full write path — Responses + Tracker row)
     console.log('');
-    console.log('5️⃣b Verifying Tracker sheet...');
+    console.log('5️⃣b Saving test PAX signup...');
+    console.log(`   $ node tools/callWebapp.js save --cmd signup --env ${env} --body '{"f3Name":"SmokeTest","email":"smoke@example.com","targetMonth":"current",...}'`);
+
+    const save = await post(signupUrl, {
+      action: 'save',
+      f3Name: 'SmokeTest',
+      email: 'smoke@example.com',
+      targetMonth: 'current',
+      teamType: 'other',
+      team: 'Smoke Test',
+      who: 'Smoke test WHO',
+      what: 'Smoke test WHAT',
+      how: 'Smoke test HOW',
+      phone: '',
+      nag: false,
+    });
+    if (!save?.ok) {
+      console.error(`❌ Save failed: ${save?.error || 'unknown error'}`);
+      process.exit(1);
+    }
+    console.log('   ✓ Test PAX written to Responses and Tracker');
+
+    // Step 5c: Verify Tracker sheet has the test PAX row
+    console.log('');
+    console.log('5️⃣c Verifying Tracker sheet...');
     console.log(`   $ node tools/callWebapp.js getSheet --env ${env} --body '{"sheetId":"${trackerId}","sheetName":"Tracker"}'`);
     const sheet = await callAdmin_(
       'getSheet',

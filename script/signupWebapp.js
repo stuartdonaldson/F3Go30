@@ -440,7 +440,9 @@ function findPaxDbMatch_(templateSpreadsheet, f3Name, email) {
         what: row[headers.indexOf('WHAT')] || '',
         how: row[headers.indexOf('HOW')] || '',
         teamType: row[headers.indexOf('Team Type')] || '',
-        otherTeam: row[headers.indexOf('Other Team')] || ''
+        otherTeam: row[headers.indexOf('Other Team')] || '',
+        phone: row[headers.indexOf('Phone')] || '',
+        nagEmail: row[headers.indexOf('NAG Email')] || ''
       };
     }
   }
@@ -485,8 +487,8 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
       who: match.who || '',
       what: match.what || '',
       how: match.how || '',
-      phone: row[state.columns.PHONE] || '',
-      nag: String(row[state.columns.NAG_EMAIL] || '').trim().toLowerCase() === 'yes',
+      phone: match.phone || '',
+      nag: String(match.nagEmail || '').trim().toLowerCase() === 'yes',
     },
   };
 }

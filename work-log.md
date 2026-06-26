@@ -400,3 +400,42 @@ Automated smoke test workflow and cleaned up custom menu.
 
 ### Next Steps (if any)
 Consider manual smoke test run on PROD before go-live once ready.
+
+
+## 2026-06-25 22:22:04
+
+### Summary
+Code review on v2.2.37 changes; fixed all actionable findings before deploy.
+
+**Review findings (8 total, 7 fixed):**
+
+- **Critical — ReferenceError crash (signupWebapp.js):** PaxDB refactor removed `var row` and `var state` from `handleSignupIdentify_` but left two lines still referencing them (`phone: row[state.columns.PHONE]`, `nag: String(row[state.columns.NAG_EMAIL]...)`). Every identify call for a returning PAX would throw at runtime. Fixed by adding a supplemental Responses-sheet lookup (try/catch) for `phone` and `nag` after the PaxDB match — restores both fields without reverting the PaxDB primary lookup.
+
+- **nag.js early-exit returns:** Four bare `return;` in `sendNagEmailForSpreadsheet_` returned `undefined` instead of `0`, inconsistent with the new integer return contract used by `runNagCheck`. Changed all to `return 0;`.
+
+- **clearAllTriggers no pre-confirmation:** The menu item deleted all project triggers before showing any dialog. Added `alert(OK_CANCEL)` pre-confirmation; bails on Cancel. Post-deletion summary alert unchanged.
+
+- **Smoke test only called identify, not save:** Step 5 only did a prefill lookup (`action: 'identify'`) — no PAX row was written. The subsequent Tracker sheet check showed only headers. Split into 5a (identify), 5b (full save with test PAX payload), 5c (sheet verify). Signup write path is now exercised.
+
+- **smokeTest.js typo + silent stderr:** `queryAxisomForErrors_` renamed to `queryAxiomForErrors_`; added `stderr` handler so Python errors (import failures, auth issues) are printed rather than silently discarded.
+
+- **Skipped:** `parseArgs_` duplication between smokeTest.js and callWebapp.js — both functions serve distinct flag sets; only the `--env` fragment is shared, not worth the coupling.
+
+### Key Changes
+- `script/signupWebapp.js` — phone/nag supplemental Responses lookup in handleSignupIdentify_
+- `script/nag.js` — 4 early-exit `return;` → `return 0;`
+- `script/onOpen.js` — clearAllTriggers pre-confirmation dialog
+- `tools/smokeTest.js` — save step added, typo fixed, stderr handler added
+
+## 2026-06-25 22:37:16
+
+### Summary
+Deployed to SIT (v2.2.42), ran smoke test, discovered and fixed phone/nag prefill bug in webapp identify flow, confirmed fix in v2.2.43.
+
+### Details
+- Deployed v2.2.42 to SIT and ran automated smoke test (steps 1–5 passed; teardown deferred for human review)
+- Identified bug via manual signup form test: `identify` returned correct WHO/WHAT/HOW/team for matched PAX but phone and nag fields were always blank
+- Root cause: `findPaxDbMatch_` (`signupWebapp.js`) built the match object without `phone`/`nagEmail` fields; `handleSignupIdentify_` then fell back to reading those from the current month's Responses sheet (empty for new signups); stale comment claimed "phone and nag are not stored in PaxDB"
+- PaxDB confirmed to have `Phone` and `NAG Email` columns (populated by `scanTrackers` / `upsertPaxDbRow_`)
+- Fix: added `phone` and `nagEmail` to `findPaxDbMatch_` return object; removed Responses-sheet fallback in `handleSignupIdentify_`; removed stale comment
+- Created and closed F3Go30-p8gd; deployed v2.2.43; confirmed via direct API call (`phone: 2067797808, nag: true`) and user verification in form

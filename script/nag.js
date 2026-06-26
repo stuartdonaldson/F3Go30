@@ -223,7 +223,7 @@ function sendNagEmailForSpreadsheet_(ss, contextDate) {
   var configSheet = ss.getSheetByName('Config');
   if (!tracker || !responses) {
     GasLogger.log('sendNagEmail.missingSheet', { trackerFound: !!tracker, responsesFound: !!responses });
-    return;
+    return 0;
   }
 
   var configData = configSheet ? configSheet.getDataRange().getValues() : [];
@@ -251,12 +251,12 @@ function sendNagEmailForSpreadsheet_(ss, contextDate) {
 
   if (dateCol === -1) {
     GasLogger.log('sendNagEmail.dateColumnNotFound', { spreadsheetId: ss.getId(), targetDateString: targetDateString });
-    return;
+    return 0;
   }
 
   var startRow = 4;
   var lastRow = tracker.getLastRow();
-  if (lastRow < startRow) return;
+  if (lastRow < startRow) return 0;
 
   // Read tracker basics (Name, Team) and yesterday's column values
   var nameTeamRange = tracker.getRange(startRow, 1, lastRow - startRow + 1, Math.max(2, Math.min(2, tracker.getLastColumn())));
@@ -267,7 +267,7 @@ function sendNagEmailForSpreadsheet_(ss, contextDate) {
   var respData = responses.getDataRange().getValues();
   if (respData.length < 2) {
     GasLogger.log('sendNagEmail.responsesEmpty', {});
-    return;
+    return 0;
   }
   var responseColumns = resolveResponseColumns_(respData[0]);
   var responseHeaders = respData[0];
