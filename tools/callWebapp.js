@@ -80,6 +80,7 @@ function loadSettings() {
 
 // POST to GAS web app. GAS responds with a 302 redirect to a GET-only echo endpoint —
 // follow as GET, never pin the method through the redirect.
+// Timeout: 60s for admin actions (e.g., runAutoGenerate) that may wait on slow external services
 function post(url, body) {
   return new Promise((resolve, reject) => {
     const bodyStr = JSON.stringify(body);
@@ -94,6 +95,7 @@ function post(url, body) {
           'Content-Type':   'text/plain',
           'Content-Length': Buffer.byteLength(bodyStr),
         },
+        timeout: 60000,
       },
       res => {
         if (res.statusCode === 301 || res.statusCode === 302) {
@@ -104,6 +106,7 @@ function post(url, body) {
       }
     );
     req.on('error', reject);
+    req.setTimeout(60000);
     req.write(bodyStr);
     req.end();
   });
@@ -111,13 +114,15 @@ function post(url, body) {
 
 function get(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, res => {
+    const req = https.get(url, res => {
       if (res.statusCode === 301 || res.statusCode === 302) {
         res.resume();
         return get(res.headers['location']).then(resolve, reject);
       }
       collectBody(res).then(resolve, reject);
-    }).on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(60000);
   });
 }
 
