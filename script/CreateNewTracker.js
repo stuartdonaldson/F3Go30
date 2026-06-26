@@ -279,13 +279,11 @@ function createTrackerSpreadsheet_(options) {
     );
 
     // Link form to new spreadsheet — required for forSpreadsheet().onFormSubmit() trigger.
-    // setDestination auto-creates "Form Responses 1"; delete it since Responses was already
-    // copied from the template with the correct column order.
+    // setDestination auto-creates "Form Responses 1"; leave it visible so that Sheets shows
+    // "Tools > Manage form" and the form can write raw submissions here. onFormSubmit reads
+    // from e.range (this sheet) and writes the processed row into Responses (template columns).
     form.setDestination(FormApp.DestinationType.SPREADSHEET, newSpreadsheetId);
     SpreadsheetApp.flush();
-    newSpreadsheet.getSheets().forEach(function(s) {
-      if (/^Form Responses/.test(s.getName())) newSpreadsheet.deleteSheet(s);
-    });
 
     var formUrl = form.getPublishedUrl();
     var formShortUrl = formUrl;
