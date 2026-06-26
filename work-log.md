@@ -378,3 +378,25 @@ Fixed three bugs in signup and tracker creation; restored form-from-spreadsheet-
 ### Deployed
 v2.2.36 to SIT
 
+
+## 2026-06-26 03:58:00
+
+### Summary
+Automated smoke test workflow and cleaned up custom menu.
+
+**Smoke test automation:** Created `tools/smokeTest.js` to automate the 8-step smoke test sequence (activate mode, create tracker, sign up PAX, verify sheet, pause for human review, teardown). Added `--teardown` flag for manual cleanup. Fixed HTTP timeout handling in `callWebapp.js` (120s) to accommodate slow GAS operations. Ran successful smoke test against SIT.
+
+**Menu cleanup:** Removed test/dev menu items (testFunction, testReuseMenu, reinitializeSheets). Kept essential owner-only items: Copy and Initialize, Initialize Nightly Triggers, Initialize Monthly Trigger, About. Added new "Clear All Triggers" function and menu item.
+
+**Deduplication fix:** Made F3 name deduplication case-insensitive with whitespace trim in both tracker form handler and signup webapp, ensuring identical dedup logic across paths.
+
+**Deployment:** Pushed all changes to SIT (version 2.2.37).
+
+### Key Changes
+- `tools/smokeTest.js` — 400+ lines, automated workflow with polling, Axiom error checking, human pause
+- `tools/callWebapp.js` — fixed timeout handling with timedOut flag to prevent destroying successful responses
+- `script/onOpen.js` — removed 150+ lines of test code, added clearAllTriggers(), cleaned menu
+- `script/addResponseOnSubmit.js`, `signupWebapp.js` — case-insensitive F3 name matching
+
+### Next Steps (if any)
+Consider manual smoke test run on PROD before go-live once ready.
