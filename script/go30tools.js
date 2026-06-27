@@ -810,6 +810,27 @@ function upsertPaxDbRow_(spreadsheet, fields) {
 }
 
 /**
+ * Recomputes PaxDB stats for every PAX in a single tracker spreadsheet and upserts each row.
+ * Called after markEmptyCellsAsMinusOne_ finalises a day's data so PaxDB stays current
+ * without waiting for the next manual runScanTrackers.
+ * @param {Spreadsheet} trackerSpreadsheet The individual tracker spreadsheet.
+ * @param {string} sheetId Its spreadsheet ID (already known at call site).
+ * @param {Date|string=} startDate The tracker's start date (from TrackerDB row).
+ * @returns {{pax: number, created: number, updated: number}}
+ */
+function refreshPaxDbForTracker_(trackerSpreadsheet, sheetId, startDate) {
+	var templateSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+	var paxRows = _loadPaxData(trackerSpreadsheet, sheetId, startDate);
+	var created = 0, updated = 0;
+	paxRows.forEach(function(row) {
+		var result = upsertPaxDbRow_(templateSpreadsheet, row);
+		if (result.created) created++; else updated++;
+	});
+	GasLogger.log('refreshPaxDbForTracker_', { sheetId: sheetId, pax: paxRows.length, created: created, updated: updated });
+	return { pax: paxRows.length, created: created, updated: updated };
+}
+
+/**
  * Finds the most recent PaxDB row for f3Name (case-insensitive), optionally excluding one
  * sheetId (the caller's own target month, when it may already have a row there). Replaces
  * the old Config 'Last Month Tracker' + cross-spreadsheet walk-back entirely: one read of
@@ -1336,6 +1357,7 @@ if (typeof module !== 'undefined' && module.exports) {
 		_carryForwardLifecycleFields_: _carryForwardLifecycleFields_,
 		resolveTrackerDbRowForContextDate_: resolveTrackerDbRowForContextDate_,
 		upsertPaxDbRow_: upsertPaxDbRow_,
+		refreshPaxDbForTracker_: refreshPaxDbForTracker_,
 		findMostRecentPaxRecordForName_: findMostRecentPaxRecordForName_,
 		findMostRecentPaxRecordForEmail_: findMostRecentPaxRecordForEmail_,
 		deletePaxDbRowsBySheetId_: deletePaxDbRowsBySheetId_,

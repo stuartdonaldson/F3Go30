@@ -462,3 +462,17 @@ Skip month-choose step when no next-month tracker exists in TrackerDB.
 - `infoNextBtn` now checks `MONTHS.next` — if absent, sets `targetMonth='current'` and saves directly, bypassing the choose step
 - When `MONTHS.next` exists, behavior unchanged (choose step shown with both month options)
 - `saveBtn` delegates to same `performSave_` — no duplicate logic
+
+## 2026-06-27 11:07:47
+
+### Summary
+Fixed GAS trigger event bug that was silently breaking both nag email and mark-minus-one daily triggers; added live PaxDB stats refresh at end of mark-minus-one.
+
+### Details
+- **Root cause (NAGMAILBUG):** GAS time-based triggers pass a TriggerEvent object as the first argument, not `undefined`. Both `sendNagEmail_` and `markEmptyCellsAsMinusOne_` used `new Date(contextDate || Date.now())` — a TriggerEvent is truthy, so this evaluated to `new Date(eventObject)` → Invalid Date → `resolveTrackerDbRowForContextDate_` threw.
+- **Fix:** Guard in all date-normalization sites: `new Date(typeof contextDate === 'string' || typeof contextDate === 'number' ? contextDate : Date.now())`. Also fixed each outer function to pass the normalized `today` (not the raw trigger arg) to its inner `ForSpreadsheet_` helper.
+- **Files changed:** `script/nag.js` (3 sites), `script/markMinusOne.js` (3 sites).
+- **PaxDB refresh:** Added `refreshPaxDbForTracker_(trackerSpreadsheet, sheetId, startDate)` to `go30tools.js`. Reuses existing `_loadPaxData` + `upsertPaxDbRow_` — no new stat-collection logic. Called from `markEmptyCellsAsMinusOne_` after `-1` marking completes, so PaxDB stays current without waiting for manual `runScanTrackers`.
+
+### Key Learnings
+- GAS time-based trigger handlers always receive a TriggerEvent as arg 0 — any `|| Date.now()` fallback is bypassed because the event object is truthy. Pattern: guard on `typeof === 'string' || typeof === 'number'` before passing to `new Date()`.

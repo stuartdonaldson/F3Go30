@@ -37,14 +37,19 @@ function markEmptyCellsAsMinusOne_(contextDate) {
   // Marking happens on (contextDate - 2 days), not today — must dispatch on that date, or a
   // run on the 1st/2nd of a month resolves to the brand-new (wrong) tracker instead of the
   // one that actually has that day's column (month-boundary dispatch bug).
-  var today = contextDate instanceof Date ? contextDate : new Date(contextDate || Date.now());
+  // Guard against GAS trigger event objects: time-based triggers pass a TriggerEvent as the
+  // first arg (truthy non-Date), so `new Date(contextDate)` would produce an Invalid Date.
+  var today = contextDate instanceof Date ? contextDate
+    : new Date(typeof contextDate === 'string' || typeof contextDate === 'number' ? contextDate : Date.now());
   var thresholdDate = new Date(today);
   thresholdDate.setDate(thresholdDate.getDate() - 2);
 
   var trackerRow = resolveTrackerForContextDate(thresholdDate);
   GasLogger.log('markEmptyCellsAsMinusOne.dispatch', { contextDate: today.toISOString(), targetDate: thresholdDate.toISOString(), sheetId: trackerRow.sheetId });
   var spreadsheet = SpreadsheetApp.openById(trackerRow.sheetId);
-  return applyMinusOneToTrackerSheet_(spreadsheet, contextDate);
+  var markedCount = applyMinusOneToTrackerSheet_(spreadsheet, today);
+  refreshPaxDbForTracker_(spreadsheet, trackerRow.sheetId, trackerRow.startDate);
+  return markedCount;
 }
 
 /**
@@ -59,7 +64,8 @@ function applyMinusOneToTrackerSheet_(spreadsheet, contextDate) {
   var markedCount = 0;
 
   if (sheet) {
-    var currentDate = contextDate instanceof Date ? contextDate : new Date(contextDate || Date.now());
+    var currentDate = contextDate instanceof Date ? contextDate
+      : new Date(typeof contextDate === 'string' || typeof contextDate === 'number' ? contextDate : Date.now());
 
     // Calculate the date for thresholdday - Day before yesterday.
     var thresholdday = new Date(currentDate);

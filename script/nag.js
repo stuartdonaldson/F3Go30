@@ -203,14 +203,17 @@ function sendNagEmail_(contextDate) {
   // Nag checks YESTERDAY's column, not today's — must dispatch on yesterday's date, or a
   // run on the 1st/2nd of a month resolves to the brand-new (wrong) tracker instead of the
   // one that actually has yesterday's data (month-boundary dispatch bug).
-  var today = contextDate instanceof Date ? contextDate : new Date(contextDate || Date.now());
+  // Guard against GAS trigger event objects: time-based triggers pass a TriggerEvent as the
+  // first arg (truthy non-Date), so `new Date(contextDate)` would produce an Invalid Date.
+  var today = contextDate instanceof Date ? contextDate
+    : new Date(typeof contextDate === 'string' || typeof contextDate === 'number' ? contextDate : Date.now());
   var yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
 
   var trackerRow = resolveTrackerForContextDate(yesterday);
   GasLogger.log('sendNagEmail.dispatch', { contextDate: today.toISOString(), targetDate: yesterday.toISOString(), sheetId: trackerRow.sheetId });
   var ss = SpreadsheetApp.openById(trackerRow.sheetId);
-  return sendNagEmailForSpreadsheet_(ss, contextDate);
+  return sendNagEmailForSpreadsheet_(ss, today);
 }
 
 /**
@@ -230,7 +233,8 @@ function sendNagEmailForSpreadsheet_(ss, contextDate) {
   var configData = configSheet ? configSheet.getDataRange().getValues() : [];
 
   var tz = ss.getSpreadsheetTimeZone();
-  var today = contextDate instanceof Date ? contextDate : new Date(contextDate || Date.now());
+  var today = contextDate instanceof Date ? contextDate
+    : new Date(typeof contextDate === 'string' || typeof contextDate === 'number' ? contextDate : Date.now());
   var yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   var targetDateString = Utilities.formatDate(yesterday, tz, 'MM/dd/yyyy');
