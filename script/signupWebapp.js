@@ -435,6 +435,7 @@ function findPaxDbMatch_(templateSpreadsheet, f3Name, email) {
       return {
         f3Name: row[f3NameIdx],
         email: row[emailIdx],
+        sheetId: row[headers.indexOf('SheetId')] || '',
         team: row[headers.indexOf('Team')] || '',
         who: row[headers.indexOf('WHO')] || '',
         what: row[headers.indexOf('WHAT')] || '',
@@ -461,6 +462,8 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
   var months = getCurrentAndNextMonths_(templateSpreadsheet);
   if (!months.current) return { ok: false, error: 'no_current_month' };
 
+  GasLogger.log('signupWebapp.identify', { f3Name: payload.f3Name, email: payload.email });
+  
   var lists = readTeamLists_(templateSpreadsheet);
   var match = findPaxDbMatch_(templateSpreadsheet, payload.f3Name, payload.email);
 
@@ -472,7 +475,7 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
   var storedTeam = match.team || match.otherTeam || '';
   var classified = classifyTeam_(storedTeam, lists.aoList, lists.goalList);
 
-  GasLogger.log('signupWebapp.identify', { matched: true, f3Name: match.f3Name });
+  GasLogger.log('signupWebapp.identify', { matched: true, f3Name: match.f3Name, sheetId: match.sheetId, teamType: classified.teamType, team: classified.team });
   return {
     ok: true,
     matched: true,
@@ -610,7 +613,45 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     }
   }
 
+  sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, !match);
   return { ok: true, savedMonth: targetMonth.label, trackerUrl: targetMonth.trackerUrl };
+}
+
+function sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, isNew) {
+  var recipient = sanitizeEmailAddressForSend_(payload.email);
+  if (!recipient) { GasLogger.log('signupWebapp.confirmEmail.skipped', { reason: 'invalid_email' }); return; }
+  var safeF3Name = sanitizeTextForEmailLine_(payload.f3Name) || '(unknown)';
+  var summaryLines = buildGoalSummaryLines_({
+    EMAIL: payload.email,
+    NAG_EMAIL: payload.nag ? 'Yes' : 'No',
+    TEAM_TYPE: payload.teamType,
+    TEAM: payload.team,
+    WHO: payload.who,
+    WHAT: payload.what,
+    HOW: payload.how,
+    PHONE: payload.phone
+  });
+  var message = buildSignupReuseEmailTemplate_({
+    mode: isNew ? 'new_signup' : 'confirmation',
+    f3Name: safeF3Name,
+    trackerUrl: targetMonth.trackerUrl,
+    prefilledUrl: null,
+    summaryLines: summaryLines,
+    registrationMonth: targetMonth.label
+  });
+  try {
+    sendConfiguredEmail_({
+      spreadsheet: templateSpreadsheet,
+      recipients: [{ name: safeF3Name, email: recipient }],
+      subject: message.subject,
+      body: message.body,
+      htmlBody: message.htmlBody,
+      allowPlainTextFallback: true,
+      logLabel: 'sendSignupWebappConfirmationEmail_'
+    });
+  } catch (e) {
+    GasLogger.log('signupWebapp.confirmEmail.failed', { error: e && e.message });
+  }
 }
 
 /**

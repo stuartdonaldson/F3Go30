@@ -126,7 +126,7 @@
 
     <div id="step-info" class="card hidden">
       <h2 id="infoHeading">Welcome! Let's get your info</h2>
-      <div id="infoMatchedCallout" class="callout hidden">We found your previous signup — review and update below.</div>
+      <div id="infoMatchedCallout" class="callout hidden">We found your previous registration.</div>
 
       <div class="identity-row">
         <div>
@@ -346,7 +346,7 @@
   }
 
   function fillInfoStep() {
-    $('infoHeading').textContent = state.wasMatched ? 'Review your signup' : "Welcome! Let's get your info";
+    $('infoHeading').textContent = state.wasMatched ? 'Review your registration' : "Welcome! Let's get your info";
     $('infoMatchedCallout').classList.toggle('hidden', !state.wasMatched);
     $('infoF3Name').textContent = state.f3Name;
     $('infoEmail').textContent = state.email;

@@ -23,6 +23,18 @@ function buildSignupEmailCopy_(options) {
     };
   }
 
+  if (mode === 'new_signup') {
+    return {
+      mode: mode,
+      headline: "You're signed up for " + registrationMonth + '!',
+      intro: 'Your registration for ' + registrationMonth + ' is confirmed.',
+      showSummary: true,
+      summaryIntro: 'Your goals:',
+      ctaIntro: null,
+      ctaLabel: null
+    };
+  }
+
   if (mode === 'reuse') {
     return {
       mode: mode,
@@ -86,8 +98,10 @@ function renderSignupReuseEmailHtml_(options) {
 function buildSignupReuseEmailTemplate_(options) {
   options = options || {};
   var copy = buildSignupEmailCopy_(options);
-  var subject = copy.mode === 'confirmation'
+  var subject = (copy.mode === 'confirmation')
     ? ('F3 Go30: registration updated for ' + (options.registrationMonth || 'this month'))
+    : (copy.mode === 'new_signup')
+    ? ('F3 Go30: registered for ' + (options.registrationMonth || 'this month'))
     : ('F3 Go30: ' + (copy.mode === 'reuse' ? "last month's goals reused" : 'enter your goals'));
   var bodyLines = [];
   bodyLines.push('F3 Name: ' + (options.f3Name || '(unknown)'));
