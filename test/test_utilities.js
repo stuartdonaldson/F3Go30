@@ -125,7 +125,7 @@ assert.equal(
 );
 assert.deepEqual(
   buildGoalSummaryLinesFromResponse_(responseRow, responseColumns, responseHeaders),
-  ['Email: stuart.donaldson@gmail.com', 'NAG Email: Yes']
+  ['Email: stuart.donaldson@gmail.com', 'Send reminder email: Yes']
 );
 
 // --- buildSignupSlackMessage_ — signup link is primary, tracker link must always be

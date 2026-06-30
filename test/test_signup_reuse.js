@@ -236,13 +236,13 @@ assert.throws(
 // -- buildReuseSummaryLines includes email and NAG email --
 assert.deepEqual(buildReuseSummaryLines({ ...reusedValues, email: 'current@example.com' }), [
     'Email: current@example.com',
-    'NAG Email: Yes',
+    'Send reminder email: Yes',
     'Team type: goal-based',
     'Team: Team B',
     'Other team name: Endurance',
-    'Who: Disciplined',
-    'What: Ruck',
-    'How: Journal',
+    'Who you want to become: Disciplined',
+    'What is your Go30 Challenge: Ruck',
+    'How will you be successful: Journal',
     'Phone: 555-2222',
 ]);
 assert.deepEqual(buildReuseSummaryLines({ email: '', nagEmail: '', teamType: '', team: 'T', otherTeam: '', who: '', what: '', how: '', phone: '' }), ['Team: T'], 'omits empty fields');

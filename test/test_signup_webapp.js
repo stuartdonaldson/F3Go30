@@ -101,14 +101,13 @@ assert.deepEqual(
   { aoList: [], goalList: [] }
 );
 
-// --- trackerHasF3Name_ — must mirror handleFormSubmit_'s exact-match dedup (addResponseOnSubmit.js
-// Phase 4: `dataValues.some(row => row[0] === f3Name)` — no trim/case-fold) for the same net effect ---
+// --- trackerHasF3Name_ — case-insensitive, trim-normalised dedup (signupWebapp.js §8, §11) ---
 
 const TRACKER_NAME_ROWS = [['Splinter'], ['Anchor'], ['']];
 
 assert.equal(trackerHasF3Name_(TRACKER_NAME_ROWS, 'Splinter'), true);
-assert.equal(trackerHasF3Name_(TRACKER_NAME_ROWS, 'splinter'), false); // exact match only, like the trigger
-assert.equal(trackerHasF3Name_(TRACKER_NAME_ROWS, ' Splinter '), false); // no trim, like the trigger
+assert.equal(trackerHasF3Name_(TRACKER_NAME_ROWS, 'splinter'), true);   // case-insensitive
+assert.equal(trackerHasF3Name_(TRACKER_NAME_ROWS, ' Splinter '), true); // trim-normalised
 assert.equal(trackerHasF3Name_(TRACKER_NAME_ROWS, 'Nobody'), false);
 
 // --- findEmptyTrackerSlotIndex_ — fills initSheets' blank row-4 template row instead of

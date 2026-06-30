@@ -418,12 +418,25 @@ class ManagedConfigSheet {
   }
 
   /**
-   * Reads a config value by key.
+   * Reads the primary (column B) value for a config key. Returns a scalar.
+   * Use getPair() when you also need the secondary (column C) value.
+   * @param {string} configKey - Key in column A.
+   * @param {Array<Array<*>>=} rows - Optional pre-fetched rows.
+   * @returns {*} Primary value, or null if key not found.
+   */
+  getValue(configKey, rows) {
+    const found = ManagedConfigSheet.findValue(configKey, rows || this.getValues());
+    return found ? found.primary : null;
+  }
+
+  /**
+   * Reads both the primary (column B) and secondary (column C) values for a config key.
+   * Use for keys that carry two parts (e.g. Site Q: name + email; Signup HC Form: name + URL).
    * @param {string} configKey - Key in column A.
    * @param {Array<Array<*>>=} rows - Optional pre-fetched rows.
    * @returns {{primary: *, secondary: *}|null}
    */
-  getValue(configKey, rows) {
+  getPair(configKey, rows) {
     return ManagedConfigSheet.findValue(configKey, rows || this.getValues());
   }
 
@@ -834,6 +847,7 @@ if (typeof module !== 'undefined' && module.exports) {
     resolveManagedHeaderMap_,
     findRowIndexByNormalizedValue_,
     buildSharedHeaderCopyPlan_,
-    sheetHasContent_
+    sheetHasContent_,
+    ManagedConfigSheet
   };
 }

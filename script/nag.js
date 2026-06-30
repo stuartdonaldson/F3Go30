@@ -12,6 +12,10 @@ var nagUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
 
 var sendConfiguredEmail_ = (nagUtilitiesModule_ && nagUtilitiesModule_.sendConfiguredEmail_)
   || (typeof globalThis !== 'undefined' && globalThis.sendConfiguredEmail_);
+var openAppConfigSheet_ = (nagUtilitiesModule_ && nagUtilitiesModule_.openAppConfigSheet_)
+  || (typeof globalThis !== 'undefined' && globalThis.openAppConfigSheet_);
+var readEmailDeliveryPolicyFromSheet_ = (nagUtilitiesModule_ && nagUtilitiesModule_.readEmailDeliveryPolicyFromSheet_)
+  || (typeof globalThis !== 'undefined' && globalThis.readEmailDeliveryPolicyFromSheet_);
 var buildEmailRecipientList_ = (nagUtilitiesModule_ && nagUtilitiesModule_.buildEmailRecipientList_)
   || (typeof globalThis !== 'undefined' && globalThis.buildEmailRecipientList_);
 var sanitizeEmailDisplayName_ = (nagUtilitiesModule_ && nagUtilitiesModule_.sanitizeEmailDisplayName_)
@@ -230,7 +234,11 @@ function sendNagEmailForSpreadsheet_(ss, contextDate) {
     return 0;
   }
 
-  var configData = configSheet ? configSheet.getDataRange().getValues() : [];
+  var configData = configSheet ? configSheet.getDataRange().getValues() : null;
+
+  // Email delivery policy comes from the HOST (template) config, not the tracker.
+  var hostConfigSheet = openAppConfigSheet_(ss);
+  var deliveryPolicy = readEmailDeliveryPolicyFromSheet_(hostConfigSheet);
 
   var tz = ss.getSpreadsheetTimeZone();
   var today = contextDate instanceof Date ? contextDate
@@ -331,13 +339,12 @@ function sendNagEmailForSpreadsheet_(ss, contextDate) {
 
     try {
       sendConfiguredEmail_({
-      configData: configData,
-      spreadsheet: ss,
-      recipients: recipients,
-      subject: message.subject,
-      body: message.body,
-      htmlBody: message.htmlBody,
-      logLabel: 'sendNagEmail'
+        policy: deliveryPolicy,
+        recipients: recipients,
+        subject: message.subject,
+        body: message.body,
+        htmlBody: message.htmlBody,
+        logLabel: 'sendNagEmail'
       });
       sentSummary.push({ team: teamName, recipients: recipients.length, missing: missing.length });
       totalEmailsSent += recipients.length;
