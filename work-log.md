@@ -476,3 +476,33 @@ Fixed GAS trigger event bug that was silently breaking both nag email and mark-m
 
 ### Key Learnings
 - GAS time-based trigger handlers always receive a TriggerEvent as arg 0 — any `|| Date.now()` fallback is bypassed because the event object is truthy. Pattern: guard on `typeof === 'string' || typeof === 'number'` before passing to `new Date()`.
+
+## 2026-06-29 18:59:12
+
+### Summary
+Investigated and fixed PROD nag email incident where real emails were sent despite Email Test Mode = Yes. Cleaned up ManagedConfigSheet API as part of the fix. Fixed 4 pre-existing test failures. Deployed to SIT.
+
+### Details
+
+**Incident investigation**
+- Queried Axiom logs: found `target=TEMPLATE, testMode=False` at 17:04 UTC (~10am PDT) — 3 real recipients received nag emails
+- Root cause: `nag.js:sendNagEmailForSpreadsheet_` reads the delivery policy from each **tracker's** Config sheet, but `Email Test Mode = Yes` is set in the **template's** Config sheet. Tracker Config sheets don't carry that setting, so it resolved to false.
+- Secondary bug: fallback when Config sheet is missing used `[]` (truthy) instead of `null`, preventing the spreadsheet fallback path in `getConfigValue_`.
+
+**Fix — 3 files**
+- `script/libSheets.js`: Split `ManagedConfigSheet.getValue()` to return scalar (column B); added `getPair()` for two-column keys (Site Q, Signup HC Form). Config key audit confirmed 4 scalar-only keys and 2 that need both columns.
+- `script/Utilities.js`: Updated `getConfigValue_` to call `getPair()` (maintains `{primary,secondary}` contract for existing callers). Added `openAppConfigSheet_(trackerSpreadsheet)` — returns template Config when `IS_TEMPLATE_HOST=true`. Added `readEmailDeliveryPolicyFromSheet_(configSheet)` — uses typed `getValue()`/`getPair()` API.
+- `script/nag.js`: Added module bindings for new functions. Fixed `[] → null`. Reads delivery policy via `openAppConfigSheet_` + `readEmailDeliveryPolicyFromSheet_`; passes pre-computed `policy` to `sendConfiguredEmail_`.
+
+**Pre-existing test fixes**
+- `test_signup_reuse.js`, `test_utilities.js`: Updated stale label expectations (`NAG Email` → `Send reminder email`; `Who/What/How` → full display phrases) to match `response_utils.js` changes.
+- `test_signup_webapp.js`: Updated `trackerHasF3Name_` assertions — function is case-insensitive (trim+lowercase), test expected exact match.
+- `test_mark_minus_one.js`: Added missing `getId()` on fake spreadsheet; added `refreshPaxDbForTracker_` no-op stub.
+
+**New test coverage**: `test_nag.js` — tests for `readEmailDeliveryPolicyFromSheet_` (test mode on/off, legacy key, null configSheet) and `ManagedConfigSheet.getValue()`/`getPair()` split.
+
+**Status**: All 15 tests pass. Committed (`03a9762`). Deployed to SIT v2.2.61. Awaiting manual SIT verification (`sendNagEmail` from Apps Script editor), then `npm run deploy:prod`.
+
+### Key Learnings
+- When GAS code runs from the template spreadsheet (IS_TEMPLATE_HOST=true), `SpreadsheetApp.getActiveSpreadsheet()` is the template — but functions that open tracker spreadsheets by ID get a different spreadsheet object. Policy/global config must be read from the template, not from the passed-in tracker.
+- `[]` is truthy in JavaScript; using it as a "no data" sentinel silently breaks `if (data)` guards that distinguish "data provided" from "go read from spreadsheet".

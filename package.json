@@ -1,6 +1,6 @@
 {
   "name": "f3go30",
-  "version": "2.2.61",
+  "version": "2.2.62",
   "private": true,
   "scripts": {
     "push": "node tools/manage-deployments.js --deploy-template",
