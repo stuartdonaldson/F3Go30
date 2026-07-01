@@ -29,6 +29,23 @@ function jsonOutput_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
+/**
+ * Renders the default (no-cmd) landing page: links to Sign Up, Dashboard/Check-in, and the
+ * current month's tracker spreadsheet. Replaces the old bare {"status":"ok"} JSON response.
+ */
+function renderHomePage_() {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var webAppUrl = ScriptApp.getService().getUrl();
+  var months = getCurrentAndNextMonths_(spreadsheet);
+
+  var template = HtmlService.createTemplateFromFile('HomeApp');
+  template.signupUrl = webAppUrl + '?cmd=signup';
+  template.checkinUrl = webAppUrl + '?cmd=checkin';
+  template.trackerUrl = (months.current && months.current.trackerUrl) || '';
+  template.monthLabel = (months.current && months.current.label) || '';
+  return template.evaluate().setTitle('Go30');
+}
+
 /** Renders the cmd=signup HTML page, injecting live ListDB/Links data server-side. */
 function renderSignupPage_() {
   var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
@@ -256,7 +273,7 @@ function doGet(e) {
     if (e && e.parameter && e.parameter.cmd === 'checkin') {
       return renderCheckinPage_();
     }
-    return jsonOutput_({ status: 'ok' });
+    return renderHomePage_();
   });
 }
 
