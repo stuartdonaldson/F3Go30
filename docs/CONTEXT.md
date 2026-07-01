@@ -69,6 +69,10 @@ month's tracker in minutes without manual sheet or trigger configuration in the 
 - Upsert a row (date modified, start date, name, tracker URL, form URL, spreadsheet ID, form
   ID) into the template's `TrackerDB` sheet each time a new tracker is created, keyed by
   spreadsheet ID — the same row is also the dispatch target for centralized triggers (ADR-010)
+- Serve a PAX-facing daily check-in + dashboard web app (`?cmd=checkin`): identifies the PAX by
+  F3 Name + Email (same pair as HC sign-up), prompts for today's (and, if missed, yesterday's)
+  check-in, then shows streak, score, weekly bonus points, and a team-grouped PAX leaderboard
+  read live from the current month's Tracker sheet
 
 ---
 
@@ -252,10 +256,49 @@ Constraints:
 
 ---
 
+### UC-7: PAX Checks In and Views Dashboard
+
+Actor: PAX (participant)
+
+Preconditions:
+- PAX has an active HC sign-up (F3 Name + Email) in the current month's Responses sheet
+- The current month's Tracker sheet has a row for that F3 Name
+
+Primary Flow:
+1. PAX opens the check-in web app link (`?cmd=checkin`) and enters F3 Name + Email — prefilled
+   from browser storage if they previously signed up or checked in on the same device
+2. Script verifies the pair against the current month's Responses sheet (same anti-enumeration
+   match used by sign-up) and locates the matching Tracker row
+3. PAX taps "Did it" / "Didn't do it" for today; if yesterday's Tracker cell is still blank, the
+   same choice is also offered for yesterday
+4. Script writes the chosen value(s) into the matching date column(s) of the PAX's Tracker row
+5. PAX is taken to the dashboard: streak, month progress, total score, weekly bonus points, a
+   "My Team" tile row, and a PAX board grouped by the Tracker's Team/Goal column
+6. PAX taps the "…" button to open the underlying tracker spreadsheet directly
+
+Alternate Flows:
+A1: F3 Name + Email do not match any current-month sign-up → generic "not found" message,
+    indistinguishable from a partial (name-only or email-only) match
+A2: PAX taps "Dashboard" without checking in → dashboard loads without writing any check-in value
+A3: Target Tracker cell is a formula (unexpected sheet layout) → write is refused; check-in
+    is not recorded and the client shows the error banner
+
+Postconditions:
+- Today's (and, if applicable, yesterday's) Tracker cell holds the PAX's reported 1/0 value
+- Dashboard reflects the Tracker sheet's live, formula-computed scores — no separate data store
+
+Constraints:
+- Identity is F3 Name + Email only — there is no password; anyone who knows both can check in
+  or view the dashboard for that PAX, the same trust model as the sign-up web app
+
+---
+
 ## Non-Goals
 
 - Not a multi-region coordination platform; each region operates its own independent spreadsheet
-- Not a public SaaS; no web app, API, or external hosting
+- Not a public SaaS; the sign-up and dashboard/check-in web apps are Apps Script `doGet`/`doPost`
+  endpoints reading/writing the region's own spreadsheet directly — no external hosting, API, or
+  database of their own
 - Does not automate the initial one-time form linking step when bootstrapping a new region
 - Does not yet deliver the finalized reminder-email experience described by the reminder workflow design; the existing nag email path is partial and still needs alignment with the FunFacts-based template and content decisions
 - No automated testing or CI/CD pipeline

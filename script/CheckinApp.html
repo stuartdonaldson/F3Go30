@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Go30 Dashboard</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #f4f1ea; font-family: Arial, Helvetica, sans-serif; color: #2b2b2b; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 18px 48px; }
+  .header { background: #2f5d50; color: #f8f4ea; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+  .header .brand { font-size: 11px; letter-spacing: .24em; opacity: .6; font-weight: bold; }
+  .header .title { font-size: 19px; font-weight: bold; margin-left: 2px; display: block; }
+  .header-right { text-align: right; display: flex; align-items: center; gap: 12px; }
+  .header-name { font-weight: bold; font-size: 14px; }
+  .header-sub { font-size: 10px; opacity: .6; }
+  .more-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); color: #f8f4ea; width: 32px; height: 32px; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; line-height: 1; }
+  .card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 22px; box-shadow: 0 2px 10px rgba(47,93,80,.07); margin-top: 18px; }
+  .card h1, .card h2 { margin: 0 0 6px; color: #2f5d50; }
+  .card h1 { font-size: 22px; }
+  .card h2 { font-size: 17px; }
+  p.muted { color: #555; font-size: 14px; line-height: 1.5; }
+  label.field-label { display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px; }
+  input[type=text], input[type=email] {
+    width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px;
+    font-size: 15px; font-family: inherit; margin-bottom: 16px; background: #fff;
+  }
+  button.primary { width: 100%; padding: 14px; border: none; border-radius: 9px; background: #2f5d50; color: #f8f4ea; font-size: 16px; font-weight: bold; cursor: pointer; font-family: inherit; }
+  button.secondary { width: 100%; margin-top: 10px; padding: 10px; border: none; border-radius: 9px; background: transparent; color: #0b5c86; font-size: 14px; cursor: pointer; font-family: inherit; }
+  .checkin-row { display: flex; gap: 10px; margin-bottom: 8px; }
+  .checkin-btn { flex: 1; padding: 16px 8px; border-radius: 10px; border: 2px solid #d8cfbf; background: #fff; font-family: inherit; font-size: 14px; font-weight: bold; cursor: pointer; text-align: center; }
+  .checkin-btn.yes { color: #2f5d50; }
+  .checkin-btn.yes:hover { border-color: #2f5d50; background: #eef3f0; }
+  .checkin-btn.no { color: #a3401a; }
+  .checkin-btn.no:hover { border-color: #a3401a; background: #fdeceb; }
+  .checkin-section-label { font-size: 11px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 18px 0 8px; }
+  .error-text { font-size: 13px; color: #a3401a; margin-bottom: 8px; }
+  .hidden { display: none; }
+  .stats-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 18px; }
+  .stat-card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 16px; text-align: center; }
+  .stat-label { font-size: 10px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin-bottom: 6px; }
+  .stat-value { font-size: 40px; font-weight: bold; line-height: 1; }
+  .stat-sub { font-size: 10px; color: #b0a898; margin-top: 6px; letter-spacing: .06em; }
+  .progress-bar { width: 100%; background: #ede9df; border-radius: 3px; height: 7px; overflow: hidden; margin-top: 10px; }
+  .progress-fill { height: 7px; background: #2f5d50; border-radius: 3px; }
+  .day-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; margin-top: 10px; }
+  .day-cell { aspect-ratio: 1; border-radius: 3px; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #888; }
+  .legend-swatch { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
+  .bonus-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  .bonus-label { font-size: 11px; font-weight: bold; color: #999; min-width: 40px; font-family: monospace; }
+  .bonus-pill { padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+  .bonus-pill.earned { background: #eef3f0; color: #2f5d50; }
+  .bonus-pill.upcoming { background: #f0ece2; color: #b0a898; }
+  .team-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(120px,1fr)); gap: 10px; margin-top: 12px; }
+  .team-tile { border-radius: 10px; padding: 12px 8px; text-align: center; border: 1.5px solid #d8cfbf; background: #fff; }
+  .team-tile.me { border-color: #2f5d50; background: #eef3f0; }
+  .team-tile .tname { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
+  .team-tile .tscore { font-size: 22px; font-weight: bold; }
+  .team-tile .tstreak { font-size: 9px; color: #b0a898; margin-top: 2px; }
+  .board-group { border: 1px solid #d8cfbf; border-radius: 12px; overflow: hidden; margin-top: 12px; }
+  .board-head { background: #2f5d50; color: #f8f4ea; padding: 9px 16px; font-size: 12px; font-weight: bold; letter-spacing: .16em; display: flex; justify-content: space-between; }
+  .board-rows { padding: 6px 12px; }
+  .board-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 4px; border-radius: 4px; font-size: 13px; }
+  .board-row.me { background: #eef3f0; font-weight: bold; }
+  .section-label { font-size: 11px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 22px 0 4px; }
+  .api-error-banner { background: #fdeceb; border-bottom: 3px solid #a3401a; color: #6b1f0a; padding: 12px 18px; font-size: 14px; line-height: 1.5; }
+  .api-error-banner strong { display: block; margin-bottom: 2px; }
+  .api-error-detail { margin-top: 6px; font-family: monospace; font-size: 12px; background: #fff; border: 1px solid #e3b8af; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div><span class="brand">F3 GO30</span><span class="title" id="headerTitle">Dashboard</span></div>
+    <div class="header-right">
+      <div id="headerIdentity" class="hidden">
+        <div class="header-name" id="headerName"></div>
+        <div class="header-sub" id="headerSub"></div>
+      </div>
+      <button id="moreBtn" class="more-btn hidden" title="Open tracker spreadsheet">&hellip;</button>
+    </div>
+  </div>
+
+  <div id="apiErrorBanner" class="api-error-banner hidden">
+    <strong>Something went wrong.</strong>
+    <span>Please screenshot this message and send it to your Site Q.</span>
+    <div id="apiErrorDetail" class="api-error-detail"></div>
+  </div>
+
+  <div class="wrap">
+
+    <div id="step-identify">
+      <div class="card">
+        <h1>Daily Check-in</h1>
+        <p class="muted">Enter your F3 name and email to check in for today and see your dashboard.</p>
+        <label class="field-label">F3 Name</label>
+        <input type="text" id="idF3Name" placeholder="e.g. Splinter">
+        <label class="field-label">Email</label>
+        <input type="email" id="idEmail" placeholder="you@example.com">
+        <div id="idError" class="error-text hidden"></div>
+        <button class="primary" id="identifyBtn">Continue</button>
+      </div>
+    </div>
+
+    <div id="step-checkin" class="card hidden">
+      <h2 id="checkinHeading">Welcome back!</h2>
+      <p class="muted" id="checkinSub"></p>
+
+      <div class="checkin-section-label">TODAY</div>
+      <div class="checkin-row">
+        <button class="checkin-btn yes" id="todayYesBtn">&#10003; Did it</button>
+        <button class="checkin-btn no" id="todayNoBtn">&#10007; Didn't do it</button>
+      </div>
+
+      <div id="yesterdayBlock" class="hidden">
+        <div class="checkin-section-label">YESTERDAY (no check-in yet)</div>
+        <div class="checkin-row">
+          <button class="checkin-btn yes" id="yesterdayYesBtn">&#10003; Did it</button>
+          <button class="checkin-btn no" id="yesterdayNoBtn">&#10007; Didn't do it</button>
+        </div>
+      </div>
+
+      <button class="secondary" id="dashboardBtn" style="margin-top:14px;">Skip to Dashboard &rarr;</button>
+    </div>
+
+    <div id="step-dashboard" class="hidden">
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">STREAK</div>
+          <div class="stat-value" id="dStreak" style="color:#2f5d50;"></div>
+          <div class="stat-sub">DAYS</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">PROGRESS</div>
+          <div class="stat-value" id="dProgressPct" style="color:#2f5d50;font-size:28px;"></div>
+          <div class="progress-bar"><div class="progress-fill" id="dProgressFill"></div></div>
+          <div class="stat-sub" id="dProgressSub"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">TOTAL SCORE</div>
+          <div class="stat-value" id="dScore"></div>
+          <div class="stat-sub" id="dScoreSub"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-label" style="margin-top:0;">WEEKLY BONUSES</div>
+        <div id="dBonuses"></div>
+      </div>
+
+      <div class="section-label">MY TEAM &middot; <span id="dTeamName"></span></div>
+      <div class="team-grid" id="dMyTeam"></div>
+
+      <div class="section-label">PAX BOARD</div>
+      <div id="dPaxBoard"></div>
+    </div>
+
+  </div>
+
+  <div style="text-align:center;padding:12px 0 24px;font-size:11px;color:#aaa;" id="versionFooter"></div>
+
+<script>
+  var WEBAPP_URL = <?!= webAppUrl ?>;
+  var APP_VERSION = <?!= JSON.stringify(appVersion) ?>;
+
+  // Same storage key the signup webapp uses (SignupApp.html) — a PAX who already signed up
+  // gets their F3 Name/Email prefilled here without retyping.
+  var IDENTITY_STORAGE_KEY = 'go30SignupIdentity';
+
+  function saveIdentityToStorage_(f3Name, email) {
+    try {
+      localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify({ f3Name: f3Name, email: email }));
+    } catch (e) { /* localStorage unavailable — not fatal */ }
+  }
+
+  function loadIdentityFromStorage_() {
+    try {
+      var raw = localStorage.getItem(IDENTITY_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  var savedIdentity = loadIdentityFromStorage_();
+  var state = {
+    f3Name: (savedIdentity && savedIdentity.f3Name) || '',
+    email: (savedIdentity && savedIdentity.email) || '',
+    trackerUrl: '',
+  };
+
+  function $(id) { return document.getElementById(id); }
+
+  function showStep(name) {
+    ['identify', 'checkin', 'dashboard'].forEach(function(s) {
+      $('step-' + s).classList.toggle('hidden', s !== name);
+    });
+    $('headerIdentity').classList.toggle('hidden', name === 'identify');
+    $('moreBtn').classList.toggle('hidden', name !== 'dashboard');
+  }
+
+  /** Rejects on any failure (HTTP error, bad JSON, {ok:false}) so every caller has one .catch(). */
+  function callApi(action, payload) {
+    var body = Object.assign({ action: action }, payload);
+    return fetch(WEBAPP_URL + '?cmd=checkin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(body),
+    }).then(function(res) {
+      if (!res.ok) throw new Error('Server returned HTTP ' + res.status);
+      return res.json();
+    }).then(function(json) {
+      if (!json.ok) throw new Error(json.error || 'Server reported an error with no detail');
+      return json;
+    });
+  }
+
+  function showApiError_(action, err) {
+    $('apiErrorDetail').textContent =
+      'Time: ' + new Date().toISOString() + '\n' +
+      'Action: ' + action + '\n' +
+      'Error: ' + (err && err.message ? err.message : String(err));
+    $('apiErrorBanner').classList.remove('hidden');
+  }
+
+  function hideApiError_() {
+    $('apiErrorBanner').classList.add('hidden');
+  }
+
+  function setButtonLoading_(btn, isLoading, loadingText) {
+    if (isLoading) {
+      btn.dataset.originalText = btn.textContent;
+      btn.textContent = loadingText || 'Working…';
+      btn.disabled = true;
+    } else {
+      btn.textContent = btn.dataset.originalText || btn.textContent;
+      btn.disabled = false;
+    }
+  }
+
+  function updateHeaderIdentity_(f3Name, team, monthLabel) {
+    $('headerName').textContent = f3Name;
+    $('headerSub').textContent = (team ? team + ' · ' : '') + (monthLabel || '');
+    $('headerIdentity').classList.remove('hidden');
+  }
+
+  // ── Step: identify ────────────────────────────────────────────────────
+  $('idF3Name').value = state.f3Name;
+  $('idEmail').value = state.email;
+
+  $('identifyBtn').addEventListener('click', function() {
+    var f3Name = $('idF3Name').value.trim();
+    var email = $('idEmail').value.trim();
+    $('idError').classList.add('hidden');
+    hideApiError_();
+    if (!f3Name || !email) {
+      $('idError').textContent = 'Please enter both your F3 name and email.';
+      $('idError').classList.remove('hidden');
+      return;
+    }
+    state.f3Name = f3Name;
+    state.email = email;
+    setButtonLoading_(this, true, 'Checking…');
+    var btn = this;
+    callApi('identify', { f3Name: f3Name, email: email })
+      .then(function(res) {
+        setButtonLoading_(btn, false);
+        if (!res.matched) {
+          $('idError').textContent = "We couldn't find a signup with that name and email for the current month. Please sign up first.";
+          $('idError').classList.remove('hidden');
+          return;
+        }
+        saveIdentityToStorage_(f3Name, email);
+        updateHeaderIdentity_(res.f3Name, res.team, res.monthLabel);
+        $('checkinHeading').textContent = 'Welcome back, ' + res.f3Name + '!';
+        $('checkinSub').textContent = res.monthLabel + ' — how did today go?';
+        $('yesterdayBlock').classList.toggle('hidden', !res.needsYesterday);
+        showStep('checkin');
+      })
+      .catch(function(err) {
+        setButtonLoading_(btn, false);
+        showApiError_('identify', err);
+      });
+  });
+
+  // ── Step: checkin ──────────────────────────────────────────────────────
+  function submitCheckin_(btn, day, value) {
+    hideApiError_();
+    setButtonLoading_(btn, true, 'Saving…');
+    callApi('checkin', { f3Name: state.f3Name, email: state.email, day: day, value: value })
+      .then(function() {
+        setButtonLoading_(btn, false);
+        loadDashboard_();
+      })
+      .catch(function(err) {
+        setButtonLoading_(btn, false);
+        showApiError_('checkin', err);
+      });
+  }
+
+  $('todayYesBtn').addEventListener('click', function() { submitCheckin_(this, 'today', 1); });
+  $('todayNoBtn').addEventListener('click', function() { submitCheckin_(this, 'today', 0); });
+  $('yesterdayYesBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', 1); });
+  $('yesterdayNoBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', 0); });
+  $('dashboardBtn').addEventListener('click', function() { loadDashboard_(); });
+
+  // ── Step: dashboard ─────────────────────────────────────────────────────
+  function scoreColor_(pct) {
+    return pct >= 80 ? '#2f5d50' : pct >= 50 ? '#b8860b' : '#a3401a';
+  }
+
+  function memberScorePct_(member) {
+    return member.rawScore ? Math.round((member.score / member.rawScore) * 100) : (member.score >= 0 ? 100 : 0);
+  }
+
+  function renderTeamTile_(member, isMe) {
+    var el = document.createElement('div');
+    el.className = 'team-tile' + (isMe ? ' me' : '');
+    el.innerHTML =
+      '<div class="tname">' + escapeHtml_(member.name) + '</div>' +
+      '<div class="tscore" style="color:' + scoreColor_(memberScorePct_(member)) + ';">' +
+      (member.score >= 0 ? '+' : '') + member.score + '</div>' +
+      '<div class="tstreak">' + (member.streak || 0) + 'd streak</div>';
+    return el;
+  }
+
+  function escapeHtml_(s) {
+    var div = document.createElement('div');
+    div.textContent = String(s == null ? '' : s);
+    return div.innerHTML;
+  }
+
+  function renderDashboard_(d) {
+    updateHeaderIdentity_(d.f3Name, d.team, d.monthLabel);
+    state.trackerUrl = d.trackerUrl || '';
+
+    $('dStreak').textContent = d.streak;
+    var pct = d.totalDays ? Math.round((d.currentDay / d.totalDays) * 100) : 0;
+    $('dProgressPct').textContent = pct + '%';
+    $('dProgressFill').style.width = pct + '%';
+    $('dProgressSub').textContent = 'Day ' + d.currentDay + ' of ' + d.totalDays;
+
+    var scorePct = d.rawScore ? Math.round((d.score / d.rawScore) * 100) : (d.score >= 0 ? 100 : 0);
+    $('dScore').textContent = (d.score >= 0 ? '+' : '') + d.score;
+    $('dScore').style.color = scoreColor_(scorePct);
+    $('dScoreSub').textContent = d.done + ' done · ' + d.missed + ' missed · ' + d.absent + ' absent';
+
+    var bonusesEl = $('dBonuses');
+    bonusesEl.innerHTML = '';
+    (d.weeklyBonuses || []).forEach(function(w) {
+      var row = document.createElement('div');
+      row.className = 'bonus-row';
+      row.innerHTML =
+        '<span class="bonus-label">' + escapeHtml_(w.label) + '</span>' +
+        '<span class="bonus-pill ' + w.status + '">' +
+        (w.status === 'earned' ? (w.value >= 0 ? '+' : '') + w.value + ' pts' : 'UPCOMING') +
+        '</span>';
+      bonusesEl.appendChild(row);
+    });
+
+    $('dTeamName').textContent = d.team || 'Unassigned';
+    var myTeamEl = $('dMyTeam');
+    myTeamEl.innerHTML = '';
+    (d.myTeam || []).forEach(function(m) {
+      myTeamEl.appendChild(renderTeamTile_(m, m.name === d.f3Name));
+    });
+
+    var boardEl = $('dPaxBoard');
+    boardEl.innerHTML = '';
+    (d.paxBoard || []).forEach(function(group) {
+      var groupEl = document.createElement('div');
+      groupEl.className = 'board-group';
+      var head = document.createElement('div');
+      head.className = 'board-head';
+      head.innerHTML = '<span>' + escapeHtml_(group.name) + '</span><span>' + group.members.length + ' PAX</span>';
+      groupEl.appendChild(head);
+      var rowsEl = document.createElement('div');
+      rowsEl.className = 'board-rows';
+      group.members.forEach(function(m) {
+        var row = document.createElement('div');
+        row.className = 'board-row' + (m.name === d.f3Name ? ' me' : '');
+        row.innerHTML = '<span>' + escapeHtml_(m.name) + '</span><span>' + (m.score >= 0 ? '+' : '') + m.score + '</span>';
+        rowsEl.appendChild(row);
+      });
+      groupEl.appendChild(rowsEl);
+      boardEl.appendChild(groupEl);
+    });
+
+    showStep('dashboard');
+  }
+
+  function loadDashboard_() {
+    hideApiError_();
+    callApi('dashboard', { f3Name: state.f3Name, email: state.email })
+      .then(renderDashboard_)
+      .catch(function(err) { showApiError_('dashboard', err); });
+  }
+
+  $('moreBtn').addEventListener('click', function() {
+    if (state.trackerUrl) window.open(state.trackerUrl, '_blank');
+  });
+
+  if (APP_VERSION) $('versionFooter').textContent = 'v' + APP_VERSION;
+</script>
+</body>
+</html>

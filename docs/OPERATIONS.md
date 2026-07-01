@@ -249,12 +249,22 @@ the five expected Drive entries (AC2–AC5). Passes in ~45s.
 - Selector broken → check `test-results/**/error-context.md` for updated ARIA names;
   see `/mnt/c/dev/GAS-Practices/best-practices/gas-editor-testing/README.md`
 
-### Testing the Web App (cmd=signup and similar)
+### Testing the Web App (cmd=signup, cmd=checkin, and similar)
 
 Use the **SIT environment** (`testScriptId` / `testSpreadsheetId`) for all web app testing.
 `getCurrentAndNextMonths_()` resolves "current month" against the SIT TrackerDB, so write-capable
-actions (`save`, `feedback`) against `targetMonth: "current"` hit the SIT spreadsheet, not PROD.
+actions (`save`, `feedback`, `checkin`) against the current month hit the SIT spreadsheet, not PROD.
 For go-live validation, use Smoke mode (see §Smoke Mode above).
+
+`cmd=checkin` (`node tools/callWebapp.js <action> --cmd checkin`) actions: `identify`
+(`{f3Name,email}`, read-only, anti-enumeration — response shape is identical whether or not the
+PAX is found except for the presence of data), `checkin` (`{f3Name,email,day,value}` where
+`day` is `'today'|'yesterday'` and `value` is `1|0` — writes a single Tracker day cell for the
+current month), `dashboard` (`{f3Name,email}`, read-only). `checkin` writes real Tracker data —
+never call it against a real PAX's name/email outside Smoke mode. The `SmokeTest` /
+`smoke@example.com` PAX left over from a prior sign-up smoke test (§Smoke Mode) is safe to reuse
+for `cmd=checkin` write testing without a full smoke tracker cycle, since it's already
+test-only data in a `Smoke Test` team group.
 
 **Always confirm the environment before writing:** call `{ "action": "getSmokeStatus" }` and
 verify `deployTarget` matches your intended environment. `identify` is read-only and safe against

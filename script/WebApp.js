@@ -253,6 +253,9 @@ function doGet(e) {
     if (e && e.parameter && e.parameter.cmd === 'signup') {
       return renderSignupPage_();
     }
+    if (e && e.parameter && e.parameter.cmd === 'checkin') {
+      return renderCheckinPage_();
+    }
     return jsonOutput_({ status: 'ok' });
   });
 }
@@ -267,6 +270,9 @@ function doPost(e) {
     }
     if (cmd === 'signup') {
       return handleSignupPost_(e);
+    }
+    if (cmd === 'checkin') {
+      return handleCheckinPost_(e);
     }
     return jsonOutput_({ status: 'ok' });
   });
