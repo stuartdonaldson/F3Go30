@@ -9,6 +9,8 @@ const {
   needsYesterdayCheckin_,
   groupByTeam_,
   buildWeeklyBonuses_,
+  buildDaySegments_,
+  buildRollingAverage_,
 } = require('../script/dashboardWebapp.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
@@ -112,6 +114,39 @@ const {
   assert.equal(weeks[0].value, 2);
   assert.equal(weeks[0].status, 'earned');
   assert.equal(weeks[1].status, 'upcoming');
+})();
+
+// ── buildDaySegments_ ──────────────────────────────────────────────────────
+(function testBuildDaySegments() {
+  // Reported days map to their outcome; days beyond what's been reported (future days, or a
+  // total-days count longer than what's been read so far) are 'upcoming'.
+  assert.deepEqual(
+    buildDaySegments_([1, 0, -1], 5),
+    ['done', 'missed', 'absent', 'upcoming', 'upcoming']
+  );
+  // A blank cell within the reported range (e.g. today's own cell before check-in) is
+  // 'pending' — distinct from 'absent' (an explicit −1) and 'upcoming' (day hasn't arrived).
+  assert.deepEqual(buildDaySegments_([1, ''], 3), ['done', 'pending', 'upcoming']);
+  assert.deepEqual(buildDaySegments_([], 2), ['upcoming', 'upcoming']);
+})();
+
+// ── buildRollingAverage_ ───────────────────────────────────────────────────
+(function testBuildRollingAverage() {
+  var raw = [1, 1, 1, 0, -1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+  var series = buildRollingAverage_(raw, 7);
+  assert.equal(series.length, raw.length);
+  assert.equal(series[0], 1);
+  assert.equal(series[3], 0.75); // window [1,1,1,0]
+  assert.ok(Math.abs(series[4] - 0.4) < 1e-9); // window [1,1,1,0,-1]
+  assert.equal(series[17], 1); // last 7 days all 1s
+
+  // Blank cells (not-yet-reported) within the window are excluded from the average, not
+  // treated as 0.
+  var withBlank = [1, '', 0];
+  var series2 = buildRollingAverage_(withBlank, 2);
+  assert.equal(series2[0], 1);
+  assert.equal(series2[1], 1); // window [1, ''] -> only 1 counts
+  assert.equal(series2[2], 0); // window ['', 0] -> only 0 counts
 })();
 
 console.log('test_dashboard_webapp.js: all assertions passed');

@@ -163,6 +163,43 @@ function buildWeeklyBonuses_(bonusCols, bonusValues, today) {
   });
 }
 
+/**
+ * Classifies every day 1..totalDays for ring/day-grid rendering: 'done'|'missed'|'absent' for
+ * a reported value, 'pending' for a blank cell still within the reported range (e.g. today's
+ * own cell before check-in — distinct from an explicit −1), 'upcoming' for a day beyond what's
+ * been read yet (future days, or totalDays longer than dayValues).
+ */
+function buildDaySegments_(dayValues, totalDays) {
+  var values = dayValues || [];
+  var segments = [];
+  for (var i = 0; i < totalDays; i++) {
+    if (i >= values.length) { segments.push('upcoming'); continue; }
+    var v = values[i];
+    if (v === 1) segments.push('done');
+    else if (v === 0) segments.push('missed');
+    else if (v === -1) segments.push('absent');
+    else segments.push('pending');
+  }
+  return segments;
+}
+
+/**
+ * Trailing windowSize-day mean at each reported-day index, for the 7-day moving-average chart
+ * and team-tile sparklines. Blank cells within the window are excluded from the average rather
+ * than treated as 0 — a not-yet-reported day shouldn't drag the average down.
+ */
+function buildRollingAverage_(dayValues, windowSize) {
+  var values = dayValues || [];
+  var series = [];
+  for (var i = 0; i < values.length; i++) {
+    var start = Math.max(0, i - windowSize + 1);
+    var windowVals = values.slice(start, i + 1).filter(function(v) { return v === 1 || v === 0 || v === -1; });
+    var avg = windowVals.length ? windowVals.reduce(function(a, b) { return a + b; }, 0) / windowVals.length : 0;
+    series.push(avg);
+  }
+  return series;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // GAS orchestration (not unit-tested — composes the pure functions above,
 // verified against the live TEST_APP deployment, same boundary as signupWebapp.js).
@@ -299,8 +336,19 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
   return { ok: true };
 }
 
-function buildDashboardPaxRow_(name, team, score, rawScore, streak) {
-  return { name: name, team: team, score: score, rawScore: rawScore, streak: streak };
+var ROLLING_AVERAGE_WINDOW_DAYS_ = 7;
+
+function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, totalDays, currentDay) {
+  return {
+    name: name,
+    team: team,
+    score: score,
+    rawScore: rawScore,
+    streak: streak,
+    scorePct: currentDay ? Math.round((score / currentDay) * 100) : (score >= 0 ? 100 : 0),
+    daySegments: buildDaySegments_(dayValues, totalDays),
+    rollingAverage: buildRollingAverage_(dayValues, ROLLING_AVERAGE_WINDOW_DAYS_),
+  };
 }
 
 function handleCheckinDashboard_(templateSpreadsheet, payload) {
@@ -314,6 +362,7 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
 
   var currentDayCols = classified.dayCols.filter(function(d) { return d.date <= today; });
   var totalDays = classified.dayCols.length;
+  var currentDay = currentDayCols.length;
 
   var allPaxRows = [];
   var userRow = null;
@@ -326,7 +375,10 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
       row[TRACKER_TEAM_COL_],
       row[TRACKER_SCORE_COL_],
       row[TRACKER_RAW_SCORE_COL_],
-      computeStreak_(dayValues)
+      computeStreak_(dayValues),
+      dayValues,
+      totalDays,
+      currentDay
     );
     allPaxRows.push(paxRow);
     if (idx === identity.rowIndex) userRow = paxRow;
@@ -343,7 +395,7 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
 
   var paxBoard = groupByTeam_(allPaxRows);
 
-  GasLogger.log('checkinWebapp.dashboard', { f3Name: payload.f3Name, currentDay: currentDayCols.length, totalDays: totalDays });
+  GasLogger.log('checkinWebapp.dashboard', { f3Name: payload.f3Name, currentDay: currentDay, totalDays: totalDays });
 
   return {
     ok: true,
@@ -351,11 +403,14 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
     team: userRow.team,
     monthLabel: identity.months.current.label,
     trackerUrl: identity.months.current.trackerUrl,
-    currentDay: currentDayCols.length,
+    currentDay: currentDay,
     totalDays: totalDays,
     streak: userRow.streak,
     score: userRow.score,
     rawScore: userRow.rawScore,
+    scorePct: userRow.scorePct,
+    daySegments: userRow.daySegments,
+    rollingAverage: userRow.rollingAverage,
     done: outcomes.done,
     missed: outcomes.missed,
     absent: outcomes.absent,
@@ -375,5 +430,7 @@ if (typeof module !== 'undefined' && module.exports) {
     needsYesterdayCheckin_: needsYesterdayCheckin_,
     groupByTeam_: groupByTeam_,
     buildWeeklyBonuses_: buildWeeklyBonuses_,
+    buildDaySegments_: buildDaySegments_,
+    buildRollingAverage_: buildRollingAverage_,
   };
 }

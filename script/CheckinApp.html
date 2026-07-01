@@ -36,15 +36,16 @@
   .checkin-section-label { font-size: 11px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 18px 0 8px; }
   .error-text { font-size: 13px; color: #a3401a; margin-bottom: 8px; }
   .hidden { display: none; }
-  .stats-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 18px; }
-  .stat-card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 16px; text-align: center; }
+  .stats-row { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 12px; margin-top: 18px; align-items: stretch; }
+  .stat-card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 16px; text-align: center; display: flex; flex-direction: column; align-items: center; }
   .stat-label { font-size: 10px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin-bottom: 6px; }
   .stat-value { font-size: 40px; font-weight: bold; line-height: 1; }
   .stat-sub { font-size: 10px; color: #b0a898; margin-top: 6px; letter-spacing: .06em; }
   .progress-bar { width: 100%; background: #ede9df; border-radius: 3px; height: 7px; overflow: hidden; margin-top: 10px; }
   .progress-fill { height: 7px; background: #2f5d50; border-radius: 3px; }
-  .day-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; margin-top: 10px; }
-  .day-cell { aspect-ratio: 1; border-radius: 3px; }
+  .ring-svg { display: block; margin: 0 auto; }
+  .day-mini-bar { display: flex; gap: 1.5px; align-items: center; flex: 1; min-width: 0; }
+  .day-mini-cell { width: 4px; height: 12px; border-radius: 1px; flex-shrink: 0; }
   .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
   .legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #888; }
   .legend-swatch { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
@@ -54,16 +55,19 @@
   .bonus-pill.earned { background: #eef3f0; color: #2f5d50; }
   .bonus-pill.upcoming { background: #f0ece2; color: #b0a898; }
   .team-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(120px,1fr)); gap: 10px; margin-top: 12px; }
-  .team-tile { border-radius: 10px; padding: 12px 8px; text-align: center; border: 1.5px solid #d8cfbf; background: #fff; }
+  .team-tile { border-radius: 10px; padding: 12px 8px; text-align: center; border: 1.5px solid #d8cfbf; background: #fff; display: flex; flex-direction: column; align-items: center; }
   .team-tile.me { border-color: #2f5d50; background: #eef3f0; }
-  .team-tile .tname { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
-  .team-tile .tscore { font-size: 22px; font-weight: bold; }
+  .team-tile .tname { font-weight: bold; font-size: 12px; margin: 4px 0 2px; }
+  .team-tile .tscore { font-size: 20px; font-weight: bold; }
   .team-tile .tstreak { font-size: 9px; color: #b0a898; margin-top: 2px; }
   .board-group { border: 1px solid #d8cfbf; border-radius: 12px; overflow: hidden; margin-top: 12px; }
   .board-head { background: #2f5d50; color: #f8f4ea; padding: 9px 16px; font-size: 12px; font-weight: bold; letter-spacing: .16em; display: flex; justify-content: space-between; }
   .board-rows { padding: 6px 12px; }
-  .board-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 4px; border-radius: 4px; font-size: 13px; }
+  .board-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 6px 4px; border-radius: 4px; font-size: 12px; }
+  .board-row .bname { width: 78px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: bold; }
+  .board-row .bpct { width: 30px; flex-shrink: 0; text-align: right; font-family: monospace; font-weight: bold; }
   .board-row.me { background: #eef3f0; font-weight: bold; }
+  .chart-card { margin-top: 12px; }
   .section-label { font-size: 11px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 22px 0 4px; }
   .api-error-banner { background: #fdeceb; border-bottom: 3px solid #a3401a; color: #6b1f0a; padding: 12px 18px; font-size: 14px; line-height: 1.5; }
   .api-error-banner strong { display: block; margin-bottom: 2px; }
@@ -130,18 +134,28 @@
           <div class="stat-label">STREAK</div>
           <div class="stat-value" id="dStreak" style="color:#2f5d50;"></div>
           <div class="stat-sub">DAYS</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">PROGRESS</div>
-          <div class="stat-value" id="dProgressPct" style="color:#2f5d50;font-size:28px;"></div>
           <div class="progress-bar"><div class="progress-fill" id="dProgressFill"></div></div>
           <div class="stat-sub" id="dProgressSub"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">MONTH PROGRESS</div>
+          <div id="dMonthRing"></div>
+          <div class="legend" style="margin-top:8px;justify-content:center;">
+            <div class="legend-item"><div class="legend-swatch" style="background:#2f5d50;"></div>Done</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#b8860b;"></div>Missed</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#a3401a;"></div>Absent</div>
+          </div>
         </div>
         <div class="stat-card">
           <div class="stat-label">TOTAL SCORE</div>
           <div class="stat-value" id="dScore"></div>
           <div class="stat-sub" id="dScoreSub"></div>
         </div>
+      </div>
+
+      <div class="card chart-card">
+        <div class="section-label" style="margin-top:0;">7-DAY MOVING AVERAGE</div>
+        <div id="dAvgChart"></div>
       </div>
 
       <div class="card">
@@ -310,20 +324,8 @@
     return pct >= 80 ? '#2f5d50' : pct >= 50 ? '#b8860b' : '#a3401a';
   }
 
-  function memberScorePct_(member) {
-    return member.rawScore ? Math.round((member.score / member.rawScore) * 100) : (member.score >= 0 ? 100 : 0);
-  }
-
-  function renderTeamTile_(member, isMe) {
-    var el = document.createElement('div');
-    el.className = 'team-tile' + (isMe ? ' me' : '');
-    el.innerHTML =
-      '<div class="tname">' + escapeHtml_(member.name) + '</div>' +
-      '<div class="tscore" style="color:' + scoreColor_(memberScorePct_(member)) + ';">' +
-      (member.score >= 0 ? '+' : '') + member.score + '</div>' +
-      '<div class="tstreak">' + (member.streak || 0) + 'd streak</div>';
-    return el;
-  }
+  var SEGMENT_COLORS_ = { done: '#2f5d50', missed: '#b8860b', absent: '#a3401a', pending: '#d8cfbf', upcoming: '#d8cfbf' };
+  var SEGMENT_VALUES_ = { done: 1, missed: 0, absent: -1 };
 
   function escapeHtml_(s) {
     var div = document.createElement('div');
@@ -331,20 +333,140 @@
     return div.innerHTML;
   }
 
+  function toRad_(deg) { return deg * Math.PI / 180; }
+
+  /** Same arc-path math as the design reference's segmented ring (donut wedge between ro/ri). */
+  function ringArcPath_(cx, cy, ro, ri, s0, s1) {
+    var a0 = toRad_(s0 - 90), a1 = toRad_(s1 - 90);
+    var x1 = cx + ro * Math.cos(a0), y1 = cy + ro * Math.sin(a0);
+    var x2 = cx + ro * Math.cos(a1), y2 = cy + ro * Math.sin(a1);
+    var x3 = cx + ri * Math.cos(a1), y3 = cy + ri * Math.sin(a1);
+    var x4 = cx + ri * Math.cos(a0), y4 = cy + ri * Math.sin(a0);
+    var largeArc = (s1 - s0) > 180 ? 1 : 0;
+    return 'M' + x1.toFixed(2) + ' ' + y1.toFixed(2) + ' A' + ro + ' ' + ro + ' 0 ' + largeArc + ' 1 ' +
+      x2.toFixed(2) + ' ' + y2.toFixed(2) + ' L' + x3.toFixed(2) + ' ' + y3.toFixed(2) +
+      ' A' + ri + ' ' + ri + ' 0 ' + largeArc + ' 0 ' + x4.toFixed(2) + ' ' + y4.toFixed(2) + 'Z';
+  }
+
+  /** Segmented donut ring — one wedge per day, colored by daySegments status, with up to two centered text lines. */
+  function buildRingSvg_(daySegments, size, centerLine1, centerLine2, centerColor) {
+    var total = (daySegments || []).length || 1;
+    var cx = size / 2, cy = size / 2;
+    var ro = size * 0.46, ri = size * 0.32;
+    var seg = 360 / total, gap = Math.min(2.2, seg * 0.15);
+    var paths = '';
+    for (var i = 0; i < total; i++) {
+      var color = SEGMENT_COLORS_[daySegments[i]] || '#d8cfbf';
+      var s0 = i * seg + gap / 2, s1 = (i + 1) * seg - gap / 2;
+      if (s1 <= s0) s1 = s0 + 0.1;
+      paths += '<path d="' + ringArcPath_(cx, cy, ro, ri, s0, s1) + '" fill="' + color + '"></path>';
+    }
+    var f1 = Math.round(size * 0.22), f2 = Math.round(size * 0.09);
+    var t1 = centerLine1 ? '<text x="' + cx + '" y="' + (cy + f1 * 0.35) + '" text-anchor="middle" font-size="' + f1 +
+      '" font-family="Arial, sans-serif" font-weight="bold" fill="' + (centerColor || '#2f5d50') + '">' + escapeHtml_(centerLine1) + '</text>' : '';
+    var t2 = centerLine2 ? '<text x="' + cx + '" y="' + (cy + f1 * 0.35 + f2 + 2) + '" text-anchor="middle" font-size="' + f2 +
+      '" font-family="monospace" fill="#888">' + escapeHtml_(centerLine2) + '</text>' : '';
+    return '<svg class="ring-svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' + paths + t1 + t2 + '</svg>';
+  }
+
+  /** Reported-so-far daySegments (drops the trailing 'upcoming' entries) mapped back to +1/0/-1, nulls dropped. */
+  function reportedValues_(daySegments, currentDay) {
+    return (daySegments || []).slice(0, currentDay)
+      .map(function(s) { return SEGMENT_VALUES_[s]; })
+      .filter(function(v) { return v === 1 || v === 0 || v === -1; });
+  }
+
+  /** Small last-7-day sparkline, same visual language as the design reference's team-tile spark. */
+  function buildSparklineSvg_(daySegments, currentDay, color, w, h) {
+    var last7 = reportedValues_(daySegments, currentDay).slice(-7);
+    if (last7.length < 2) return '';
+    var pts = last7.map(function(v, i) {
+      var x = (i / (last7.length - 1)) * w;
+      var y = v === 1 ? 2 : v === 0 ? h / 2 : h - 2;
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
+      '<polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+  }
+
+  /** Day-by-day mini bar for a PAX board row — one thin colored cell per reported day. */
+  function buildDayMiniBar_(daySegments, currentDay) {
+    var el = document.createElement('div');
+    el.className = 'day-mini-bar';
+    (daySegments || []).slice(0, currentDay).forEach(function(status) {
+      var cell = document.createElement('div');
+      cell.className = 'day-mini-cell';
+      cell.style.background = SEGMENT_COLORS_[status] || '#d8cfbf';
+      el.appendChild(cell);
+    });
+    return el;
+  }
+
+  /** 7-day moving-average chart: bars = daily outcome, line = rollingAverage series. */
+  function buildAvgChartSvg_(rollingAverage, daySegments, currentDay) {
+    if (!currentDay || currentDay < 2) return '<p class="muted" style="margin:0;">Not enough data yet.</p>';
+    var W = 600, H = 130, PADT = 12, PADB = 22, PADL = 28, PADR = 6;
+    var PW = W - PADL - PADR, PH = H - PADT - PADB;
+    var mapY = function(v) { return PADT + PH * (1 - (v + 1) / 2); };
+    var mapX = function(i) { return PADL + (i / (currentDay - 1)) * PW; };
+    var bw = Math.max(3, PW / currentDay - 3);
+    var zY = mapY(0);
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;">';
+    svg += '<line x1="' + PADL + '" y1="' + mapY(1) + '" x2="' + W + '" y2="' + mapY(1) + '" stroke="#eef3f0" stroke-width="1"/>';
+    svg += '<line x1="' + PADL + '" y1="' + zY + '" x2="' + W + '" y2="' + zY + '" stroke="#d8cfbf" stroke-width="1" stroke-dasharray="4,4"/>';
+    svg += '<line x1="' + PADL + '" y1="' + mapY(-1) + '" x2="' + W + '" y2="' + mapY(-1) + '" stroke="#f2e2d9" stroke-width="1"/>';
+    svg += '<text x="0" y="' + (mapY(1) + 4) + '" font-size="10" fill="#888">+1</text>';
+    svg += '<text x="0" y="' + (zY - 2) + '" font-size="10" fill="#888">0</text>';
+    svg += '<text x="0" y="' + (mapY(-1) + 4) + '" font-size="10" fill="#888">-1</text>';
+    for (var i = 0; i < currentDay; i++) {
+      var status = daySegments[i];
+      var color = SEGMENT_COLORS_[status] || '#d8cfbf';
+      var v = SEGMENT_VALUES_[status] || 0;
+      var x = mapX(i) - bw / 2, top = Math.min(zY, mapY(v)), ht = Math.abs(zY - mapY(v));
+      svg += '<rect x="' + x.toFixed(1) + '" y="' + top.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(ht, 2).toFixed(1) + '" fill="' + color + '" opacity="0.35"/>';
+    }
+    var points = (rollingAverage || []).map(function(v, i) { return mapX(i).toFixed(1) + ',' + mapY(v).toFixed(1); }).join(' ');
+    svg += '<polyline points="' + points + '" fill="none" stroke="#2f5d50" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
+    (rollingAverage || []).forEach(function(v, i) {
+      svg += '<circle cx="' + mapX(i).toFixed(1) + '" cy="' + mapY(v).toFixed(1) + '" r="3" fill="#2f5d50"/>';
+    });
+    svg += '</svg>';
+    return svg;
+  }
+
+  function renderTeamTile_(member, isMe, currentDay) {
+    var el = document.createElement('div');
+    el.className = 'team-tile' + (isMe ? ' me' : '');
+    var ring = buildRingSvg_(member.daySegments, 72, member.scorePct + '%', '', scoreColor_(member.scorePct));
+    var spark = buildSparklineSvg_(member.daySegments, currentDay, scoreColor_(member.scorePct), 66, 20);
+    el.innerHTML =
+      ring +
+      '<div class="tname">' + escapeHtml_(member.name) + '</div>' +
+      (spark ? '<div>' + spark + '</div>' : '') +
+      '<div class="tscore" style="color:' + scoreColor_(member.scorePct) + ';">' +
+      (member.score >= 0 ? '+' : '') + member.score + '</div>' +
+      '<div class="tstreak">' + (member.streak || 0) + 'd streak</div>';
+    return el;
+  }
+
   function renderDashboard_(d) {
     updateHeaderIdentity_(d.f3Name, d.team, d.monthLabel);
     state.trackerUrl = d.trackerUrl || '';
 
     $('dStreak').textContent = d.streak;
-    var pct = d.totalDays ? Math.round((d.currentDay / d.totalDays) * 100) : 0;
-    $('dProgressPct').textContent = pct + '%';
-    $('dProgressFill').style.width = pct + '%';
+    var dayPct = d.totalDays ? Math.round((d.currentDay / d.totalDays) * 100) : 0;
+    $('dProgressFill').style.width = dayPct + '%';
     $('dProgressSub').textContent = 'Day ' + d.currentDay + ' of ' + d.totalDays;
 
-    var scorePct = d.rawScore ? Math.round((d.score / d.rawScore) * 100) : (d.score >= 0 ? 100 : 0);
+    $('dMonthRing').innerHTML = buildRingSvg_(
+      d.daySegments, 140, d.scorePct + '%', (d.score >= 0 ? '+' : '') + d.score + ' pts', scoreColor_(d.scorePct)
+    );
+
     $('dScore').textContent = (d.score >= 0 ? '+' : '') + d.score;
-    $('dScore').style.color = scoreColor_(scorePct);
+    $('dScore').style.color = scoreColor_(d.scorePct);
     $('dScoreSub').textContent = d.done + ' done · ' + d.missed + ' missed · ' + d.absent + ' absent';
+
+    $('dAvgChart').innerHTML = buildAvgChartSvg_(d.rollingAverage, d.daySegments, d.currentDay);
 
     var bonusesEl = $('dBonuses');
     bonusesEl.innerHTML = '';
@@ -363,7 +485,7 @@
     var myTeamEl = $('dMyTeam');
     myTeamEl.innerHTML = '';
     (d.myTeam || []).forEach(function(m) {
-      myTeamEl.appendChild(renderTeamTile_(m, m.name === d.f3Name));
+      myTeamEl.appendChild(renderTeamTile_(m, m.name === d.f3Name, d.currentDay));
     });
 
     var boardEl = $('dPaxBoard');
@@ -380,7 +502,16 @@
       group.members.forEach(function(m) {
         var row = document.createElement('div');
         row.className = 'board-row' + (m.name === d.f3Name ? ' me' : '');
-        row.innerHTML = '<span>' + escapeHtml_(m.name) + '</span><span>' + (m.score >= 0 ? '+' : '') + m.score + '</span>';
+        var nameEl = document.createElement('span');
+        nameEl.className = 'bname';
+        nameEl.textContent = m.name;
+        var pctEl = document.createElement('span');
+        pctEl.className = 'bpct';
+        pctEl.style.color = scoreColor_(m.scorePct);
+        pctEl.textContent = m.scorePct + '%';
+        row.appendChild(nameEl);
+        row.appendChild(buildDayMiniBar_(m.daySegments, d.currentDay));
+        row.appendChild(pctEl);
         rowsEl.appendChild(row);
       });
       groupEl.appendChild(rowsEl);
