@@ -506,3 +506,31 @@ Investigated and fixed PROD nag email incident where real emails were sent despi
 ### Key Learnings
 - When GAS code runs from the template spreadsheet (IS_TEMPLATE_HOST=true), `SpreadsheetApp.getActiveSpreadsheet()` is the template — but functions that open tracker spreadsheets by ID get a different spreadsheet object. Policy/global config must be read from the template, not from the passed-in tracker.
 - `[]` is truthy in JavaScript; using it as a "no data" sentinel silently breaks `if (data)` guards that distinguish "data provided" from "go read from spreadsheet".
+
+## 2026-07-01 01:18:23
+
+### Summary:
+Built a new PAX-facing daily check-in + dashboard web app (`cmd=checkin`) on branch
+`dashboard-tool`, based on the Go30 PAX Scoring Dashboard design reference. Identity reuses
+the sign-up F3 Name + Email pair (no password concept exists — ADR-011); team grouping reads
+the Tracker's live Team/Goal column rather than an invented roster (ADR-012). Backend
+(`script/dashboardWebapp.js`) exposes `identify`/`checkin`/`dashboard` actions and is
+unit-tested (`test/test_dashboard_webapp.js`) for column classification, streak/outcome
+counting, team grouping, weekly-bonus status, day-segment classification, and rolling-average
+computation. Frontend (`script/CheckinApp.html`) renders identify → today/yesterday check-in →
+dashboard, with a segmented SVG donut ring (score % + raw score), per-team-tile rings and
+sparklines, a 7-day moving-average chart, and day-by-day mini bars on PAX board rows — all
+restored via plain SVG/CSS after an initial simplification pass dropped them per user feedback.
+Also added `HomeApp.html`, a landing page for the no-cmd `doGet` path linking to sign-up,
+check-in/dashboard, and the current tracker spreadsheet (replacing the old bare
+`{"status":"ok"}` JSON). All work live-verified end-to-end on SIT — identify/checkin/dashboard
+round-trips against a real signed-up PAX (read-only) and the leftover `SmokeTest` PAX
+(read+write), plus Playwright screenshots confirming the rendered dashboard and home page.
+Three bd issues closed (F3Go30-ln1x, F3Go30-bjxr, F3Go30-m41e); docs (CONTEXT.md, DESIGN.md,
+OPERATIONS.md) and two new ADRs updated. Branch not yet pushed or merged.
+
+### Key Learnings:
+GAS `HtmlService` templates render inside a nested iframe chain when loaded via the `/exec`
+web app URL (`userCodeAppPanel` → a same-origin `/blank` frame) — Playwright selectors must
+target `page.frames().find(f => f.url().includes('/blank'))`, not the top-level page or the
+first-level iframe, or `waitForSelector` calls silently time out with no useful error.
