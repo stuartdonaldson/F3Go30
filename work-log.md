@@ -534,3 +534,106 @@ GAS `HtmlService` templates render inside a nested iframe chain when loaded via 
 web app URL (`userCodeAppPanel` → a same-origin `/blank` frame) — Playwright selectors must
 target `page.frames().find(f => f.url().includes('/blank'))`, not the top-level page or the
 first-level iframe, or `waitForSelector` calls silently time out with no useful error.
+
+## 2026-07-01 01:40:19
+
+### Summary:
+Extended the PAX check-in dashboard (dashboard-tool branch) with four requested fixes.
+Mobile viewport: HtmlService's IFRAME sandbox strips a plain `<meta viewport>` tag, so
+`.addMetaTag('viewport', ...)` was added to all three rendered pages (checkin, signup,
+home) in `dashboardWebapp.js`/`WebApp.js`. Streak card now shows current streak plus "Best
+30d" via a new pure `computeMaxStreak_()` (longest run of 1's, optionally windowed), unit
+tested in `test/test_dashboard_webapp.js`. `onOpen.js`'s About dialog now reads the
+`WEBAPP_URL` script property instead of `ScriptApp.getService().getUrl()`, which is
+unreliable when called from a spreadsheet-menu execution rather than a live web request.
+Added date-navigation arrows to the dashboard: `handleCheckinDashboard_` now accepts an
+optional `dateISO`, resolves the target month via TrackerDB (`resolveTrackerForContextDate`)
+instead of being locked to "current," and always returns the *entire* month's raw day
+values (through real "today") in one payload. The client caches that payload per month
+(`state.monthCache`) and recomputes streak/day-segments/rolling-average locally for any
+day within an already-cached month, so arrow clicks within a month cost no server round
+trip; crossing into an unfetched month triggers exactly one new request. Score/weekly
+bonuses intentionally stay pinned to the live running total rather than being re-derived
+per historical day, since the Tracker's Score column is a spreadsheet formula not safely
+reproducible client-side. Added server-side `CacheService` caching (5 min TTL) of each
+Tracker sheet's row2/row3/PAX-data read, invalidated immediately on check-in write. Full
+existing 13-file test suite plus new tests all pass; changes not yet pushed, deployed, or
+live-verified against SIT.
+
+### Key Learnings:
+Reusing one "identity resolution" function across both the always-current check-in flow
+and the date-scrubbing dashboard (by parameterizing on an already-resolved `monthInfo`
+rather than re-deriving "current month" internally) kept the historical-navigation feature
+from duplicating the anti-enumeration Responses-matching logic.
+
+## 2026-07-01 13:29:07
+
+### Summary:
+Fixed month-boundary bugs in the check-in dashboard (dashboardWebapp.js): yesterday's check-in
+status/edit now correctly falls back to the previous month's tracker via new
+resolveCheckinDayTarget_ (handleCheckinIdentify_/handleCheckinSubmit_), and the 7-day rolling
+average chart now pads its display window across a month boundary with real prior-month day
+values (new priorMonthDayValues server field + client-side buildRollingAverageLocal_ in
+CheckinApp.html) instead of showing a sparse few-point chart early in a month. Added a WHO/WHAT/
+HOW goals reminder to the check-in page, sourced from the already-cached Responses row (no new
+caching needed). Bumped small/medium font sizes ~30% larger across CheckinApp.html (largest
+stat/ring numbers left unchanged) and made the date-nav arrows bigger/bolder/higher-contrast.
+Extended the "About" dialog (onOpen.js) with direct Signup/Dashboard links. All changes verified
+live against real SIT data (Crazy Ivan, Little John) and deployed to SIT.
+
+Also fixed the "Invalidate Cache" menu action's scope: discovered each monthly Tracker
+spreadsheet is a Drive makeCopy() of the Template, which never copies Script Properties, so a
+Tracker copy's script runs against its own empty PropertiesService store — a menu click there
+was silently invalidating nothing. New WebApp.js admin action invalidateAllCache runs inside the
+actual deployed web app's project (the real cache store) and does a full wipe across all months,
+called over HTTP from onOpen.js's menu handler regardless of which spreadsheet it's opened from.
+
+### Key Learnings:
+Script Properties are never copied by Drive's makeCopy — only the Template's own script project
+ever has WEBAPP_URL/ADMIN_SHARED_SECRET set, so any admin-style action triggered from a monthly
+Tracker's own menu/onEdit must go through the deployed web app over HTTP (UrlFetchApp), not touch
+PropertiesService.getScriptProperties() locally, or it silently operates on an empty, irrelevant
+store. Note: onEdit (CacheInvalidation.js) has this same architectural gap for manual Tracker
+edits made outside the web app — flagged for a follow-up fix, not yet addressed.
+
+## 2026-07-01 14:03:04
+
+### Summary:
+Polished the checkin/dashboard web app (CheckinApp.html) — bumped all font sizes by 1px across checkin+dashboard views (including responsive overrides and SVG axis labels), replaced the thin/misaligned entity arrows (&larr;/&rarr;) on date-nav-btn with flex-centered inline SVG chevrons, widened the PAX board's F3-name column (78px->117px) and day-mini-cell blocks (4px->6px) by 50%, and centered the day-mini-bar block between the name and score% columns via justify-content:center. Diagnosed and fixed a real perf gap in getPriorMonthTailValues_ (dashboardWebapp.js): it unconditionally called SpreadsheetApp.openById on the prior month's tracker even when the tracker-layout cache and this PAX's PaxCache row were both already hit, so navigating back across a month boundary paid a needless cold spreadsheet open every time. Added a cache-only fast path (new getCachedTrackerLayoutOnly_ helper) that skips the open when both caches hit; confirmed both caches are already correctly write-through invalidated by handleCheckinSubmit_'s "yesterday" write path, so no staleness risk. Added checkinWebapp.priorMonthTail.timing GasLogger entries and unit tests for the new cache-peek helper. Verified live on SIT via Axiom logs: cold call skippedOpen=false/1593ms, repeat calls skippedOpen=true/~344-1437ms. Deployed to SIT (v2.2.82 through v2.2.86) and then to PROD.
+
+### Key Learnings:
+PaxCache (PropertiesService, per-PAX row + roster index) and the Tracker-layout cache (CacheService, 6h TTL) were already correctly write-through invalidated for the one write path that can touch a prior month (checking in "yesterday" on day 1 of a new month) — the actual bug wasn't missing caching, it was that getPriorMonthTailValues_ ignored those caches when deciding whether to pay for SpreadsheetApp.openById, always opening the spreadsheet regardless of cache state. Lesson: when investigating "is X cached", check whether the expensive call is gated on the cache result at all, not just whether a cache exists.
+
+## 2026-07-01 17:49:32
+
+### Summary:
+Fixed a real cache-invalidation gap in PaxCache: the onEdit simple trigger (CacheInvalidation.js) could never invalidate the shared PropertiesService store because a monthly Tracker spreadsheet is a Drive copy carrying its own independent bound script + PropertiesService, so onEdit ran in the wrong project entirely. Replaced it with a Drive-modtime freshness gate in PaxCache.js (ensurePaxCacheFresh_): DriveApp.getFileById(sheetId).getLastUpdated() is readable cross-project regardless of which script owns the file, so it's compared against a stored asOf on every cache read (memoized per sheetId per execution) and wipes the sheet's cache on any drift. Deleted the now-dead CacheInvalidation.js + its test. Also added setPaxCacheRowsBulk_ (single PropertiesService.setProperties() call) and switched dashboardWebapp.js's resolveCheckinIdentityFull_ off its old per-PAX-row setProperty loop, cutting a full-roster cache rebuild from N+1 PropertiesService calls to 1.
+
+Then built the "Bonus Check In" feature end to end (tracked as F3Go30-yj53): a PAX-facing way to list/add/edit their own Bonus Tracker entries (EHing FNG, Fellowship, Q Point, Inspire) without opening the spreadsheet. User explicitly redirected the initial plan (a new ?cmd=bonus page) to instead extend the existing check-in page, reusing its identity — new script/bonusWebapp.js (validateBonusEntry_, formatBonusRowForClient_, listBonusEntriesForPax_/addBonusEntry_/editBonusEntry_) wired into dashboardWebapp.js's handleCheckinPost_ as bonusList/bonusAdd/bonusEdit actions, no new WebApp.js route. CheckinApp.html gained a header-accessible Bonus section (list + add/edit form, link required client- and server-side for EHing FNG/Q Point/Inspire). Row appends copy the Bonus Tracker's B:E formula columns down from the row above (mirroring signupWebapp.js's Tracker-row-append pattern) since Apps Script's setValues() has no UI-style fill-down. Dates round-trip as local-midnight YYYY-MM-DD strings to avoid a UTC-shift bug. test/test_bonus_webapp.js added; npm test green; docs/CONTEXT.md and docs/sheet-reference.md updated. Live SIT verification (deploy + tools/callWebapp.js + browser walkthrough) still outstanding, pending user go-ahead to deploy.
+
+### Key Learnings:
+A Drive-copied spreadsheet's bound script is a full independent copy with its own PropertiesService/script-cache store — any onEdit-based invalidation scheme for a cache that lives in a *different* (e.g. template/deployed-webapp) script project silently no-ops, since the trigger fires in the copy's own project, not the one holding the real store. DriveApp.getFileById().getLastUpdated() is the one signal that's readable identically regardless of which script project is asking, making it the right cross-project staleness gate. Also: PropertiesService.setProperties() collapses a full-roster cache rebuild from O(N) calls to O(1) — worth using anywhere a loop is calling setProperty per row.
+
+## 2026-07-01 18:24:43
+
+### Summary:
+Diagnosed a live SIT bug (bonusAdd -> "server_error") reported while testing F3Go30-yj53's new Bonus Check In feature. Root-caused via Axiom (query_axiom.py): the error was "coordinates of the target range are outside the dimensions of the sheet." Confirmed live against the SIT tracker spreadsheet's Bonus Tracker sheet (tools/callWebapp.js getSheet) that it's pre-formatted to exactly 892 rows (matching the sheet's own $G2:$G892 array-formula bound) but was entirely blank in B:E — because CreateNewTracker.js's initSheets() reset the Bonus Tracker with a blanket clearContent() across the whole row2+ range each month, wiping the spilled B2:E2 array-formula anchor along with the PAX-entered columns. With that anchor gone, bonusWebapp.js's addBonusEntry_ still trusted getLastRow() (inflated to 892 by leftover template formatting) to compute the next append row, landing one row past the sheet's real bounds. Fixed both: CreateNewTracker.js now only clears the PAX-entered columns (A, F:I) during the monthly reset, leaving B:E's formula anchor intact; bonusWebapp.js's addBonusEntry_ now scans column A for the first blank row within getMaxRows() (new findNextBonusRow_) instead of trusting getLastRow(), and no longer does the now-unnecessary/buggy copyTo of B:E. editBonusEntry_'s bounds check switched from getLastRow() to getMaxRows() for the same reason. Added regression tests in test_bonus_webapp.js using a mock sheet shaped like the real bug (maxRows=892, no real data). Full suite green; fix not yet deployed to SIT (pending go-ahead).
+
+Also audited every doGet/doPost entry point and installable trigger for consistent error-logging: GasLogger.run() already exists and every true entry point (doGet/doPost, onOpen, form-submit trigger, time-driven triggers, menu items) already uses it. The real gap was in the three inner action-dispatchers (handleSignupPost_, handleAdminPost_, handleCheckinPost_) — each has its own try/catch (correctly, so they can return JSON instead of rethrowing into run()'s handler), but none logged a stack trace, only the error message, which is exactly why the bonusAdd bug needed reverse-engineering from live sheet state instead of just reading the stack. Added GasLogger.logError(tag, err, extra) (always logs message+stack+extra) and switched all three dispatchers to use it. ~20 other best-effort catches (shortenUrlFailed, emailFailed, lockFailed, etc.) still omit stack traces but were left alone as out of scope (non-fatal branches inside already-run()-wrapped functions, not the "did this request 500" signal).
+
+Shipped three CheckinApp.html UI changes on request: (1) swapped the "..." (&hellip;) overflow-menu glyph on the tracker-spreadsheet button for a bar-chart emoji (&#128202;) so it reads as a spreadsheet icon rather than a generic more-menu; (2) reordered the Bonus add/edit form to Date first then Type, defaulted new entries to Fellowship (BONUS_DEFAULT_TYPE_) instead of whatever key happened to be first in BONUS_TYPE_RULES_, and added setBonusWhenRange_() to constrain the date picker's min/max to last-month-1st through this-month-end (client-side only — bonusWebapp.js's validateBonusEntry_ doesn't enforce that range server-side yet, flagged but not changed since it wasn't asked for); (3) removed the static "F3 GO30 / Dashboard" branding and moved the PAX's name/team into the upper-left in its place — headerName now reads "F3 Go30: <name>" (falling back to plain "F3 Go30" pre-identify) with team on the line below, headerIdentity wrapper and its show/hide logic removed since the block is now always present.
+
+### Key Learnings:
+When a Sheets range's getLastRow() looks "full of data," check whether that's real content or just leftover formatting from a template — a pre-formatted, formula-spilling sheet (single array formula anchored at row 2, auto-filling hundreds of rows below) will report a large getLastRow() even when every data row is genuinely blank, and code that treats getLastRow()+1 as a safe append point will eventually walk off the sheet's real physical bounds. The actual fix is to scan the identifying column (here, Name) for the first truly-blank cell instead of trusting getLastRow(). Related: a monthly "reset" that does a blanket clearContent() across a full row range will happily wipe a spilled-array-formula anchor sitting in that same range — any sheet reset routine needs to explicitly protect formula-bearing columns, not just the ones with periodic content.
+Separately: an outer GasLogger.run() wrapper and an inner hand-rolled try/catch are not redundant when the inner one needs to return a controlled JSON error response (can't let the exception propagate to run()'s rethrow) — but that split means the inner catch is now solely responsible for capturing enough detail (message *and* stack) to diagnose from logs alone; message-only logging in that inner catch is what turned a one-line stack-trace lookup into a from-scratch live-sheet investigation.
+
+## 2026-07-01 21:05:31
+
+### Summary:
+Reviewed the previously-drafted Go30-Demo-Script.html against the actual product code (SignupApp.html, CheckinApp.html, bonusWebapp.js) and F3 culture reference docs, and found it materially inaccurate: it invented a PAX-facing "Coach's Note" AI-suggestion box and a "Team Q leader dashboard" with coaching-note controls, neither of which exist anywhere in the check-in/dashboard/bonus web apps (Site Q functionality is spreadsheet/admin-side only). It also used wrong field labels/button text (e.g. "Hit/Miss" instead of the real "✓ Did it / ✗ Didn't do it", generic dashboard tiles instead of the real Month Progress ring / Streak / Total Score+bonus-breakdown / 7-Day Rolling Average / My Team / PAX Board layout). Rewrote it as Go30-Demo-Script.md with corrected copy pulled from the actual HTML/JS, and reframed the narration around real F3 culture (3 Fs, HIM accountability groups, EHing FNG as the highest-weighted bonus type) rather than generic productivity-app language.
+
+Then replaced the markdown's ASCII mockups with real screenshots: built tests/playwright/demo-screenshots.spec.js (new npm script `demo:screenshots`) that drives the live SIT signup/check-in/bonus web apps as a real test PAX ("NoSadClown", team Crucible, using the user-approved WHO/WHAT/HOW example) at a 390×844 mobile viewport, capturing 10 PNGs into docs/references/demo-screenshots/. Hit and fixed two real bugs getting it working: GAS web apps render inside two nested sandboxed iframes, so top-level page.click()/page.fill() silently timed out until every locator was routed through page.frameLocator('iframe').frameLocator('iframe'); and the "created by a Google Apps Script user" interstitial banner needed a longer visibility wait before dismissal or it leaked into the first screenshot. Also caught a flaky first-pass result where the post-save bonus screenshot showed stale dashboard content instead of the updated bonus list — tightening the assertion to wait for the new entry's text (not just the form closing) before screenshotting fixed it on re-run, most likely a render-timing race rather than a real app bug. Updated Go30-Demo-Script.md to reference the real screenshot filenames instead of mockups. Per user decision, NoSadClown's SIT signup and two bonus entries are left in place (SIT already carries other test/smoke PAX rows).
+
+### Key Learnings:
+When asked to "review for accuracy" against a codebase, treat every concrete UI claim (button text, field labels, feature existence) as falsifiable and grep/read the actual source before keeping it — a demo script drafted from a general sense of "what a habit-tracking app usually has" will confidently invent plausible-sounding features (coach's notes, leader dashboards) that don't exist, and those are exactly the details a subject-matter reviewer will catch first.
+Google Apps Script web apps (doGet HTML service) always render inside a nested double iframe with a dismissible "created by a Google Apps Script user" banner above it — any Playwright automation against a GAS webapp needs page.frameLocator(iframe).frameLocator(iframe) for every locator, and should dismiss/wait-out the banner before the first screenshot, or every top-level selector call will silently time out with no indication that the real problem is iframe nesting rather than a broken page.
