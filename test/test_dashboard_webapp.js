@@ -1,16 +1,34 @@
 const assert = require('node:assert/strict');
 
+function makeFakeScriptCache_() {
+  var store = {};
+  return {
+    get: function(key) { return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null; },
+    put: function(key, value) { store[key] = value; },
+    _store: store,
+  };
+}
+
+var fakeScriptCache_ = makeFakeScriptCache_();
+global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
 const {
   classifyTrackerColumns_,
   findDateColumnIndex_,
   findTrackerRowIndexByName_,
   computeStreak_,
+  computeMaxStreak_,
   countOutcomes_,
   needsYesterdayCheckin_,
+  dayValueStatus_,
   groupByTeam_,
-  buildWeeklyBonuses_,
+  buildBonusByType_,
   buildDaySegments_,
   buildRollingAverage_,
+  buildRollingAverageWithLookback_,
+  getCachedTrackerLayoutOnly_,
+  trackerLayoutCacheKey_,
+  serializeRow3ForCache_,
 } = require('../script/dashboardWebapp.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
@@ -67,6 +85,19 @@ const {
   assert.equal(computeStreak_([]), 0);
 })();
 
+// ── computeMaxStreak_ ────────────────────────────────────────────────────
+(function testComputeMaxStreak() {
+  // Longest run of 1's anywhere in the array, not just the trailing run (contrast computeStreak_).
+  assert.equal(computeMaxStreak_([1, 1, 0, 1, 1, 1, 0, 1]), 3);
+  assert.equal(computeMaxStreak_([1, 1, 1, '', '']), 3); // trailing blanks trimmed first
+  assert.equal(computeMaxStreak_([]), 0);
+  assert.equal(computeMaxStreak_([0, -1, 0]), 0);
+  // windowDays restricts to the trailing N reported values — "max streak in the last 30 days".
+  var monthOfOnes = new Array(40).fill(1);
+  monthOfOnes[5] = 0;
+  assert.equal(computeMaxStreak_(monthOfOnes, 30), 30); // last 30 entries (idx 10..39) are unaffected by idx 5
+})();
+
 // ── countOutcomes_ ─────────────────────────────────────────────────────────
 (function testCountOutcomes() {
   assert.deepEqual(countOutcomes_([1, 1, 1, 0, -1, 1, '']), { done: 4, missed: 1, absent: 1 });
@@ -80,6 +111,17 @@ const {
   assert.equal(needsYesterdayCheckin_(0), false);
   assert.equal(needsYesterdayCheckin_(1), false);
   assert.equal(needsYesterdayCheckin_(-1), false);
+})();
+
+// ── dayValueStatus_ ──────────────────────────────────────────────────────
+(function testDayValueStatus() {
+  assert.equal(dayValueStatus_(1), 'done');
+  assert.equal(dayValueStatus_(0), 'missed');
+  assert.equal(dayValueStatus_(-1), 'absent');
+  // Blank/not-yet-reported is 'pending' — never treated as an error or as the -1 outcome.
+  assert.equal(dayValueStatus_(''), 'pending');
+  assert.equal(dayValueStatus_(undefined), 'pending');
+  assert.equal(dayValueStatus_(null), 'pending');
 })();
 
 // ── groupByTeam_ ───────────────────────────────────────────────────────────
@@ -102,18 +144,16 @@ const {
 })();
 
 // ── buildWeeklyBonuses_ ────────────────────────────────────────────────────
-(function testBuildWeeklyBonuses() {
-  var bonusCols = [
-    { col: 11, period: 1, precedingDate: new Date(2026, 5, 6) },
-    { col: 14, period: 2, precedingDate: new Date(2026, 5, 13) },
-  ];
-  var bonusValues = [2, 0];
-  var weeks = buildWeeklyBonuses_(bonusCols, bonusValues, new Date(2026, 5, 10));
-  assert.equal(weeks.length, 2);
-  assert.equal(weeks[0].label, 'WK 1');
-  assert.equal(weeks[0].value, 2);
-  assert.equal(weeks[0].status, 'earned');
-  assert.equal(weeks[1].status, 'upcoming');
+(function testBuildBonusByType() {
+  // Columns A-H: Name, Team, Fellowship, Q-Point, Inspire, EHing FNG, Raw Score, Score.
+  var trackerRow = ['Crazy Ivan', 'Crucible', 3, 2, 1, 5, 11, 25];
+  var byType = buildBonusByType_(trackerRow);
+  assert.deepEqual(byType, { fe: 3, q: 2, ins: 1, eh: 5 });
+})();
+
+(function testBuildBonusByTypeDefaultsBlankCellsToZero() {
+  var trackerRow = ['Little John', 'Crucible', '', '', '', '', 8, 8];
+  assert.deepEqual(buildBonusByType_(trackerRow), { fe: 0, q: 0, ins: 0, eh: 0 });
 })();
 
 // ── buildDaySegments_ ──────────────────────────────────────────────────────
@@ -147,6 +187,75 @@ const {
   assert.equal(series2[0], 1);
   assert.equal(series2[1], 1); // window [1, ''] -> only 1 counts
   assert.equal(series2[2], 0); // window ['', 0] -> only 0 counts
+})();
+
+// ── buildRollingAverageWithLookback_ ────────────────────────────────────────
+(function testBuildRollingAverageWithLookbackCrossesMonthBoundary() {
+  // Day 2 of a new month: without lookback this would only average [1, 0] (window of 2).
+  // With 5 trailing days from last month prepended, it should be a true 7-day window.
+  var priorTail = [1, 1, 1, 1, 1]; // last 5 days of the previous month, all done
+  var thisMonth = [1, 0]; // first 2 days of the new month
+  var series = buildRollingAverageWithLookback_(thisMonth, 7, priorTail);
+  assert.equal(series.length, thisMonth.length); // aligned to thisMonth, not the combined array
+  // Day 1: window = last 5 prior + day1 = [1,1,1,1,1,1] -> 1
+  assert.equal(series[0], 1);
+  // Day 2: window = last 5 prior + day1 + day2 = [1,1,1,1,1,1,0] (7 days) -> 6/7
+  assert.ok(Math.abs(series[1] - 6 / 7) < 1e-9);
+})();
+
+(function testBuildRollingAverageWithLookbackNoPriorMonth() {
+  // No prior tracker (e.g. the very first month ever) — behaves exactly like buildRollingAverage_.
+  var values = [1, 0, 1];
+  assert.deepEqual(buildRollingAverageWithLookback_(values, 7, []), buildRollingAverage_(values, 7));
+  assert.deepEqual(buildRollingAverageWithLookback_(values, 7, undefined), buildRollingAverage_(values, 7));
+})();
+
+(function testBuildRollingAverageWithLookbackOnlyUsesTrailingWindowMinusOneDays() {
+  // A long prior-month tail is trimmed to windowSize-1 — older days shouldn't leak in further
+  // than a true rolling window would ever reach.
+  var longTail = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]; // 13 days, only last 2 matter for window=3
+  var series = buildRollingAverageWithLookback_([1], 3, longTail);
+  // window = last 2 of tail ([1,1]) + [1] = [1,1,1] -> 1, not dragged down by the older 0s.
+  assert.equal(series[0], 1);
+})();
+
+// ── getCachedTrackerLayoutOnly_ ──────────────────────────────────────────
+// This is the fast-path check getPriorMonthTailValues_ uses to decide whether it can skip
+// SpreadsheetApp.openById entirely on a repeat view of a prior month's tracker.
+(function testGetCachedTrackerLayoutOnlyMiss() {
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  assert.equal(getCachedTrackerLayoutOnly_('no-such-sheet'), null);
+})();
+
+(function testGetCachedTrackerLayoutOnlyHit() {
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  var row2 = ['', 1, 2];
+  var row3 = ['F3 Name', new Date(2026, 5, 1), 'Bonus'];
+  fakeScriptCache_.put(trackerLayoutCacheKey_('sheetA'), JSON.stringify({
+    row2: row2, row3: serializeRow3ForCache_(row3),
+  }));
+
+  var layout = getCachedTrackerLayoutOnly_('sheetA');
+  assert.deepEqual(layout.row2, row2);
+  assert.equal(layout.row3[0], 'F3 Name');
+  assert.ok(layout.row3[1] instanceof Date);
+  assert.equal(layout.row3[1].getTime(), row3[1].getTime());
+})();
+
+(function testGetCachedTrackerLayoutOnlyCorruptEntryIsTreatedAsMiss() {
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  fakeScriptCache_.put(trackerLayoutCacheKey_('sheetB'), 'not json');
+  assert.equal(getCachedTrackerLayoutOnly_('sheetB'), null);
+})();
+
+(function testGetCachedTrackerLayoutOnlyIsSheetIdScoped() {
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  fakeScriptCache_.put(trackerLayoutCacheKey_('sheetA'), JSON.stringify({ row2: ['x'], row3: ['y'] }));
+  assert.equal(getCachedTrackerLayoutOnly_('sheetC'), null);
 })();
 
 console.log('test_dashboard_webapp.js: all assertions passed');

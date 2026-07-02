@@ -394,14 +394,41 @@ function copyAndInit_() {
     return;
   }
 
-  const currentSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  try {
+    createTrackerForMonth_(SpreadsheetApp.getActiveSpreadsheet(), startDate, NoticeLog);
+  } catch (err) {
+    return; // error already logged by createTrackerForMonth_ via the logFn callback
+  }
+
+  noticeLogDone_();
+}
+
+/**
+ * Shared body of copyAndInit_ (interactive, prompts for a date) — everything that happens once
+ * a valid startDate is known. Also the target for the headless "createTrackerForMonth" admin
+ * action (WebApp.js), which creates an arbitrary month's tracker without a NoticePrompt dialog —
+ * e.g. backfilling a month that autoGenerateNextMonthTracker_'s real-today+1 logic skipped
+ * because it ran after that month had already started (see F3Go30 2026-07-01 incident: SIT's
+ * July tracker was never created, so running the auto-generate trigger late produced August
+ * instead of the missing July).
+ * @param {Spreadsheet} currentSpreadsheet Template spreadsheet.
+ * @param {Date} startDate First day of the new tracker month — caller must have already
+ *   validated it (see copyAndInit_'s date-rollover check) since this function assumes it's a
+ *   real calendar date.
+ * @param {Function} logFn Progress logger — NoticeLog for the interactive caller, GasLogger.log
+ *   or similar for a headless caller. Errors are always thrown (never swallowed) after being
+ *   logged, so headless callers can turn them into a { ok: false } response.
+ * @returns {Object} createTrackerSpreadsheet_'s return value.
+ */
+function createTrackerForMonth_(currentSpreadsheet, startDate, logFn) {
+  logFn = logFn || function() {};
   const configSheet = currentSpreadsheet.getSheetByName('Config');
   const configData = configSheet ? configSheet.getDataRange().getValues() : null;
 
   const siteQConfig = getConfigValue_(null, 'Site Q', configData);
   if (!siteQConfig || !siteQConfig.secondary) {
-    NoticeLog('Error: Site Q email not found in Config sheet — add a "Site Q" row with the email address in the secondary column.');
-    return;
+    logFn('Error: Site Q email not found in Config sheet — add a "Site Q" row with the email address in the secondary column.');
+    throw new Error('Site Q email not found in Config sheet');
   }
   const siteQEmail = siteQConfig.secondary;
 
@@ -414,10 +441,10 @@ function copyAndInit_() {
       nameSpaceConfig = getConfigValue_(null, 'NameSpace', configSheet.getDataRange().getValues());
     }
     if (!nameSpaceConfig || !nameSpaceConfig.primary) {
-      NoticeLog('Error: NameSpace not found in Config sheet — add a "NameSpace" row with the region identifier in the primary column.');
-      return;
+      logFn('Error: NameSpace not found in Config sheet — add a "NameSpace" row with the region identifier in the primary column.');
+      throw new Error('NameSpace not found in Config sheet');
     }
-    NoticeLog('Config: NameSpace was not set — wrote default "' + DEFAULT_NAMESPACE + '". Update the Config sheet NameSpace row to change the region identifier.');
+    logFn('Config: NameSpace was not set — wrote default "' + DEFAULT_NAMESPACE + '". Update the Config sheet NameSpace row to change the region identifier.');
   }
   const smokeMode = PropertiesService.getScriptProperties().getProperty('SMOKE_MODE') === 'true';
   const nameSpace = nameSpaceConfig.primary + (smokeMode ? ' (Smoke)' : '');
@@ -428,12 +455,12 @@ function copyAndInit_() {
   const currentSpreadsheetFile = DriveApp.getFileById(currentSpreadsheet.getId());
   const parents = currentSpreadsheetFile.getParents();
   if (!parents.hasNext()) {
-    NoticeLog('Error: cannot determine folder — spreadsheet must be in a Drive folder, not in My Drive root.');
-    return;
+    logFn('Error: cannot determine folder — spreadsheet must be in a Drive folder, not in My Drive root.');
+    throw new Error('Cannot determine Drive folder for spreadsheet');
   }
   const folder = parents.next();
 
-  NoticeLog('Creating ' + newSpreadsheetName + '. Please wait...');
+  logFn('Creating ' + newSpreadsheetName + '. Please wait...');
 
   let result;
   try {
@@ -447,17 +474,17 @@ function copyAndInit_() {
       siteQConfig: siteQConfig,
       configSheet: configSheet,
       configData: configData,
-      logFn: NoticeLog
+      logFn: logFn
     });
   } catch (err) {
     const orphanId = err.orphanedSpreadsheetId || null;
     if (orphanId) {
-      NoticeLog('Error during initialization: ' + err.message);
-      NoticeLog('Orphaned spreadsheet ID: ' + orphanId + ' — please delete it from Drive.');
+      logFn('Error during initialization: ' + err.message);
+      logFn('Orphaned spreadsheet ID: ' + orphanId + ' — please delete it from Drive.');
     } else {
-      NoticeLog('Error: ' + err.message);
+      logFn('Error: ' + err.message);
     }
-    GasLogger.log('copyAndInit.error', {
+    GasLogger.log('createTrackerForMonth_.error', {
       error: err.message,
       spreadsheetName: newSpreadsheetName,
       orphanedSpreadsheetId: orphanId
@@ -466,22 +493,22 @@ function copyAndInit_() {
   }
 
   if (result.expiredTracker) {
-    NoticeLog('<b style="color:#b05000;">⚠️ Previous tracker expired:</b> "' + result.expiredTracker.name + '" was renamed to "' + result.expiredTracker.name + ' (Expired)". It remains accessible in Drive.');
-    NoticeLog("-");
+    logFn('<b style="color:#b05000;">⚠️ Previous tracker expired:</b> "' + result.expiredTracker.name + '" was renamed to "' + result.expiredTracker.name + ' (Expired)". It remains accessible in Drive.');
+    logFn("-");
   }
-  NoticeLog('New spreadsheet tracker sheet link: ' + createHtmlLink(result.newSpreadsheetName, result.trackerSheetShortUrl));
-  NoticeLog('New HC Form: ' + createHtmlLink(result.formName, result.formShortUrl));
-  NoticeLog("-");
-  NoticeLog('<b>Next steps:</b>');
-  NoticeLog('1. Open the new spreadsheet (link above) and verify it looks correct');
-  NoticeLog('2. Open the HC form (link above) and verify it looks correct');
-  NoticeLog("-");
-  NoticeLog('<b>Slack channel message:</b>');
-  NoticeLog('<textarea rows="5" style="width:100%;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;" readonly onclick="this.select()">' + escapeHtml_(result.slackMsg) + '</textarea>');
-  NoticeLog("-");
-  NoticeLog('You can now close this sidebar.');
+  logFn('New spreadsheet tracker sheet link: ' + createHtmlLink(result.newSpreadsheetName, result.trackerSheetShortUrl));
+  logFn('New HC Form: ' + createHtmlLink(result.formName, result.formShortUrl));
+  logFn("-");
+  logFn('<b>Next steps:</b>');
+  logFn('1. Open the new spreadsheet (link above) and verify it looks correct');
+  logFn('2. Open the HC form (link above) and verify it looks correct');
+  logFn("-");
+  logFn('<b>Slack channel message:</b>');
+  logFn('<textarea rows="5" style="width:100%;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;" readonly onclick="this.select()">' + escapeHtml_(result.slackMsg) + '</textarea>');
+  logFn("-");
+  logFn('You can now close this sidebar.');
 
-  GasLogger.log('copyAndInit', {
+  GasLogger.log('createTrackerForMonth_', {
     spreadsheetId: result.newSpreadsheetId,
     spreadsheetName: result.newSpreadsheetName,
     startDateIso: result.startDateIso,
@@ -527,14 +554,14 @@ function copyAndInit_() {
       body: emailMessage.body,
       htmlBody: emailMessage.htmlBody,
       allowPlainTextFallback: true,
-      logLabel: 'copyAndInit'
+      logLabel: 'createTrackerForMonth_'
     });
   } catch (mailErr) {
-    GasLogger.log('copyAndInit.emailFailed', { error: mailErr.message });
-    NoticeLog('Note: email notification failed — ' + mailErr.message);
+    GasLogger.log('createTrackerForMonth_.emailFailed', { error: mailErr.message });
+    logFn('Note: email notification failed — ' + mailErr.message);
   }
 
-  noticeLogDone_();
+  return result;
 }
 
 /**
@@ -632,8 +659,17 @@ function initSheets(newSpreadsheet, startDate) {
     SpreadsheetApp.flush();
 
   NoticeLog('Resetting Bonus Tracker sheet...');
+    // Columns B:E (Period/Uncapped Points/Multiplier/Complete) are a single spilled array
+    // formula anchored at row 2 (e.g. B2's VLOOKUP($G2:$G892, ...) auto-fills every row below
+    // it) — see docs/sheet-reference.md §Bonus Tracker. A blanket clearContent() across the
+    // whole row would wipe that anchor along with the PAX-entered data, leaving every future
+    // Bonus Tracker row for the month with no scoring formulas at all. Only clear the
+    // PAX-entered columns (A, F:I — see bonusWebapp.js's BONUS_TRACKER_* column constants) and
+    // leave B:E untouched.
     if (bonusTrackerSheet.getLastRow() > 1) {
-      bonusTrackerSheet.getRange(2, 1, bonusTrackerSheet.getLastRow() - 1, bonusTrackerSheet.getLastColumn()).clearContent();
+      var bonusRowCount = bonusTrackerSheet.getLastRow() - 1;
+      bonusTrackerSheet.getRange(2, 1, bonusRowCount, 1).clearContent(); // A: Name
+      bonusTrackerSheet.getRange(2, 6, bonusRowCount, 4).clearContent(); // F:I: Type/When/What/Link
       SpreadsheetApp.flush();
     }
 

@@ -18,9 +18,19 @@ var signupWebappAddResponseModule_ = (typeof module !== 'undefined' && module.ex
   : null;
 var formatRegistrationMonth_ = (signupWebappAddResponseModule_ && signupWebappAddResponseModule_.formatRegistrationMonth_)
   || (typeof globalThis !== 'undefined' && globalThis.formatRegistrationMonth_);
+var sortTrackerSheet_ = (signupWebappAddResponseModule_ && signupWebappAddResponseModule_.sortTrackerSheet_)
+  || (typeof globalThis !== 'undefined' && globalThis.sortTrackerSheet_);
 
 var resolveResponseColumns = (signupWebappResponseUtilsModule_ && signupWebappResponseUtilsModule_.resolveResponseColumns)
   || (typeof globalThis !== 'undefined' && globalThis.resolveResponseColumns);
+
+var signupWebappPaxCacheModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./PaxCache.js')
+  : null;
+var deletePaxCacheRow_sw_ = (signupWebappPaxCacheModule_ && signupWebappPaxCacheModule_.deletePaxCacheRow_)
+  || (typeof globalThis !== 'undefined' && globalThis.deletePaxCacheRow_);
+var patchPaxRosterIndex_sw_ = (signupWebappPaxCacheModule_ && signupWebappPaxCacheModule_.patchPaxRosterIndex_)
+  || (typeof globalThis !== 'undefined' && globalThis.patchPaxRosterIndex_);
 
 function normalizeTeamValue_(value) {
   return String(value || '').trim();
@@ -541,6 +551,9 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     var updatedRow = buildResponseRowWithSelfHeal_(state.sheet, state.columns, match.row, formData);
     updatedRow[0] = new Date();
     state.sheet.getRange(match.rowIndex + 2, 1, 1, updatedRow.length).setValues([updatedRow]);
+    // Write-through: row position is unchanged, only its contents — drop the cached copy so the
+    // dashboard/check-in's next lean read (dashboardWebapp.js) picks up the update.
+    deletePaxCacheRow_sw_('responses', targetMonth.sheetId, payload.f3Name);
     GasLogger.log('signupWebapp.save', { mode: 'update', row: match.rowIndex + 2 });
   } else {
     // No exact (name+email) match — check whether this is the same PAX under a different
@@ -550,12 +563,18 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     var nameOnlyMatch = findSignupMatchByF3NameOnly_(state.dataRows, payload.f3Name, state.columns);
     if (nameOnlyMatch) {
       state.sheet.getRange(nameOnlyMatch.rowIndex + 2, state.columns.PARTICIPATION + 1).setValue('DELETED');
+      // The old row's cached copy (if any) would now serve stale/DELETED content under this
+      // same name key — drop it so a lean lookup falls through to a live re-scan.
+      deletePaxCacheRow_sw_('responses', targetMonth.sheetId, payload.f3Name);
       GasLogger.log('signupWebapp.save.emailChanged', { oldRow: nameOnlyMatch.rowIndex + 2 });
     }
 
     var newRow = buildResponseRowWithSelfHeal_(state.sheet, state.columns, null, formData);
     newRow[0] = new Date();
     state.sheet.appendRow(newRow);
+    // Write-through: this PAX's row is new — patch it straight into an already-cached roster
+    // index (no-op if nothing's cached yet, since the next miss will rebuild from the sheet).
+    patchPaxRosterIndex_sw_('responses', targetMonth.sheetId, payload.f3Name, state.dataRows.length);
     GasLogger.log('signupWebapp.save', { mode: 'insert' });
   }
 
@@ -609,8 +628,16 @@ function handleSignupSave_(templateSpreadsheet, payload) {
         trackerSheet.getRangeList(clearRanges).clearContent();
       }
 
+      // Write-through: same reasoning as the Responses insert above — patch the new PAX
+      // straight into the Tracker roster index (dashboardWebapp.js) if one's already cached.
+      patchPaxRosterIndex_sw_('tracker', targetMonth.sheetId, payload.f3Name, nextRow - 4);
       GasLogger.log('signupWebapp.save', { trackerRowAdded: nextRow });
     }
+
+    // Mirrors handleFormSubmit_'s Phase 5 (addResponseOnSubmit.js) — re-sort Tracker by
+    // column B then column A on every save, not just on insert, so an in-place score/goal
+    // edit that changes standings is reflected immediately too.
+    sortTrackerSheet_(trackerSheet);
   }
 
   sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, !match);

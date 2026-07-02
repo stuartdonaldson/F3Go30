@@ -9,80 +9,127 @@
   body { margin: 0; min-height: 100vh; background: #f4f1ea; font-family: Arial, Helvetica, sans-serif; color: #2b2b2b; }
   .wrap { max-width: 720px; margin: 0 auto; padding: 0 18px 48px; }
   .header { background: #2f5d50; color: #f8f4ea; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
-  .header .brand { font-size: 11px; letter-spacing: .24em; opacity: .6; font-weight: bold; }
-  .header .title { font-size: 19px; font-weight: bold; margin-left: 2px; display: block; }
   .header-right { text-align: right; display: flex; align-items: center; gap: 12px; }
-  .header-name { font-weight: bold; font-size: 14px; }
-  .header-sub { font-size: 10px; opacity: .6; }
-  .more-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); color: #f8f4ea; width: 32px; height: 32px; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; line-height: 1; }
+  .header-name { font-weight: bold; font-size: 20px; }
+  .header-sub { font-size: 13px; opacity: .6; }
+  .more-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); color: #f8f4ea; width: 32px; height: 32px; border-radius: 8px; font-size: 20px; font-weight: bold; cursor: pointer; line-height: 1; }
   .card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 22px; box-shadow: 0 2px 10px rgba(47,93,80,.07); margin-top: 18px; }
   .card h1, .card h2 { margin: 0 0 6px; color: #2f5d50; }
-  .card h1 { font-size: 22px; }
-  .card h2 { font-size: 17px; }
-  p.muted { color: #555; font-size: 14px; line-height: 1.5; }
-  label.field-label { display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px; }
-  input[type=text], input[type=email] {
+  .card h1 { font-size: 23px; }
+  .card h2 { font-size: 19px; }
+  p.muted { color: #555; font-size: 17px; line-height: 1.5; }
+  label.field-label { display: block; font-size: 16px; font-weight: bold; color: #2f5d50; margin-bottom: 5px; }
+  input[type=text], input[type=email], input[type=date], select, textarea {
     width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px;
-    font-size: 15px; font-family: inherit; margin-bottom: 16px; background: #fff;
+    font-size: 18px; font-family: inherit; margin-bottom: 16px; background: #fff;
   }
-  button.primary { width: 100%; padding: 14px; border: none; border-radius: 9px; background: #2f5d50; color: #f8f4ea; font-size: 16px; font-weight: bold; cursor: pointer; font-family: inherit; }
-  button.secondary { width: 100%; margin-top: 10px; padding: 10px; border: none; border-radius: 9px; background: transparent; color: #0b5c86; font-size: 14px; cursor: pointer; font-family: inherit; }
+  textarea { resize: vertical; }
+  button.primary { width: 100%; padding: 14px; border: none; border-radius: 9px; background: #2f5d50; color: #f8f4ea; font-size: 18px; font-weight: bold; cursor: pointer; font-family: inherit; }
+  button.secondary { width: 100%; margin-top: 10px; padding: 10px; border: none; border-radius: 9px; background: transparent; color: #0b5c86; font-size: 17px; cursor: pointer; font-family: inherit; }
   .checkin-row { display: flex; gap: 10px; margin-bottom: 8px; }
-  .checkin-btn { flex: 1; padding: 16px 8px; border-radius: 10px; border: 2px solid #d8cfbf; background: #fff; font-family: inherit; font-size: 14px; font-weight: bold; cursor: pointer; text-align: center; }
+  .checkin-btn { flex: 1; padding: 16px 8px; border-radius: 10px; border: 2px solid #d8cfbf; background: #fff; font-family: inherit; font-size: 17px; font-weight: bold; cursor: pointer; text-align: center; }
   .checkin-btn.yes { color: #2f5d50; }
   .checkin-btn.yes:hover { border-color: #2f5d50; background: #eef3f0; }
   .checkin-btn.no { color: #a3401a; }
   .checkin-btn.no:hover { border-color: #a3401a; background: #fdeceb; }
-  .checkin-section-label { font-size: 11px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 18px 0 8px; }
-  .error-text { font-size: 13px; color: #a3401a; margin-bottom: 8px; }
+  .checkin-btn.current.yes { background: #eef3f0; border-color: #2f5d50; }
+  .checkin-btn.current.no { background: #fdeceb; border-color: #a3401a; }
+  .checkin-btn:disabled { opacity: .45; cursor: not-allowed; }
+  .checkin-status { font-size: 15px; color: #888; margin: -2px 0 8px; }
+  .checkin-section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 18px 0 8px; }
+  .goals-reminder { background: #eef3f0; border: 1px solid #cfe0d8; border-radius: 8px; padding: 10px 12px; margin-bottom: 4px; }
+  .goals-reminder-row { font-size: 15px; line-height: 1.4; margin: 3px 0; }
+  .goals-reminder-row strong { color: #2f5d50; }
+  .error-text { font-size: 16px; color: #a3401a; margin-bottom: 8px; }
+  .warning-text { font-size: 15px; color: #8a6d00; background: #fdf6e3; border: 1px solid #e8d9a0; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
   .hidden { display: none; }
   .stats-row { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 12px; margin-top: 18px; align-items: stretch; }
   .stat-card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 16px; text-align: center; display: flex; flex-direction: column; align-items: center; }
-  .stat-label { font-size: 10px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin-bottom: 6px; }
-  .stat-value { font-size: 40px; font-weight: bold; line-height: 1; }
-  .stat-sub { font-size: 10px; color: #b0a898; margin-top: 6px; letter-spacing: .06em; }
+  .stat-label { font-size: 13px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin-bottom: 6px; }
+  .stat-value { font-size: 41px; font-weight: bold; line-height: 1; }
+  .stat-sub { font-size: 13px; color: #b0a898; margin-top: 6px; letter-spacing: .06em; }
   .progress-bar { width: 100%; background: #ede9df; border-radius: 3px; height: 7px; overflow: hidden; margin-top: 10px; }
   .progress-fill { height: 7px; background: #2f5d50; border-radius: 3px; }
   .ring-svg { display: block; margin: 0 auto; }
-  .day-mini-bar { display: flex; gap: 1.5px; align-items: center; flex: 1; min-width: 0; }
-  .day-mini-cell { width: 4px; height: 12px; border-radius: 1px; flex-shrink: 0; }
+  .day-mini-bar { display: flex; gap: 1.5px; align-items: center; justify-content: center; flex: 1; min-width: 0; }
+  .day-mini-cell { width: 6px; height: 12px; border-radius: 1px; flex-shrink: 0; }
   .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
-  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #888; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #888; }
   .legend-swatch { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
-  .bonus-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
-  .bonus-label { font-size: 11px; font-weight: bold; color: #999; min-width: 40px; font-family: monospace; }
-  .bonus-pill { padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: bold; }
-  .bonus-pill.earned { background: #eef3f0; color: #2f5d50; }
-  .bonus-pill.upcoming { background: #f0ece2; color: #b0a898; }
+  .score-tile-body { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; }
+  .score-main { display: flex; flex-direction: column; align-items: center; }
+  .score-bonus-list { display: flex; flex-direction: column; gap: 4px; border-left: 1px solid #ede9df; padding-left: 10px; }
+  .bonus-type-row { display: flex; align-items: center; gap: 5px; }
+  .bonus-type-code { font-family: monospace; font-weight: bold; font-size: 12px; padding: 1px 5px; border-radius: 3px; }
+  .bonus-type-code.fe { background: #eef3f0; color: #2f5d50; }
+  .bonus-type-code.q { background: #e5eff6; color: #0b5c86; }
+  .bonus-type-code.ins { background: #f1e9f6; color: #6a3d9a; }
+  .bonus-type-code.eh { background: #fdf1de; color: #9a6b00; }
+  .bonus-type-value { font-size: 14px; font-weight: bold; color: #2b2b2b; min-width: 16px; }
   .team-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(120px,1fr)); gap: 10px; margin-top: 12px; }
   .team-tile { border-radius: 10px; padding: 12px 8px; text-align: center; border: 1.5px solid #d8cfbf; background: #fff; display: flex; flex-direction: column; align-items: center; }
   .team-tile.me { border-color: #2f5d50; background: #eef3f0; }
-  .team-tile .tname { font-weight: bold; font-size: 12px; margin: 4px 0 2px; }
-  .team-tile .tscore { font-size: 20px; font-weight: bold; }
-  .team-tile .tstreak { font-size: 9px; color: #b0a898; margin-top: 2px; }
+  .team-tile .tname { font-weight: bold; font-size: 15px; margin: 4px 0 2px; }
+  .team-tile .tscore { font-size: 21px; font-weight: bold; }
+  .team-tile .tstreak { font-size: 12px; color: #b0a898; margin-top: 2px; }
   .board-group { border: 1px solid #d8cfbf; border-radius: 12px; overflow: hidden; margin-top: 12px; }
-  .board-head { background: #2f5d50; color: #f8f4ea; padding: 9px 16px; font-size: 12px; font-weight: bold; letter-spacing: .16em; display: flex; justify-content: space-between; }
+  .board-head { background: #2f5d50; color: #f8f4ea; padding: 9px 16px; font-size: 15px; font-weight: bold; letter-spacing: .16em; display: flex; justify-content: space-between; }
   .board-rows { padding: 6px 12px; }
-  .board-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 6px 4px; border-radius: 4px; font-size: 12px; }
-  .board-row .bname { width: 78px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: bold; }
+  .board-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 6px 4px; border-radius: 4px; font-size: 15px; }
+  .board-row .bname { width: 117px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: bold; }
   .board-row .bpct { width: 30px; flex-shrink: 0; text-align: right; font-family: monospace; font-weight: bold; }
   .board-row.me { background: #eef3f0; font-weight: bold; }
   .chart-card { margin-top: 12px; }
-  .section-label { font-size: 11px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 22px 0 4px; }
-  .api-error-banner { background: #fdeceb; border-bottom: 3px solid #a3401a; color: #6b1f0a; padding: 12px 18px; font-size: 14px; line-height: 1.5; }
+  .section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 22px 0 4px; }
+  .api-error-banner { background: #fdeceb; border-bottom: 3px solid #a3401a; color: #6b1f0a; padding: 12px 18px; font-size: 17px; line-height: 1.5; }
   .api-error-banner strong { display: block; margin-bottom: 2px; }
-  .api-error-detail { margin-top: 6px; font-family: monospace; font-size: 12px; background: #fff; border: 1px solid #e3b8af; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .api-error-detail { margin-top: 6px; font-family: monospace; font-size: 15px; background: #fff; border: 1px solid #e3b8af; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .date-nav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 18px; }
+  .date-nav-btn { width: 44px; height: 44px; border-radius: 8px; border: 2px solid #2f5d50; background: #fffdf8; color: #2f5d50; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
+  .date-nav-btn svg { width: 20px; height: 20px; display: block; }
+  .date-nav-btn:disabled { color: #d8cfbf; border-color: #d8cfbf; cursor: default; }
+  .date-nav-label { font-size: 16px; font-weight: bold; color: #2f5d50; min-width: 150px; text-align: center; }
+  .streak-best { font-size: 14px; font-weight: bold; color: #b0a898; margin-top: 4px; }
+  .streak-best span { color: #2f5d50; }
+  .bonus-entry { border: 1px solid #d8cfbf; border-radius: 10px; padding: 12px 14px; margin-top: 10px; }
+  .bonus-entry-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .bonus-entry-type { font-family: monospace; font-weight: bold; font-size: 13px; padding: 2px 7px; border-radius: 4px; background: #eef3f0; color: #2f5d50; }
+  .bonus-entry-date { font-size: 13px; color: #888; }
+  .bonus-entry-message { font-size: 15px; margin: 8px 0; line-height: 1.4; }
+  .bonus-entry-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .bonus-badge { font-size: 12px; font-weight: bold; padding: 2px 8px; border-radius: 10px; }
+  .bonus-badge.complete { background: #eef3f0; color: #2f5d50; }
+  .bonus-badge.pending { background: #fdf6e3; color: #8a6d00; }
+  .bonus-edit-btn { background: transparent; border: none; color: #0b5c86; font-size: 14px; cursor: pointer; font-family: inherit; text-decoration: underline; padding: 0; }
+  .card-head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .card-head-row h2 { margin: 0; }
+  .btn-inline { width: auto; margin: 0; padding: 8px 14px; }
+  @media (max-width: 480px) {
+    /* Progress + Streak sit side by side (2 cols); Score spans the full row below them —
+       everything shrunk to fit two tiles per row on a narrow phone screen. */
+    .stats-row { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .stat-card { padding: 10px; }
+    .stat-card:nth-child(3) { grid-column: 1 / -1; }
+    .stat-label { font-size: 12px; margin-bottom: 4px; }
+    .stat-value { font-size: 27px; }
+    .stat-sub { font-size: 12px; }
+    .streak-best { font-size: 12px; }
+    .ring-svg { width: 100px; height: 100px; }
+    .legend { gap: 6px; }
+    .legend-item { font-size: 11px; }
+    .team-grid { grid-template-columns: repeat(auto-fill,minmax(96px,1fr)); }
+  }
 </style>
 </head>
 <body>
   <div class="header">
-    <div><span class="brand">F3 GO30</span><span class="title" id="headerTitle">Dashboard</span></div>
+    <div id="headerLeft">
+      <div class="header-name" id="headerName">F3 Go30</div>
+      <div class="header-sub" id="headerSub"></div>
+    </div>
     <div class="header-right">
-      <div id="headerIdentity" class="hidden">
-        <div class="header-name" id="headerName"></div>
-        <div class="header-sub" id="headerSub"></div>
-      </div>
-      <button id="moreBtn" class="more-btn hidden" title="Open tracker spreadsheet">&hellip;</button>
+      <button id="bonusBtn" class="more-btn hidden" title="Manage Bonus Points">&#127942;</button>
+      <button id="moreBtn" class="more-btn hidden" title="Open tracker spreadsheet">&#128202;</button>
     </div>
   </div>
 
@@ -104,39 +151,48 @@
         <input type="email" id="idEmail" placeholder="you@example.com">
         <div id="idError" class="error-text hidden"></div>
         <button class="primary" id="identifyBtn">Continue</button>
+        <button class="secondary hidden" id="idSignupBtn" style="margin-top:10px;">Sign up &rarr;</button>
       </div>
     </div>
 
     <div id="step-checkin" class="card hidden">
       <h2 id="checkinHeading">Welcome back!</h2>
       <p class="muted" id="checkinSub"></p>
+      <div id="emailMismatchNote" class="warning-text hidden"></div>
+
+      <div id="goalsReminder" class="hidden"></div>
 
       <div class="checkin-section-label">TODAY</div>
+      <div class="checkin-status" id="todayStatusNote"></div>
       <div class="checkin-row">
         <button class="checkin-btn yes" id="todayYesBtn">&#10003; Did it</button>
         <button class="checkin-btn no" id="todayNoBtn">&#10007; Didn't do it</button>
       </div>
 
       <div id="yesterdayBlock" class="hidden">
-        <div class="checkin-section-label">YESTERDAY (no check-in yet)</div>
+        <div class="checkin-section-label">YESTERDAY</div>
+        <div class="checkin-status" id="yesterdayStatusNote"></div>
         <div class="checkin-row">
           <button class="checkin-btn yes" id="yesterdayYesBtn">&#10003; Did it</button>
           <button class="checkin-btn no" id="yesterdayNoBtn">&#10007; Didn't do it</button>
         </div>
       </div>
 
+      <div id="nextMonthNote" class="warning-text hidden">
+        <span id="nextMonthNoteText"></span>
+        <button class="secondary" id="nextMonthSignupBtn" style="margin-top:8px;padding:8px;">Sign up for next month &rarr;</button>
+      </div>
+
       <button class="secondary" id="dashboardBtn" style="margin-top:14px;">Skip to Dashboard &rarr;</button>
     </div>
 
     <div id="step-dashboard" class="hidden">
+      <div class="date-nav">
+        <button id="datePrevBtn" class="date-nav-btn" title="Previous day"><svg viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <div class="date-nav-label" id="dateNavLabel">&nbsp;</div>
+        <button id="dateNextBtn" class="date-nav-btn" title="Next day"><svg viewBox="0 0 24 24" fill="none"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
       <div class="stats-row">
-        <div class="stat-card">
-          <div class="stat-label">STREAK</div>
-          <div class="stat-value" id="dStreak" style="color:#2f5d50;"></div>
-          <div class="stat-sub">DAYS</div>
-          <div class="progress-bar"><div class="progress-fill" id="dProgressFill"></div></div>
-          <div class="stat-sub" id="dProgressSub"></div>
-        </div>
         <div class="stat-card">
           <div class="stat-label">MONTH PROGRESS</div>
           <div id="dMonthRing"></div>
@@ -147,20 +203,28 @@
           </div>
         </div>
         <div class="stat-card">
+          <div class="stat-label">STREAK</div>
+          <div class="stat-value" id="dStreak" style="color:#2f5d50;"></div>
+          <div class="stat-sub">CURRENT</div>
+          <div class="streak-best">Best 30d: <span id="dMaxStreak30"></span></div>
+          <div class="progress-bar"><div class="progress-fill" id="dProgressFill"></div></div>
+          <div class="stat-sub" id="dProgressSub"></div>
+        </div>
+        <div class="stat-card">
           <div class="stat-label">TOTAL SCORE</div>
-          <div class="stat-value" id="dScore"></div>
-          <div class="stat-sub" id="dScoreSub"></div>
+          <div class="score-tile-body">
+            <div class="score-main">
+              <div class="stat-value" id="dScore"></div>
+              <div class="stat-sub" id="dScoreSub"></div>
+            </div>
+            <div class="score-bonus-list" id="dBonuses"></div>
+          </div>
         </div>
       </div>
 
       <div class="card chart-card">
-        <div class="section-label" style="margin-top:0;">7-DAY MOVING AVERAGE</div>
+        <div class="section-label" style="margin-top:0;">7-DAY ROLLING AVERAGE</div>
         <div id="dAvgChart"></div>
-      </div>
-
-      <div class="card">
-        <div class="section-label" style="margin-top:0;">WEEKLY BONUSES</div>
-        <div id="dBonuses"></div>
       </div>
 
       <div class="section-label">MY TEAM &middot; <span id="dTeamName"></span></div>
@@ -170,13 +234,43 @@
       <div id="dPaxBoard"></div>
     </div>
 
+    <div id="step-bonus" class="hidden">
+      <div class="card">
+        <div class="card-head-row">
+          <h2>Bonus Points</h2>
+          <button class="secondary btn-inline" id="bonusBackBtn">&larr; Back</button>
+        </div>
+        <p class="muted">Log EHing an FNG, Fellowship, a Q, or an Inspire moment. EHing FNG, Q
+          Point, and Inspire need a link to Slack as evidence before they count.</p>
+        <div id="bonusListError" class="error-text hidden"></div>
+        <div id="bonusList"></div>
+        <button class="secondary" id="bonusAddBtn" style="margin-top:14px;">+ Add Bonus</button>
+      </div>
+
+      <div id="bonusFormCard" class="card hidden">
+        <h2 id="bonusFormHeading">Add Bonus</h2>
+        <label class="field-label">Date</label>
+        <input type="date" id="bonusWhen">
+        <label class="field-label">Type</label>
+        <select id="bonusType"></select>
+        <label class="field-label">What / Where / Who</label>
+        <textarea id="bonusMessage" rows="3" placeholder="What happened?"></textarea>
+        <label class="field-label" id="bonusLinkLabel">Slack Link</label>
+        <input type="text" id="bonusLink" placeholder="https://...slack.com/...">
+        <div id="bonusFormError" class="error-text hidden"></div>
+        <button class="primary" id="bonusSaveBtn">Save</button>
+        <button class="secondary" id="bonusCancelBtn">Cancel</button>
+      </div>
+    </div>
+
   </div>
 
-  <div style="text-align:center;padding:12px 0 24px;font-size:11px;color:#aaa;" id="versionFooter"></div>
+  <div style="text-align:center;padding:12px 0 24px;font-size:14px;color:#aaa;" id="versionFooter"></div>
 
 <script>
   var WEBAPP_URL = <?!= webAppUrl ?>;
   var APP_VERSION = <?!= JSON.stringify(appVersion) ?>;
+  var BONUS_TYPE_RULES_ = <?!= bonusTypesJson ?>;
 
   // Same storage key the signup webapp uses (SignupApp.html) — a PAX who already signed up
   // gets their F3 Name/Email prefilled here without retyping.
@@ -202,16 +296,23 @@
     f3Name: (savedIdentity && savedIdentity.f3Name) || '',
     email: (savedIdentity && savedIdentity.email) || '',
     trackerUrl: '',
+    monthCache: {}, // monthKey ("YYYY-MM") -> full-month dashboard payload, see loadDashboard_
+    viewDate: null, // Date currently shown on the dashboard (date-nav arrows move this)
+    bonusReturnStep: 'checkin', // which step bonusBackBtn returns to — set by showStep
+    bonusEntries: [], // this PAX's own Bonus Tracker rows, from the last bonusList fetch
+    bonusEditingRowIndex: null, // null while adding; the sheet row number while editing
   };
 
   function $(id) { return document.getElementById(id); }
 
   function showStep(name) {
-    ['identify', 'checkin', 'dashboard'].forEach(function(s) {
+    ['identify', 'checkin', 'dashboard', 'bonus'].forEach(function(s) {
       $('step-' + s).classList.toggle('hidden', s !== name);
     });
-    $('headerIdentity').classList.toggle('hidden', name === 'identify');
     $('moreBtn').classList.toggle('hidden', name !== 'dashboard');
+    // Bonus is reachable from checkin or dashboard (post-identify), not from itself or identify.
+    $('bonusBtn').classList.toggle('hidden', name === 'identify' || name === 'bonus');
+    if (name === 'checkin' || name === 'dashboard') state.bonusReturnStep = name;
   }
 
   /** Rejects on any failure (HTTP error, bad JSON, {ok:false}) so every caller has one .catch(). */
@@ -244,7 +345,10 @@
 
   function setButtonLoading_(btn, isLoading, loadingText) {
     if (isLoading) {
-      btn.dataset.originalText = btn.textContent;
+      // Only capture the true original label on the not-loading -> loading transition, so a
+      // second setButtonLoading_(btn, true, ...) call (e.g. relabeling "Saving…" to "Loading
+      // dashboard…" mid-flow) doesn't clobber it with the current loading text.
+      if (!btn.disabled) btn.dataset.originalText = btn.textContent;
       btn.textContent = loadingText || 'Working…';
       btn.disabled = true;
     } else {
@@ -253,10 +357,11 @@
     }
   }
 
+  // monthLabel is shown elsewhere (checkinSub) once identified — the header itself only ever
+  // needs the PAX's name and team (upper-left), so it's accepted here but not displayed.
   function updateHeaderIdentity_(f3Name, team, monthLabel) {
-    $('headerName').textContent = f3Name;
-    $('headerSub').textContent = (team ? team + ' · ' : '') + (monthLabel || '');
-    $('headerIdentity').classList.remove('hidden');
+    $('headerName').textContent = 'F3 Go30: ' + f3Name;
+    $('headerSub').textContent = team || '';
   }
 
   // ── Step: identify ────────────────────────────────────────────────────
@@ -283,13 +388,30 @@
         if (!res.matched) {
           $('idError').textContent = "We couldn't find a signup with that name and email for the current month. Please sign up first.";
           $('idError').classList.remove('hidden');
+          // Prefill the signup page with what they just typed, even though it didn't match.
+          saveIdentityToStorage_(f3Name, email);
+          $('idSignupBtn').classList.remove('hidden');
           return;
         }
+        $('idSignupBtn').classList.add('hidden');
         saveIdentityToStorage_(f3Name, email);
+        state.monthCache = {};
+        state.viewDate = null;
         updateHeaderIdentity_(res.f3Name, res.team, res.monthLabel);
         $('checkinHeading').textContent = 'Welcome back, ' + res.f3Name + '!';
         $('checkinSub').textContent = res.monthLabel + ' — how did today go?';
-        $('yesterdayBlock').classList.toggle('hidden', !res.needsYesterday);
+        renderGoalsReminder_(res.goals);
+        renderCheckinStatus_('today', res.todayStatus);
+        $('yesterdayBlock').classList.toggle('hidden', !res.yesterdayAvailable);
+        if (res.yesterdayAvailable) renderCheckinStatus_('yesterday', res.yesterdayStatus);
+        // Name matched but the email doesn't match our record — non-blocking, still proceed
+        // (see F3Go30-rvde: name is the only real gate right now).
+        $('emailMismatchNote').textContent = "Note: this email doesn't match what we have on file for " + res.f3Name + ', but we found your check-in.';
+        $('emailMismatchNote').classList.toggle('hidden', !res.emailMismatch);
+        // res.nextMonthRegistered is null when there's no next-month tracker yet (nothing to
+        // sign up for) — only nudge when it's explicitly false.
+        $('nextMonthNoteText').textContent = "You're not signed up for " + res.nextMonthLabel + ' yet — verify or update your goals before the month starts.';
+        $('nextMonthNote').classList.toggle('hidden', res.nextMonthRegistered !== false);
         showStep('checkin');
       })
       .catch(function(err) {
@@ -299,17 +421,64 @@
   });
 
   // ── Step: checkin ──────────────────────────────────────────────────────
+  var CHECKIN_STATUS_TEXT_ = {
+    done: '✓ You said: Did it',
+    missed: "✗ You said: Didn't do it",
+    pending: 'Not checked in yet',
+    absent: 'Marked absent by your Q',
+    unavailable: 'No tracker day for this date yet',
+  };
+
+  /** Renders the PAX's own WHO/WHAT/HOW goals (from signup) as a reminder above the check-in
+   * buttons — skips any line that's blank, and hides the whole block if all three are blank. */
+  function renderGoalsReminder_(goals) {
+    var el = $('goalsReminder');
+    var rows = [
+      { label: 'WHO', value: goals && goals.who },
+      { label: 'WHAT', value: goals && goals.what },
+      { label: 'HOW', value: goals && goals.how },
+    ].filter(function(r) { return r.value; });
+    if (!rows.length) {
+      el.classList.add('hidden');
+      el.innerHTML = '';
+      return;
+    }
+    el.innerHTML = '<div class="goals-reminder">' + rows.map(function(r) {
+      return '<div class="goals-reminder-row"><strong>' + r.label + ':</strong> ' + escapeHtml_(r.value) + '</div>';
+    }).join('') + '</div>';
+    el.classList.remove('hidden');
+  }
+
+  /** Shows the PAX's current recorded status for 'today'/'yesterday' — 'pending' (not yet
+   * checked in) is a neutral state, never styled or worded as an error/absence. */
+  function renderCheckinStatus_(prefix, status) {
+    var yesBtn = $(prefix + 'YesBtn');
+    var noBtn = $(prefix + 'NoBtn');
+    $(prefix + 'StatusNote').textContent = CHECKIN_STATUS_TEXT_[status] || '';
+    yesBtn.classList.toggle('current', status === 'done');
+    noBtn.classList.toggle('current', status === 'missed');
+    var disabled = status === 'unavailable';
+    yesBtn.disabled = disabled;
+    noBtn.disabled = disabled;
+  }
+
   function submitCheckin_(btn, day, value) {
     hideApiError_();
     setButtonLoading_(btn, true, 'Saving…');
     callApi('checkin', { f3Name: state.f3Name, email: state.email, day: day, value: value })
       .then(function() {
-        setButtonLoading_(btn, false);
-        loadDashboard_();
+        // Stay in a loading state through the dashboard fetch too — it takes several seconds,
+        // and a button that goes back to normal right before that stall looks like the click
+        // wasn't registered. loadDashboard_ handles its own errors internally and always
+        // resolves, so this .then chain reaches .finally either way.
+        setButtonLoading_(btn, true, 'Loading dashboard…');
+        return loadDashboard_();
       })
       .catch(function(err) {
-        setButtonLoading_(btn, false);
         showApiError_('checkin', err);
+      })
+      .finally(function() {
+        setButtonLoading_(btn, false);
       });
   }
 
@@ -317,7 +486,22 @@
   $('todayNoBtn').addEventListener('click', function() { submitCheckin_(this, 'today', 0); });
   $('yesterdayYesBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', 1); });
   $('yesterdayNoBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', 0); });
-  $('dashboardBtn').addEventListener('click', function() { loadDashboard_(); });
+  $('dashboardBtn').addEventListener('click', function() {
+    var btn = this;
+    setButtonLoading_(btn, true, 'Loading…');
+    loadDashboard_().finally(function() { setButtonLoading_(btn, false); });
+  });
+
+  /** Opens the signup app deep-linked past the intro/identify steps straight to goal
+   * verification — identity is already in localStorage (saveIdentityToStorage_) under the
+   * same key SignupApp.html reads, and targetMonth/autoStart tell it which month + to skip
+   * ahead rather than making the PAX retype their name/email there too. */
+  function openSignup_(targetMonth) {
+    window.open(WEBAPP_URL + '?cmd=signup&targetMonth=' + targetMonth + '&autoStart=1', '_blank');
+  }
+
+  $('idSignupBtn').addEventListener('click', function() { openSignup_('current'); });
+  $('nextMonthSignupBtn').addEventListener('click', function() { openSignup_('next'); });
 
   // ── Step: dashboard ─────────────────────────────────────────────────────
   function scoreColor_(pct) {
@@ -326,6 +510,18 @@
 
   var SEGMENT_COLORS_ = { done: '#2f5d50', missed: '#b8860b', absent: '#a3401a', pending: '#d8cfbf', upcoming: '#d8cfbf' };
   var SEGMENT_VALUES_ = { done: 1, missed: 0, absent: -1 };
+  var DISPLAY_WINDOW_DAYS_ = 14;
+  // Mirrors dashboardWebapp.js's ROLLING_AVERAGE_WINDOW_DAYS_ — needed client-side only to
+  // re-average the previous month's padded-in tail values (buildRollingAverageLocal_ below).
+  var ROLLING_AVERAGE_WINDOW_DAYS_ = 7;
+  // Matches dashboardWebapp.js's buildBonusByType_ keys (fe/q/ins/eh) — short codes so all four
+  // fit beside the score number rather than stacking below it.
+  var BONUS_TYPE_CODES_ = [
+    { key: 'fe', label: 'FE' },
+    { key: 'q', label: 'Q' },
+    { key: 'ins', label: 'Ins' },
+    { key: 'eh', label: 'EH' },
+  ];
 
   function escapeHtml_(s) {
     var div = document.createElement('div');
@@ -376,12 +572,12 @@
       .filter(function(v) { return v === 1 || v === 0 || v === -1; });
   }
 
-  /** Small last-7-day sparkline, same visual language as the design reference's team-tile spark. */
+  /** Small last-14-day sparkline, same visual language as the design reference's team-tile spark. */
   function buildSparklineSvg_(daySegments, currentDay, color, w, h) {
-    var last7 = reportedValues_(daySegments, currentDay).slice(-7);
-    if (last7.length < 2) return '';
-    var pts = last7.map(function(v, i) {
-      var x = (i / (last7.length - 1)) * w;
+    var last14 = reportedValues_(daySegments, currentDay).slice(-DISPLAY_WINDOW_DAYS_);
+    if (last14.length < 2) return '';
+    var pts = last14.map(function(v, i) {
+      var x = (i / (last14.length - 1)) * w;
       var y = v === 1 ? 2 : v === 0 ? h / 2 : h - 2;
       return x.toFixed(1) + ',' + y.toFixed(1);
     }).join(' ');
@@ -402,22 +598,26 @@
     return el;
   }
 
-  /** 7-day moving-average chart: bars = daily outcome, line = rollingAverage series. */
+  /** Rolling-average chart: bars = daily outcome, line = rollingAverage series (already
+   * averaged server-side over ROLLING_AVERAGE_WINDOW_DAYS_, including cross-month lookback —
+   * so even a single day of raw data this month can produce a meaningful averaged point).
+   * currentDay here is how many points are in the *display* window, not the averaging period. */
   function buildAvgChartSvg_(rollingAverage, daySegments, currentDay) {
-    if (!currentDay || currentDay < 2) return '<p class="muted" style="margin:0;">Not enough data yet.</p>';
+    if (!currentDay) return '<p class="muted" style="margin:0;">Not enough data yet.</p>';
     var W = 600, H = 130, PADT = 12, PADB = 22, PADL = 28, PADR = 6;
     var PW = W - PADL - PADR, PH = H - PADT - PADB;
     var mapY = function(v) { return PADT + PH * (1 - (v + 1) / 2); };
-    var mapX = function(i) { return PADL + (i / (currentDay - 1)) * PW; };
+    var xDenom = Math.max(currentDay - 1, 1); // avoid /0 when there's only one point to plot
+    var mapX = function(i) { return PADL + (i / xDenom) * PW; };
     var bw = Math.max(3, PW / currentDay - 3);
     var zY = mapY(0);
     var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;">';
     svg += '<line x1="' + PADL + '" y1="' + mapY(1) + '" x2="' + W + '" y2="' + mapY(1) + '" stroke="#eef3f0" stroke-width="1"/>';
     svg += '<line x1="' + PADL + '" y1="' + zY + '" x2="' + W + '" y2="' + zY + '" stroke="#d8cfbf" stroke-width="1" stroke-dasharray="4,4"/>';
     svg += '<line x1="' + PADL + '" y1="' + mapY(-1) + '" x2="' + W + '" y2="' + mapY(-1) + '" stroke="#f2e2d9" stroke-width="1"/>';
-    svg += '<text x="0" y="' + (mapY(1) + 4) + '" font-size="10" fill="#888">+1</text>';
-    svg += '<text x="0" y="' + (zY - 2) + '" font-size="10" fill="#888">0</text>';
-    svg += '<text x="0" y="' + (mapY(-1) + 4) + '" font-size="10" fill="#888">-1</text>';
+    svg += '<text x="0" y="' + (mapY(1) + 4) + '" font-size="13" fill="#888">+1</text>';
+    svg += '<text x="0" y="' + (zY - 2) + '" font-size="13" fill="#888">0</text>';
+    svg += '<text x="0" y="' + (mapY(-1) + 4) + '" font-size="13" fill="#888">-1</text>';
     for (var i = 0; i < currentDay; i++) {
       var status = daySegments[i];
       var color = SEGMENT_COLORS_[status] || '#d8cfbf';
@@ -449,35 +649,170 @@
     return el;
   }
 
-  function renderDashboard_(d) {
+  // ── Client-side day-value math (mirrors dashboardWebapp.js's pure functions) ────────────
+  // The server sends each PAX's full dayValues array for the whole month (through real
+  // "today"), plus dayDates for index<->calendar-date lookup. Re-deriving streak/segments/
+  // rolling-average locally for whichever day is being viewed means the date arrows only
+  // hit the server when crossing into a month that hasn't been fetched yet.
+  function trimTrailingBlanks_(values) {
+    var v = (values || []).slice();
+    while (v.length && v[v.length - 1] === '') v.pop();
+    return v;
+  }
+
+  function computeStreakLocal_(dayValues) {
+    var values = trimTrailingBlanks_(dayValues);
+    var streak = 0;
+    for (var i = values.length - 1; i >= 0; i--) {
+      if (values[i] === 1) streak++; else break;
+    }
+    return streak;
+  }
+
+  function computeMaxStreakLocal_(dayValues, windowDays) {
+    var values = trimTrailingBlanks_(dayValues);
+    if (windowDays) values = values.slice(-windowDays);
+    var max = 0, run = 0;
+    for (var i = 0; i < values.length; i++) {
+      if (values[i] === 1) { run++; if (run > max) max = run; } else { run = 0; }
+    }
+    return max;
+  }
+
+  function buildDaySegmentsLocal_(dayValues, totalDays) {
+    var values = dayValues || [];
+    var segments = [];
+    for (var i = 0; i < totalDays; i++) {
+      if (i >= values.length) { segments.push('upcoming'); continue; }
+      var v = values[i];
+      if (v === 1) segments.push('done');
+      else if (v === 0) segments.push('missed');
+      else if (v === -1) segments.push('absent');
+      else segments.push('pending');
+    }
+    return segments;
+  }
+
+  function valueToSegmentLocal_(v) {
+    return v === 1 ? 'done' : v === 0 ? 'missed' : v === -1 ? 'absent' : 'pending';
+  }
+
+  /** Same trailing-mean math as dashboardWebapp.js's buildRollingAverage_ — used only to average
+   * the previous month's own padded-in tail values (see renderDashboard_), since the server's
+   * rollingAverage array only covers the viewed month's own days. */
+  function buildRollingAverageLocal_(values, windowSize) {
+    var series = [];
+    for (var i = 0; i < values.length; i++) {
+      var start = Math.max(0, i - windowSize + 1);
+      var windowVals = values.slice(start, i + 1).filter(function(v) { return v === 1 || v === 0 || v === -1; });
+      var avg = windowVals.length ? windowVals.reduce(function(a, b) { return a + b; }, 0) / windowVals.length : 0;
+      series.push(avg);
+    }
+    return series;
+  }
+
+  function isoDate_(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function monthKeyOf_(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+
+  function parseIsoDate_(iso) {
+    var parts = iso.split('-').map(Number);
+    return new Date(parts[0], parts[1] - 1, parts[2]);
+  }
+
+  function formatNavDate_(d) {
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  /** Recomputed view of a team/board member as of dayIndex — only score/scorePct stay pinned
+   * to the current (real "today") totals, since those come from the Tracker's own score
+   * formula and can't be safely re-derived for an arbitrary past day client-side. */
+  function memberViewForIndex_(member, dayIndex, totalDays) {
+    var sliced = (member.dayValues || []).slice(0, dayIndex + 1);
+    return {
+      name: member.name,
+      team: member.team,
+      score: member.score,
+      scorePct: member.scorePct,
+      streak: computeStreakLocal_(sliced),
+      daySegments: buildDaySegmentsLocal_(sliced, totalDays),
+    };
+  }
+
+  function renderDateNav_(viewDateObj) {
+    var todayClient = new Date();
+    var isToday = isoDate_(viewDateObj) === isoDate_(todayClient);
+    $('dateNavLabel').textContent = (isToday ? 'Today · ' : '') + formatNavDate_(viewDateObj);
+    $('dateNextBtn').disabled = isToday;
+  }
+
+  function renderDashboard_(d, dayIndex) {
     updateHeaderIdentity_(d.f3Name, d.team, d.monthLabel);
     state.trackerUrl = d.trackerUrl || '';
 
-    $('dStreak').textContent = d.streak;
-    var dayPct = d.totalDays ? Math.round((d.currentDay / d.totalDays) * 100) : 0;
+    var viewDateObj = parseIsoDate_(d.dayDates[dayIndex] || d.viewDate);
+    state.viewDate = viewDateObj;
+    renderDateNav_(viewDateObj);
+
+    var currentDay = dayIndex + 1;
+    var selfValues = (d.dayValues || []).slice(0, currentDay);
+    var daySegments = buildDaySegmentsLocal_(selfValues, d.totalDays);
+    var rollingAverage = (d.rollingAverage || []).slice(0, currentDay);
+
+    // Two independent windows, not one: the server already averaged each point over
+    // ROLLING_AVERAGE_WINDOW_DAYS_ (7 — the *averaging period*, dashboardWebapp.js, including
+    // lookback into the prior month so even day 1 of a new month is a real 7-day mean). This
+    // just decides how many of those already-averaged points to show at once (the *display
+    // window*, DISPLAY_WINDOW_DAYS_ = 14) ending on the viewed date — it does not re-average
+    // anything.
+    var avgWindowStart = Math.max(0, currentDay - DISPLAY_WINDOW_DAYS_);
+    var avgDaySegments = daySegments.slice(avgWindowStart, currentDay);
+    var avgRollingAverage = rollingAverage.slice(avgWindowStart, currentDay);
+
+    // Early in a month, the display window (last DISPLAY_WINDOW_DAYS_ days) reaches before this
+    // month's day 0 — pad the front with the previous month's own trailing days (d.
+    // priorMonthDayValues, server-supplied) rather than showing a sparse chart with only a
+    // handful of points. Re-averaged locally (buildRollingAverageLocal_) since the server's
+    // rollingAverage array only has points for the viewed month's own days.
+    var priorNeeded = DISPLAY_WINDOW_DAYS_ - avgDaySegments.length;
+    if (priorNeeded > 0 && d.priorMonthDayValues && d.priorMonthDayValues.length) {
+      var priorSlice = d.priorMonthDayValues.slice(-priorNeeded);
+      avgDaySegments = priorSlice.map(valueToSegmentLocal_).concat(avgDaySegments);
+      avgRollingAverage = buildRollingAverageLocal_(priorSlice, ROLLING_AVERAGE_WINDOW_DAYS_).concat(avgRollingAverage);
+    }
+    var avgWindowCount = avgDaySegments.length;
+
+    $('dStreak').textContent = computeStreakLocal_(selfValues);
+    $('dMaxStreak30').textContent = computeMaxStreakLocal_(selfValues, 30);
+    var dayPct = d.totalDays ? Math.round((currentDay / d.totalDays) * 100) : 0;
     $('dProgressFill').style.width = dayPct + '%';
-    $('dProgressSub').textContent = 'Day ' + d.currentDay + ' of ' + d.totalDays;
+    $('dProgressSub').textContent = 'Day ' + currentDay + ' of ' + d.totalDays;
 
     $('dMonthRing').innerHTML = buildRingSvg_(
-      d.daySegments, 140, d.scorePct + '%', (d.score >= 0 ? '+' : '') + d.score + ' pts', scoreColor_(d.scorePct)
+      daySegments, 140, d.scorePct + '%', (d.score >= 0 ? '+' : '') + d.score + ' pts', scoreColor_(d.scorePct)
     );
 
+    // Score/weekly bonuses reflect the current running total (as of real "today"), not the
+    // scrubbed-to day — the Tracker's Score column is a live formula we don't re-derive here.
     $('dScore').textContent = (d.score >= 0 ? '+' : '') + d.score;
     $('dScore').style.color = scoreColor_(d.scorePct);
     $('dScoreSub').textContent = d.done + ' done · ' + d.missed + ' missed · ' + d.absent + ' absent';
 
-    $('dAvgChart').innerHTML = buildAvgChartSvg_(d.rollingAverage, d.daySegments, d.currentDay);
+    $('dAvgChart').innerHTML = buildAvgChartSvg_(avgRollingAverage, avgDaySegments, avgWindowCount);
 
     var bonusesEl = $('dBonuses');
     bonusesEl.innerHTML = '';
-    (d.weeklyBonuses || []).forEach(function(w) {
+    BONUS_TYPE_CODES_.forEach(function(code) {
+      var value = (d.bonusByType && d.bonusByType[code.key]) || 0;
       var row = document.createElement('div');
-      row.className = 'bonus-row';
+      row.className = 'bonus-type-row';
       row.innerHTML =
-        '<span class="bonus-label">' + escapeHtml_(w.label) + '</span>' +
-        '<span class="bonus-pill ' + w.status + '">' +
-        (w.status === 'earned' ? (w.value >= 0 ? '+' : '') + w.value + ' pts' : 'UPCOMING') +
-        '</span>';
+        '<span class="bonus-type-code ' + code.key + '">' + code.label + '</span>' +
+        '<span class="bonus-type-value">' + (value >= 0 ? '+' : '') + value + '</span>';
       bonusesEl.appendChild(row);
     });
 
@@ -485,7 +820,8 @@
     var myTeamEl = $('dMyTeam');
     myTeamEl.innerHTML = '';
     (d.myTeam || []).forEach(function(m) {
-      myTeamEl.appendChild(renderTeamTile_(m, m.name === d.f3Name, d.currentDay));
+      var view = memberViewForIndex_(m, dayIndex, d.totalDays);
+      myTeamEl.appendChild(renderTeamTile_(view, m.name === d.f3Name, currentDay));
     });
 
     var boardEl = $('dPaxBoard');
@@ -499,7 +835,8 @@
       groupEl.appendChild(head);
       var rowsEl = document.createElement('div');
       rowsEl.className = 'board-rows';
-      group.members.forEach(function(m) {
+      group.members.forEach(function(rawMember) {
+        var m = memberViewForIndex_(rawMember, dayIndex, d.totalDays);
         var row = document.createElement('div');
         row.className = 'board-row' + (m.name === d.f3Name ? ' me' : '');
         var nameEl = document.createElement('span');
@@ -510,7 +847,7 @@
         pctEl.style.color = scoreColor_(m.scorePct);
         pctEl.textContent = m.scorePct + '%';
         row.appendChild(nameEl);
-        row.appendChild(buildDayMiniBar_(m.daySegments, d.currentDay));
+        row.appendChild(buildDayMiniBar_(m.daySegments, currentDay));
         row.appendChild(pctEl);
         rowsEl.appendChild(row);
       });
@@ -521,15 +858,202 @@
     showStep('dashboard');
   }
 
-  function loadDashboard_() {
+  /** Fetches and caches one month's full dashboard payload (server always returns the whole
+   * month through real "today", regardless of which day dateISO points at — see
+   * dashboardWebapp.js's handleCheckinDashboard_). Cached per monthKey so date-arrow
+   * navigation within an already-loaded month never re-reads the spreadsheet. */
+  function loadDashboard_(dateISO) {
     hideApiError_();
-    callApi('dashboard', { f3Name: state.f3Name, email: state.email })
-      .then(renderDashboard_)
-      .catch(function(err) { showApiError_('dashboard', err); });
+    // Default to the browser's local calendar date (not the Apps Script server's timezone) so
+    // the dashboard opens on "today" as the PAX's device sees it.
+    dateISO = dateISO || isoDate_(new Date());
+    return callApi('dashboard', { f3Name: state.f3Name, email: state.email, dateISO: dateISO })
+      .then(function(payload) {
+        state.monthCache[payload.monthKey] = payload;
+        renderDashboard_(payload, payload.viewDayIndex);
+      })
+      .catch(function(err) {
+        var friendly = (err && err.message === 'no_tracker_for_date')
+          ? new Error('No tracker exists for that date yet.')
+          : err;
+        showApiError_('dashboard', friendly);
+      });
   }
+
+  function navigateDashboard_(deltaDays) {
+    if (!state.viewDate) return;
+    var newDate = new Date(state.viewDate);
+    newDate.setDate(newDate.getDate() + deltaDays);
+
+    var todayClient = new Date();
+    if (newDate > todayClient && isoDate_(newDate) !== isoDate_(todayClient)) return;
+
+    var cached = state.monthCache[monthKeyOf_(newDate)];
+    if (cached) {
+      var idx = cached.dayDates.indexOf(isoDate_(newDate));
+      if (idx === -1) { loadDashboard_(isoDate_(newDate)); return; }
+      renderDashboard_(cached, idx);
+    } else {
+      loadDashboard_(isoDate_(newDate));
+    }
+  }
+
+  $('datePrevBtn').addEventListener('click', function() { navigateDashboard_(-1); });
+  $('dateNextBtn').addEventListener('click', function() { navigateDashboard_(1); });
 
   $('moreBtn').addEventListener('click', function() {
     if (state.trackerUrl) window.open(state.trackerUrl, '_blank');
+  });
+
+  // ── Step: bonus ──────────────────────────────────────────────────────────
+  function bonusTypeRequiresLink_(type) {
+    return !!(BONUS_TYPE_RULES_[type] && BONUS_TYPE_RULES_[type].requiresLink);
+  }
+
+  function renderBonusList_() {
+    var el = $('bonusList');
+    el.innerHTML = '';
+    if (!state.bonusEntries.length) {
+      el.innerHTML = '<p class="muted" style="margin:10px 0 0;">No bonus entries yet this month.</p>';
+      return;
+    }
+    state.bonusEntries.forEach(function(entry) {
+      var row = document.createElement('div');
+      row.className = 'bonus-entry';
+      var dateLabel = entry.whenIso ? formatNavDate_(parseIsoDate_(entry.whenIso)) : '';
+      row.innerHTML =
+        '<div class="bonus-entry-top">' +
+          '<span class="bonus-entry-type">' + escapeHtml_(entry.type) + '</span>' +
+          '<span class="bonus-entry-date">' + escapeHtml_(dateLabel) + '</span>' +
+        '</div>' +
+        '<div class="bonus-entry-message">' + escapeHtml_(entry.message) + '</div>' +
+        '<div class="bonus-entry-bottom">' +
+          '<span class="bonus-badge ' + (entry.complete ? 'complete' : 'pending') + '">' +
+            (entry.complete ? '✓ Counted' : 'Needs link') + '</span>' +
+          '<button class="bonus-edit-btn" data-row="' + entry.rowIndex + '">Edit</button>' +
+        '</div>';
+      el.appendChild(row);
+    });
+    Array.prototype.forEach.call(el.querySelectorAll('.bonus-edit-btn'), function(btn) {
+      btn.addEventListener('click', function() {
+        var rowIndex = Number(btn.dataset.row);
+        var entry = state.bonusEntries.filter(function(e) { return e.rowIndex === rowIndex; })[0];
+        if (entry) openBonusForm_(entry);
+      });
+    });
+  }
+
+  function loadBonusList_() {
+    hideApiError_();
+    $('bonusListError').classList.add('hidden');
+    return callApi('bonusList', { f3Name: state.f3Name, email: state.email })
+      .then(function(res) {
+        state.bonusEntries = res.entries || [];
+        renderBonusList_();
+      })
+      .catch(function(err) {
+        $('bonusListError').textContent = "Couldn't load your bonus entries — please try again.";
+        $('bonusListError').classList.remove('hidden');
+        showApiError_('bonusList', err);
+      });
+  }
+
+  var BONUS_DEFAULT_TYPE_ = 'Fellowship';
+
+  /** Constrains the bonus date picker to this month or last month — no earlier, no future. */
+  function setBonusWhenRange_() {
+    var today = new Date();
+    var firstOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    var lastOfThisMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    $('bonusWhen').min = isoDate_(firstOfLastMonth);
+    $('bonusWhen').max = isoDate_(lastOfThisMonth);
+  }
+
+  /** Populates and shows the add/edit form. entry is null when adding a new one. */
+  function openBonusForm_(entry) {
+    state.bonusEditingRowIndex = entry ? entry.rowIndex : null;
+    $('bonusFormHeading').textContent = entry ? 'Edit Bonus' : 'Add Bonus';
+    setBonusWhenRange_();
+    $('bonusWhen').value = entry ? entry.whenIso : isoDate_(new Date());
+    $('bonusType').value = entry ? entry.type : BONUS_DEFAULT_TYPE_;
+    $('bonusMessage').value = entry ? entry.message : '';
+    $('bonusLink').value = entry ? entry.link : '';
+    $('bonusFormError').classList.add('hidden');
+    updateBonusLinkVisibility_();
+    $('bonusFormCard').classList.remove('hidden');
+    $('bonusFormCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function closeBonusForm_() {
+    $('bonusFormCard').classList.add('hidden');
+    state.bonusEditingRowIndex = null;
+  }
+
+  function updateBonusLinkVisibility_() {
+    var required = bonusTypeRequiresLink_($('bonusType').value);
+    $('bonusLinkLabel').textContent = required ? 'Slack Link (required)' : 'Slack Link (optional)';
+  }
+
+  Object.keys(BONUS_TYPE_RULES_).forEach(function(type) {
+    var opt = document.createElement('option');
+    opt.value = type;
+    opt.textContent = type;
+    $('bonusType').appendChild(opt);
+  });
+  $('bonusType').addEventListener('change', updateBonusLinkVisibility_);
+
+  $('bonusBtn').addEventListener('click', function() {
+    hideApiError_();
+    closeBonusForm_();
+    showStep('bonus');
+    loadBonusList_();
+  });
+  $('bonusBackBtn').addEventListener('click', function() { showStep(state.bonusReturnStep); });
+  $('bonusAddBtn').addEventListener('click', function() { openBonusForm_(null); });
+  $('bonusCancelBtn').addEventListener('click', closeBonusForm_);
+
+  var BONUS_ERROR_TEXT_ = {
+    invalid_type: 'Please choose a bonus type.',
+    invalid_when: 'Please choose a valid date.',
+    message_required: 'Please describe what happened.',
+    link_required: 'This bonus type needs a Slack link before it counts.',
+    invalid_link: 'That doesn’t look like a valid link (must start with http:// or https://).',
+    not_your_entry: 'That entry no longer belongs to you — please refresh and try again.',
+    not_found: 'That entry could not be found — please refresh and try again.',
+  };
+
+  $('bonusSaveBtn').addEventListener('click', function() {
+    var btn = this;
+    var payload = {
+      f3Name: state.f3Name,
+      email: state.email,
+      type: $('bonusType').value,
+      whenIso: $('bonusWhen').value,
+      message: $('bonusMessage').value.trim(),
+      link: $('bonusLink').value.trim(),
+    };
+    $('bonusFormError').classList.add('hidden');
+    hideApiError_();
+    var action = state.bonusEditingRowIndex ? 'bonusEdit' : 'bonusAdd';
+    if (state.bonusEditingRowIndex) payload.rowIndex = state.bonusEditingRowIndex;
+    setButtonLoading_(btn, true, 'Saving…');
+    callApi(action, payload)
+      .then(function() {
+        closeBonusForm_();
+        return loadBonusList_();
+      })
+      .catch(function(err) {
+        var msg = BONUS_ERROR_TEXT_[err && err.message] || null;
+        if (msg) {
+          $('bonusFormError').textContent = msg;
+          $('bonusFormError').classList.remove('hidden');
+        } else {
+          showApiError_(action, err);
+        }
+      })
+      .finally(function() {
+        setButtonLoading_(btn, false);
+      });
   });
 
   if (APP_VERSION) $('versionFooter').textContent = 'v' + APP_VERSION;

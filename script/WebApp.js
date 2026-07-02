@@ -43,7 +43,9 @@ function renderHomePage_() {
   template.checkinUrl = webAppUrl + '?cmd=checkin';
   template.trackerUrl = (months.current && months.current.trackerUrl) || '';
   template.monthLabel = (months.current && months.current.label) || '';
-  return template.evaluate().setTitle('Go30');
+  // See renderCheckinPage_'s comment (dashboardWebapp.js) — addMetaTag is required for the
+  // viewport meta tag to survive HtmlService's IFRAME sandbox wrapper on mobile browsers.
+  return template.evaluate().setTitle('Go30').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 /** Renders the cmd=signup HTML page, injecting live ListDB/Links data server-side. */
@@ -58,7 +60,7 @@ function renderSignupPage_() {
   template.goalListJson = JSON.stringify(lists.goalList);
   template.monthsJson = JSON.stringify(months);
   template.appVersion = APP_VERSION;
-  return template.evaluate().setTitle('Go30 Hard Commit Signup');
+  return template.evaluate().setTitle('Go30 Hard Commit Signup').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 /** Dispatches a cmd=signup doPost JSON body ({action, ...}) to the matching handler. */
@@ -77,7 +79,7 @@ function handleSignupPost_(e) {
     if (payload.action === 'feedback') return jsonOutput_(handleSignupFeedback_(spreadsheet, payload));
     return jsonOutput_({ ok: false, error: 'unknown_action' });
   } catch (err) {
-    GasLogger.log('handleSignupPost_.error', { error: err && err.message, action: payload.action });
+    GasLogger.logError('handleSignupPost_.error', err, { action: payload.action });
     return jsonOutput_({ ok: false, error: 'server_error' });
   }
 }
@@ -135,6 +137,42 @@ function handleAdminPost_(e) {
       autoGenerateNextMonthTracker();
       return jsonOutput_({ ok: true });
     }
+    if (payload.action === 'createTrackerForMonth') {
+      // Headless equivalent of the Template's "Create New Tracker" sidebar (copyAndInit_),
+      // for an explicit target month — unlike runAutoGenerate (always real-today + 1 month),
+      // this can backfill a month that auto-generate skipped because it ran late (see
+      // createTrackerForMonth_'s docstring, CreateNewTracker.js).
+      if (!payload.startDateIso) {
+        return jsonOutput_({ ok: false, error: 'startDateIso is required (YYYY-MM-DD)' });
+      }
+      var newTrackerStartDate = new Date(payload.startDateIso + 'T00:00:00');
+      if (isNaN(newTrackerStartDate.getTime())) {
+        return jsonOutput_({ ok: false, error: 'invalid_date' });
+      }
+      // Catch JS date rollover (e.g. 2025-02-30 → March 2), same check copyAndInit_ does.
+      var newTrackerInputMonth = parseInt(payload.startDateIso.split('-')[1], 10);
+      if (newTrackerStartDate.getMonth() + 1 !== newTrackerInputMonth) {
+        return jsonOutput_({ ok: false, error: 'date_does_not_exist' });
+      }
+      var createTrackerLog = [];
+      try {
+        var createTrackerResult = createTrackerForMonth_(
+          SpreadsheetApp.getActiveSpreadsheet(), newTrackerStartDate,
+          function(msg) { createTrackerLog.push(msg); }
+        );
+        return jsonOutput_({
+          ok: true,
+          sheetId: createTrackerResult.newSpreadsheetId,
+          spreadsheetName: createTrackerResult.newSpreadsheetName,
+          trackerUrl: createTrackerResult.trackerSheetShortUrl,
+          formUrl: createTrackerResult.formShortUrl,
+          log: createTrackerLog,
+        });
+      } catch (err) {
+        GasLogger.log('handleAdminPost_.createTrackerForMonth.error', { error: err.message });
+        return jsonOutput_({ ok: false, error: 'server_error', detail: err.message, log: createTrackerLog });
+      }
+    }
     if (payload.action === 'cleanupTracker') {
       // Removes a tracker from TrackerDB, its PaxDB rows, and optionally trashes the
       // spreadsheet and its linked HC form. Primary use case: smoke test teardown.
@@ -184,6 +222,26 @@ function handleAdminPost_(e) {
         smokeMode: props.getProperty('SMOKE_MODE') === 'true',
         smokeTrackerId: props.getProperty('SMOKE_TRACKER_ID') || null
       });
+    }
+    if (payload.action === 'invalidateAllCache') {
+      // Runs inside this deployed webapp's own script project — the only PropertiesService
+      // store PaxCache entries actually live in (see PaxCache.js's wipeAllPaxCache_ docstring
+      // for why a monthly Tracker's own script copy can't do this locally). onOpen.js's
+      // "Invalidate Cache" menu item calls this over HTTP for exactly that reason.
+      var wipedCount = wipeAllPaxCache_();
+      var layoutCleared = 0;
+      try {
+        var trackerState = _readTrackerDbRowsBySheetId_(SpreadsheetApp.getActiveSpreadsheet());
+        var layoutKeys = Object.keys(trackerState.bySheetId).map(trackerLayoutCacheKey_);
+        if (layoutKeys.length) {
+          CacheService.getScriptCache().removeAll(layoutKeys);
+          layoutCleared = layoutKeys.length;
+        }
+      } catch (err) {
+        GasLogger.log('handleAdminPost_.invalidateAllCache.layoutClearFailed', { error: err.message });
+      }
+      GasLogger.log('handleAdminPost_.invalidateAllCache', { wiped: wipedCount, layoutCleared: layoutCleared });
+      return jsonOutput_({ ok: true, wiped: wipedCount, layoutCleared: layoutCleared });
     }
     if (payload.action === 'setWebappUrl') {
       // Sets WEBAPP_URL script property with the current webapp deployment URL.
@@ -243,6 +301,22 @@ function handleAdminPost_(e) {
       var sheetHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
       return jsonOutput_({ ok: true, headers: sheetHeaders });
     }
+    if (payload.action === 'sortTracker') {
+      // Re-sorts an arbitrary tracker's Tracker sheet by column B then column A — the same
+      // sort handleFormSubmit_/handleSignupSave_ apply on every write (addResponseOnSubmit.js
+      // sortTrackerSheet_). Exposed as a standalone admin action so a tracker written to by a
+      // save path that predates that sort being wired up can be fixed without a full re-deploy.
+      if (!payload.sheetId) {
+        return jsonOutput_({ ok: false, error: 'sheetId is required' });
+      }
+      var sortTrackerSs = SpreadsheetApp.openById(payload.sheetId);
+      var sortTrackerSheetObj = sortTrackerSs.getSheetByName('Tracker');
+      if (!sortTrackerSheetObj) {
+        return jsonOutput_({ ok: false, error: 'sheet_not_found' });
+      }
+      sortTrackerSheet_(sortTrackerSheetObj);
+      return jsonOutput_({ ok: true });
+    }
     if (payload.action === 'runMinusOneCheck') {
       // Runs the daily minus-one marking for a specific context date (default: today).
       // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload.
@@ -259,7 +333,7 @@ function handleAdminPost_(e) {
     }
     return jsonOutput_({ ok: false, error: 'unknown_action' });
   } catch (err) {
-    GasLogger.log('handleAdminPost_.error', { error: err && err.message, action: payload.action });
+    GasLogger.logError('handleAdminPost_.error', err, { action: payload.action });
     return jsonOutput_({ ok: false, error: 'server_error' });
   }
 }
