@@ -23,6 +23,7 @@ const {
   dayValueStatus_,
   groupByTeam_,
   buildBonusByType_,
+  buildDashboardPaxRow_,
   buildDaySegments_,
   buildRollingAverage_,
   buildRollingAverageWithLookback_,
@@ -154,6 +155,24 @@ const {
 (function testBuildBonusByTypeDefaultsBlankCellsToZero() {
   var trackerRow = ['Little John', 'Crucible', '', '', '', '', 8, 8];
   assert.deepEqual(buildBonusByType_(trackerRow), { fe: 0, q: 0, ins: 0, eh: 0 });
+})();
+
+// ── buildDashboardPaxRow_ ──────────────────────────────────────────────────
+// F3Go30-y55y: the team/board view only ever showed day-grid/score/streak — bonusByType is a
+// per-PAX board field, same as score/streak, not something only the logged-in PAX's own tile
+// gets (that was the bug: handleCheckinDashboard_ only ever computed it once, for the
+// identified PAX, never per-row in the allPaxRows loop this function backs).
+(function testBuildDashboardPaxRowIncludesBonusByType() {
+  var bonusByType = { fe: 3, q: 2, ins: 1, eh: 5 };
+  var row = buildDashboardPaxRow_('Crazy Ivan', 'Crucible', 25, 11, 4, [1, 1, 0, 1], 30, 4, bonusByType);
+  assert.deepEqual(row.bonusByType, bonusByType);
+})();
+
+(function testBuildDashboardPaxRowDefaultsBonusByTypeWhenOmitted() {
+  // A caller that doesn't pass bonusByType (shouldn't happen post-fix, but must not throw)
+  // gets the all-zero shape, matching buildBonusByType_'s own blank-cell default.
+  var row = buildDashboardPaxRow_('Little John', 'Crucible', 8, 8, 2, [1, 1], 30, 2);
+  assert.deepEqual(row.bonusByType, { fe: 0, q: 0, ins: 0, eh: 0 });
 })();
 
 // ── buildDaySegments_ ──────────────────────────────────────────────────────

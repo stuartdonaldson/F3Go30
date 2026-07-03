@@ -135,12 +135,29 @@ function deletePaxRosterIndex_(kind, sheetId) {
   try { PropertiesService.getScriptProperties().deleteProperty(paxCacheRosterKey_(kind, sheetId)); } catch (e) { /* best-effort */ }
 }
 
-/** Adds/updates a single name's entry in an already-cached roster index without a full rebuild. */
+/**
+ * Adds/updates a single name's entry in an already-cached roster index without a full rebuild.
+ * Lock-guarded (same convention as signupWebapp.js's ensureResponseColumn_): this is a
+ * read-modify-write on a single shared property, and two concurrent signups patching the same
+ * roster index would otherwise race — both read the pre-patch index, each add their own entry,
+ * and whichever writes last overwrites (silently drops) the other's patch.
+ */
 function patchPaxRosterIndex_(kind, sheetId, name, rowIndex) {
-  var index = getPaxRosterIndex_(kind, sheetId);
-  if (!index) return; // no cached index to patch — next reader will build it fresh anyway
-  index[paxCacheNormalizeName_(name)] = rowIndex;
-  setPaxRosterIndex_(kind, sheetId, index);
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch (e) {
+    GasLogger.log('patchPaxRosterIndex_.lockFailed', { kind: kind, sheetId: sheetId, error: e.message });
+    return; // best-effort — next full reader rebuilds the index from live data anyway
+  }
+  try {
+    var index = getPaxRosterIndex_(kind, sheetId);
+    if (!index) return; // no cached index to patch — next reader will build it fresh anyway
+    index[paxCacheNormalizeName_(name)] = rowIndex;
+    setPaxRosterIndex_(kind, sheetId, index);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**

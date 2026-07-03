@@ -19,6 +19,8 @@ var dashboardWebappSignupModule_ = (typeof module !== 'undefined' && module.expo
   : null;
 var getCurrentAndNextMonths_dw_ = (dashboardWebappSignupModule_ && dashboardWebappSignupModule_.getCurrentAndNextMonths_)
   || (typeof globalThis !== 'undefined' && globalThis.getCurrentAndNextMonths_);
+var selectTargetMonth_dw_ = (dashboardWebappSignupModule_ && dashboardWebappSignupModule_.selectTargetMonth_)
+  || (typeof globalThis !== 'undefined' && globalThis.selectTargetMonth_);
 var findSignupMatchByF3NameOnly_dw_ = (dashboardWebappSignupModule_ && dashboardWebappSignupModule_.findSignupMatchByF3NameOnly_)
   || (typeof globalThis !== 'undefined' && globalThis.findSignupMatchByF3NameOnly_);
 
@@ -469,12 +471,19 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
   };
 }
 
-function resolveCheckinIdentity_(templateSpreadsheet, f3Name, email) {
+/**
+ * @param {string=} targetMonth 'current' (default) | 'next' | 'smoke' — same selectTargetMonth_
+ *   enum signup's targetMonth already uses (signupWebapp.js), so a smoke-test caller can
+ *   explicitly address the smoke tracker here too rather than relying on it happening to be
+ *   "current" by date (see resolveSignupMonths_'s docstring for why that can't be trusted).
+ */
+function resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, targetMonth) {
   var t0 = Date.now();
   var months = getCurrentAndNextMonths_dw_(templateSpreadsheet);
   GasLogger.log('checkinWebapp.resolveMonths.timing', { durationMs: Date.now() - t0 });
-  if (!months.current) return { matched: false, months: months };
-  return resolveCheckinIdentityLean_(months.current, f3Name, email, months);
+  var monthInfo = selectTargetMonth_dw_(months, targetMonth);
+  if (!monthInfo) return { matched: false, months: months };
+  return resolveCheckinIdentityLean_(monthInfo, f3Name, email, months);
 }
 
 /**
@@ -732,7 +741,7 @@ function resolveCheckinDayTarget_(identity, f3Name, targetDate) {
 function handleCheckinIdentify_(templateSpreadsheet, payload) {
   var t0 = Date.now();
   GasLogger.log('checkinWebapp.identify', { f3Name: payload.f3Name });
-  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email);
+  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth);
   if (!identity.matched) {
     GasLogger.log('checkinWebapp.identify.result', { matched: false, durationMs: Date.now() - t0 });
     return { ok: true, matched: false };
@@ -767,7 +776,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     emailMismatch: !!identity.emailMismatch,
     f3Name: trackerRow[TRACKER_NAME_COL_],
     team: trackerRow[TRACKER_TEAM_COL_],
-    monthLabel: identity.months.current.label,
+    monthLabel: identity.monthInfo.label,
     goals: identity.goals,
     todayStatus: todayStatus,
     yesterdayAvailable: yesterdayAvailable,
@@ -781,11 +790,14 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
   if (payload.day !== 'today' && payload.day !== 'yesterday') {
     return { ok: false, error: 'invalid_day' };
   }
-  if (payload.value !== 0 && payload.value !== 1) {
+  // null means "clear this day's entry back to unrecorded" (the third check-in state,
+  // distinct from 0/1) — the PAX's own explicit undo, not the same as the -1 "absent"
+  // value markMinusOne sets after the grace period expires.
+  if (payload.value !== 0 && payload.value !== 1 && payload.value !== null) {
     return { ok: false, error: 'invalid_value' };
   }
 
-  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email);
+  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth);
   if (!identity.matched) return { ok: false, error: 'not_found' };
 
   var targetDate = new Date();
@@ -801,7 +813,7 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
   var cell = target.trackerSheet.getRange(sheetRow, sheetCol);
   if (cell.getFormula()) return { ok: false, error: 'cell_is_formula' };
 
-  cell.setValue(payload.value);
+  if (payload.value === null) cell.clearContent(); else cell.setValue(payload.value);
   // Write-through: this PAX's own row changed, so drop just their cached copy rather than the
   // whole sheet's — the next read (identify/checkin/dashboard) repopulates it with one row read.
   deletePaxCacheRow_dw_('tracker', target.sheetId, payload.f3Name);
@@ -817,7 +829,7 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
  * client sent, so Bonus Tracker rows always "match Tracker exactly" per the sheet's own rule.
  */
 function resolveBonusSheet_(templateSpreadsheet, payload) {
-  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email);
+  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth);
   if (!identity.matched) return { error: 'not_found' };
   var bonusSheet = identity.targetSs.getSheetByName('Bonus Tracker');
   if (!bonusSheet) return { error: 'bonus_sheet_not_found' };
@@ -867,7 +879,7 @@ var MAX_STREAK_WINDOW_DAYS_ = 30;
 // boundary the same way the average itself already does.
 var DASHBOARD_DISPLAY_WINDOW_DAYS_ = 14;
 
-function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, totalDays, currentDay) {
+function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, totalDays, currentDay, bonusByType) {
   return {
     name: name,
     team: team,
@@ -879,6 +891,10 @@ function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, t
     dayValues: dayValues,
     daySegments: buildDaySegments_(dayValues, totalDays),
     rollingAverage: buildRollingAverage_(dayValues, ROLLING_AVERAGE_WINDOW_DAYS_),
+    // F3Go30-y55y: per-PAX, same as score/streak — every board tile gets its own bonus totals,
+    // not just the logged-in PAX's own stat area (buildBonusByType_'s own blank-cell default
+    // covers a caller that omits this, e.g. a row with no Tracker data at all).
+    bonusByType: bonusByType || { fe: 0, q: 0, ins: 0, eh: 0 },
   };
 }
 
@@ -957,7 +973,8 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
       computeStreak_(dayValues),
       dayValues,
       totalDays,
-      currentDay
+      currentDay,
+      buildBonusByType_(row)
     );
     allPaxRows.push(paxRow);
     if (idx === identity.rowIndex) userRow = paxRow;
@@ -969,14 +986,30 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
 
   // Early-month days would otherwise show an artificially short rolling-average window (e.g.
   // day 2 of July only has 2 days to average) — reach into the previous month's tracker so the
-  // window is always a true ROLLING_AVERAGE_WINDOW_DAYS_ trailing mean. Fetched at the larger
-  // of the two window sizes so the same tail also covers the chart's display-window padding
-  // (see priorMonthDayValues below) — getPriorMonthTailValues_ trims to whatever each caller
-  // actually needs.
+  // window is always a true ROLLING_AVERAGE_WINDOW_DAYS_ trailing mean. Fetched at the largest
+  // of the three window sizes so the same tail also covers the chart's display-window padding
+  // (see priorMonthDayValues below) and the 30-day max-streak lookback below —
+  // getPriorMonthTailValues_ trims to whatever each caller actually needs.
   var priorMonthTail = getPriorMonthTailValues_(
-    monthInfo, payload.f3Name, Math.max(ROLLING_AVERAGE_WINDOW_DAYS_, DASHBOARD_DISPLAY_WINDOW_DAYS_)
+    monthInfo, payload.f3Name,
+    Math.max(ROLLING_AVERAGE_WINDOW_DAYS_, DASHBOARD_DISPLAY_WINDOW_DAYS_, MAX_STREAK_WINDOW_DAYS_)
   );
   var userRollingAverage = buildRollingAverageWithLookback_(userDayValues, ROLLING_AVERAGE_WINDOW_DAYS_, priorMonthTail);
+
+  // Same month-boundary problem as the rolling average above, applied to streak: buildDashboard
+  // PaxRow_'s streak/maxStreak30 (used for every other board row) only sees this month's own
+  // dayValues, so early in a month a real streak that started last month reads as artificially
+  // short (or a real 30-day-best gets capped at however few days have elapsed so far this
+  // month). Recompute both for the identified PAX specifically using the same prior-month tail,
+  // overriding userRow's current-month-only figures. Both figures are windowed to the same
+  // trailing MAX_STREAK_WINDOW_DAYS_ days — "current streak" is not an unbounded look-back, it's
+  // the run within that same 30-day window, exactly like "best in 30 days" is.
+  var userValuesWithLookback = priorMonthTail.concat(userDayValues);
+  var userValuesTrimmed = userValuesWithLookback.slice();
+  while (userValuesTrimmed.length && userValuesTrimmed[userValuesTrimmed.length - 1] === '') userValuesTrimmed.pop();
+  var userValuesWindowed = userValuesTrimmed.slice(-MAX_STREAK_WINDOW_DAYS_);
+  var userStreak = computeStreak_(userValuesWindowed);
+  var userMaxStreak30 = computeMaxStreak_(userValuesWindowed, MAX_STREAK_WINDOW_DAYS_);
 
   var userTeam = String(identity.trackerValues[identity.rowIndex][TRACKER_TEAM_COL_] || '').trim().toLowerCase();
   var myTeamMembers = allPaxRows.filter(function(r) { return String(r.team || '').trim().toLowerCase() === userTeam; })
@@ -1002,8 +1035,8 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
     dayDates: dayDates,
     viewDayIndex: viewDayIndex,
     viewDate: dayDates[viewDayIndex] || null,
-    streak: userRow.streak,
-    maxStreak30: userRow.maxStreak30,
+    streak: userStreak,
+    maxStreak30: userMaxStreak30,
     score: userRow.score,
     rawScore: userRow.rawScore,
     scorePct: userRow.scorePct,
@@ -1036,6 +1069,7 @@ if (typeof module !== 'undefined' && module.exports) {
     dayValueStatus_: dayValueStatus_,
     groupByTeam_: groupByTeam_,
     buildBonusByType_: buildBonusByType_,
+    buildDashboardPaxRow_: buildDashboardPaxRow_,
     buildDaySegments_: buildDaySegments_,
     buildRollingAverage_: buildRollingAverage_,
     buildRollingAverageWithLookback_: buildRollingAverageWithLookback_,

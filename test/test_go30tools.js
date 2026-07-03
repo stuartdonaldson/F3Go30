@@ -126,6 +126,21 @@ assert.throws(
   /ambiguous match/
 );
 
+// A smoke tracker sharing a real tracker's StartDate (docs/OPERATIONS.md §Smoke Mode) is
+// exactly this ambiguity — resolveTrackerForContextDate (the GAS-facing wrapper) excludes
+// SmokeMode.js's getSmokeTrackerId_() before calling this pure function, specifically so
+// nag/minus-one/dashboard-nav never throw on it and never resolve to it. This function itself
+// stays exclusion-agnostic (no smoke-awareness here) — the pure "resolve a date range" rule
+// doesn't change; only which rows are offered to it does. Documented here as the pattern the
+// wrapper applies, since resolveTrackerForContextDate itself is GAS-only and not unit-tested.
+const AMBIGUOUS_WITH_SMOKE = AMBIGUOUS_ROWS;
+const smokeExcluded = AMBIGUOUS_WITH_SMOKE.filter(function(row) { return row.sheetId !== 'sheet-may-v2'; });
+assert.equal(
+  resolveTrackerDbRowForContextDate_(smokeExcluded, new Date(2026, 4, 15)).sheetId,
+  'sheet-may',
+  'excluding the smoke row resolves the real one instead of throwing ambiguous'
+);
+
 // --- upsertPaxDbRow_ / findMostRecentPaxRecordForName_ — incremental PaxDB writes/reads,
 // replacing the old Config 'Last Month Tracker' + cross-spreadsheet walk-back ---
 

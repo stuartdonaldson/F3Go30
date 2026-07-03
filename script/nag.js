@@ -20,6 +20,8 @@ var buildEmailRecipientList_ = (nagUtilitiesModule_ && nagUtilitiesModule_.build
   || (typeof globalThis !== 'undefined' && globalThis.buildEmailRecipientList_);
 var sanitizeEmailDisplayName_ = (nagUtilitiesModule_ && nagUtilitiesModule_.sanitizeEmailDisplayName_)
   || (typeof globalThis !== 'undefined' && globalThis.sanitizeEmailDisplayName_);
+var resolveWebAppBaseUrl_ = (nagUtilitiesModule_ && nagUtilitiesModule_.resolveWebAppBaseUrl_)
+  || (typeof globalThis !== 'undefined' && globalThis.resolveWebAppBaseUrl_);
 var nagResponseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./response_utils.js')
   : null;
@@ -125,6 +127,7 @@ function renderReminderEmailHtmlFallback_(options) {
     var goal = member.who ? (' - goal: ' + escapeHtmlForEmail_(member.who)) : '';
     return '<li><strong>' + escapeHtmlForEmail_(member.name) + '</strong>' + goal + '</li>';
   }).join('');
+  var checkinUrl = (resolveWebAppBaseUrl_ && resolveWebAppBaseUrl_()) ? resolveWebAppBaseUrl_() + '?cmd=checkin' : '';
 
   return [
     '<!DOCTYPE html>',
@@ -134,6 +137,7 @@ function renderReminderEmailHtmlFallback_(options) {
     '<p>This is a quick reminder that the following teammates have not yet checked in for ' + escapeHtmlForEmail_(options.targetDateString) + ':</p>',
     '<ul>' + missingItems + '</ul>',
     '<p><a href="' + escapeHtmlForEmail_(options.trackerUrl) + '">Open the tracker</a></p>',
+    checkinUrl ? ('<p>Also give the new check-in page and dashboard a try: <a href="' + escapeHtmlForEmail_(checkinUrl) + '">Open check-in &amp; dashboard</a></p>') : '',
     '<p>If you already checked in and your entry is not showing yet, just update it in the tracker.</p>',
     '<p>This reminder was sent only to teammates who explicitly opted in to nag emails.</p>',
     '<p>Stay after it,<br>F3 Go30</p>',
@@ -146,10 +150,12 @@ function renderReminderEmailHtml_(options) {
     return renderReminderEmailHtmlFallback_(options);
   }
 
+  var webAppBaseUrl = resolveWebAppBaseUrl_ ? resolveWebAppBaseUrl_() : '';
   var template = HtmlService.createTemplateFromFile('ReminderEmailTemplate');
   template.teamName = options.teamName;
   template.targetDateString = options.targetDateString;
   template.trackerUrl = options.trackerUrl;
+  template.checkinUrl = webAppBaseUrl ? webAppBaseUrl + '?cmd=checkin' : '';
   template.funFact = options.funFact;
   template.missing = options.missing || [];
   template.appVersion = typeof APP_VERSION !== 'undefined' ? APP_VERSION : '';
@@ -175,6 +181,14 @@ function buildReminderEmailTemplate_(options) {
   bodyLines.push('');
   bodyLines.push('Open the tracker here:');
   bodyLines.push(options.trackerUrl);
+
+  var webAppBaseUrl = resolveWebAppBaseUrl_ ? resolveWebAppBaseUrl_() : '';
+  if (webAppBaseUrl) {
+    bodyLines.push('');
+    bodyLines.push('Also give the new check-in page and dashboard a try:');
+    bodyLines.push(webAppBaseUrl + '?cmd=checkin');
+  }
+
   bodyLines.push('');
   bodyLines.push('If you already checked in and your entry is not showing yet, just update it in the tracker.');
   bodyLines.push('');

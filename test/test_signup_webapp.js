@@ -10,6 +10,7 @@ const {
   buildResponseRowFromForm_,
   parseLinksRows_,
   resolveSignupMonths_,
+  selectTargetMonth_,
   handleSignupFeedback_,
 } = require('../script/signupWebapp.js');
 
@@ -246,6 +247,42 @@ const onlyThroughJune = parseLinksRows_(LINKS_VALUES.slice(0, 4));
 const monthsNoNext = resolveSignupMonths_(onlyThroughJune, today);
 assert.equal(monthsNoNext.current.sheetId, 'sheet-june');
 assert.equal(monthsNoNext.next, null);
+
+// No smokeTrackerId passed -> smoke is null, current/next unaffected (default behavior)
+assert.equal(months.smoke, null);
+
+// --- resolveSignupMonths_ smoke exclusion — a smoke tracker is created with the same
+// StartDate a real tracker for that month would use (docs/OPERATIONS.md §Smoke Mode), so it
+// must never win the "latest Date wins" tie-break for current/next, only be reachable via its
+// own `smoke` slot. ---
+
+// Smoke shares July's StartDate with the real 'sheet-july-v2' row, and was written later
+// (Date 2026-06-25 > 2026-06-22) — without exclusion it would silently hijack 'next'.
+const LINKS_WITH_SMOKE = LINKS_VALUES.concat([
+  [new Date(2026, 5, 25), new Date(2026, 6, 1), '2026-07-F3-Go30a (Smoke)', null, null, null, null, 'sheet-smoke', 'form-smoke'],
+]);
+const parsedWithSmoke = parseLinksRows_(LINKS_WITH_SMOKE);
+const monthsWithSmoke = resolveSignupMonths_(parsedWithSmoke, today, 'sheet-smoke');
+assert.equal(monthsWithSmoke.current.sheetId, 'sheet-june', 'smoke exclusion does not disturb current');
+assert.equal(monthsWithSmoke.next.sheetId, 'sheet-july-v2', 'smoke never wins the next-month tie-break');
+assert.equal(monthsWithSmoke.smoke.sheetId, 'sheet-smoke', 'smoke is reachable via its own slot');
+
+// Without a smokeTrackerId, the same fixture reproduces the hijack this exclusion prevents —
+// documents the bug this fix closes, not just the fix itself.
+const monthsWithoutExclusion = resolveSignupMonths_(parsedWithSmoke, today);
+assert.equal(monthsWithoutExclusion.next.sheetId, 'sheet-smoke', 'no smokeTrackerId: smoke wins the tie-break (the bug)');
+
+// If SMOKE_MODE isn't active, resolveSignupMonths_ is never called with a smokeTrackerId at
+// all (getCurrentAndNextMonths_ passes null), and smoke stays completely absent — same as
+// today's behavior for every deployment that isn't mid-smoke-test.
+assert.equal(resolveSignupMonths_(parsedWithSmoke, today, null).smoke, null);
+
+// --- selectTargetMonth_ — the shared 'current'|'next'|'smoke' selector signup and checkin
+// action handlers both use. ---
+assert.equal(selectTargetMonth_(monthsWithSmoke, undefined), monthsWithSmoke.current, 'default is current');
+assert.equal(selectTargetMonth_(monthsWithSmoke, 'current'), monthsWithSmoke.current);
+assert.equal(selectTargetMonth_(monthsWithSmoke, 'next'), monthsWithSmoke.next);
+assert.equal(selectTargetMonth_(monthsWithSmoke, 'smoke'), monthsWithSmoke.smoke);
 
 // --- handleSignupFeedback_ — blank rating + blank comment must not touch the sheet at all,
 // since writing them would overwrite feedback already on file. The guard runs before any

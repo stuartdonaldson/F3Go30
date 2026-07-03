@@ -64,10 +64,19 @@ labeled artifacts that are cleaned up afterward. Run on SIT first; repeat on PRO
 **Automated workflow (recommended):**
 
 ```bash
-# Full automation: steps 1–5, human review pause, then teardown
+# Full automation: tracker creation, then signup/check-in/bonus workflows, human review
+# pause, then teardown
 node tools/smokeTest.js [--env sit|prod]
 # Default: --env sit
-# Pauses after tracker creation and sheet verification for human review.
+#
+# Exercises: 3 teams of 3 test PAX signing up, each PAX checking in for today, and one
+# bonus entry of each type (EHing FNG, Fellowship, Q Point, Inspire) — each write is
+# verified by reading it back through the same webapp path a real user hits (identify /
+# bonusList), not just checked for an ok:true response.
+#
+# Pauses after all of the above for human review — the automated checks can't judge the
+# Bonus Tracker's spilled-formula Multiplier/Uncapped Points/Complete columns, so the pause
+# prompt lists exactly what to eyeball before teardown.
 # Press Enter at the prompt to complete teardown; Ctrl+C to abort.
 ```
 
@@ -117,6 +126,20 @@ node tools/callWebapp.js getSmokeStatus --env <env>
 - The new tracker's spreadsheet ID is saved to `SMOKE_TRACKER_ID` in Script Properties.
 - `runScanTrackers` admin action is blocked — prevents test data contaminating PaxDB.
 - Outbound emails redirect to Site Q address (same as Email Test Mode) with `[SMOKE]` subject prefix.
+
+**Addressing the smoke tracker deterministically:** the smoke tracker is created with the same
+`StartDate` a real tracker for that month would use, so it is *not* reliably `'current'` or
+`'next'` — in particular, the auto-generate path always dates it at next month's start, so
+`targetMonth: 'current'` on `cmd=signup`/`cmd=checkin` calls would resolve to whichever real
+tracker is actually current, not the smoke one. Pass `targetMonth: 'smoke'` on `identify` /
+`save` / `feedback` (signup) and `identify` / `checkin` / `bonusList` / `bonusAdd` / `bonusEdit`
+(checkin) to resolve straight to `SMOKE_TRACKER_ID` instead of date-matching — this is what
+`tools/smokeTest.js` uses. If `SMOKE_TRACKER_ID` isn't set, `targetMonth: 'smoke'` fails closed
+(`invalid_target_month` / `not_found`) rather than silently falling back to `'current'`.
+Nag/minus-one/dashboard-navigation dispatch (`resolveTrackerForContextDate`, go30tools.js)
+separately excludes the smoke tracker from its own date matching unconditionally, so it's never
+a candidate for real dispatch regardless of `targetMonth`. Both behaviors are centralized in
+`script/SmokeMode.js` — see its file header for why.
 
 ### Script Properties
 

@@ -391,6 +391,20 @@ function testGasLogger() {
   Logger.log('[testGasLogger_] complete — check Drive folder for runId=gaslogger-test');
 }
 
+/**
+ * Resolves the evergreen check-in/signup webapp base URL — same source WebApp.js's own landing
+ * page uses for its signupUrl/checkinUrl links (script/WebApp.js:42-43). Falls back to '' rather
+ * than throwing when PropertiesService/ScriptApp aren't available (e.g. under Node tests without
+ * GAS globals), so callers can simply omit a link when this returns falsy.
+ */
+function resolveWebAppBaseUrl_() {
+  if (typeof PropertiesService === 'undefined') return '';
+  var configured = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL');
+  if (configured) return configured;
+  if (typeof ScriptApp === 'undefined') return '';
+  return ScriptApp.getService().getUrl() || '';
+}
+
 function getLockedRowA1Notation(sheet, row, column) {
   var cellNotation = sheet.getRange(row, column).getA1Notation();
   
@@ -417,6 +431,7 @@ if (typeof module !== 'undefined' && module.exports) {
     readEmailDeliveryPolicyFromSheet_: readEmailDeliveryPolicyFromSheet_,
     prepareOutboundEmailDelivery_: prepareOutboundEmailDelivery_,
     sendConfiguredEmail_: sendConfiguredEmail_,
+    resolveWebAppBaseUrl_: resolveWebAppBaseUrl_,
     buildSlackMessage_: buildSlackMessage_,
     buildSignupSlackMessage_: buildSignupSlackMessage_
   };

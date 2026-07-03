@@ -58,7 +58,10 @@ function renderSignupPage_() {
   template.webAppUrl = JSON.stringify(ScriptApp.getService().getUrl());
   template.aoListJson = JSON.stringify(lists.aoList);
   template.goalListJson = JSON.stringify(lists.goalList);
-  template.monthsJson = JSON.stringify(months);
+  // Only current/next are ever meant for the client — getCurrentAndNextMonths_ also returns
+  // `smoke` (the smoke tracker's sheetId) whenever SMOKE_MODE is active, which must never be
+  // embedded in a page anonymous users can view source on.
+  template.monthsJson = JSON.stringify({ current: months.current, next: months.next });
   template.appVersion = APP_VERSION;
   return template.evaluate().setTitle('Go30 Hard Commit Signup').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }

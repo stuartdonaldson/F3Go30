@@ -32,8 +32,11 @@
   .checkin-btn.yes:hover { border-color: #2f5d50; background: #eef3f0; }
   .checkin-btn.no { color: #a3401a; }
   .checkin-btn.no:hover { border-color: #a3401a; background: #fdeceb; }
+  .checkin-btn.none { color: #8a8272; }
+  .checkin-btn.none:hover { border-color: #b0a898; background: #f5f2ea; }
   .checkin-btn.current.yes { background: #eef3f0; border-color: #2f5d50; }
   .checkin-btn.current.no { background: #fdeceb; border-color: #a3401a; }
+  .checkin-btn.current.none { background: #f5f2ea; border-color: #b0a898; }
   .checkin-btn:disabled { opacity: .45; cursor: not-allowed; }
   .checkin-status { font-size: 15px; color: #888; margin: -2px 0 8px; }
   .checkin-section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 18px 0 8px; }
@@ -43,22 +46,22 @@
   .error-text { font-size: 16px; color: #a3401a; margin-bottom: 8px; }
   .warning-text { font-size: 15px; color: #8a6d00; background: #fdf6e3; border: 1px solid #e8d9a0; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
   .hidden { display: none; }
-  .stats-row { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 12px; margin-top: 18px; align-items: stretch; }
+  .stats-row { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 12px; margin-top: 32px; align-items: stretch; }
   .stat-card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 16px; text-align: center; display: flex; flex-direction: column; align-items: center; }
+  .stat-card-clickable { cursor: pointer; }
+  .stat-card-clickable:hover, .stat-card-clickable:focus-visible { border-color: #2f5d50; background: #f5f8f6; }
   .stat-label { font-size: 13px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin-bottom: 6px; }
   .stat-value { font-size: 41px; font-weight: bold; line-height: 1; }
   .stat-sub { font-size: 13px; color: #b0a898; margin-top: 6px; letter-spacing: .06em; }
-  .progress-bar { width: 100%; background: #ede9df; border-radius: 3px; height: 7px; overflow: hidden; margin-top: 10px; }
-  .progress-fill { height: 7px; background: #2f5d50; border-radius: 3px; }
   .ring-svg { display: block; margin: 0 auto; }
   .day-mini-bar { display: flex; gap: 1.5px; align-items: center; justify-content: center; flex: 1; min-width: 0; }
   .day-mini-cell { width: 6px; height: 12px; border-radius: 1px; flex-shrink: 0; }
   .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
   .legend-item { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #888; }
   .legend-swatch { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
-  .score-tile-body { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; }
+  .score-tile-body { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
   .score-main { display: flex; flex-direction: column; align-items: center; }
-  .score-bonus-list { display: flex; flex-direction: column; gap: 4px; border-left: 1px solid #ede9df; padding-left: 10px; }
+  .score-bonus-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; border-top: 1px solid #ede9df; padding-top: 8px; width: 100%; justify-items: center; }
   .bonus-type-row { display: flex; align-items: center; gap: 5px; }
   .bonus-type-code { font-family: monospace; font-weight: bold; font-size: 12px; padding: 1px 5px; border-radius: 3px; }
   .bonus-type-code.fe { background: #eef3f0; color: #2f5d50; }
@@ -72,13 +75,19 @@
   .team-tile .tname { font-weight: bold; font-size: 15px; margin: 4px 0 2px; }
   .team-tile .tscore { font-size: 21px; font-weight: bold; }
   .team-tile .tstreak { font-size: 12px; color: #b0a898; margin-top: 2px; }
+  .team-tile .tbonuses { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; margin-top: 5px; }
+  .team-tile .tbonuses .bonus-type-code { font-size: 10px; padding: 0 4px; }
   .board-group { border: 1px solid #d8cfbf; border-radius: 12px; overflow: hidden; margin-top: 12px; }
   .board-head { background: #2f5d50; color: #f8f4ea; padding: 9px 16px; font-size: 15px; font-weight: bold; letter-spacing: .16em; display: flex; justify-content: space-between; }
   .board-rows { padding: 6px 12px; }
-  .board-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 6px 4px; border-radius: 4px; font-size: 15px; }
-  .board-row .bname { width: 117px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: bold; }
-  .board-row .bpct { width: 30px; flex-shrink: 0; text-align: right; font-family: monospace; font-weight: bold; }
+  .board-row { padding: 6px 4px; border-radius: 4px; }
   .board-row.me { background: #eef3f0; font-weight: bold; }
+  .board-row-main { display: flex; align-items: center; gap: 8px; justify-content: space-between; font-size: 15px; }
+  .board-row-main .bname { width: 117px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: bold; }
+  .board-row-main .bpct { width: 30px; flex-shrink: 0; text-align: right; font-family: monospace; font-weight: bold; }
+  /* Only rendered when at least one bonus type is nonzero — most rows stay single-line. */
+  .board-row-bonuses { display: flex; gap: 3px; margin-top: 3px; padding-left: 4px; }
+  .board-row-bonuses .bonus-type-code { font-size: 10px; padding: 0 4px; }
   .chart-card { margin-top: 12px; }
   .section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 22px 0 4px; }
   .api-error-banner { background: #fdeceb; border-bottom: 3px solid #a3401a; color: #6b1f0a; padding: 12px 18px; font-size: 17px; line-height: 1.5; }
@@ -89,8 +98,8 @@
   .date-nav-btn svg { width: 20px; height: 20px; display: block; }
   .date-nav-btn:disabled { color: #d8cfbf; border-color: #d8cfbf; cursor: default; }
   .date-nav-label { font-size: 16px; font-weight: bold; color: #2f5d50; min-width: 150px; text-align: center; }
-  .streak-best { font-size: 14px; font-weight: bold; color: #b0a898; margin-top: 4px; }
-  .streak-best span { color: #2f5d50; }
+  .streak-best { font-size: 15px; font-weight: bold; color: #6b6255; margin-top: 20px; }
+  .streak-best span { display: block; color: #2f5d50; font-size: 32px; margin-top: 10px; }
   .bonus-entry { border: 1px solid #d8cfbf; border-radius: 10px; padding: 12px 14px; margin-top: 10px; }
   .bonus-entry-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .bonus-entry-type { font-family: monospace; font-weight: bold; font-size: 13px; padding: 2px 7px; border-radius: 4px; background: #eef3f0; color: #2f5d50; }
@@ -113,7 +122,8 @@
     .stat-label { font-size: 12px; margin-bottom: 4px; }
     .stat-value { font-size: 27px; }
     .stat-sub { font-size: 12px; }
-    .streak-best { font-size: 12px; }
+    .streak-best { font-size: 13px; }
+    .streak-best span { font-size: 20px; }
     .ring-svg { width: 100px; height: 100px; }
     .legend { gap: 6px; }
     .legend-item { font-size: 11px; }
@@ -165,16 +175,18 @@
       <div class="checkin-section-label">TODAY</div>
       <div class="checkin-status" id="todayStatusNote"></div>
       <div class="checkin-row">
-        <button class="checkin-btn yes" id="todayYesBtn">&#10003; Did it</button>
-        <button class="checkin-btn no" id="todayNoBtn">&#10007; Didn't do it</button>
+        <button class="checkin-btn yes" id="todayYesBtn">&#10003; I Hit it!</button>
+        <button class="checkin-btn no" id="todayNoBtn">&#10007; Missed it</button>
+        <button class="checkin-btn none" id="todayNoneBtn">No Check-in</button>
       </div>
 
       <div id="yesterdayBlock" class="hidden">
         <div class="checkin-section-label">YESTERDAY</div>
         <div class="checkin-status" id="yesterdayStatusNote"></div>
         <div class="checkin-row">
-          <button class="checkin-btn yes" id="yesterdayYesBtn">&#10003; Did it</button>
-          <button class="checkin-btn no" id="yesterdayNoBtn">&#10007; Didn't do it</button>
+          <button class="checkin-btn yes" id="yesterdayYesBtn">&#10003; I Hit it!</button>
+          <button class="checkin-btn no" id="yesterdayNoBtn">&#10007; Missed it</button>
+          <button class="checkin-btn none" id="yesterdayNoneBtn">No Check-in</button>
         </div>
       </div>
 
@@ -183,7 +195,7 @@
         <button class="secondary" id="nextMonthSignupBtn" style="margin-top:8px;padding:8px;">Sign up for next month &rarr;</button>
       </div>
 
-      <button class="secondary" id="dashboardBtn" style="margin-top:14px;">Skip to Dashboard &rarr;</button>
+      <button class="primary" id="dashboardBtn" style="margin-top:14px;">Continue to Dashboard &rarr;</button>
     </div>
 
     <div id="step-dashboard" class="hidden">
@@ -193,22 +205,19 @@
         <button id="dateNextBtn" class="date-nav-btn" title="Next day"><svg viewBox="0 0 24 24" fill="none"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
       <div class="stats-row">
-        <div class="stat-card">
+        <div class="stat-card stat-card-clickable" id="dMonthProgressTile" role="button" tabindex="0" title="Edit today's/yesterday's check-in">
           <div class="stat-label">MONTH PROGRESS</div>
           <div id="dMonthRing"></div>
           <div class="legend" style="margin-top:8px;justify-content:center;">
-            <div class="legend-item"><div class="legend-swatch" style="background:#2f5d50;"></div>Done</div>
-            <div class="legend-item"><div class="legend-swatch" style="background:#b8860b;"></div>Missed</div>
-            <div class="legend-item"><div class="legend-swatch" style="background:#a3401a;"></div>Absent</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#2f5d50;"></div>Hits</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#b8860b;"></div>Misses</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#a3401a;"></div>None</div>
           </div>
         </div>
         <div class="stat-card">
           <div class="stat-label">STREAK</div>
           <div class="stat-value" id="dStreak" style="color:#2f5d50;"></div>
-          <div class="stat-sub">CURRENT</div>
-          <div class="streak-best">Best 30d: <span id="dMaxStreak30"></span></div>
-          <div class="progress-bar"><div class="progress-fill" id="dProgressFill"></div></div>
-          <div class="stat-sub" id="dProgressSub"></div>
+          <div class="streak-best">Best (30d): <span id="dStreakBest30"></span></div>
         </div>
         <div class="stat-card">
           <div class="stat-label">TOTAL SCORE</div>
@@ -399,7 +408,7 @@
         state.viewDate = null;
         updateHeaderIdentity_(res.f3Name, res.team, res.monthLabel);
         $('checkinHeading').textContent = 'Welcome back, ' + res.f3Name + '!';
-        $('checkinSub').textContent = res.monthLabel + ' — how did today go?';
+        $('checkinSub').textContent = res.monthLabel + ' — How did you do on your commitment for today?';
         renderGoalsReminder_(res.goals);
         renderCheckinStatus_('today', res.todayStatus);
         $('yesterdayBlock').classList.toggle('hidden', !res.yesterdayAvailable);
@@ -422,12 +431,19 @@
 
   // ── Step: checkin ──────────────────────────────────────────────────────
   var CHECKIN_STATUS_TEXT_ = {
-    done: '✓ You said: Did it',
-    missed: "✗ You said: Didn't do it",
-    pending: 'Not checked in yet',
+    done: '✓ You said: I Hit it!',
+    missed: '✗ You said: Missed it',
+    pending: 'No check-in yet',
     absent: 'Marked absent by your Q',
     unavailable: 'No tracker day for this date yet',
   };
+
+  /** Maps a submitted check-in value back to the same status vocabulary the server uses
+   * (dayValueStatus_ in dashboardWebapp.js) so the tri-state buttons can re-render immediately
+   * on submit success without a second round trip just to learn what we already just wrote. */
+  function valueToCheckinStatus_(value) {
+    return value === 1 ? 'done' : value === 0 ? 'missed' : 'pending';
+  }
 
   /** Renders the PAX's own WHO/WHAT/HOW goals (from signup) as a reminder above the check-in
    * buttons — skips any line that's blank, and hides the whole block if all three are blank. */
@@ -449,17 +465,22 @@
     el.classList.remove('hidden');
   }
 
-  /** Shows the PAX's current recorded status for 'today'/'yesterday' — 'pending' (not yet
-   * checked in) is a neutral state, never styled or worded as an error/absence. */
+  /** Shows the PAX's current recorded status for 'today'/'yesterday' as a true tri-state
+   * toggle — exactly one of the three buttons is ever "current", including 'pending' (not yet
+   * checked in), so it's always visually obvious which state a day is in rather than a day
+   * with no answer looking the same as one with an answer. */
   function renderCheckinStatus_(prefix, status) {
     var yesBtn = $(prefix + 'YesBtn');
     var noBtn = $(prefix + 'NoBtn');
+    var noneBtn = $(prefix + 'NoneBtn');
     $(prefix + 'StatusNote').textContent = CHECKIN_STATUS_TEXT_[status] || '';
     yesBtn.classList.toggle('current', status === 'done');
     noBtn.classList.toggle('current', status === 'missed');
+    noneBtn.classList.toggle('current', status === 'pending');
     var disabled = status === 'unavailable';
     yesBtn.disabled = disabled;
     noBtn.disabled = disabled;
+    noneBtn.disabled = disabled;
   }
 
   function submitCheckin_(btn, day, value) {
@@ -467,12 +488,11 @@
     setButtonLoading_(btn, true, 'Saving…');
     callApi('checkin', { f3Name: state.f3Name, email: state.email, day: day, value: value })
       .then(function() {
-        // Stay in a loading state through the dashboard fetch too — it takes several seconds,
-        // and a button that goes back to normal right before that stall looks like the click
-        // wasn't registered. loadDashboard_ handles its own errors internally and always
-        // resolves, so this .then chain reaches .finally either way.
-        setButtonLoading_(btn, true, 'Loading dashboard…');
-        return loadDashboard_();
+        // Deliberately does NOT navigate to the dashboard — a PAX often wants to set both
+        // today's and yesterday's answer in the same visit, and forcing a navigation after the
+        // first click would race them off the checkin step before the second click lands. The
+        // dashboard is reached only via the explicit "Skip to Dashboard" button.
+        renderCheckinStatus_(day, valueToCheckinStatus_(value));
       })
       .catch(function(err) {
         showApiError_('checkin', err);
@@ -484,12 +504,22 @@
 
   $('todayYesBtn').addEventListener('click', function() { submitCheckin_(this, 'today', 1); });
   $('todayNoBtn').addEventListener('click', function() { submitCheckin_(this, 'today', 0); });
+  $('todayNoneBtn').addEventListener('click', function() { submitCheckin_(this, 'today', null); });
   $('yesterdayYesBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', 1); });
   $('yesterdayNoBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', 0); });
+  $('yesterdayNoneBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', null); });
   $('dashboardBtn').addEventListener('click', function() {
     var btn = this;
     setButtonLoading_(btn, true, 'Loading…');
     loadDashboard_().finally(function() { setButtonLoading_(btn, false); });
+  });
+  // The whole Month Progress tile is the edit affordance — always returns to the real, live
+  // today/yesterday check-in step, deliberately ignoring whatever day the date-nav arrows have
+  // scrubbed the dashboard to, since the editable window is fixed to today/yesterday (ADR-005's
+  // 24hr grace period) regardless of what's being viewed.
+  $('dMonthProgressTile').addEventListener('click', function() { showStep('checkin'); });
+  $('dMonthProgressTile').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showStep('checkin'); }
   });
 
   /** Opens the signup app deep-linked past the intro/identify steps straight to goal
@@ -514,12 +544,24 @@
   // Mirrors dashboardWebapp.js's ROLLING_AVERAGE_WINDOW_DAYS_ — needed client-side only to
   // re-average the previous month's padded-in tail values (buildRollingAverageLocal_ below).
   var ROLLING_AVERAGE_WINDOW_DAYS_ = 7;
+  // Mirrors dashboardWebapp.js's MAX_STREAK_WINDOW_DAYS_ — needed client-side to recompute both
+  // streak figures identically when date-nav scrubs to a different day within an already-fetched
+  // month (see computeWindowedStreaks_ below).
+  var MAX_STREAK_WINDOW_DAYS_ = 30;
   // Matches dashboardWebapp.js's buildBonusByType_ keys (fe/q/ins/eh) — short codes so all four
   // fit beside the score number rather than stacking below it.
   var BONUS_TYPE_CODES_ = [
     { key: 'fe', label: 'FE' },
     { key: 'q', label: 'Q' },
     { key: 'ins', label: 'Ins' },
+    { key: 'eh', label: 'EH' },
+  ];
+  // Same four types, reordered for the Total Score tile's 2-column grid — a row-major grid
+  // filled in this order lands FE/Ins on row one and Q/EH on row two.
+  var BONUS_GRID_ORDER_ = [
+    { key: 'fe', label: 'FE' },
+    { key: 'ins', label: 'Ins' },
+    { key: 'q', label: 'Q' },
     { key: 'eh', label: 'EH' },
   ];
 
@@ -634,18 +676,34 @@
     return svg;
   }
 
+  /** F3Go30-y55y: same fe/q/ins/eh chips as the self-tile's #dBonuses section (BONUS_TYPE_CODES_),
+   *  but omitting zero-count types entirely — a board tile has no room for 4 chips per PAX when
+   *  most PAX are only active in 0-1 types, and unlike the self section there's no room for a
+   *  "0 done" number column to make an empty chip meaningful. Returns '' when every type is 0,
+   *  so callers can skip the row wrapper entirely rather than rendering an empty div. */
+  function buildBonusChipsHtml_(bonusByType) {
+    var chips = BONUS_TYPE_CODES_
+      .filter(function(code) { return (bonusByType && bonusByType[code.key]) > 0; })
+      .map(function(code) {
+        return '<span class="bonus-type-code ' + code.key + '">' + code.label + '·' + bonusByType[code.key] + '</span>';
+      });
+    return chips.join('');
+  }
+
   function renderTeamTile_(member, isMe, currentDay) {
     var el = document.createElement('div');
     el.className = 'team-tile' + (isMe ? ' me' : '');
     var ring = buildRingSvg_(member.daySegments, 72, member.scorePct + '%', '', scoreColor_(member.scorePct));
     var spark = buildSparklineSvg_(member.daySegments, currentDay, scoreColor_(member.scorePct), 66, 20);
+    var bonusChipsHtml = buildBonusChipsHtml_(member.bonusByType);
     el.innerHTML =
       ring +
       '<div class="tname">' + escapeHtml_(member.name) + '</div>' +
       (spark ? '<div>' + spark + '</div>' : '') +
       '<div class="tscore" style="color:' + scoreColor_(member.scorePct) + ';">' +
       (member.score >= 0 ? '+' : '') + member.score + '</div>' +
-      '<div class="tstreak">' + (member.streak || 0) + 'd streak</div>';
+      '<div class="tstreak">' + (member.streak || 0) + 'd streak</div>' +
+      (bonusChipsHtml ? '<div class="tbonuses">' + bonusChipsHtml + '</div>' : '');
     return el;
   }
 
@@ -677,6 +735,18 @@
       if (values[i] === 1) { run++; if (run > max) max = run; } else { run = 0; }
     }
     return max;
+  }
+
+  /** Both streak figures share one trailing MAX_STREAK_WINDOW_DAYS_ window, reaching into the
+   * prior month's tail (priorMonthTailValues, server-supplied) the same way the server's own
+   * computation does — otherwise an early-month day would recompute a too-short "current streak"
+   * on the client even though the initial server-rendered value was correct. */
+  function computeWindowedStreaks_(dayValues, priorMonthTailValues, windowDays) {
+    var combined = (priorMonthTailValues || []).concat(dayValues || []).slice(-windowDays);
+    return {
+      current: computeStreakLocal_(combined),
+      best: computeMaxStreakLocal_(combined, windowDays),
+    };
   }
 
   function buildDaySegmentsLocal_(dayValues, totalDays) {
@@ -740,6 +810,9 @@
       scorePct: member.scorePct,
       streak: computeStreakLocal_(sliced),
       daySegments: buildDaySegmentsLocal_(sliced, totalDays),
+      // Month-to-date totals, same as score/scorePct above — not re-derivable for an arbitrary
+      // scrubbed-to day, so pinned to the server's real-"today" value like those two are.
+      bonusByType: member.bonusByType,
     };
   }
 
@@ -786,11 +859,9 @@
     }
     var avgWindowCount = avgDaySegments.length;
 
-    $('dStreak').textContent = computeStreakLocal_(selfValues);
-    $('dMaxStreak30').textContent = computeMaxStreakLocal_(selfValues, 30);
-    var dayPct = d.totalDays ? Math.round((currentDay / d.totalDays) * 100) : 0;
-    $('dProgressFill').style.width = dayPct + '%';
-    $('dProgressSub').textContent = 'Day ' + currentDay + ' of ' + d.totalDays;
+    var streaks = computeWindowedStreaks_(selfValues, d.priorMonthDayValues, MAX_STREAK_WINDOW_DAYS_);
+    $('dStreak').textContent = streaks.current;
+    $('dStreakBest30').textContent = streaks.best;
 
     $('dMonthRing').innerHTML = buildRingSvg_(
       daySegments, 140, d.scorePct + '%', (d.score >= 0 ? '+' : '') + d.score + ' pts', scoreColor_(d.scorePct)
@@ -800,13 +871,15 @@
     // scrubbed-to day — the Tracker's Score column is a live formula we don't re-derive here.
     $('dScore').textContent = (d.score >= 0 ? '+' : '') + d.score;
     $('dScore').style.color = scoreColor_(d.scorePct);
-    $('dScoreSub').textContent = d.done + ' done · ' + d.missed + ' missed · ' + d.absent + ' absent';
+    $('dScoreSub').innerHTML = d.done + ' hits<br>' + d.missed + ' misses<br>' + d.absent + ' no check-in';
 
     $('dAvgChart').innerHTML = buildAvgChartSvg_(avgRollingAverage, avgDaySegments, avgWindowCount);
 
     var bonusesEl = $('dBonuses');
     bonusesEl.innerHTML = '';
-    BONUS_TYPE_CODES_.forEach(function(code) {
+    // Column-first order (FE/Q down the left, Ins/EH down the right) rendered into a row-major
+    // 2-column grid gives the requested layout: FE +1 / Ins +0 on row one, Q +1 / EH +0 on row two.
+    BONUS_GRID_ORDER_.forEach(function(code) {
       var value = (d.bonusByType && d.bonusByType[code.key]) || 0;
       var row = document.createElement('div');
       row.className = 'bonus-type-row';
@@ -839,6 +912,8 @@
         var m = memberViewForIndex_(rawMember, dayIndex, d.totalDays);
         var row = document.createElement('div');
         row.className = 'board-row' + (m.name === d.f3Name ? ' me' : '');
+        var mainEl = document.createElement('div');
+        mainEl.className = 'board-row-main';
         var nameEl = document.createElement('span');
         nameEl.className = 'bname';
         nameEl.textContent = m.name;
@@ -846,9 +921,19 @@
         pctEl.className = 'bpct';
         pctEl.style.color = scoreColor_(m.scorePct);
         pctEl.textContent = m.scorePct + '%';
-        row.appendChild(nameEl);
-        row.appendChild(buildDayMiniBar_(m.daySegments, currentDay));
-        row.appendChild(pctEl);
+        mainEl.appendChild(nameEl);
+        mainEl.appendChild(buildDayMiniBar_(m.daySegments, currentDay));
+        mainEl.appendChild(pctEl);
+        row.appendChild(mainEl);
+        // F3Go30-y55y: same chips as the team-tile grid, omitted entirely when every type is
+        // 0 so most rows in a long roster stay single-line.
+        var bonusChipsHtml = buildBonusChipsHtml_(m.bonusByType);
+        if (bonusChipsHtml) {
+          var bonusesRow = document.createElement('div');
+          bonusesRow.className = 'board-row-bonuses';
+          bonusesRow.innerHTML = bonusChipsHtml;
+          row.appendChild(bonusesRow);
+        }
         rowsEl.appendChild(row);
       });
       groupEl.appendChild(rowsEl);

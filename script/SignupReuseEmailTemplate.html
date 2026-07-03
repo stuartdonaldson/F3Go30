@@ -28,9 +28,19 @@
           <? if (prefilledUrl && ctaIntro) { ?>
             <p style="margin:0 0 16px;"><?= ctaIntro ?></p>
             <p style="margin:0 0 16px;"><a href="<?= prefilledUrl ?>" style="color:#0b5c86;font-weight:bold;"><?= ctaLabel ?></a></p>
+
+            <? if (newSignupUrl) { ?>
+              <p style="margin:0 0 16px;">We also have a new sign-up page — try it here:</p>
+              <p style="margin:0 0 16px;"><a href="<?= newSignupUrl ?>" style="color:#0b5c86;font-weight:bold;">Open new sign-up page</a></p>
+            <? } ?>
           <? } ?>
 
           <p style="margin:0 0 16px;">Tracker: <a href="<?= trackerUrl ?>" style="color:#0b5c86;font-weight:bold;">View tracker</a></p>
+
+          <? if (checkinUrl) { ?>
+            <p style="margin:0 0 16px;">Also give the new check-in page and dashboard a try:</p>
+            <p style="margin:0 0 16px;"><a href="<?= checkinUrl ?>" style="color:#0b5c86;font-weight:bold;">Open check-in &amp; dashboard</a></p>
+          <? } ?>
 
           <p style="margin:20px 0 0;">Thanks,<br>F3 Go30</p>
           <p style="margin:6px 0 0;font-size:11px;color:#888;">Version: <?= appVersion || 'unknown' ?></p>

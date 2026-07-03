@@ -30,6 +30,15 @@ global.DriveApp = {
   },
 };
 
+// In-memory stand-in for LockService.getScriptLock() — single-process tests never contend, so
+// this just needs to satisfy the waitLock/releaseLock contract patchPaxRosterIndex_ relies on.
+global.LockService = {
+  getScriptLock: function() {
+    return { waitLock: function() {}, releaseLock: function() {} };
+  },
+};
+global.GasLogger = { log: function() {}, run: function(name, fn) { return fn(); } };
+
 const {
   paxCacheNormalizeName_,
   getPaxCacheRow_,

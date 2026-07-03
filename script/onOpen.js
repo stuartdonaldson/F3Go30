@@ -124,6 +124,21 @@ function invalidateCacheMenuAction() {
 }
 
 /**
+ * Script Properties are capped at 500KB total and 9KB per value (Apps Script quota) — PaxCache
+ * (script/PaxCache.js) is the biggest consumer of that budget, so surfacing count/size here
+ * gives an early warning before a roster grows large enough to hit the ceiling.
+ * @returns {{count: number, totalBytes: number}}
+ */
+function scriptPropertiesMetrics_() {
+  var props = PropertiesService.getScriptProperties().getProperties();
+  var keys = Object.keys(props);
+  var totalBytes = keys.reduce(function(sum, key) {
+    return sum + key.length + (props[key] || '').length;
+  }, 0);
+  return { count: keys.length, totalBytes: totalBytes };
+}
+
+/**
  * Displays an About dialog with version info and author contact.
  */
 function showAbout() {
@@ -133,6 +148,14 @@ function showAbout() {
   // by the webapp itself (WebApp.js's setWebappUrl admin action), so prefer that.
   const serviceUrl = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL') || ScriptApp.getService().getUrl();
   const deploymentId = serviceUrl ? serviceUrl.match(/\/d\/([^\/]+)/)?.[1] : 'unknown';
+
+  // Reflects *this* script project's own Script Properties store. Meaningful when opened from
+  // the Template (the deployed webapp's PaxCache entries live here); a monthly Tracker copy
+  // has its own separate, mostly-empty store (see PaxCache.js's wipeAllPaxCache_ docstring) —
+  // same caveat as WEBAPP_URL above.
+  const propsMetrics = scriptPropertiesMetrics_();
+  const propsKB = (propsMetrics.totalBytes / 1024).toFixed(1);
+  const propsPct = ((propsMetrics.totalBytes / (500 * 1024)) * 100).toFixed(1);
 
   const html = HtmlService.createHtmlOutput(
     '<style>' +
@@ -156,6 +179,10 @@ function showAbout() {
     '<p class="code">' + deploymentId + '</p>' +
     '<p><span class="label">Service URL:</span></p>' +
     '<p class="code">' + (serviceUrl || 'unknown') + '</p>' +
+    '<hr>' +
+    '<p><span class="label">Script Properties (this spreadsheet\'s script):</span></p>' +
+    '<p>' + propsMetrics.count + ' propert' + (propsMetrics.count === 1 ? 'y' : 'ies') +
+      ', ' + propsKB + ' KB (' + propsPct + '% of the 500 KB quota)</p>' +
     (serviceUrl ? (
       '<hr>' +
       '<p><span class="label">Signup:</span> <a href="' + serviceUrl + '?cmd=signup" target="_blank">' + serviceUrl + '?cmd=signup</a></p>' +
