@@ -770,3 +770,19 @@ and the new CopyTemplate tool (`script/CopyTemplate.js`, `tools/copyTemplate.js`
 A per-spec `test.use()` override is the right tool when one spec in a suite has different environment
 requirements than the rest (headless-safe public webapp vs. a GAS-editor spec needing a real
 viewport) — no need to split into a separate Playwright project/config for a single flag.
+
+## 2026-07-04 09:23:40
+
+### Summary:
+Fixed a live PROD bug: dashboard's previous-day nav arrow was permanently grayed out after
+the first load. Root cause was in `script/CheckinApp.html`'s `renderDateNav_` — it only ever
+managed `dateNextBtn`'s disabled state (today-check); `loadDashboard_` disables both nav
+buttons while fetching, but nothing re-enabled `datePrevBtn` afterward, despite a comment
+claiming `renderDateNav_` handled it. One-line fix: `renderDateNav_` now also sets
+`datePrevBtn.disabled = false`. Deployed to PROD as v2.3.12 and committed (67979e3).
+
+### Key Learnings:
+A misleading code comment ("re-enables/relabels the nav buttons via renderDateNav_") masked
+that the referenced function only handled one of the two buttons it claimed to — worth treating
+comments describing a function's effects as a hypothesis to verify against the actual code,
+not as ground truth, especially when tracking down a "button stuck disabled" symptom.
