@@ -7,16 +7,16 @@ Reads axiomQueryToken + axiomDataset from local.settings.json (same settings fil
 test/script in this repo uses — see tests/conftest.py:_load_settings()). Never prints the token.
 
 Usage:
-    python scripts/query_axiom.py [--limit N] [--since DURATION] [--side gas|python]
-                                   [--name SUBSTRING] [--where APL_EXPR] [--raw [PATH]]
+    python tools/query_axiom.py [--limit N] [--since DURATION] [--side gas|python]
+                                 [--name SUBSTRING] [--where APL_EXPR] [--raw [PATH]]
 
 Examples:
-    python scripts/query_axiom.py                          # last 200 events, last 24h
-    python scripts/query_axiom.py --limit 50 --since 2h
-    python scripts/query_axiom.py --side python
-    python scripts/query_axiom.py --name sync.warn
-    python scripts/query_axiom.py --where "data.docId == '1AAE...'"
-    python scripts/query_axiom.py --raw /tmp/axiom_dump.json   # also dump full JSON for offline analysis
+    python tools/query_axiom.py                          # last 200 events, last 24h
+    python tools/query_axiom.py --limit 50 --since 2h
+    python tools/query_axiom.py --side python
+    python tools/query_axiom.py --name sync.warn
+    python tools/query_axiom.py --where "data.docId == '1AAE...'"
+    python tools/query_axiom.py --raw /tmp/axiom_dump.json   # also dump full JSON for offline analysis
 
 DURATION accepts <N>s / <N>m / <N>h / <N>d (e.g. 30m, 2h, 1d). Default: 24h.
 """

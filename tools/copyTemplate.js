@@ -20,9 +20,11 @@
 
 const { post, loadSettings, ENV_MAP } = require('./callWebapp.js');
 
+const FLAGS_WITH_VALUES_ = ['--env', '--tracker-count'];
+
 function parseArgs_(argv) {
   const args = argv.slice(2);
-  const folderName = args.find(a => !a.startsWith('--'));
+  const folderName = args.find((a, i) => !a.startsWith('--') && !FLAGS_WITH_VALUES_.includes(args[i - 1]));
   if (!folderName) {
     console.error('Usage: copyTemplate.js <folderName> [--env sit|prod] [--tracker-count 3]');
     process.exit(1);

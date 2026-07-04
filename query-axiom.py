@@ -70,7 +70,6 @@ def query(dataset: str, token: str, *, limit: int, since: timedelta,
         "startTime": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "endTime": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    print(body)
     req = urllib.request.Request(
         "https://api.axiom.co/v1/datasets/_apl?format=legacy",
         data=json.dumps(body).encode(),
