@@ -44,6 +44,7 @@ function makeFakeTrackerSheet(dateRow, rows) {
 
 function makeFakeSpreadsheet(sheetsByName) {
   return {
+    getId: function() { return 'fake-spreadsheet-id'; },
     getSheetByName: function(name) { return sheetsByName[name] || null; }
   };
 }
@@ -67,6 +68,8 @@ const trackerRows = [
 
 const fakeSheet = makeFakeTrackerSheet(dateRow, trackerRows);
 const fakeFutureSpreadsheet = makeFakeSpreadsheet({ Tracker: fakeSheet });
+
+global.refreshPaxDbForTracker_ = function() {};
 
 global.resolveTrackerForContextDate = function(targetDate) {
   // Must dispatch on (contextDate - 2 days) — the date actually being marked — not

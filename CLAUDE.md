@@ -125,7 +125,17 @@ Reads deployment ID from local.settings.json. For `--cmd admin` (the default), a
 injects the admin secret automatically. Default: `--cmd admin --env sit`.
 
 Common admin actions: `getSmokeStatus`, `setScriptProperties`, `cleanupTracker`,
-`runScanTrackers`, `getSheet`
+`runScanTrackers`, `getSheet`, `runAutoGenerate`, `createTrackerForMonth`
+
+- `runAutoGenerate` creates the tracker for **real-today's month + 1** (it's meant to run a
+  few days before month-end via its own time trigger). If it's ever run late — after a month
+  has already started with no tracker created for it — it silently creates the *next* month
+  instead, skipping the missing one. Check `getSheet`/TrackerDB before relying on it.
+- `createTrackerForMonth` creates a tracker for an **explicit** month — use this to backfill a
+  skipped month or create one out of band:
+  `node tools/callWebapp.js createTrackerForMonth --env <env> --body '{"startDateIso":"2026-07-01"}'`
+- To undo a wrongly-created tracker: `cleanupTracker --body '{"sheetId":"<id>","trashSpreadsheet":true}'`
+  removes the TrackerDB row + PaxDB rows and trashes the spreadsheet + its linked HC Form.
 
 ### Smoke mode workflow (run on SIT first; repeat on PROD before go-live)
 See docs/OPERATIONS.md §Smoke Mode for the full numbered sequence. Quick reference:

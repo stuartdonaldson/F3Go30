@@ -37,11 +37,17 @@
           <p style="margin:0 0 10px;">Open the tracker here:</p>
           <p style="margin:0 0 20px;"><a href="<?= trackerUrl ?>" style="color:#0b5c86;font-weight:bold;">View current tracker</a></p>
 
+          <? if (checkinUrl) { ?>
+            <p style="margin:0 0 10px;">Also give the new check-in page and dashboard a try:</p>
+            <p style="margin:0 0 20px;"><a href="<?= checkinUrl ?>" style="color:#0b5c86;font-weight:bold;">Open check-in &amp; dashboard</a></p>
+          <? } ?>
+
           <p style="margin:0 0 16px;">If you already checked in and your entry is not showing yet, just update it in the tracker.</p>
 
           <p style="margin:0 0 16px;font-size:13px;color:#555;">This reminder was sent only to teammates who explicitly opted in to nag emails.</p>
 
           <p style="margin:20px 0 0;">Stay after it,<br>F3 Go30</p>
+          <p style="margin:6px 0 0;font-size:11px;color:#888;">Version: <?= appVersion || 'unknown' ?></p>
         </div>
       </div>
     </div>

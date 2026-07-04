@@ -264,6 +264,24 @@ var GasLogger = {
   disable: function() { this._enabled = false; },
 
   /**
+   * Standardizes a caught-exception log entry so every hand-rolled try/catch (an action
+   * dispatcher like handleCheckinPost_ that must return a JSON error response instead of
+   * rethrowing, so it can't just let the outer GasLogger.run() wrapper catch it) logs the same
+   * shape as run()'s own catch: message + stack, plus whatever call-site context is useful
+   * (e.g. { action: payload.action }). Before this existed, each dispatcher's catch logged
+   * message only — no stack — which made a caught server_error much harder to root-cause from
+   * Axiom alone (see F3Go30-yj53, where the actual failing getRange() call had to be
+   * reconstructed by hand instead of read off the stack).
+   * @param {string} tag   - Entry tag (e.g. 'handleCheckinPost_.error').
+   * @param {Error}  err   - The caught exception.
+   * @param {Object=} extra - Extra fields merged in (e.g. { action: payload.action }).
+   */
+  logError: function(tag, err, extra) {
+    var data = Object.assign({ message: err && err.message, stack: err && err.stack }, extra || {});
+    this.log(tag, data);
+  },
+
+  /**
    * Wraps an entry-point function with init/flush so callers don't have to manage the
    * lifecycle by hand. On error, logs the error entry, flushes, then rethrows — a thrown
    * error still surfaces as a failed execution (so Apps Script's trigger-failure email,

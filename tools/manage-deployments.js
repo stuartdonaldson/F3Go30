@@ -165,6 +165,22 @@ function findActiveDeploymentId_(claspEnv) {
   return match[1];
 }
 
+// A freshly created/updated Apps Script deployment can take a few seconds to propagate on
+// Google's edge, so the very next HTTPS call against it may 404/error transiently.
+function execSyncWithRetry_(command, options, { attempts = 3, delayMs = 5000 } = {}) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return execSync(command, options);
+    } catch (err) {
+      if (attempt === attempts) throw err;
+      console.log(
+        `\n⚠️  Command failed (attempt ${attempt}/${attempts}), retrying in ${delayMs / 1000}s…`
+      );
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+    }
+  }
+}
+
 function saveDeploymentId_(targetKey, deploymentId) {
   const settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
   settings[TARGETS[targetKey].deploymentIdKey] = deploymentId;
@@ -225,7 +241,7 @@ function deploy(targetKey, options = {}) {
 
   if (targetKey === 'template') {
     console.log('\n🔗 Setting WEBAPP_URL script property on PROD…');
-    execSync('node tools/callWebapp.js setWebappUrl --env prod', {
+    execSyncWithRetry_('node tools/callWebapp.js setWebappUrl --env prod', {
       stdio: 'inherit',
       cwd: ROOT,
     });

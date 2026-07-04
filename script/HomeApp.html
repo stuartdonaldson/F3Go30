@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Go30</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #f4f1ea; font-family: Arial, Helvetica, sans-serif; color: #2b2b2b; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .wrap { max-width: 420px; width: 100%; }
+  .header { text-align: center; margin-bottom: 22px; }
+  .header .brand { font-size: 11px; letter-spacing: .24em; color: #2f5d50; font-weight: bold; opacity: .7; }
+  .header .title { font-size: 28px; font-weight: bold; color: #2f5d50; }
+  .card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 22px; box-shadow: 0 2px 10px rgba(47,93,80,.07); }
+  a.link-btn { display: block; text-align: center; padding: 15px; border-radius: 9px; font-size: 16px; font-weight: bold; text-decoration: none; margin-bottom: 12px; font-family: inherit; }
+  a.link-btn:last-child { margin-bottom: 0; }
+  a.link-btn.primary { background: #2f5d50; color: #f8f4ea; }
+  a.link-btn.secondary { background: #eef3f0; color: #2f5d50; }
+  a.link-btn.tertiary { background: transparent; color: #0b5c86; border: 1px solid #d8cfbf; }
+  a.link-btn.disabled { background: #f0ece2; color: #b0a898; pointer-events: none; }
+  p.muted { color: #777; font-size: 12px; text-align: center; margin: 16px 0 0; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div class="brand">F3</div>
+      <div class="title">Go30</div>
+    </div>
+    <div class="card">
+      <a class="link-btn primary" href="<?!= signupUrl ?>">Sign Up / Update My Commit</a>
+      <a class="link-btn secondary" href="<?!= checkinUrl ?>">Daily Check-in &amp; Dashboard</a>
+      <? if (trackerUrl) { ?>
+        <a class="link-btn tertiary" href="<?!= trackerUrl ?>" target="_blank">Open Tracker Spreadsheet</a>
+      <? } else { ?>
+        <span class="link-btn tertiary disabled">Tracker not available yet</span>
+      <? } ?>
+    </div>
+    <p class="muted"><? if (monthLabel) { ?><?!= monthLabel ?><? } ?></p>
+  </div>
+</body>
+</html>

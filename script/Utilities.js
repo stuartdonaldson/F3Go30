@@ -42,7 +42,7 @@ function getConfigValue_(spreadsheet, variableName, data) {
     return null;
   }
 
-  return config.getValue(variableName);
+  return config.getPair(variableName);
 }
 
 function findConfigRowIndex_(rows, variableName) {
@@ -183,6 +183,37 @@ function readEmailDeliveryPolicy_(spreadsheet, configData) {
     emailTestMode: isConfigYesLike_(testModeConfig && (testModeConfig.primary || testModeConfig.secondary)),
     siteQEmail: sanitizePolicyEmailAddress_(siteQConfig && siteQConfig.secondary),
     siteQName: String(siteQConfig && siteQConfig.primary || '').trim()
+  };
+}
+
+/**
+ * Returns the ManagedConfigSheet for the authoritative config spreadsheet.
+ * When IS_TEMPLATE_HOST is set, config always comes from the template (active spreadsheet).
+ * Otherwise falls back to the provided tracker spreadsheet.
+ * @param {Spreadsheet=} trackerSpreadsheet - Tracker spreadsheet (used only when not template host).
+ * @returns {ManagedConfigSheet|null}
+ */
+function openAppConfigSheet_(trackerSpreadsheet) {
+  var isTemplateHost = PropertiesService.getScriptProperties().getProperty('IS_TEMPLATE_HOST') === 'true';
+  return openConfigSheet(isTemplateHost ? undefined : trackerSpreadsheet);
+}
+
+/**
+ * Reads the email delivery policy from a ManagedConfigSheet using typed accessors.
+ * Use in place of readEmailDeliveryPolicy_() when the config sheet is already resolved
+ * via openAppConfigSheet_().
+ * @param {ManagedConfigSheet|null} configSheet
+ * @returns {{emailTestMode: boolean, siteQEmail: string, siteQName: string}}
+ */
+function readEmailDeliveryPolicyFromSheet_(configSheet) {
+  var testModeVal = configSheet && (
+    configSheet.getValue('Email Test Mode') || configSheet.getValue('Email Test')
+  );
+  var siteQPair = configSheet && configSheet.getPair('Site Q');
+  return {
+    emailTestMode: isConfigYesLike_(testModeVal),
+    siteQEmail: sanitizePolicyEmailAddress_(siteQPair && siteQPair.secondary),
+    siteQName: String(siteQPair && siteQPair.primary || '').trim()
   };
 }
 
@@ -360,6 +391,20 @@ function testGasLogger() {
   Logger.log('[testGasLogger_] complete — check Drive folder for runId=gaslogger-test');
 }
 
+/**
+ * Resolves the evergreen check-in/signup webapp base URL — same source WebApp.js's own landing
+ * page uses for its signupUrl/checkinUrl links (script/WebApp.js:42-43). Falls back to '' rather
+ * than throwing when PropertiesService/ScriptApp aren't available (e.g. under Node tests without
+ * GAS globals), so callers can simply omit a link when this returns falsy.
+ */
+function resolveWebAppBaseUrl_() {
+  if (typeof PropertiesService === 'undefined') return '';
+  var configured = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL');
+  if (configured) return configured;
+  if (typeof ScriptApp === 'undefined') return '';
+  return ScriptApp.getService().getUrl() || '';
+}
+
 function getLockedRowA1Notation(sheet, row, column) {
   var cellNotation = sheet.getRange(row, column).getA1Notation();
   
@@ -381,9 +426,12 @@ if (typeof module !== 'undefined' && module.exports) {
     initializeConfigSheet_: initializeConfigSheet_,
     sanitizeEmailDisplayName_: sanitizeEmailDisplayName_,
     buildEmailRecipientList_: buildEmailRecipientList_,
+    openAppConfigSheet_: openAppConfigSheet_,
     readEmailDeliveryPolicy_: readEmailDeliveryPolicy_,
+    readEmailDeliveryPolicyFromSheet_: readEmailDeliveryPolicyFromSheet_,
     prepareOutboundEmailDelivery_: prepareOutboundEmailDelivery_,
     sendConfiguredEmail_: sendConfiguredEmail_,
+    resolveWebAppBaseUrl_: resolveWebAppBaseUrl_,
     buildSlackMessage_: buildSlackMessage_,
     buildSignupSlackMessage_: buildSignupSlackMessage_
   };

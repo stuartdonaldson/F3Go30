@@ -12,10 +12,16 @@ var nagUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
 
 var sendConfiguredEmail_ = (nagUtilitiesModule_ && nagUtilitiesModule_.sendConfiguredEmail_)
   || (typeof globalThis !== 'undefined' && globalThis.sendConfiguredEmail_);
+var openAppConfigSheet_ = (nagUtilitiesModule_ && nagUtilitiesModule_.openAppConfigSheet_)
+  || (typeof globalThis !== 'undefined' && globalThis.openAppConfigSheet_);
+var readEmailDeliveryPolicyFromSheet_ = (nagUtilitiesModule_ && nagUtilitiesModule_.readEmailDeliveryPolicyFromSheet_)
+  || (typeof globalThis !== 'undefined' && globalThis.readEmailDeliveryPolicyFromSheet_);
 var buildEmailRecipientList_ = (nagUtilitiesModule_ && nagUtilitiesModule_.buildEmailRecipientList_)
   || (typeof globalThis !== 'undefined' && globalThis.buildEmailRecipientList_);
 var sanitizeEmailDisplayName_ = (nagUtilitiesModule_ && nagUtilitiesModule_.sanitizeEmailDisplayName_)
   || (typeof globalThis !== 'undefined' && globalThis.sanitizeEmailDisplayName_);
+var resolveWebAppBaseUrl_ = (nagUtilitiesModule_ && nagUtilitiesModule_.resolveWebAppBaseUrl_)
+  || (typeof globalThis !== 'undefined' && globalThis.resolveWebAppBaseUrl_);
 var nagResponseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./response_utils.js')
   : null;
@@ -121,6 +127,7 @@ function renderReminderEmailHtmlFallback_(options) {
     var goal = member.who ? (' - goal: ' + escapeHtmlForEmail_(member.who)) : '';
     return '<li><strong>' + escapeHtmlForEmail_(member.name) + '</strong>' + goal + '</li>';
   }).join('');
+  var checkinUrl = (resolveWebAppBaseUrl_ && resolveWebAppBaseUrl_()) ? resolveWebAppBaseUrl_() + '?cmd=checkin' : '';
 
   return [
     '<!DOCTYPE html>',
@@ -130,6 +137,7 @@ function renderReminderEmailHtmlFallback_(options) {
     '<p>This is a quick reminder that the following teammates have not yet checked in for ' + escapeHtmlForEmail_(options.targetDateString) + ':</p>',
     '<ul>' + missingItems + '</ul>',
     '<p><a href="' + escapeHtmlForEmail_(options.trackerUrl) + '">Open the tracker</a></p>',
+    checkinUrl ? ('<p>Also give the new check-in page and dashboard a try: <a href="' + escapeHtmlForEmail_(checkinUrl) + '">Open check-in &amp; dashboard</a></p>') : '',
     '<p>If you already checked in and your entry is not showing yet, just update it in the tracker.</p>',
     '<p>This reminder was sent only to teammates who explicitly opted in to nag emails.</p>',
     '<p>Stay after it,<br>F3 Go30</p>',
@@ -142,12 +150,15 @@ function renderReminderEmailHtml_(options) {
     return renderReminderEmailHtmlFallback_(options);
   }
 
+  var webAppBaseUrl = resolveWebAppBaseUrl_ ? resolveWebAppBaseUrl_() : '';
   var template = HtmlService.createTemplateFromFile('ReminderEmailTemplate');
   template.teamName = options.teamName;
   template.targetDateString = options.targetDateString;
   template.trackerUrl = options.trackerUrl;
+  template.checkinUrl = webAppBaseUrl ? webAppBaseUrl + '?cmd=checkin' : '';
   template.funFact = options.funFact;
   template.missing = options.missing || [];
+  template.appVersion = typeof APP_VERSION !== 'undefined' ? APP_VERSION : '';
   return template.evaluate().getContent();
 }
 
@@ -170,6 +181,14 @@ function buildReminderEmailTemplate_(options) {
   bodyLines.push('');
   bodyLines.push('Open the tracker here:');
   bodyLines.push(options.trackerUrl);
+
+  var webAppBaseUrl = resolveWebAppBaseUrl_ ? resolveWebAppBaseUrl_() : '';
+  if (webAppBaseUrl) {
+    bodyLines.push('');
+    bodyLines.push('Also give the new check-in page and dashboard a try:');
+    bodyLines.push(webAppBaseUrl + '?cmd=checkin');
+  }
+
   bodyLines.push('');
   bodyLines.push('If you already checked in and your entry is not showing yet, just update it in the tracker.');
   bodyLines.push('');
@@ -202,14 +221,17 @@ function sendNagEmail_(contextDate) {
   // Nag checks YESTERDAY's column, not today's — must dispatch on yesterday's date, or a
   // run on the 1st/2nd of a month resolves to the brand-new (wrong) tracker instead of the
   // one that actually has yesterday's data (month-boundary dispatch bug).
-  var today = contextDate instanceof Date ? contextDate : new Date(contextDate || Date.now());
+  // Guard against GAS trigger event objects: time-based triggers pass a TriggerEvent as the
+  // first arg (truthy non-Date), so `new Date(contextDate)` would produce an Invalid Date.
+  var today = contextDate instanceof Date ? contextDate
+    : new Date(typeof contextDate === 'string' || typeof contextDate === 'number' ? contextDate : Date.now());
   var yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
 
   var trackerRow = resolveTrackerForContextDate(yesterday);
   GasLogger.log('sendNagEmail.dispatch', { contextDate: today.toISOString(), targetDate: yesterday.toISOString(), sheetId: trackerRow.sheetId });
   var ss = SpreadsheetApp.openById(trackerRow.sheetId);
-  return sendNagEmailForSpreadsheet_(ss, contextDate);
+  return sendNagEmailForSpreadsheet_(ss, today);
 }
 
 /**
@@ -226,10 +248,15 @@ function sendNagEmailForSpreadsheet_(ss, contextDate) {
     return 0;
   }
 
-  var configData = configSheet ? configSheet.getDataRange().getValues() : [];
+  var configData = configSheet ? configSheet.getDataRange().getValues() : null;
+
+  // Email delivery policy comes from the HOST (template) config, not the tracker.
+  var hostConfigSheet = openAppConfigSheet_(ss);
+  var deliveryPolicy = readEmailDeliveryPolicyFromSheet_(hostConfigSheet);
 
   var tz = ss.getSpreadsheetTimeZone();
-  var today = contextDate instanceof Date ? contextDate : new Date(contextDate || Date.now());
+  var today = contextDate instanceof Date ? contextDate
+    : new Date(typeof contextDate === 'string' || typeof contextDate === 'number' ? contextDate : Date.now());
   var yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   var targetDateString = Utilities.formatDate(yesterday, tz, 'MM/dd/yyyy');
@@ -326,13 +353,12 @@ function sendNagEmailForSpreadsheet_(ss, contextDate) {
 
     try {
       sendConfiguredEmail_({
-      configData: configData,
-      spreadsheet: ss,
-      recipients: recipients,
-      subject: message.subject,
-      body: message.body,
-      htmlBody: message.htmlBody,
-      logLabel: 'sendNagEmail'
+        policy: deliveryPolicy,
+        recipients: recipients,
+        subject: message.subject,
+        body: message.body,
+        htmlBody: message.htmlBody,
+        logLabel: 'sendNagEmail'
       });
       sentSummary.push({ team: teamName, recipients: recipients.length, missing: missing.length });
       totalEmailsSent += recipients.length;

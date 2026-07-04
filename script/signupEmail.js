@@ -1,6 +1,11 @@
 /**
  * Build signup reuse email using SignupReuseEmailTemplate
  */
+var signupEmailUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./Utilities.js')
+  : null;
+var resolveWebAppBaseUrl_ = (signupEmailUtilitiesModule_ && signupEmailUtilitiesModule_.resolveWebAppBaseUrl_)
+  || (typeof globalThis !== 'undefined' && globalThis.resolveWebAppBaseUrl_);
 
 function resolveSignupEmailMode_(options) {
   if (options && options.mode) return options.mode;
@@ -20,6 +25,18 @@ function buildSignupEmailCopy_(options) {
       summaryIntro: 'Current goals:',
       ctaIntro: 'If you want to make another change, use this form link:',
       ctaLabel: 'Open form'
+    };
+  }
+
+  if (mode === 'new_signup') {
+    return {
+      mode: mode,
+      headline: "You're signed up for " + registrationMonth + '!',
+      intro: 'Your registration for ' + registrationMonth + ' is confirmed.',
+      showSummary: true,
+      summaryIntro: 'Your goals:',
+      ctaIntro: null,
+      ctaLabel: null
     };
   }
 
@@ -48,6 +65,9 @@ function buildSignupEmailCopy_(options) {
 
 function renderSignupReuseEmailHtml_(options) {
   var copy = buildSignupEmailCopy_(options || {});
+  var webAppBaseUrl = resolveWebAppBaseUrl_ ? resolveWebAppBaseUrl_() : '';
+  var checkinUrl = webAppBaseUrl ? webAppBaseUrl + '?cmd=checkin' : '';
+  var newSignupUrl = webAppBaseUrl ? webAppBaseUrl + '?cmd=signup' : '';
 
   if (typeof HtmlService === 'undefined' || !HtmlService.createTemplateFromFile) {
     var lines = [];
@@ -61,8 +81,14 @@ function renderSignupReuseEmailHtml_(options) {
     if (options.prefilledUrl && copy.ctaIntro) {
       lines.push('<p>' + copy.ctaIntro + '</p>');
       lines.push('<p><a href="' + options.prefilledUrl + '">' + copy.ctaLabel + '</a></p>');
+      if (newSignupUrl) {
+        lines.push('<p>We also have a new sign-up page — try it here: <a href="' + newSignupUrl + '">Open new sign-up page</a></p>');
+      }
     }
     if (options.trackerUrl) lines.push('<p><a href="' + options.trackerUrl + '">View tracker</a></p>');
+    if (checkinUrl) {
+      lines.push('<p>Also give the new check-in page and dashboard a try: <a href="' + checkinUrl + '">Open check-in &amp; dashboard</a></p>');
+    }
     lines.push('</body></html>');
     return lines.join('\n');
   }
@@ -78,15 +104,20 @@ function renderSignupReuseEmailHtml_(options) {
   template.f3Name = options.f3Name;
   template.trackerUrl = options.trackerUrl;
   template.prefilledUrl = options.prefilledUrl;
+  template.checkinUrl = checkinUrl;
+  template.newSignupUrl = newSignupUrl;
   template.summaryLines = options.summaryLines || [];
+  template.appVersion = typeof APP_VERSION !== 'undefined' ? APP_VERSION : '';
   return template.evaluate().getContent();
 }
 
 function buildSignupReuseEmailTemplate_(options) {
   options = options || {};
   var copy = buildSignupEmailCopy_(options);
-  var subject = copy.mode === 'confirmation'
+  var subject = (copy.mode === 'confirmation')
     ? ('F3 Go30: registration updated for ' + (options.registrationMonth || 'this month'))
+    : (copy.mode === 'new_signup')
+    ? ('F3 Go30: registered for ' + (options.registrationMonth || 'this month'))
     : ('F3 Go30: ' + (copy.mode === 'reuse' ? "last month's goals reused" : 'enter your goals'));
   var bodyLines = [];
   bodyLines.push('F3 Name: ' + (options.f3Name || '(unknown)'));
@@ -97,13 +128,27 @@ function buildSignupReuseEmailTemplate_(options) {
     bodyLines.push(copy.summaryIntro);
     bodyLines = bodyLines.concat(options.summaryLines || []);
   }
+  var webAppBaseUrl = resolveWebAppBaseUrl_ ? resolveWebAppBaseUrl_() : '';
+  var checkinUrl = webAppBaseUrl ? webAppBaseUrl + '?cmd=checkin' : '';
+  var newSignupUrl = webAppBaseUrl ? webAppBaseUrl + '?cmd=signup' : '';
+
   if (options.prefilledUrl && copy.ctaIntro) {
     bodyLines.push('');
     bodyLines.push(copy.ctaIntro);
     bodyLines.push(options.prefilledUrl);
+    if (newSignupUrl) {
+      bodyLines.push('');
+      bodyLines.push('We also have a new sign-up page — try it here:');
+      bodyLines.push(newSignupUrl);
+    }
   }
   bodyLines.push('');
   if (options.trackerUrl) bodyLines.push('Tracker: ' + options.trackerUrl);
+  if (checkinUrl) {
+    bodyLines.push('');
+    bodyLines.push('Also give the new check-in page and dashboard a try:');
+    bodyLines.push(checkinUrl);
+  }
 
   return {
     subject: subject,

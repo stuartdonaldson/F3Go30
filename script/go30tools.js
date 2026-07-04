@@ -24,6 +24,12 @@
 *   LastNagRunAt - timestamp of the latest nag email trigger run
 */
 
+var go30ToolsSmokeModeModule_ = (typeof module !== 'undefined' && module.exports)
+	? require('./SmokeMode.js')
+	: null;
+var getSmokeTrackerId_gt_ = (go30ToolsSmokeModeModule_ && go30ToolsSmokeModeModule_.getSmokeTrackerId_)
+	|| (typeof globalThis !== 'undefined' && globalThis.getSmokeTrackerId_);
+
 var TRACKER_DB_SHEET_NAME_ = 'TrackerDB';
 var ALL_GO30_ROOT_FOLDER_ID_ = '1bMf--vyEqu8_F1NskrMbJ0cusRrR-plr';
 var TRACKER_DB_HEADERS_ = [
@@ -434,9 +440,16 @@ function resolveTrackerDbRowForContextDate_(rows, contextDate) {
  * context date. Thin GAS-facing wrapper around resolveTrackerDbRowForContextDate_ —
  * dispatch functions (minus-one, nag, form-submit) should call this rather than
  * implementing their own TrackerDB matching.
+ *
+ * Always excludes the active smoke tracker (SmokeMode.js's getSmokeTrackerId_) before
+ * matching — nag/minus-one/dashboard-nav are real-dispatch and date-navigation paths that
+ * must never resolve to test data, and a smoke tracker sharing a real tracker's StartDate
+ * (see docs/OPERATIONS.md §Smoke Mode) would otherwise make resolveTrackerDbRowForContextDate_
+ * throw "ambiguous match" the moment both exist. The pure function itself stays exclusion-
+ * agnostic — this wrapper is the only place that needs to know smoke exists.
  * @param {Date|string=} contextDate Defaults to now.
  * @returns {Object} The single matching TrackerDB row.
- * @throws {Error} When zero or more than one row matches the context date.
+ * @throws {Error} When zero or more than one (non-smoke) row matches the context date.
  */
 function resolveTrackerForContextDate(contextDate) {
 	var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
@@ -444,6 +457,10 @@ function resolveTrackerForContextDate(contextDate) {
 	var rows = Object.keys(trackerState.bySheetId).map(function(sheetId) {
 		return trackerState.bySheetId[sheetId];
 	});
+	var smokeTrackerId = getSmokeTrackerId_gt_ ? getSmokeTrackerId_gt_() : null;
+	if (smokeTrackerId) {
+		rows = rows.filter(function(row) { return row.sheetId !== smokeTrackerId; });
+	}
 	return resolveTrackerDbRowForContextDate_(rows, contextDate || new Date());
 }
 
@@ -451,8 +468,8 @@ function resolveTrackerForContextDate(contextDate) {
  * Writes TrackerDB rows, replacing existing body rows while preserving the sheet.
  * @param {Array<Object>} rows Tracker summary rows.
  */
-function _updateTrackerDB(rows) {
-	var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+function _updateTrackerDB(rows, spreadsheet) {
+	if (!spreadsheet) spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 	var sheet = spreadsheet.getSheetByName(TRACKER_DB_SHEET_NAME_);
 	if (!sheet) {
 		sheet = spreadsheet.insertSheet(TRACKER_DB_SHEET_NAME_);
@@ -807,6 +824,27 @@ function upsertPaxDbRow_(spreadsheet, fields) {
 	});
 
 	return { created: matchedRowNumber === -1, row: targetRowNumber };
+}
+
+/**
+ * Recomputes PaxDB stats for every PAX in a single tracker spreadsheet and upserts each row.
+ * Called after markEmptyCellsAsMinusOne_ finalises a day's data so PaxDB stays current
+ * without waiting for the next manual runScanTrackers.
+ * @param {Spreadsheet} trackerSpreadsheet The individual tracker spreadsheet.
+ * @param {string} sheetId Its spreadsheet ID (already known at call site).
+ * @param {Date|string=} startDate The tracker's start date (from TrackerDB row).
+ * @returns {{pax: number, created: number, updated: number}}
+ */
+function refreshPaxDbForTracker_(trackerSpreadsheet, sheetId, startDate) {
+	var templateSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+	var paxRows = _loadPaxData(trackerSpreadsheet, sheetId, startDate);
+	var created = 0, updated = 0;
+	paxRows.forEach(function(row) {
+		var result = upsertPaxDbRow_(templateSpreadsheet, row);
+		if (result.created) created++; else updated++;
+	});
+	GasLogger.log('refreshPaxDbForTracker_', { sheetId: sheetId, pax: paxRows.length, created: created, updated: updated });
+	return { pax: paxRows.length, created: created, updated: updated };
 }
 
 /**
@@ -1336,10 +1374,19 @@ if (typeof module !== 'undefined' && module.exports) {
 		_carryForwardLifecycleFields_: _carryForwardLifecycleFields_,
 		resolveTrackerDbRowForContextDate_: resolveTrackerDbRowForContextDate_,
 		upsertPaxDbRow_: upsertPaxDbRow_,
+		refreshPaxDbForTracker_: refreshPaxDbForTracker_,
 		findMostRecentPaxRecordForName_: findMostRecentPaxRecordForName_,
 		findMostRecentPaxRecordForEmail_: findMostRecentPaxRecordForEmail_,
 		deletePaxDbRowsBySheetId_: deletePaxDbRowsBySheetId_,
-		_readPaxDbRowsBySheetId_: _readPaxDbRowsBySheetId_
+		_readPaxDbRowsBySheetId_: _readPaxDbRowsBySheetId_,
+		_readTrackerDbRowsBySheetId_: _readTrackerDbRowsBySheetId_,
+		_computeTrackerMetrics_: _computeTrackerMetrics_,
+		_buildTrackerMetadata_: _buildTrackerMetadata_,
+		_loadPaxData: _loadPaxData,
+		_updateTrackerDB: _updateTrackerDB,
+		_updatePaxDB: _updatePaxDB,
+		TRACKER_DB_HEADERS_: TRACKER_DB_HEADERS_,
+		PAX_DB_HEADERS_: PAX_DB_HEADERS_
 	};
 }
 

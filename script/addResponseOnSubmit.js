@@ -57,6 +57,22 @@ function clearFormSubmitTrigger(spreadsheet) {
   });
 }
 
+/**
+ * Sorts a Tracker sheet's data rows (4+) by column B then column A ascending — the canonical
+ * Tracker sort, shared by the Form-submit path (Phase 5 below) and the signup webapp's save
+ * path (signupWebapp.js), and callable directly (admin `sortTracker` action, WebApp.js) to
+ * re-sort a tracker that was written to by a path that predates this sort being wired up.
+ * No-op if the sheet has fewer than 4 rows (header rows only, nothing to sort).
+ * @param {Sheet} trackerSheet
+ */
+function sortTrackerSheet_(trackerSheet) {
+  var lastRow = trackerSheet.getLastRow();
+  if (lastRow < 4) return;
+  var lastColumn = trackerSheet.getLastColumn();
+  trackerSheet.getRange(4, 1, lastRow - 3, lastColumn)
+    .sort([{ column: 2, ascending: true }, { column: 1, ascending: true }]);
+}
+
 function getTrackerStartDate_(trackerSheet) {
   if (!trackerSheet || typeof trackerSheet.getLastColumn !== 'function') return null;
 
@@ -259,8 +275,7 @@ function onFormSubmitLocked_(e) {
   }
 
   // Phase 5 — Sort Tracker and log the activity.
-  var rangeToSort = destinationSheet.getRange(4, 1, trackerLastRow - 3, lastColumn);
-  rangeToSort.sort([{column: 2, ascending: true}, {column: 1, ascending: true}]);
+  sortTrackerSheet_(destinationSheet);
 
   logActivity('Response', f3Name);
 }
@@ -328,6 +343,7 @@ if (typeof module !== 'undefined' && module.exports) {
     findDuplicateResponseRows_,
     removeDuplicateResponseRow_,
     deduplicateResponsesSheet_,
+    sortTrackerSheet_,
     getTrackerStartDate_,
     formatRegistrationMonth_,
     maybeSendRegistrationConfirmation_,

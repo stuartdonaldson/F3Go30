@@ -192,13 +192,13 @@ function findResponseRowIndexByEmail_(rows, emailAddress, responseColumns, respo
 
 var GOAL_SUMMARY_FIELDS_ = [
   ['EMAIL', 'Email'],
-  ['NAG_EMAIL', 'NAG Email'],
+  ['NAG_EMAIL', 'Send reminder email'],
   ['TEAM_TYPE', 'Team type'],
   ['TEAM', 'Team'],
   ['OTHER_TEAM', 'Other team name'],
-  ['WHO', 'Who'],
-  ['WHAT', 'What'],
-  ['HOW', 'How'],
+  ['WHO', 'Who you want to become'],
+  ['WHAT', 'What is your Go30 Challenge'],
+  ['HOW', 'How will you be successful'],
   ['PHONE', 'Phone']
 ];
 

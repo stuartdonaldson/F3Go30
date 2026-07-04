@@ -128,6 +128,19 @@ A PAX can return to the Bonus Tracker and edit their row directly. There is no s
 correction flow — editing column I to add a missing link will immediately change `Complete`
 to `TRUE` and update the Tracker score on next recalculation.
 
+**Managing entries via the check-in web app**
+
+A PAX can also list, add, and edit their own rows from the check-in web app (`?cmd=checkin`,
+`bonusList`/`bonusAdd`/`bonusEdit` actions — `script/bonusWebapp.js`, dispatched from
+`dashboardWebapp.js`'s `handleCheckinPost_`) instead of editing the sheet directly. It writes
+only the PAX-entered columns (A, F, G, H, I); B:E (Period/Uncapped Points/Multiplier/Complete)
+need no writing at all — they're a single spilled array formula anchored at B2 that recalculates
+automatically as soon as a row's PAX-entered columns are filled in, so a webapp-submitted row
+scores the same as a manually typed one. The
+link-required rule (EHing FNG/Q Point/Inspire yes, Fellowship no) is enforced both client- and
+server-side, mirroring the Complete-formula logic above — there's no live Controls-sheet column
+for that flag, so `bonusWebapp.js`'s `BONUS_TYPE_RULES_` is a manual mirror kept in sync by hand.
+
 ---
 
 ### Responses

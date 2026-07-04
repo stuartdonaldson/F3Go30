@@ -29,6 +29,25 @@ function jsonOutput_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
+/**
+ * Renders the default (no-cmd) landing page: links to Sign Up, Dashboard/Check-in, and the
+ * current month's tracker spreadsheet. Replaces the old bare {"status":"ok"} JSON response.
+ */
+function renderHomePage_() {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var webAppUrl = ScriptApp.getService().getUrl();
+  var months = getCurrentAndNextMonths_(spreadsheet);
+
+  var template = HtmlService.createTemplateFromFile('HomeApp');
+  template.signupUrl = webAppUrl + '?cmd=signup';
+  template.checkinUrl = webAppUrl + '?cmd=checkin';
+  template.trackerUrl = (months.current && months.current.trackerUrl) || '';
+  template.monthLabel = (months.current && months.current.label) || '';
+  // See renderCheckinPage_'s comment (dashboardWebapp.js) — addMetaTag is required for the
+  // viewport meta tag to survive HtmlService's IFRAME sandbox wrapper on mobile browsers.
+  return template.evaluate().setTitle('Go30').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
 /** Renders the cmd=signup HTML page, injecting live ListDB/Links data server-side. */
 function renderSignupPage_() {
   var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
@@ -39,8 +58,12 @@ function renderSignupPage_() {
   template.webAppUrl = JSON.stringify(ScriptApp.getService().getUrl());
   template.aoListJson = JSON.stringify(lists.aoList);
   template.goalListJson = JSON.stringify(lists.goalList);
-  template.monthsJson = JSON.stringify(months);
-  return template.evaluate().setTitle('Go30 Hard Commit Signup');
+  // Only current/next are ever meant for the client — getCurrentAndNextMonths_ also returns
+  // `smoke` (the smoke tracker's sheetId) whenever SMOKE_MODE is active, which must never be
+  // embedded in a page anonymous users can view source on.
+  template.monthsJson = JSON.stringify({ current: months.current, next: months.next });
+  template.appVersion = APP_VERSION;
+  return template.evaluate().setTitle('Go30 Hard Commit Signup').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 /** Dispatches a cmd=signup doPost JSON body ({action, ...}) to the matching handler. */
@@ -59,7 +82,7 @@ function handleSignupPost_(e) {
     if (payload.action === 'feedback') return jsonOutput_(handleSignupFeedback_(spreadsheet, payload));
     return jsonOutput_({ ok: false, error: 'unknown_action' });
   } catch (err) {
-    GasLogger.log('handleSignupPost_.error', { error: err && err.message, action: payload.action });
+    GasLogger.logError('handleSignupPost_.error', err, { action: payload.action });
     return jsonOutput_({ ok: false, error: 'server_error' });
   }
 }
@@ -117,6 +140,42 @@ function handleAdminPost_(e) {
       autoGenerateNextMonthTracker();
       return jsonOutput_({ ok: true });
     }
+    if (payload.action === 'createTrackerForMonth') {
+      // Headless equivalent of the Template's "Create New Tracker" sidebar (copyAndInit_),
+      // for an explicit target month — unlike runAutoGenerate (always real-today + 1 month),
+      // this can backfill a month that auto-generate skipped because it ran late (see
+      // createTrackerForMonth_'s docstring, CreateNewTracker.js).
+      if (!payload.startDateIso) {
+        return jsonOutput_({ ok: false, error: 'startDateIso is required (YYYY-MM-DD)' });
+      }
+      var newTrackerStartDate = new Date(payload.startDateIso + 'T00:00:00');
+      if (isNaN(newTrackerStartDate.getTime())) {
+        return jsonOutput_({ ok: false, error: 'invalid_date' });
+      }
+      // Catch JS date rollover (e.g. 2025-02-30 → March 2), same check copyAndInit_ does.
+      var newTrackerInputMonth = parseInt(payload.startDateIso.split('-')[1], 10);
+      if (newTrackerStartDate.getMonth() + 1 !== newTrackerInputMonth) {
+        return jsonOutput_({ ok: false, error: 'date_does_not_exist' });
+      }
+      var createTrackerLog = [];
+      try {
+        var createTrackerResult = createTrackerForMonth_(
+          SpreadsheetApp.getActiveSpreadsheet(), newTrackerStartDate,
+          function(msg) { createTrackerLog.push(msg); }
+        );
+        return jsonOutput_({
+          ok: true,
+          sheetId: createTrackerResult.newSpreadsheetId,
+          spreadsheetName: createTrackerResult.newSpreadsheetName,
+          trackerUrl: createTrackerResult.trackerSheetShortUrl,
+          formUrl: createTrackerResult.formShortUrl,
+          log: createTrackerLog,
+        });
+      } catch (err) {
+        GasLogger.log('handleAdminPost_.createTrackerForMonth.error', { error: err.message });
+        return jsonOutput_({ ok: false, error: 'server_error', detail: err.message, log: createTrackerLog });
+      }
+    }
     if (payload.action === 'cleanupTracker') {
       // Removes a tracker from TrackerDB, its PaxDB rows, and optionally trashes the
       // spreadsheet and its linked HC form. Primary use case: smoke test teardown.
@@ -166,6 +225,26 @@ function handleAdminPost_(e) {
         smokeMode: props.getProperty('SMOKE_MODE') === 'true',
         smokeTrackerId: props.getProperty('SMOKE_TRACKER_ID') || null
       });
+    }
+    if (payload.action === 'invalidateAllCache') {
+      // Runs inside this deployed webapp's own script project — the only PropertiesService
+      // store PaxCache entries actually live in (see PaxCache.js's wipeAllPaxCache_ docstring
+      // for why a monthly Tracker's own script copy can't do this locally). onOpen.js's
+      // "Invalidate Cache" menu item calls this over HTTP for exactly that reason.
+      var wipedCount = wipeAllPaxCache_();
+      var layoutCleared = 0;
+      try {
+        var trackerState = _readTrackerDbRowsBySheetId_(SpreadsheetApp.getActiveSpreadsheet());
+        var layoutKeys = Object.keys(trackerState.bySheetId).map(trackerLayoutCacheKey_);
+        if (layoutKeys.length) {
+          CacheService.getScriptCache().removeAll(layoutKeys);
+          layoutCleared = layoutKeys.length;
+        }
+      } catch (err) {
+        GasLogger.log('handleAdminPost_.invalidateAllCache.layoutClearFailed', { error: err.message });
+      }
+      GasLogger.log('handleAdminPost_.invalidateAllCache', { wiped: wipedCount, layoutCleared: layoutCleared });
+      return jsonOutput_({ ok: true, wiped: wipedCount, layoutCleared: layoutCleared });
     }
     if (payload.action === 'setWebappUrl') {
       // Sets WEBAPP_URL script property with the current webapp deployment URL.
@@ -225,6 +304,41 @@ function handleAdminPost_(e) {
       var sheetHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
       return jsonOutput_({ ok: true, headers: sheetHeaders });
     }
+    if (payload.action === 'getSheetFormulas') {
+      // Read-only formula inspection (row 1..N as authored) for reverse-engineering scoring
+      // logic against the live sheet — same admin-secret gate as getSheet, formulas instead of
+      // values. Ad hoc diagnostic; not part of any PAX-facing flow.
+      if (!payload.sheetName) {
+        return jsonOutput_({ ok: false, error: 'sheetName is required' });
+      }
+      var formulaSs = payload.sheetId
+        ? SpreadsheetApp.openById(payload.sheetId)
+        : SpreadsheetApp.getActiveSpreadsheet();
+      var formulaSheet = formulaSs.getSheetByName(payload.sheetName);
+      if (!formulaSheet) {
+        return jsonOutput_({ ok: false, error: 'sheet_not_found' });
+      }
+      var formulaRows = payload.maxRows
+        ? formulaSheet.getRange(1, 1, Math.min(payload.maxRows, formulaSheet.getMaxRows()), formulaSheet.getLastColumn()).getFormulas()
+        : formulaSheet.getDataRange().getFormulas();
+      return jsonOutput_({ ok: true, formulas: formulaRows });
+    }
+    if (payload.action === 'sortTracker') {
+      // Re-sorts an arbitrary tracker's Tracker sheet by column B then column A — the same
+      // sort handleFormSubmit_/handleSignupSave_ apply on every write (addResponseOnSubmit.js
+      // sortTrackerSheet_). Exposed as a standalone admin action so a tracker written to by a
+      // save path that predates that sort being wired up can be fixed without a full re-deploy.
+      if (!payload.sheetId) {
+        return jsonOutput_({ ok: false, error: 'sheetId is required' });
+      }
+      var sortTrackerSs = SpreadsheetApp.openById(payload.sheetId);
+      var sortTrackerSheetObj = sortTrackerSs.getSheetByName('Tracker');
+      if (!sortTrackerSheetObj) {
+        return jsonOutput_({ ok: false, error: 'sheet_not_found' });
+      }
+      sortTrackerSheet_(sortTrackerSheetObj);
+      return jsonOutput_({ ok: true });
+    }
     if (payload.action === 'runMinusOneCheck') {
       // Runs the daily minus-one marking for a specific context date (default: today).
       // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload.
@@ -239,9 +353,34 @@ function handleAdminPost_(e) {
       var result = sendNagEmail_(contextDate);
       return jsonOutput_({ ok: true, result: result });
     }
+    if (payload.action === 'copyTemplate') {
+      // Stands up a new environment's files: copies the Template (+ bound script) and the
+      // N most recent real trackers into a new sibling Drive folder, then rebuilds that
+      // copy's TrackerDB/PaxDB from only the copied trackers. See CopyTemplate.js file header
+      // — deliberately does not touch triggers/forms/short links or deploy anything.
+      if (!payload.folderName) {
+        return jsonOutput_({ ok: false, error: 'folderName is required' });
+      }
+      var copyTemplateLog = [];
+      try {
+        var copyResult = copyTemplateToNewEnvironment_(
+          payload.folderName, payload.trackerCount || 3,
+          function(msg) { copyTemplateLog.push(msg); }
+        );
+        GasLogger.log('handleAdminPost_.copyTemplate', {
+          newFolderId: copyResult.newFolderId,
+          newTemplateId: copyResult.newTemplateId,
+          copiedTrackers: copyResult.copiedTrackers.length
+        });
+        return jsonOutput_({ ok: true, log: copyTemplateLog, result: copyResult });
+      } catch (err) {
+        GasLogger.log('handleAdminPost_.copyTemplate.error', { error: err.message });
+        return jsonOutput_({ ok: false, error: 'server_error', detail: err.message, log: copyTemplateLog });
+      }
+    }
     return jsonOutput_({ ok: false, error: 'unknown_action' });
   } catch (err) {
-    GasLogger.log('handleAdminPost_.error', { error: err && err.message, action: payload.action });
+    GasLogger.logError('handleAdminPost_.error', err, { action: payload.action });
     return jsonOutput_({ ok: false, error: 'server_error' });
   }
 }
@@ -252,7 +391,10 @@ function doGet(e) {
     if (e && e.parameter && e.parameter.cmd === 'signup') {
       return renderSignupPage_();
     }
-    return jsonOutput_({ status: 'ok' });
+    if (e && e.parameter && e.parameter.cmd === 'checkin') {
+      return renderCheckinPage_();
+    }
+    return renderHomePage_();
   });
 }
 
@@ -266,6 +408,9 @@ function doPost(e) {
     }
     if (cmd === 'signup') {
       return handleSignupPost_(e);
+    }
+    if (cmd === 'checkin') {
+      return handleCheckinPost_(e);
     }
     return jsonOutput_({ status: 'ok' });
   });

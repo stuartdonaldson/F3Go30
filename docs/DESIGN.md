@@ -73,6 +73,7 @@ class BG1,BG3 lightgreen
 | Entry Points | `onOpen.js`, `macros.js` | Custom menu, legacy macro entry points |
 | Tracker Lifecycle | `CreateNewTracker.js`, `addResponseOnSubmit.js`, `markMinusOne.js`, `nag.js` | Copy-and-init workflow, form-submit handler, nightly miss marking, daily reminder email workflow — all triggers installed once on the Template and dispatching by `TrackerDB` lookup (ADR-010) |
 | Dispatch / TrackerDB | `go30tools.js` | `TrackerDB`/`PaxDB` schema, cross-tracker aggregation, and (per ADR-010) the context-date → target-spreadsheet resolution used by every centrally-dispatched function |
+| Web Apps | `WebApp.js`, `signupWebapp.js`, `SignupApp.html`, `dashboardWebapp.js`, `CheckinApp.html`, `HomeApp.html` | `doGet`/`doPost` dispatcher by `cmd` query param (`signup`, `checkin`, `admin`); each `cmd` renders its own `HtmlService` template and handles its own `action`-keyed POST body. `signupWebapp.js`/`SignupApp.html` = HC sign-up; `dashboardWebapp.js`/`CheckinApp.html` = daily check-in + PAX dashboard, reading/writing the current month's Tracker sheet directly (no separate data store); no `cmd` (or an unrecognized one) renders `HomeApp.html`, a landing page linking to sign-up, check-in/dashboard, and the current month's tracker spreadsheet |
 | UI / Notifications | `NotificationSBCode.js`, `NotificationSidebar.html` | Sidebar panel: log streaming, prompts, HTML link generation |
 | Utilities | `logActivity.js`, `urlShortener.js`, `Utilities.js` | Activity logging, URL shortening (TinyURL/Bitly), cell utilities, Config sheet reads |
 
@@ -122,13 +123,26 @@ that cannot guarantee a sidebar context must call `Logger.log()` directly.
 
 - **Current implementation note:** `nag.js` already sends a basic team-scoped nag email to opted-in recipients. That implementation is only partial: it currently pulls quote text from the `Inspiration` sheet and uses direct body construction rather than the resolved `FunFacts`-based reminder template. Documentation and implementation should treat this as in-progress behavior, not the final design.
 
+- **Dashboard/check-in identity (F3Go30-ln1x) — DECIDED:** The check-in web app identifies a PAX
+  by F3 Name + Email — the same pair the sign-up web app already uses — rather than adding a
+  password. No password concept exists anywhere else in the data model; reusing the pair keeps a
+  single trust boundary and lets `resolveCheckinIdentity_` reuse `signupWebapp.js`'s
+  anti-enumeration `findSignupMatch_` check unchanged. Trade-off: no stronger authentication than
+  "knows the PAX's name and email" — acceptable for this internal, low-sensitivity data.
+
+- **Dashboard team grouping (F3Go30-ln1x) — DECIDED:** "My Team" and the PAX board group by
+  whatever string currently lives in the Tracker's column B (Goal/Team), not a separately
+  maintained team roster — there is no fixed team list in the data model. A group is exactly the
+  set of PAX sharing that value at read time; renaming a PAX's team moves them to a new group on
+  the next dashboard load with no migration step.
+
 ---
 
 ## Data Model
 
 | Sheet | Purpose | Key Columns |
 |-------|---------|-------------|
-| Tracker | One row per PAX; daily check-in grid | A: F3 Name, Row 3: dates (MM/dd/yyyy), data rows 4+ |
+| Tracker | One row per PAX; daily check-in grid | A: F3 Name, B: Team/Goal (VLOOKUP), G: Raw Score, H: Score, columns I+ (row 3 header): a `Date` value = day column (PAX-entered 1/0, or −1 after nightly marking), the literal string `'Bonus'` = weekly bonus column (row 2 holds its period number, formula-computed); data rows 4+. `dashboardWebapp.js`'s `classifyTrackerColumns_` reads row 2/row 3 to tell day columns from bonus columns rather than hardcoding column letters |
 | Responses | Raw Google Form submission data | Col 4 (index 3): F3 Name, Col 6: Team |
 | Config | Runtime configuration read by the script | A: variable name, B: primary value, C: secondary value |
 | Help | Operational links and config values | A: Label, B: URL |

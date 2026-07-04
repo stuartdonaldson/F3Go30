@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   prepareOutboundEmailDelivery_,
   readEmailDeliveryPolicy_,
+  readEmailDeliveryPolicyFromSheet_,
 } = require('../script/Utilities.js');
 
 global.PropertiesService = {
@@ -180,5 +181,55 @@ const aliasPolicy = readEmailDeliveryPolicy_(null, [
 
 assert.equal(aliasPolicy.emailTestMode, true);
 assert.equal(aliasPolicy.siteQEmail, 'siteq@example.com');
+
+// readEmailDeliveryPolicyFromSheet_ — uses ManagedConfigSheet.getValue()/getPair()
+const { ManagedConfigSheet } = require('../script/libSheets.js');
+
+function makeMockConfigSheet(rows) {
+  const sheet = {
+    getDataRange: () => ({ getValues: () => rows })
+  };
+  return new ManagedConfigSheet(sheet);
+}
+
+const testModeSheet = makeMockConfigSheet([
+  ['Email Test Mode', 'Yes', ''],
+  ['Site Q', 'Little John', 'siteq@example.com'],
+]);
+const policyFromSheet = readEmailDeliveryPolicyFromSheet_(testModeSheet);
+assert.equal(policyFromSheet.emailTestMode, true);
+assert.equal(policyFromSheet.siteQEmail, 'siteq@example.com');
+assert.equal(policyFromSheet.siteQName, 'Little John');
+
+const noTestModeSheet = makeMockConfigSheet([
+  ['Email Test Mode', 'No', ''],
+  ['Site Q', 'Little John', 'siteq@example.com'],
+]);
+const livePolicy = readEmailDeliveryPolicyFromSheet_(noTestModeSheet);
+assert.equal(livePolicy.emailTestMode, false);
+
+// Legacy 'Email Test' key fallback
+const legacySheet = makeMockConfigSheet([
+  ['Email Test', 'Yes', ''],
+  ['Site Q', 'Little John', 'siteq@example.com'],
+]);
+const legacyPolicy = readEmailDeliveryPolicyFromSheet_(legacySheet);
+assert.equal(legacyPolicy.emailTestMode, true);
+
+// null configSheet (no Config sheet found) → safe defaults
+const nullPolicy = readEmailDeliveryPolicyFromSheet_(null);
+assert.equal(nullPolicy.emailTestMode, false);
+assert.equal(nullPolicy.siteQEmail, '');
+
+// ManagedConfigSheet.getValue() returns scalar; getPair() returns {primary, secondary}
+const directSheet = makeMockConfigSheet([
+  ['NameSpace', 'F3 Go30', ''],
+  ['Site Q', 'Iron Pax', 'ironpax@example.com'],
+]);
+assert.equal(directSheet.getValue('NameSpace'), 'F3 Go30');
+assert.equal(directSheet.getValue('Site Q'), 'Iron Pax');
+assert.deepEqual(directSheet.getPair('Site Q'), { primary: 'Iron Pax', secondary: 'ironpax@example.com' });
+assert.equal(directSheet.getValue('Missing Key'), null);
+assert.equal(directSheet.getPair('Missing Key'), null);
 
 console.log('test_nag.js: PASS');

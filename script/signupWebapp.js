@@ -18,9 +18,25 @@ var signupWebappAddResponseModule_ = (typeof module !== 'undefined' && module.ex
   : null;
 var formatRegistrationMonth_ = (signupWebappAddResponseModule_ && signupWebappAddResponseModule_.formatRegistrationMonth_)
   || (typeof globalThis !== 'undefined' && globalThis.formatRegistrationMonth_);
+var sortTrackerSheet_ = (signupWebappAddResponseModule_ && signupWebappAddResponseModule_.sortTrackerSheet_)
+  || (typeof globalThis !== 'undefined' && globalThis.sortTrackerSheet_);
 
 var resolveResponseColumns = (signupWebappResponseUtilsModule_ && signupWebappResponseUtilsModule_.resolveResponseColumns)
   || (typeof globalThis !== 'undefined' && globalThis.resolveResponseColumns);
+
+var signupWebappPaxCacheModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./PaxCache.js')
+  : null;
+var deletePaxCacheRow_sw_ = (signupWebappPaxCacheModule_ && signupWebappPaxCacheModule_.deletePaxCacheRow_)
+  || (typeof globalThis !== 'undefined' && globalThis.deletePaxCacheRow_);
+var patchPaxRosterIndex_sw_ = (signupWebappPaxCacheModule_ && signupWebappPaxCacheModule_.patchPaxRosterIndex_)
+  || (typeof globalThis !== 'undefined' && globalThis.patchPaxRosterIndex_);
+
+var signupWebappSmokeModeModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./SmokeMode.js')
+  : null;
+var getSmokeTrackerId_sw_ = (signupWebappSmokeModeModule_ && signupWebappSmokeModeModule_.getSmokeTrackerId_)
+  || (typeof globalThis !== 'undefined' && globalThis.getSmokeTrackerId_);
 
 function normalizeTeamValue_(value) {
   return String(value || '').trim();
@@ -343,18 +359,44 @@ function parseLinksRows_(values) {
   return rows;
 }
 
+/** Shapes a parsed Links row into the {sheetId, trackerUrl, label, startDate} target objects
+ *  resolveSignupMonths_ returns for current/next/smoke. */
+function formatMonthTarget_(row) {
+  return row ? { sheetId: row.sheetId, trackerUrl: row.trackerUrl, label: formatRegistrationMonth_(row.startDate), startDate: row.startDate } : null;
+}
+
 /**
- * Resolves "current month" and "next month" tracker targets from parsed Links rows (requirements
- * doc §6.3). Current = the most recent StartDate not in the future, relative to `today`. Next =
- * the Links entry one calendar month after current's StartDate, if any. When multiple rows share
- * the same StartDate (a tracker was re-created), the row with the latest `date` wins.
+ * Resolves "current month", "next month", and (if active) "smoke" tracker targets from parsed
+ * Links rows (requirements doc §6.3). Current = the most recent StartDate not in the future,
+ * relative to `today`. Next = the Links entry one calendar month after current's StartDate, if
+ * any. When multiple rows share the same StartDate (a tracker was re-created), the row with the
+ * latest `date` wins.
+ *
+ * `smokeTrackerId` (optional — pass SmokeMode.js's getSmokeTrackerId_(), see
+ * getCurrentAndNextMonths_ below) is excluded from the current/next candidate pool before that
+ * tie-break runs: a smoke tracker is deliberately created with the same StartDate a real
+ * tracker for that month would use (see docs/OPERATIONS.md §Smoke Mode), so without this
+ * exclusion a smoke tracker created after the real one would silently win the "latest date
+ * wins" tie-break and hijack 'current'/'next' for every request until it's torn down. The
+ * excluded row is still returned separately as `smoke`, addressable only by an explicit
+ * `targetMonth: 'smoke'` (selectTargetMonth_ below) — never as an implicit fallback.
+ * @param {Array<Object>} parsedLinksRows
+ * @param {Date|string} today
+ * @param {string=} smokeTrackerId
  */
-function resolveSignupMonths_(parsedLinksRows, today) {
+function resolveSignupMonths_(parsedLinksRows, today, smokeTrackerId) {
   var now = today instanceof Date ? today : new Date(today);
   var nowKey = monthKey_(now);
 
+  var smokeRow = smokeTrackerId
+    ? (parsedLinksRows || []).find(function(row) { return row.sheetId === smokeTrackerId; })
+    : null;
+  var candidateRows = smokeTrackerId
+    ? (parsedLinksRows || []).filter(function(row) { return row.sheetId !== smokeTrackerId; })
+    : (parsedLinksRows || []);
+
   var byMonth = {};
-  (parsedLinksRows || []).forEach(function(row) {
+  candidateRows.forEach(function(row) {
     var key = monthKey_(row.startDate);
     var existing = byMonth[key];
     if (!existing || new Date(row.date || 0) >= new Date(existing.date || 0)) {
@@ -367,16 +409,32 @@ function resolveSignupMonths_(parsedLinksRows, today) {
     .sort()
     .pop();
 
-  if (!currentKey) return { current: null, next: null };
+  if (!currentKey) return { current: null, next: null, smoke: formatMonthTarget_(smokeRow) };
 
   var current = byMonth[currentKey];
   var nextKey = addOneMonthKey_(currentKey);
   var nextRow = byMonth[nextKey] || null;
 
   return {
-    current: { sheetId: current.sheetId, trackerUrl: current.trackerUrl, label: formatRegistrationMonth_(current.startDate), startDate: current.startDate },
-    next: nextRow ? { sheetId: nextRow.sheetId, trackerUrl: nextRow.trackerUrl, label: formatRegistrationMonth_(nextRow.startDate), startDate: nextRow.startDate } : null,
+    current: formatMonthTarget_(current),
+    next: formatMonthTarget_(nextRow),
+    smoke: formatMonthTarget_(smokeRow),
   };
+}
+
+/**
+ * Single seam for turning a request's `targetMonth` field into one of resolveSignupMonths_'s
+ * (or getCurrentAndNextMonths_'s) resolved targets. Shared by signup and checkin action
+ * handlers so 'current'/'next'/'smoke' mean the same thing everywhere a caller can select a
+ * target month — add any future targetMonth value here rather than re-deriving the enum per
+ * call site.
+ * @param {{current:Object,next:Object,smoke:Object}} months
+ * @param {string=} targetMonth 'current' (default) | 'next' | 'smoke'
+ */
+function selectTargetMonth_(months, targetMonth) {
+  if (targetMonth === 'next') return months.next;
+  if (targetMonth === 'smoke') return months.smoke;
+  return months.current;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -385,11 +443,12 @@ function resolveSignupMonths_(parsedLinksRows, today) {
 // sheet-mutating functions).
 // ─────────────────────────────────────────────────────────────────────────
 
-/** Reads the Template's TrackerDB sheet and resolves current/next month targets (§6.3). */
+/** Reads the Template's TrackerDB sheet and resolves current/next/smoke month targets (§6.3). */
 function getCurrentAndNextMonths_(templateSpreadsheet) {
   var linksSheet = templateSpreadsheet.getSheetByName('TrackerDB');
   var values = linksSheet ? linksSheet.getDataRange().getValues() : [];
-  return resolveSignupMonths_(parseLinksRows_(values), new Date());
+  var smokeTrackerId = getSmokeTrackerId_sw_ ? getSmokeTrackerId_sw_() : null;
+  return resolveSignupMonths_(parseLinksRows_(values), new Date(), smokeTrackerId);
 }
 
 function readResponsesSheetState_(spreadsheet) {
@@ -435,6 +494,7 @@ function findPaxDbMatch_(templateSpreadsheet, f3Name, email) {
       return {
         f3Name: row[f3NameIdx],
         email: row[emailIdx],
+        sheetId: row[headers.indexOf('SheetId')] || '',
         team: row[headers.indexOf('Team')] || '',
         who: row[headers.indexOf('WHO')] || '',
         what: row[headers.indexOf('WHAT')] || '',
@@ -461,6 +521,8 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
   var months = getCurrentAndNextMonths_(templateSpreadsheet);
   if (!months.current) return { ok: false, error: 'no_current_month' };
 
+  GasLogger.log('signupWebapp.identify', { f3Name: payload.f3Name, email: payload.email });
+  
   var lists = readTeamLists_(templateSpreadsheet);
   var match = findPaxDbMatch_(templateSpreadsheet, payload.f3Name, payload.email);
 
@@ -472,7 +534,7 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
   var storedTeam = match.team || match.otherTeam || '';
   var classified = classifyTeam_(storedTeam, lists.aoList, lists.goalList);
 
-  GasLogger.log('signupWebapp.identify', { matched: true, f3Name: match.f3Name });
+  GasLogger.log('signupWebapp.identify', { matched: true, f3Name: match.f3Name, sheetId: match.sheetId, teamType: classified.teamType, team: classified.team });
   return {
     ok: true,
     matched: true,
@@ -502,7 +564,7 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
  */
 function handleSignupSave_(templateSpreadsheet, payload) {
   var months = getCurrentAndNextMonths_(templateSpreadsheet);
-  var targetMonth = payload.targetMonth === 'next' ? months.next : months.current;
+  var targetMonth = selectTargetMonth_(months, payload.targetMonth);
   if (!targetMonth) return { ok: false, error: 'invalid_target_month' };
 
   var targetSs = SpreadsheetApp.openById(targetMonth.sheetId);
@@ -538,6 +600,9 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     var updatedRow = buildResponseRowWithSelfHeal_(state.sheet, state.columns, match.row, formData);
     updatedRow[0] = new Date();
     state.sheet.getRange(match.rowIndex + 2, 1, 1, updatedRow.length).setValues([updatedRow]);
+    // Write-through: row position is unchanged, only its contents — drop the cached copy so the
+    // dashboard/check-in's next lean read (dashboardWebapp.js) picks up the update.
+    deletePaxCacheRow_sw_('responses', targetMonth.sheetId, payload.f3Name);
     GasLogger.log('signupWebapp.save', { mode: 'update', row: match.rowIndex + 2 });
   } else {
     // No exact (name+email) match — check whether this is the same PAX under a different
@@ -547,12 +612,18 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     var nameOnlyMatch = findSignupMatchByF3NameOnly_(state.dataRows, payload.f3Name, state.columns);
     if (nameOnlyMatch) {
       state.sheet.getRange(nameOnlyMatch.rowIndex + 2, state.columns.PARTICIPATION + 1).setValue('DELETED');
+      // The old row's cached copy (if any) would now serve stale/DELETED content under this
+      // same name key — drop it so a lean lookup falls through to a live re-scan.
+      deletePaxCacheRow_sw_('responses', targetMonth.sheetId, payload.f3Name);
       GasLogger.log('signupWebapp.save.emailChanged', { oldRow: nameOnlyMatch.rowIndex + 2 });
     }
 
     var newRow = buildResponseRowWithSelfHeal_(state.sheet, state.columns, null, formData);
     newRow[0] = new Date();
     state.sheet.appendRow(newRow);
+    // Write-through: this PAX's row is new — patch it straight into an already-cached roster
+    // index (no-op if nothing's cached yet, since the next miss will rebuild from the sheet).
+    patchPaxRosterIndex_sw_('responses', targetMonth.sheetId, payload.f3Name, state.dataRows.length);
     GasLogger.log('signupWebapp.save', { mode: 'insert' });
   }
 
@@ -606,11 +677,57 @@ function handleSignupSave_(templateSpreadsheet, payload) {
         trackerSheet.getRangeList(clearRanges).clearContent();
       }
 
+      // Write-through: same reasoning as the Responses insert above — patch the new PAX
+      // straight into the Tracker roster index (dashboardWebapp.js) if one's already cached.
+      patchPaxRosterIndex_sw_('tracker', targetMonth.sheetId, payload.f3Name, nextRow - 4);
       GasLogger.log('signupWebapp.save', { trackerRowAdded: nextRow });
     }
+
+    // Mirrors handleFormSubmit_'s Phase 5 (addResponseOnSubmit.js) — re-sort Tracker by
+    // column B then column A on every save, not just on insert, so an in-place score/goal
+    // edit that changes standings is reflected immediately too.
+    sortTrackerSheet_(trackerSheet);
   }
 
+  sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, !match);
   return { ok: true, savedMonth: targetMonth.label, trackerUrl: targetMonth.trackerUrl };
+}
+
+function sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, isNew) {
+  var recipient = sanitizeEmailAddressForSend_(payload.email);
+  if (!recipient) { GasLogger.log('signupWebapp.confirmEmail.skipped', { reason: 'invalid_email' }); return; }
+  var safeF3Name = sanitizeTextForEmailLine_(payload.f3Name) || '(unknown)';
+  var summaryLines = buildGoalSummaryLines_({
+    EMAIL: payload.email,
+    NAG_EMAIL: payload.nag ? 'Yes' : 'No',
+    TEAM_TYPE: payload.teamType,
+    TEAM: payload.team,
+    WHO: payload.who,
+    WHAT: payload.what,
+    HOW: payload.how,
+    PHONE: payload.phone
+  });
+  var message = buildSignupReuseEmailTemplate_({
+    mode: isNew ? 'new_signup' : 'confirmation',
+    f3Name: safeF3Name,
+    trackerUrl: targetMonth.trackerUrl,
+    prefilledUrl: null,
+    summaryLines: summaryLines,
+    registrationMonth: targetMonth.label
+  });
+  try {
+    sendConfiguredEmail_({
+      spreadsheet: templateSpreadsheet,
+      recipients: [{ name: safeF3Name, email: recipient }],
+      subject: message.subject,
+      body: message.body,
+      htmlBody: message.htmlBody,
+      allowPlainTextFallback: true,
+      logLabel: 'sendSignupWebappConfirmationEmail_'
+    });
+  } catch (e) {
+    GasLogger.log('signupWebapp.confirmEmail.failed', { error: e && e.message });
+  }
 }
 
 /**
@@ -627,7 +744,7 @@ function handleSignupFeedback_(templateSpreadsheet, payload) {
   }
 
   var months = getCurrentAndNextMonths_(templateSpreadsheet);
-  var targetMonth = payload.targetMonth === 'next' ? months.next : months.current;
+  var targetMonth = selectTargetMonth_(months, payload.targetMonth);
   if (!targetMonth) return { ok: false, error: 'invalid_target_month' };
 
   var targetSs = SpreadsheetApp.openById(targetMonth.sheetId);
@@ -658,6 +775,7 @@ if (typeof module !== 'undefined' && module.exports) {
     buildResponseRowFromForm_,
     parseLinksRows_,
     resolveSignupMonths_,
+    selectTargetMonth_,
     getCurrentAndNextMonths_,
     handleSignupIdentify_,
     handleSignupSave_,
