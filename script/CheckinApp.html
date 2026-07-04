@@ -891,6 +891,7 @@
     var isToday = isoDate_(viewDateObj) === isoDate_(todayClient);
     $('dateNavLabel').textContent = (isToday ? 'Today · ' : '') + formatNavDate_(viewDateObj);
     $('dateNextBtn').disabled = isToday;
+    $('datePrevBtn').disabled = false;
   }
 
   function renderDashboard_(d, dayIndex) {
