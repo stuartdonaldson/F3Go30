@@ -70,7 +70,8 @@
   .bonus-type-code.eh { background: #fdf1de; color: #9a6b00; }
   .bonus-type-value { font-size: 14px; font-weight: bold; color: #2b2b2b; min-width: 16px; }
   .team-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(120px,1fr)); gap: 10px; margin-top: 12px; }
-  .team-tile { border-radius: 10px; padding: 12px 8px; text-align: center; border: 1.5px solid #d8cfbf; background: #fff; display: flex; flex-direction: column; align-items: center; }
+  .team-tile { position: relative; border-radius: 10px; padding: 12px 8px; text-align: center; border: 1.5px solid #d8cfbf; background: #fff; display: flex; flex-direction: column; align-items: center; }
+  .team-tile .checkin-status-badge { position: absolute; top: 6px; left: 7px; font-size: 14px; margin-right: 0; }
   .team-tile.me { border-color: #2f5d50; background: #eef3f0; }
   .team-tile .tname { font-weight: bold; font-size: 15px; margin: 4px 0 2px; }
   .team-tile .tscore { font-size: 21px; font-weight: bold; }
@@ -84,7 +85,14 @@
   .board-row.me { background: #eef3f0; font-weight: bold; }
   .board-row-main { display: flex; align-items: center; gap: 8px; justify-content: space-between; font-size: 15px; }
   .board-row-main .bname { width: 117px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: bold; }
+  .board-row-main .bstatus { width: 20px; flex-shrink: 0; text-align: center; }
   .board-row-main .bpct { width: 30px; flex-shrink: 0; text-align: right; font-family: monospace; font-weight: bold; }
+  /* Yesterday-not-checked-in indicator: warning (before 10am local) vs urgent (10am and later).
+     .warning is the plain emoji glyph (already renders yellow via system emoji font). .urgent is
+     a plain text glyph (U+24CD, not emoji-colored by default), so needs explicit red + bold +
+     ~15% larger to read as an equally strong signal next to the emoji triangle. */
+  .checkin-status-badge { margin-right: 3px; display: inline-block; }
+  .checkin-status-badge.urgent { color: #c0272d; font-weight: bold; font-size: 1.15em; line-height: 1; }
   /* Only rendered when at least one bonus type is nonzero — most rows stay single-line. */
   .board-row-bonuses { display: flex; gap: 3px; margin-top: 3px; padding-left: 4px; }
   .board-row-bonuses .bonus-type-code { font-size: 10px; padding: 0 4px; }
@@ -111,8 +119,8 @@
   .bonus-badge.pending { background: #fdf6e3; color: #8a6d00; }
   .bonus-edit-btn { background: transparent; border: none; color: #0b5c86; font-size: 14px; cursor: pointer; font-family: inherit; text-decoration: underline; padding: 0; }
   .card-head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .card-head-row h2 { margin: 0; }
-  .btn-inline { width: auto; margin: 0; padding: 8px 14px; }
+  .card-head-row h2 { margin: 0; white-space: nowrap; }
+  .btn-inline { width: auto; margin: 0; padding: 8px 14px; flex-shrink: 0; }
   @media (max-width: 480px) {
     /* Progress + Streak sit side by side (2 cols); Score spans the full row below them —
        everything shrunk to fit two tiles per row on a narrow phone screen. */
@@ -145,7 +153,8 @@
 
   <div id="apiErrorBanner" class="api-error-banner hidden">
     <strong>Something went wrong.</strong>
-    <span>Please screenshot this message and send it to your Site Q.</span>
+    <span>Please try again, or refresh the browser and try again. If the problem persists,
+      notify <span id="apiErrorSiteQName">your Site Q</span><a id="apiErrorContactLink" class="hidden" href="#">(email)</a>.</span>
     <div id="apiErrorDetail" class="api-error-detail"></div>
   </div>
 
@@ -249,6 +258,7 @@
           <h2>Bonus Points</h2>
           <button class="secondary btn-inline" id="bonusBackBtn">&larr; Back</button>
         </div>
+        <div class="section-label" id="bonusMonthLabel" style="margin-top:0;"></div>
         <p class="muted">Log EHing an FNG, Fellowship, a Q, or an Inspire moment. EHing FNG, Q
           Point, and Inspire need a link to Slack as evidence before they count.</p>
         <div id="bonusListError" class="error-text hidden"></div>
@@ -280,6 +290,8 @@
   var WEBAPP_URL = <?!= webAppUrl ?>;
   var APP_VERSION = <?!= JSON.stringify(appVersion) ?>;
   var BONUS_TYPE_RULES_ = <?!= bonusTypesJson ?>;
+  var SITE_Q_NAME = <?!= JSON.stringify(siteQName) ?>;
+  var SITE_Q_EMAIL = <?!= JSON.stringify(siteQEmail) ?>;
 
   // Same storage key the signup webapp uses (SignupApp.html) — a PAX who already signed up
   // gets their F3 Name/Email prefilled here without retyping.
@@ -307,9 +319,13 @@
     trackerUrl: '',
     monthCache: {}, // monthKey ("YYYY-MM") -> full-month dashboard payload, see loadDashboard_
     viewDate: null, // Date currently shown on the dashboard (date-nav arrows move this)
+    dashboardLoading: false, // true while a loadDashboard_ fetch is in flight — blocks duplicate date-nav clicks
     bonusReturnStep: 'checkin', // which step bonusBackBtn returns to — set by showStep
     bonusEntries: [], // this PAX's own Bonus Tracker rows, from the last bonusList fetch
-    bonusEditingRowIndex: null, // null while adding; the sheet row number while editing
+    bonusEditingRowIndex: null, // null while adding; a locate hint (not authoritative) while editing
+    bonusEditingOriginalWhenIso: null, // dateISO of the sheet the entry being edited was loaded from
+    bonusEditingOriginalSnapshot: null, // pre-edit {type,whenIso,message,link} — server relocates the row by matching this
+    bonusListContextIso: undefined, // dateISO last passed to bonusList — identifies which month sheet state.bonusEntries came from
   };
 
   function $(id) { return document.getElementById(id); }
@@ -341,10 +357,23 @@
   }
 
   function showApiError_(action, err) {
-    $('apiErrorDetail').textContent =
+    var detail =
       'Time: ' + new Date().toISOString() + '\n' +
       'Action: ' + action + '\n' +
       'Error: ' + (err && err.message ? err.message : String(err));
+    $('apiErrorDetail').textContent = detail;
+
+    $('apiErrorSiteQName').textContent = SITE_Q_NAME || 'your Site Q';
+    var contactLink = $('apiErrorContactLink');
+    if (SITE_Q_EMAIL) {
+      contactLink.href = 'mailto:' + SITE_Q_EMAIL +
+        '?subject=' + encodeURIComponent('F3 Go30 check-in error') +
+        '&body=' + encodeURIComponent(detail);
+      contactLink.classList.remove('hidden');
+    } else {
+      contactLink.classList.add('hidden');
+    }
+
     $('apiErrorBanner').classList.remove('hidden');
   }
 
@@ -586,12 +615,17 @@
       ' A' + ri + ' ' + ri + ' 0 ' + largeArc + ' 0 ' + x4.toFixed(2) + ' ' + y4.toFixed(2) + 'Z';
   }
 
-  /** Segmented donut ring — one wedge per day, colored by daySegments status, with up to two centered text lines. */
-  function buildRingSvg_(daySegments, size, centerLine1, centerLine2, centerColor) {
+  /** Segmented donut ring — one wedge per day, colored by daySegments status, with up to two
+   * centered text lines. bgColor (optional), when given, fills a disc behind the ring — a
+   * subtle status tint (e.g. the yesterday-checkin warning/urgent state) that shows through the
+   * ring's inner hole and the small gaps between wedges without covering the wedge colors
+   * themselves. */
+  function buildRingSvg_(daySegments, size, centerLine1, centerLine2, centerColor, bgColor) {
     var total = (daySegments || []).length || 1;
     var cx = size / 2, cy = size / 2;
     var ro = size * 0.46, ri = size * 0.32;
     var seg = 360 / total, gap = Math.min(2.2, seg * 0.15);
+    var bg = bgColor ? '<circle cx="' + cx + '" cy="' + cy + '" r="' + (size * 0.49) + '" fill="' + bgColor + '"></circle>' : '';
     var paths = '';
     for (var i = 0; i < total; i++) {
       var color = SEGMENT_COLORS_[daySegments[i]] || '#d8cfbf';
@@ -604,7 +638,7 @@
       '" font-family="Arial, sans-serif" font-weight="bold" fill="' + (centerColor || '#2f5d50') + '">' + escapeHtml_(centerLine1) + '</text>' : '';
     var t2 = centerLine2 ? '<text x="' + cx + '" y="' + (cy + f1 * 0.35 + f2 + 2) + '" text-anchor="middle" font-size="' + f2 +
       '" font-family="monospace" fill="#888">' + escapeHtml_(centerLine2) + '</text>' : '';
-    return '<svg class="ring-svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' + paths + t1 + t2 + '</svg>';
+    return '<svg class="ring-svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' + bg + paths + t1 + t2 + '</svg>';
   }
 
   /** Reported-so-far daySegments (drops the trailing 'upcoming' entries) mapped back to +1/0/-1, nulls dropped. */
@@ -690,13 +724,44 @@
     return chips.join('');
   }
 
-  function renderTeamTile_(member, isMe, currentDay) {
+  var YESTERDAY_CHECKIN_WARNING_HOUR_ = 10; // local hour before which a missing yesterday check-in shows the softer 'warning' badge; 'urgent' at/after
+
+  /** Index of iso within dayDates, or -1 — used to locate real "yesterday" inside whichever
+   * month's dayDates the dashboard currently has loaded. */
+  function findDayIndex_(dayDates, iso) {
+    return (dayDates || []).indexOf(iso);
+  }
+
+  /** 'warning' | 'urgent' | null for a PAX's real (not scrubbed-to) yesterday check-in. null
+   * when yesterday is already reported (1/0/-1) or isn't present in the currently loaded
+   * month's dayDates (viewing a different month, or real-today is the 1st so yesterday is in
+   * the prior month, unavailable in this payload). Always driven by wall-clock "now", not the
+   * date-nav-scrubbed viewDate, so it doesn't change as a Q/PAX scrubs through past days. */
+  function yesterdayCheckinStatus_(rawMember, yesterdayIndex) {
+    if (yesterdayIndex < 0) return null;
+    var v = (rawMember.dayValues || [])[yesterdayIndex];
+    if (v === 1 || v === 0 || v === -1) return null;
+    return new Date().getHours() < YESTERDAY_CHECKIN_WARNING_HOUR_ ? 'warning' : 'urgent';
+  }
+
+  function checkinStatusBadgeHtml_(status) {
+    if (status === 'warning') return '<span class="checkin-status-badge warning" title="Yesterday not checked in yet">⚠️</span>';
+    if (status === 'urgent') return '<span class="checkin-status-badge urgent" title="Yesterday not checked in">Ⓧ</span>';
+    return '';
+  }
+
+  // Subtle tints for the team-tile ring background — readable against the ring's wedge colors
+  // and the centered score text, not a full-strength alert color.
+  var CHECKIN_STATUS_RING_BG_ = { warning: '#fdf1c9', urgent: '#f8d6d3' };
+
+  function renderTeamTile_(member, isMe, currentDay, checkinStatus) {
     var el = document.createElement('div');
     el.className = 'team-tile' + (isMe ? ' me' : '');
-    var ring = buildRingSvg_(member.daySegments, 72, member.scorePct + '%', '', scoreColor_(member.scorePct));
+    var ring = buildRingSvg_(member.daySegments, 72, member.scorePct + '%', '', scoreColor_(member.scorePct), CHECKIN_STATUS_RING_BG_[checkinStatus]);
     var spark = buildSparklineSvg_(member.daySegments, currentDay, scoreColor_(member.scorePct), 66, 20);
     var bonusChipsHtml = buildBonusChipsHtml_(member.bonusByType);
     el.innerHTML =
+      checkinStatusBadgeHtml_(checkinStatus) +
       ring +
       '<div class="tname">' + escapeHtml_(member.name) + '</div>' +
       (spark ? '<div>' + spark + '</div>' : '') +
@@ -798,9 +863,16 @@
     return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   }
 
-  /** Recomputed view of a team/board member as of dayIndex — only score/scorePct stay pinned
-   * to the current (real "today") totals, since those come from the Tracker's own score
-   * formula and can't be safely re-derived for an arbitrary past day client-side. */
+  function formatMonthLabel_(d) {
+    return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  }
+
+  /** Recomputed view of a team/board member as of dayIndex — score/scorePct stay pinned to the
+   * current (real "today") totals, since those come from the Tracker's own score formula and
+   * can't be safely re-derived for an arbitrary past day client-side. bonusByType, by contrast,
+   * IS re-derived per day from the server-supplied bonusByTypeSeries (one entry per reported
+   * day, date-scoped and weekly-capped — see dashboardWebapp.js's computeBonusPillsAsOf_), so
+   * scrubbing to a date before a bonus was logged correctly hides it. */
   function memberViewForIndex_(member, dayIndex, totalDays) {
     var sliced = (member.dayValues || []).slice(0, dayIndex + 1);
     return {
@@ -810,9 +882,7 @@
       scorePct: member.scorePct,
       streak: computeStreakLocal_(sliced),
       daySegments: buildDaySegmentsLocal_(sliced, totalDays),
-      // Month-to-date totals, same as score/scorePct above — not re-derivable for an arbitrary
-      // scrubbed-to day, so pinned to the server's real-"today" value like those two are.
-      bonusByType: member.bonusByType,
+      bonusByType: (member.bonusByTypeSeries && member.bonusByTypeSeries[dayIndex]) || member.bonusByType,
     };
   }
 
@@ -867,20 +937,23 @@
       daySegments, 140, d.scorePct + '%', (d.score >= 0 ? '+' : '') + d.score + ' pts', scoreColor_(d.scorePct)
     );
 
-    // Score/weekly bonuses reflect the current running total (as of real "today"), not the
-    // scrubbed-to day — the Tracker's Score column is a live formula we don't re-derive here.
+    // Score reflects the current running total (as of real "today"), not the scrubbed-to day —
+    // the Tracker's Score column is a live formula we don't re-derive here. Bonus pills, by
+    // contrast, ARE scrubbed-to-day accurate: d.bonusByTypeSeries[dayIndex] is the date-scoped,
+    // weekly-capped total as of that day (see dashboardWebapp.js's computeBonusPillsAsOf_).
     $('dScore').textContent = (d.score >= 0 ? '+' : '') + d.score;
     $('dScore').style.color = scoreColor_(d.scorePct);
     $('dScoreSub').innerHTML = d.done + ' hits<br>' + d.missed + ' misses<br>' + d.absent + ' no check-in';
 
     $('dAvgChart').innerHTML = buildAvgChartSvg_(avgRollingAverage, avgDaySegments, avgWindowCount);
 
+    var dBonusesForDay = (d.bonusByTypeSeries && d.bonusByTypeSeries[dayIndex]) || d.bonusByType;
     var bonusesEl = $('dBonuses');
     bonusesEl.innerHTML = '';
     // Column-first order (FE/Q down the left, Ins/EH down the right) rendered into a row-major
     // 2-column grid gives the requested layout: FE +1 / Ins +0 on row one, Q +1 / EH +0 on row two.
     BONUS_GRID_ORDER_.forEach(function(code) {
-      var value = (d.bonusByType && d.bonusByType[code.key]) || 0;
+      var value = (dBonusesForDay && dBonusesForDay[code.key]) || 0;
       var row = document.createElement('div');
       row.className = 'bonus-type-row';
       row.innerHTML =
@@ -890,11 +963,19 @@
     });
 
     $('dTeamName').textContent = d.team || 'Unassigned';
+
+    // Real "yesterday" located within whichever month's dayDates is currently loaded — drives
+    // the checkin-status badge below, independent of the scrubbed-to viewed day (dayIndex).
+    var yesterdayReal = new Date();
+    yesterdayReal.setDate(yesterdayReal.getDate() - 1);
+    var yesterdayIndex = findDayIndex_(d.dayDates, isoDate_(yesterdayReal));
+
     var myTeamEl = $('dMyTeam');
     myTeamEl.innerHTML = '';
     (d.myTeam || []).forEach(function(m) {
       var view = memberViewForIndex_(m, dayIndex, d.totalDays);
-      myTeamEl.appendChild(renderTeamTile_(view, m.name === d.f3Name, currentDay));
+      var checkinStatus = yesterdayCheckinStatus_(m, yesterdayIndex);
+      myTeamEl.appendChild(renderTeamTile_(view, m.name === d.f3Name, currentDay, checkinStatus));
     });
 
     var boardEl = $('dPaxBoard');
@@ -910,6 +991,7 @@
       rowsEl.className = 'board-rows';
       group.members.forEach(function(rawMember) {
         var m = memberViewForIndex_(rawMember, dayIndex, d.totalDays);
+        var checkinStatus = yesterdayCheckinStatus_(rawMember, yesterdayIndex);
         var row = document.createElement('div');
         row.className = 'board-row' + (m.name === d.f3Name ? ' me' : '');
         var mainEl = document.createElement('div');
@@ -921,7 +1003,11 @@
         pctEl.className = 'bpct';
         pctEl.style.color = scoreColor_(m.scorePct);
         pctEl.textContent = m.scorePct + '%';
+        var statusEl = document.createElement('span');
+        statusEl.className = 'bstatus';
+        statusEl.innerHTML = checkinStatusBadgeHtml_(checkinStatus); // fixed-width column — empty when no badge, so rows still line up
         mainEl.appendChild(nameEl);
+        mainEl.appendChild(statusEl);
         mainEl.appendChild(buildDayMiniBar_(m.daySegments, currentDay));
         mainEl.appendChild(pctEl);
         row.appendChild(mainEl);
@@ -946,27 +1032,43 @@
   /** Fetches and caches one month's full dashboard payload (server always returns the whole
    * month through real "today", regardless of which day dateISO points at — see
    * dashboardWebapp.js's handleCheckinDashboard_). Cached per monthKey so date-arrow
-   * navigation within an already-loaded month never re-reads the spreadsheet. */
+   * navigation within an already-loaded month never re-reads the spreadsheet.
+   *
+   * A month the dashboard hasn't visited yet this session can take several seconds server-side
+   * (handleCheckinDashboard_'s board/team view reads the whole Responses + Tracker sheets fresh
+   * every time — no cache) — without visible feedback, that read either just looked broken, or
+   * invited repeated clicks that each fired their own duplicate fetch. dashboardLoading blocks
+   * that; the nav buttons visibly disable and the label reads "Loading…" for the duration. */
   function loadDashboard_(dateISO) {
     hideApiError_();
     // Default to the browser's local calendar date (not the Apps Script server's timezone) so
     // the dashboard opens on "today" as the PAX's device sees it.
     dateISO = dateISO || isoDate_(new Date());
+    state.dashboardLoading = true;
+    $('datePrevBtn').disabled = true;
+    $('dateNextBtn').disabled = true;
+    $('dateNavLabel').textContent = 'Loading…';
     return callApi('dashboard', { f3Name: state.f3Name, email: state.email, dateISO: dateISO })
       .then(function(payload) {
         state.monthCache[payload.monthKey] = payload;
-        renderDashboard_(payload, payload.viewDayIndex);
+        renderDashboard_(payload, payload.viewDayIndex); // re-enables/relabels the nav buttons via renderDateNav_
       })
       .catch(function(err) {
         var friendly = (err && err.message === 'no_tracker_for_date')
           ? new Error('No tracker exists for that date yet.')
           : err;
         showApiError_('dashboard', friendly);
+        // Failure path doesn't go through renderDashboard_/renderDateNav_, so restore the nav
+        // controls here instead of leaving them stuck disabled on "Loading…".
+        if (state.viewDate) renderDateNav_(state.viewDate);
+      })
+      .finally(function() {
+        state.dashboardLoading = false;
       });
   }
 
   function navigateDashboard_(deltaDays) {
-    if (!state.viewDate) return;
+    if (!state.viewDate || state.dashboardLoading) return;
     var newDate = new Date(state.viewDate);
     newDate.setDate(newDate.getDate() + deltaDays);
 
@@ -1031,12 +1133,23 @@
   function loadBonusList_() {
     hideApiError_();
     $('bonusListError').classList.add('hidden');
-    return callApi('bonusList', { f3Name: state.f3Name, email: state.email })
+    // Match whatever month the dashboard is currently viewing (state.viewDate, moved by the
+    // date-nav arrows), not always real "today" — otherwise a PAX who navigated back into a
+    // prior month would see this month's bonus entries instead of that month's.
+    var dateISO = state.viewDate ? isoDate_(state.viewDate) : undefined;
+    state.bonusListContextIso = dateISO;
+    $('bonusMonthLabel').textContent = formatMonthLabel_(state.viewDate || new Date());
+    // Without this, the list either sits blank on first open or keeps showing the pre-save
+    // entries after an add/edit until the fetch resolves — both read as "did my change even
+    // happen?" rather than "still loading."
+    $('bonusList').innerHTML = '<p class="muted" style="margin:10px 0 0;">Loading…</p>';
+    return callApi('bonusList', { f3Name: state.f3Name, email: state.email, dateISO: dateISO })
       .then(function(res) {
         state.bonusEntries = res.entries || [];
         renderBonusList_();
       })
       .catch(function(err) {
+        $('bonusList').innerHTML = '';
         $('bonusListError').textContent = "Couldn't load your bonus entries — please try again.";
         $('bonusListError').classList.remove('hidden');
         showApiError_('bonusList', err);
@@ -1045,11 +1158,12 @@
 
   var BONUS_DEFAULT_TYPE_ = 'Fellowship';
 
-  /** Constrains the bonus date picker to this month or last month — no earlier, no future. */
+  /** Constrains the bonus date picker to the context month (state.viewDate, default real today)
+   *  or the month before it — no earlier, no future relative to that context. */
   function setBonusWhenRange_() {
-    var today = new Date();
-    var firstOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-    var lastOfThisMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    var contextDay = state.viewDate || new Date();
+    var firstOfLastMonth = new Date(contextDay.getFullYear(), contextDay.getMonth() - 1, 1);
+    var lastOfThisMonth = new Date(contextDay.getFullYear(), contextDay.getMonth() + 1, 0);
     $('bonusWhen').min = isoDate_(firstOfLastMonth);
     $('bonusWhen').max = isoDate_(lastOfThisMonth);
   }
@@ -1057,9 +1171,21 @@
   /** Populates and shows the add/edit form. entry is null when adding a new one. */
   function openBonusForm_(entry) {
     state.bonusEditingRowIndex = entry ? entry.rowIndex : null;
+    // Must match the dateISO the list was actually fetched with (state.bonusListContextIso), not
+    // entry.whenIso — an entry's own date doesn't necessarily resolve back to the sheet it's
+    // physically stored in (e.g. it was added while viewing a different month), so re-deriving
+    // "which sheet is this row in" from entry.whenIso can point at the wrong month entirely.
+    state.bonusEditingOriginalWhenIso = entry ? (state.bonusListContextIso || isoDate_(new Date())) : null;
+    // Full pre-edit snapshot (Type/When/What/Link) — the server relocates the row being edited by
+    // matching this content rather than trusting rowIndex to still point at the same row by save
+    // time (rows can move under a rowIndex for reasons that have nothing to do with this app, e.g.
+    // a human manually sorting the Bonus Tracker sheet in between).
+    state.bonusEditingOriginalSnapshot = entry
+      ? { type: entry.type, whenIso: entry.whenIso, message: entry.message, link: entry.link }
+      : null;
     $('bonusFormHeading').textContent = entry ? 'Edit Bonus' : 'Add Bonus';
     setBonusWhenRange_();
-    $('bonusWhen').value = entry ? entry.whenIso : isoDate_(new Date());
+    $('bonusWhen').value = entry ? entry.whenIso : isoDate_(state.viewDate || new Date());
     $('bonusType').value = entry ? entry.type : BONUS_DEFAULT_TYPE_;
     $('bonusMessage').value = entry ? entry.message : '';
     $('bonusLink').value = entry ? entry.link : '';
@@ -1072,6 +1198,8 @@
   function closeBonusForm_() {
     $('bonusFormCard').classList.add('hidden');
     state.bonusEditingRowIndex = null;
+    state.bonusEditingOriginalWhenIso = null;
+    state.bonusEditingOriginalSnapshot = null;
   }
 
   function updateBonusLinkVisibility_() {
@@ -1103,8 +1231,9 @@
     message_required: 'Please describe what happened.',
     link_required: 'This bonus type needs a Slack link before it counts.',
     invalid_link: 'That doesn’t look like a valid link (must start with http:// or https://).',
-    not_your_entry: 'That entry no longer belongs to you — please refresh and try again.',
     not_found: 'That entry could not be found — please refresh and try again.',
+    locked: 'Bonus Tracker is busy right now — please try again in a moment.',
+    bonus_sheet_full: 'This month’s Bonus Tracker is full — please contact your Q.',
   };
 
   $('bonusSaveBtn').addEventListener('click', function() {
@@ -1120,7 +1249,11 @@
     $('bonusFormError').classList.add('hidden');
     hideApiError_();
     var action = state.bonusEditingRowIndex ? 'bonusEdit' : 'bonusAdd';
-    if (state.bonusEditingRowIndex) payload.rowIndex = state.bonusEditingRowIndex;
+    if (state.bonusEditingRowIndex) {
+      payload.rowIndex = state.bonusEditingRowIndex;
+      payload.originalWhenIso = state.bonusEditingOriginalWhenIso;
+      payload.original = state.bonusEditingOriginalSnapshot;
+    }
     setButtonLoading_(btn, true, 'Saving…');
     callApi(action, payload)
       .then(function() {

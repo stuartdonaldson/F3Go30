@@ -304,6 +304,25 @@ function handleAdminPost_(e) {
       var sheetHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
       return jsonOutput_({ ok: true, headers: sheetHeaders });
     }
+    if (payload.action === 'getSheetFormulas') {
+      // Read-only formula inspection (row 1..N as authored) for reverse-engineering scoring
+      // logic against the live sheet — same admin-secret gate as getSheet, formulas instead of
+      // values. Ad hoc diagnostic; not part of any PAX-facing flow.
+      if (!payload.sheetName) {
+        return jsonOutput_({ ok: false, error: 'sheetName is required' });
+      }
+      var formulaSs = payload.sheetId
+        ? SpreadsheetApp.openById(payload.sheetId)
+        : SpreadsheetApp.getActiveSpreadsheet();
+      var formulaSheet = formulaSs.getSheetByName(payload.sheetName);
+      if (!formulaSheet) {
+        return jsonOutput_({ ok: false, error: 'sheet_not_found' });
+      }
+      var formulaRows = payload.maxRows
+        ? formulaSheet.getRange(1, 1, Math.min(payload.maxRows, formulaSheet.getMaxRows()), formulaSheet.getLastColumn()).getFormulas()
+        : formulaSheet.getDataRange().getFormulas();
+      return jsonOutput_({ ok: true, formulas: formulaRows });
+    }
     if (payload.action === 'sortTracker') {
       // Re-sorts an arbitrary tracker's Tracker sheet by column B then column A — the same
       // sort handleFormSubmit_/handleSignupSave_ apply on every write (addResponseOnSubmit.js
@@ -333,6 +352,31 @@ function handleAdminPost_(e) {
       var contextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
       var result = sendNagEmail_(contextDate);
       return jsonOutput_({ ok: true, result: result });
+    }
+    if (payload.action === 'copyTemplate') {
+      // Stands up a new environment's files: copies the Template (+ bound script) and the
+      // N most recent real trackers into a new sibling Drive folder, then rebuilds that
+      // copy's TrackerDB/PaxDB from only the copied trackers. See CopyTemplate.js file header
+      // — deliberately does not touch triggers/forms/short links or deploy anything.
+      if (!payload.folderName) {
+        return jsonOutput_({ ok: false, error: 'folderName is required' });
+      }
+      var copyTemplateLog = [];
+      try {
+        var copyResult = copyTemplateToNewEnvironment_(
+          payload.folderName, payload.trackerCount || 3,
+          function(msg) { copyTemplateLog.push(msg); }
+        );
+        GasLogger.log('handleAdminPost_.copyTemplate', {
+          newFolderId: copyResult.newFolderId,
+          newTemplateId: copyResult.newTemplateId,
+          copiedTrackers: copyResult.copiedTrackers.length
+        });
+        return jsonOutput_({ ok: true, log: copyTemplateLog, result: copyResult });
+      } catch (err) {
+        GasLogger.log('handleAdminPost_.copyTemplate.error', { error: err.message });
+        return jsonOutput_({ ok: false, error: 'server_error', detail: err.message, log: copyTemplateLog });
+      }
     }
     return jsonOutput_({ ok: false, error: 'unknown_action' });
   } catch (err) {

@@ -141,6 +141,28 @@ separately excludes the smoke tracker from its own date matching unconditionally
 a candidate for real dispatch regardless of `targetMonth`. Both behaviors are centralized in
 `script/SmokeMode.js` — see its file header for why.
 
+### CopyTemplate — standing up a new environment
+
+`node tools/copyTemplate.js <folderName> [--env sit|prod] [--tracker-count 3]` stands up the
+*files* for a brand-new, fully isolated environment (e.g. a different F3 region), without
+deploying or initializing anything:
+
+1. Copies the Template spreadsheet into a new sibling Drive folder named `<folderName>` — the
+   bound Apps Script project comes along automatically (Drive file copies of a container-bound
+   spreadsheet duplicate the bound script too).
+2. Copies the N most recent **real** (non-smoke, non-expired) monthly tracker spreadsheets from
+   TrackerDB into that same new folder.
+3. Rebuilds the new Template copy's `TrackerDB`/`PaxDB` sheets from scratch, using only the
+   copied trackers' new SheetIds — the raw copy would otherwise carry over the *entire* source
+   TrackerDB/PaxDB history (both live inside the Template spreadsheet), pointing at the old
+   trackers' original SheetIds instead of the copies.
+
+Deliberately out of scope: triggers, HC Form links, TinyURL short links, Script Properties,
+and any deployment. Use `--env prod` for the real use case — PROD's TrackerDB holds true
+production history; SIT's is contaminated with SIT-only test rows layered on inherited prod
+history. Bringing the new environment live (initializing triggers, deploying its own web app,
+re-linking forms) is a separate, manual step — see `script/CopyTemplate.js`'s file header.
+
 ### Script Properties
 
 Set in Apps Script Project Settings → Script Properties.

@@ -12,7 +12,10 @@
  * banner is dismissed once per page so it doesn't show up in screenshots.
  *
  * Usage:
- *   npx playwright test tests/playwright/demo-screenshots.spec.js --headed
+ *   npx playwright test tests/playwright/demo-screenshots.spec.js
+ *
+ * Runs headless (overrides the suite-wide headless:false in playwright.config.js,
+ * which exists only for the GAS-editor spec's real-viewport requirement).
  *
  * Re-running: the signup step is idempotent — the signup app looks up
  * NoSadClown/nosadclown@example.com by identify and re-fills the existing
@@ -41,7 +44,13 @@ const BONUS_ENTRY = {
   link: 'https://f3cascades.slack.com/archives/C0A18QD4MD5/p1234567890',
 };
 
-test.use({ storageState: undefined, viewport: { width: 390, height: 844 } });
+const BONUS_ENTRY_EDITED = {
+  message: "Brought Splinter out to the Hawk's Nest AO this morning (edited during demo)",
+};
+
+// Public PAX web apps need no Google login and no real-viewport GAS editor
+// interactions, so unlike the rest of the suite this spec can run headless.
+test.use({ storageState: undefined, viewport: { width: 390, height: 844 }, headless: true });
 
 function loadSettings() {
   const p = path.join(ROOT, 'local.settings.json');
@@ -171,5 +180,19 @@ test.describe('Go30 demo screenshots (SIT)', () => {
     await expect(app.locator('#bonusFormCard')).toBeHidden({ timeout: 15000 });
     await expect(app.locator('#bonusList')).toContainText(BONUS_ENTRY.message, { timeout: 15000 });
     await shot(page, '11-bonus-added.png');
+
+    const entry = app.locator('.bonus-entry', { hasText: BONUS_ENTRY.message }).first();
+    await entry.locator('.bonus-edit-btn').click();
+    await expect(app.locator('#bonusFormCard')).toBeVisible();
+    await expect(app.locator('#bonusFormHeading')).toHaveText('Edit Bonus');
+    await shot(page, '12-bonus-edit-form.png');
+
+    await app.locator('#bonusMessage').fill(BONUS_ENTRY_EDITED.message);
+    await shot(page, '13-bonus-edit-form-filled.png');
+
+    await app.locator('#bonusSaveBtn').click();
+    await expect(app.locator('#bonusFormCard')).toBeHidden({ timeout: 15000 });
+    await expect(app.locator('#bonusList')).toContainText(BONUS_ENTRY_EDITED.message, { timeout: 15000 });
+    await shot(page, '14-bonus-edited.png');
   });
 });

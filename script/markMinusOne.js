@@ -109,6 +109,12 @@ function applyMinusOneToTrackerSheet_(spreadsheet, contextDate) {
 
     if (markedCount > 0) {
       dataRange.setValues(values);
+      // dashboardWebapp.js's full-roster dashboard/board cache has no per-PAX granularity and
+      // this write touches many PAX at once — invalidate it so the next dashboard load doesn't
+      // serve pre-marking data for up to FULL_ROSTER_CACHE_TTL_SECONDS_. Guarded: this function
+      // only exists when dashboardWebapp.js is loaded in the same script project (always true in
+      // production GAS's single global namespace; not true in this file's own unit tests).
+      if (typeof invalidateFullRosterCache_ === 'function') invalidateFullRosterCache_(spreadsheet.getId());
     }
 
     GasLogger.log('markEmptyCellsAsMinusOne.complete', { spreadsheetId: spreadsheet.getId(), thresholdDay: thresholddayString, cellsMarked: markedCount });

@@ -235,6 +235,16 @@ function ensurePaxCacheFresh_(sheetId) {
     if (liveModTime > storedAsOf) {
       wipePaxCacheForSheet_('tracker', sheetId);
       wipePaxCacheForSheet_('responses', sheetId);
+      // Also clears dashboardWebapp.js's full-roster CacheService cache (trackerValuesCacheKey_/
+      // responsesValuesCacheKey_) for the same sheet — CacheService has no key-enumeration or
+      // prefix-delete (unlike PropertiesService.getKeys() above), so the exact key strings are
+      // duplicated here rather than referencing those functions directly, to avoid a circular
+      // dependency between PaxCache.js and dashboardWebapp.js. Keep in sync if either changes.
+      try {
+        var cache = CacheService.getScriptCache();
+        cache.remove('go30dash:trackerValues:' + sheetId);
+        cache.remove('go30dash:responsesValues:' + sheetId);
+      } catch (e2) { /* best-effort — write-through invalidation at the point of write is the primary path */ }
     }
     props.setProperty(key, String(liveModTime));
   } catch (e) { /* Drive lookup unavailable — trust existing cache rather than block the request */ }

@@ -468,8 +468,8 @@ function resolveTrackerForContextDate(contextDate) {
  * Writes TrackerDB rows, replacing existing body rows while preserving the sheet.
  * @param {Array<Object>} rows Tracker summary rows.
  */
-function _updateTrackerDB(rows) {
-	var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+function _updateTrackerDB(rows, spreadsheet) {
+	if (!spreadsheet) spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 	var sheet = spreadsheet.getSheetByName(TRACKER_DB_SHEET_NAME_);
 	if (!sheet) {
 		sheet = spreadsheet.insertSheet(TRACKER_DB_SHEET_NAME_);
@@ -1378,7 +1378,15 @@ if (typeof module !== 'undefined' && module.exports) {
 		findMostRecentPaxRecordForName_: findMostRecentPaxRecordForName_,
 		findMostRecentPaxRecordForEmail_: findMostRecentPaxRecordForEmail_,
 		deletePaxDbRowsBySheetId_: deletePaxDbRowsBySheetId_,
-		_readPaxDbRowsBySheetId_: _readPaxDbRowsBySheetId_
+		_readPaxDbRowsBySheetId_: _readPaxDbRowsBySheetId_,
+		_readTrackerDbRowsBySheetId_: _readTrackerDbRowsBySheetId_,
+		_computeTrackerMetrics_: _computeTrackerMetrics_,
+		_buildTrackerMetadata_: _buildTrackerMetadata_,
+		_loadPaxData: _loadPaxData,
+		_updateTrackerDB: _updateTrackerDB,
+		_updatePaxDB: _updatePaxDB,
+		TRACKER_DB_HEADERS_: TRACKER_DB_HEADERS_,
+		PAX_DB_HEADERS_: PAX_DB_HEADERS_
 	};
 }
 

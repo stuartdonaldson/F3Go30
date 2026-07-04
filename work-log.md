@@ -682,3 +682,91 @@ Added a check-in/dashboard webapp invitation link to the signup confirmation ema
 A server-side bug fix isn't done until you've confirmed the client actually uses the corrected value — this session's streak fix looked complete after the first deploy (server math verified correct) but the client was silently recomputing its own, still-buggy version from a narrower data slice, discarding the server's fix entirely. "Still seems off" after a deploy is a strong signal to check the render path, not just re-verify the computation.
 When a user proposes a queue/trigger/polling architecture for a performance problem, the deciding question is whether the "slow" work is already happening inside a live request the same user is waiting on (in which case there's nothing to detach — just do the extra work in that call) versus work that genuinely needs to happen independent of any single request. onEdit specifically cannot bridge script-driven writes at all, independent of the simple-vs-installable distinction, which only affects execution context/permissions, not what counts as a triggering "edit" event.
 Iterative pixel/wording-level UI feedback (streak tile layout across ~6 rounds) is cheap to act on individually but easy to under-verify collectively — running the syntax check + npm test + deploy:sit after every single small tweak this session caught nothing broken, but confirms that batching several such small requests without redeploying in between would have made a later regression much harder to attribute to a specific change.
+
+## 2026-07-03 06:17:13
+
+### Summary:
+Revised the website's "How it Works" panel (SignupApp.html) and docs/references/Go30-FAQ-2026-06.md to match current webapp-based reality instead of the pre-webapp, sheet-only/Google-Form world they still described: added the dashboard and the check-in page's chart-icon (📊) link to the underlying spreadsheet as an explicit backup path, corrected the icon description after user correction (it's a chart icon, not "…"), clarified the -1 deadline messaging (10am social deadline plus a short automatic grace window, per user's chosen phrasing), and rewrote the FAQ's recording-scores/bonus-points/signup/reuse-registration answers to describe the current webapps as primary with the spreadsheet as fallback.
+
+Implemented a real scoring-accuracy fix identified during that documentation review: the dashboard's bonus pills (fe/q/ins/eh) were previously read straight off the Tracker sheet's C-F month-to-date columns, which are neither date-scoped (same total shown regardless of which day the date-nav arrows were scrubbed to) nor capped — confirmed via a live SIT formula inspection (added a temporary/kept getSheetFormulas admin action to WebApp.js) that the spreadsheet's own weekly Bonus-column SUMIFS formula does not itself enforce the "1 point per week" cap for Fellowship/Q Point/Inspire that docs and the user both describe as the intended rule. Per user decision, fixed this only in the dashboard (not the spreadsheet formula): added bonusWebapp.js's readAllBonusEntries_/getAllBonusEntriesCached_ (CacheService cache, invalidated on every addBonusEntry_/editBonusEntry_ write) and dashboardWebapp.js's weekOfMonth_ (Sun-Sat periods that naturally clip short at month start/end)/computeBonusPillsAsOf_ (date-scoped, capped)/computeBonusSeriesForPax_ (one pill-set per reported day, for every PAX not just the logged-in one). Wired the new per-day series into CheckinApp.html's memberViewForIndex_ and the self-tile bonus grid, replacing the prior "pinned to today" behavior. Removed the now-dead buildBonusByType_/TRACKER_BONUS_*_COL_ reads and their tests. Updated bd issue F3Go30-y55y's acceptance criteria and left a verification note rather than closing it. Verified live on SIT: two Fellowship entries in the same week still show fe:1 (cap holds); a Q Point entry dated 07-02 is excluded when viewing 07-01 and included when scrubbed to 07-02; board tiles each carry their own bonusByTypeSeries.
+
+### Key Learnings:
+Before reimplementing a business rule ("cap bonus points at 1/week") that's described in project docs and repeated by the user, verify it against the live spreadsheet's actual formulas rather than the docs — docs/sheet-reference.md described the cap as "enforced by the capped/uncapped logic," but pulling the real formula (via a new getSheetFormulas admin action) showed the SUMIFS has no cap at all; the intended rule and the shipped formula had silently diverged, and mirroring the docs' description instead of the sheet would have reimplemented behavior nobody had actually verified.
+When a change reverses or refines an in-progress bd issue's stated AC (F3Go30-y55y had just recorded "bonus totals are month-to-date, not per-day" as intentional), update that issue's AC explicitly rather than silently coding the opposite behavior or spawning a disconnected new issue — the user's clarifying answer ("month-to-date is true given the date is the context date") showed the original AC wasn't wrong, just ambiguous about which "today."
+`bd update --body-file` replaces the description field, not acceptance criteria — use `--acceptance` (via `$(cat file)` command substitution, not `--body-file`) to set AC content, and always `bd show` immediately after any bulk update to confirm the field that actually changed.
+
+## 2026-07-03 09:48:15
+
+### Summary:
+Fixed the live "that entry no longer belongs to you" bonus-edit bug reported on SIT/prod: root cause was `editBonusEntry_`/`clearBonusEntry_` trusting a client-held `rowIndex` that goes stale by save time (cross-month moves, manual sheet sorts, or unrelated row shifts). Replaced with `findBonusRowByIdentity_` — locates the row by matching remembered content (Name/Type/When/What/Link) instead of a bare row number, with `rowIndex` demoted to a fast-path hint. Added `LockService`-guarded critical sections to `addBonusEntry_`/`editBonusEntry_`/`clearBonusEntry_` to close a real concurrent-write race (two adds claiming the same "next free row"), and reordered `handleBonusEdit_`'s cross-month move to add-then-clear so a failure partway through leaves a recoverable duplicate rather than losing the entry.
+
+Found and fixed a performance regression I introduced in the same fix: `handleBonusEdit_` was calling the expensive identity-resolution step twice per edit (once for the new month, once for the original) even when both were the same month. Added a cheap month-only pre-check (`resolveBonusMonthOnly_`, local TrackerDB scan only) so same-month edits — the overwhelming majority — pay for exactly one resolution again.
+
+Investigated a separate "Failed to fetch" report using a browser HAR export and found two real, pre-existing (not caused by me) performance issues: (1) the bonus-list endpoint (`listBonusEntriesForPax_`) had zero caching at all, re-reading the Bonus Tracker's full ~890-row pre-formatted extent on every single load — fixed by adding `getAllBonusRowsCached_`, reusing the same CacheService infrastructure already correctly wired for invalidation. (2) `resolveCheckinIdentityFull_` (the dashboard/board view) did a fully uncached full-sheet read of both Responses and Tracker on every single call, regardless of staleness — "nothing touched it in days" turned out to mean "there is no cache for this path at all," not "the cache is cold." Added a new CacheService-backed full-roster cache with two-layer invalidation: explicit write-through in `handleCheckinSubmit_` and `markMinusOne.js` (which previously invalidated nothing), plus `PaxCache.js`'s existing Drive-modtime freshness gate (`ensurePaxCacheFresh_`) extended as a backstop for out-of-band edits.
+
+Also shipped, per user request during live testing: a dashboard date-nav loading indicator + duplicate-request guard (the HAR showed 3 concurrent duplicate `dashboard` POSTs from unguarded rapid clicking), a Site Q contact error banner with a pre-filled mailto link (reads name/email from the Config sheet's "Site Q" row, same source already used for admin emails), and yesterday-checkin status badges (⚠️ before 10am local, Ⓧ red/bold at/after) — placed as an upper-left overlay with a subtle ring-background tint on My Team tiles, and as a fixed-width column between name and daily-progress bar on the Pax Board.
+
+Extended `tools/smokeTest.js` (the only live E2E harness in the repo) with two new steps that previously had zero live coverage: a same-month bonus edit (verifying `editBonusEntry_`'s actual live write path, not just unit-mocked), and a `dashboard` action call with roster/team-shape assertions. Documented in the file header why a true cross-month live test can't be safely added without new production-adjacent surface area (signup's `targetMonth` enum has no way to target an arbitrary second synthetic month) — saved as `bd remember` key `F3Go30-bonus-crossmonth-test-gap` for a future decision rather than building a risky workaround unilaterally.
+
+Deployed through the full-roster caching fix to SIT (v104). All 19 `npm test` suites pass.
+
+### Stopping point / what's next:
+- Planned but **not started**: adding a bonus-edit cycle to `tests/playwright/demo-screenshots.spec.js` (the existing live-browser workflow-screenshot spec) — user asked for this alongside the `smokeTest.js` work.
+- `tools/smokeTest.js` changes are untested — syntax-checked only (`node -c`), never actually run end-to-end against SIT.
+- Open decision needed from Stuart: how (or whether) to add live cross-month bonus-edit test coverage — see `bd remember F3Go30-bonus-crossmonth-test-gap` for the full tradeoff writeup.
+- Not yet deployed: `tools/smokeTest.js` changes don't need deployment (local tooling only, calls the already-deployed SIT webapp).
+
+### Key Learnings:
+- A GAS web app's `CacheService` caps TTL at 6 hours regardless of how long the underlying data has been stable — "untouched for days" does not imply "still cached" unless the read path was ever wired to a cache at all. Always check whether a slow path has *any* cache before assuming staleness is the cause.
+- Browser HAR exports are a much higher-signal debugging tool than server logs alone for GAS web apps specifically, because GAS's POST→302→GET-echo redirect chain and per-request execution timing (`wait` in HAR timings) directly expose server-side execution time per request — cross-referencing HAR timestamps against Axiom's `resolveIdentity.timing` log lines pinpointed the exact double-resolution regression.
+- A client-held `rowIndex`/array-position captured at list-load time is inherently unsafe to trust unchanged by save time for anything editable — content-based relocation (matching remembered field values) is the more robust pattern, confining any lock to the actual read-modify-write rather than the user's think-time.
+
+## 2026-07-03 21:03:18
+
+### Summary:
+Cleaned up SIT (3 stray smoke trackers from prior session, cleared SMOKE_MODE). Wrote the
+bonus-edit cycle addition to tests/playwright/demo-screenshots.spec.js (not yet run). Ran
+tools/smokeTest.js against SIT — check-in step failed with day_column_not_found; diagnosed and
+filed as bd issue F3Go30-jldr (structural bug, not flakiness). Tore down the resulting partial
+smoke tracker. Built and shipped a new CopyTemplate tool per user request: script/CopyTemplate.js
+(+ admin action in WebApp.js, unit tests in test/test_copy_template.js, tools/copyTemplate.js CLI
+wrapper) that copies the Template spreadsheet (+ bound script) and the N most recent real
+monthly trackers into a new Drive folder, then rebuilds that copy's TrackerDB/PaxDB from scratch
+using only the copied trackers. Deployed to SIT and live-validated (3/3 trackers, 52/52 PaxDB
+rows correctly scoped to the new SheetIds). Documented in docs/OPERATIONS.md §CopyTemplate.
+CopyTemplateTest artifacts left in Drive for review, not yet trashed.
+
+### Key Learnings:
+TrackerDB/PaxDB live inside the Template spreadsheet itself, so any Drive-level copy of the
+Template inherits the *entire* source history (pointing at the old trackers' original SheetIds)
+— it has to be explicitly wiped and reseeded from only the newly copied trackers, since
+go30tools.js's existing scanTrackers()/_mergeTrackerDbRowsForScan_ path is additive-only and
+never drops stale rows. _updateTrackerDB() was previously hardwired to
+SpreadsheetApp.getActiveSpreadsheet() (unlike _updatePaxDB, which already took an optional
+spreadsheet param) — added the same optional param so CopyTemplate could target the new copy
+explicitly rather than whatever spreadsheet the script happens to be bound to at execution time.
+Also: SIT's own TrackerDB is not a reliable source for "most recent real trackers" — it mixes
+SIT-only test rows with historical rows inherited from when SIT's template was first copied
+from PROD; PROD's TrackerDB is the only trustworthy source for that.
+
+## 2026-07-04 05:21:09
+
+### Summary:
+Closed out the Playwright demo-screenshots gap flagged in the prior session: added a `headless: true`
+override to `demo-screenshots.spec.js`'s `test.use()` block (the suite-wide `playwright.config.js`
+sets `headless: false` only for a separate GAS-editor spec that needs a real viewport — this spec
+drives the public, no-login PAX signup/check-in/dashboard/bonus webapps and has no such requirement).
+Ran it headless end-to-end against SIT; both tests passed and refreshed all 13 demo screenshots in
+`docs/references/demo-screenshots/` for documentation/training use.
+
+Deployed to PROD as v2.3.11 (`package.json`/`script/version.js` bumped). This release bundles
+everything accumulated since v2.3.6: the bonus-edit content-identity fix and `LockService` guards
+around bonus add/edit/clear, bonus-list and full-roster caching fixes, the dashboard date-nav loading
+indicator + duplicate-request guard, the Site Q contact error banner, yesterday-checkin status badges,
+and the new CopyTemplate tool (`script/CopyTemplate.js`, `tools/copyTemplate.js`,
+`test/test_copy_template.js`). Committed and tagged `v2.3.11`.
+
+### Key Learnings:
+A per-spec `test.use()` override is the right tool when one spec in a suite has different environment
+requirements than the rest (headless-safe public webapp vs. a GAS-editor spec needing a real
+viewport) — no need to split into a separate Playwright project/config for a single flag.

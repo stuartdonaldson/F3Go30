@@ -47,6 +47,8 @@ var resolvePaxRowIndex_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappP
   || (typeof globalThis !== 'undefined' && globalThis.resolvePaxRowIndex_);
 var paxCacheNormalizeName_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.paxCacheNormalizeName_)
   || (typeof globalThis !== 'undefined' && globalThis.paxCacheNormalizeName_);
+var ensurePaxCacheFresh_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.ensurePaxCacheFresh_)
+  || (typeof globalThis !== 'undefined' && globalThis.ensurePaxCacheFresh_);
 
 var dashboardWebappBonusModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./bonusWebapp.js')
@@ -57,8 +59,14 @@ var addBonusEntry_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusModu
   || (typeof globalThis !== 'undefined' && globalThis.addBonusEntry_);
 var editBonusEntry_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusModule_.editBonusEntry_)
   || (typeof globalThis !== 'undefined' && globalThis.editBonusEntry_);
+var clearBonusEntry_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusModule_.clearBonusEntry_)
+  || (typeof globalThis !== 'undefined' && globalThis.clearBonusEntry_);
+var findBonusRowByIdentity_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusModule_.findBonusRowByIdentity_)
+  || (typeof globalThis !== 'undefined' && globalThis.findBonusRowByIdentity_);
 var BONUS_TYPE_RULES_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusModule_.BONUS_TYPE_RULES_)
   || (typeof globalThis !== 'undefined' && globalThis.BONUS_TYPE_RULES_);
+var getAllBonusEntriesCached_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusModule_.getAllBonusEntriesCached_)
+  || (typeof globalThis !== 'undefined' && globalThis.getAllBonusEntriesCached_);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Pure functions (unit-tested — test/test_dashboard_webapp.js)
@@ -68,13 +76,9 @@ var BONUS_TYPE_RULES_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusM
 var TRACKER_FIXED_COLUMN_COUNT_ = 8;
 var TRACKER_NAME_COL_ = 0;
 var TRACKER_TEAM_COL_ = 1;
-// Columns C-F: per-type month-to-date bonus totals (docs/sheet-reference.md "Tracker" §Column
-// layout) — distinct from the per-week Bonus columns (classifyTrackerColumns_'s bonusCols),
-// which sum every type together and so can't be broken out by type after the fact.
-var TRACKER_BONUS_FELLOWSHIP_COL_ = 2;
-var TRACKER_BONUS_QPOINT_COL_ = 3;
-var TRACKER_BONUS_INSPIRE_COL_ = 4;
-var TRACKER_BONUS_EHING_FNG_COL_ = 5;
+// Columns C-F hold per-type month-to-date bonus totals (docs/sheet-reference.md "Tracker"
+// §Column layout), but the dashboard no longer reads them — they're neither date-scoped nor
+// capped at 1/period the way the fe/q/ins/eh pills need to be (see computeBonusPillsAsOf_).
 var TRACKER_RAW_SCORE_COL_ = 6;
 var TRACKER_SCORE_COL_ = 7;
 
@@ -200,20 +204,6 @@ function groupByTeam_(paxRows) {
 }
 
 /**
- * Reads the PAX's per-type month-to-date bonus totals straight off their Tracker row (columns
- * C-F) — see TRACKER_BONUS_*_COL_. Short codes (fe/q/ins/eh) match the client's color-coded
- * pills (CheckinApp.html), sized to fit beside the score number rather than below it.
- */
-function buildBonusByType_(trackerRow) {
-  return {
-    fe: trackerRow[TRACKER_BONUS_FELLOWSHIP_COL_] || 0,
-    q: trackerRow[TRACKER_BONUS_QPOINT_COL_] || 0,
-    ins: trackerRow[TRACKER_BONUS_INSPIRE_COL_] || 0,
-    eh: trackerRow[TRACKER_BONUS_EHING_FNG_COL_] || 0,
-  };
-}
-
-/**
  * Classifies a single Tracker day cell: 'done' (1), 'missed' (0), 'absent' (-1, Q-marked via
  * markMinusOne — a PAX never sets this themselves), or 'pending' (blank — not yet reported,
  * never treated as a negative outcome or an error).
@@ -276,6 +266,86 @@ function buildRollingAverageWithLookback_(dayValues, windowSize, priorMonthTailV
   return buildRollingAverage_(combined, windowSize).slice(tail.length);
 }
 
+/** Maps a Bonus Tracker "Type" string to the short pill code the client renders. */
+var BONUS_TYPE_KEY_BY_NAME_ = {
+  'Fellowship': 'fe',
+  'Q Point': 'q',
+  'Inspire': 'ins',
+  'EHing FNG': 'eh',
+};
+
+/** Types capped at one point per Sun-Sat period — everything except EHing FNG (F3Go30-y55y:
+ *  the live spreadsheet's own weekly Bonus-column formula does not enforce this cap today; this
+ *  is an intentional correction applied only to the dashboard's fe/q/ins/eh pills, not to the
+ *  sheet's own Score column). */
+var BONUS_CAPPED_TYPES_ = { 'Fellowship': true, 'Q Point': true, 'Inspire': true };
+
+/**
+ * Sun-Sat week-of-month number (1-based), matching the spreadsheet's Periods sheet formula
+ * `WEEKNUM(date,1) - WEEKNUM(DATE(YEAR(date),MONTH(date),1),1) + 1` without an ISO-week
+ * dependency: day-of-month (0-based) plus the 1st's weekday, bucketed into 7s. A month starting
+ * mid-week naturally gets a short first period (start of month through the first Saturday); a
+ * month ending mid-week naturally gets a short last period (last Sunday through end of month) —
+ * both fall out of this arithmetic without separate boundary-clamping.
+ * @param {Date} date
+ * @param {Date} monthStart First-of-month date for the tracker date belongs to.
+ * @returns {number} 1-based period number.
+ */
+function weekOfMonth_(date, monthStart) {
+  var firstWeekday = monthStart.getDay(); // 0 = Sunday
+  var dayOffset = date.getDate() - 1 + firstWeekday;
+  return Math.floor(dayOffset / 7) + 1;
+}
+
+/**
+ * Per-type bonus pill totals for one PAX, as of asOfDate — entries dated after asOfDate are
+ * excluded entirely (this is what makes the dashboard's bonus pills accurate when the date-nav
+ * arrows are scrubbed to a day before a bonus was logged). Capped types (see
+ * BONUS_CAPPED_TYPES_) contribute at most one multiplier's worth per Sun-Sat period regardless
+ * of how many complete entries land in it; EHing FNG is uncapped.
+ * @param {Array<{nameNorm:string, date:Date, type:string, complete:boolean}>} entries Every
+ *   PAX's Bonus Tracker rows for the tracker's month (see bonusWebapp.js's
+ *   readAllBonusEntries_/getAllBonusEntriesCached_).
+ * @param {string} f3NameNorm Already-normalized name (paxCacheNormalizeName_) to match.
+ * @param {Date} asOfDate
+ * @param {Date} monthStart
+ * @returns {{fe:number,q:number,ins:number,eh:number}}
+ */
+function computeBonusPillsAsOf_(entries, f3NameNorm, asOfDate, monthStart) {
+  var pills = { fe: 0, q: 0, ins: 0, eh: 0 };
+  var periodCredited = { fe: {}, q: {}, ins: {} };
+  (entries || []).forEach(function(entry) {
+    if (entry.nameNorm !== f3NameNorm || !entry.complete || entry.date > asOfDate) return;
+    var key = BONUS_TYPE_KEY_BY_NAME_[entry.type];
+    if (!key) return;
+    var rules = BONUS_TYPE_RULES_dw_[entry.type];
+    var multiplier = (rules && rules.multiplier) || 0;
+    if (BONUS_CAPPED_TYPES_[entry.type]) {
+      var period = weekOfMonth_(entry.date, monthStart);
+      if (periodCredited[key][period]) return; // already credited this period
+      periodCredited[key][period] = true;
+    }
+    pills[key] += multiplier;
+  });
+  return pills;
+}
+
+/**
+ * One computeBonusPillsAsOf_ result per date in dayDates, aligned 1:1 — lets the client scrub
+ * the date-nav arrows locally against a per-day series, the same pattern already used for
+ * dayValues/daySegments, instead of re-deriving pill totals with a server round trip per day.
+ * @param {Array<Object>} entries See computeBonusPillsAsOf_.
+ * @param {string} f3NameNorm
+ * @param {Array<Date>} dayDates Calendar dates for this month's day columns, in order.
+ * @param {Date} monthStart
+ * @returns {Array<{fe:number,q:number,ins:number,eh:number}>}
+ */
+function computeBonusSeriesForPax_(entries, f3NameNorm, dayDates, monthStart) {
+  return (dayDates || []).map(function(d) {
+    return computeBonusPillsAsOf_(entries, f3NameNorm, d, monthStart);
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // GAS orchestration (not unit-tested — composes the pure functions above,
 // verified against the live TEST_APP deployment, same boundary as signupWebapp.js).
@@ -287,6 +357,12 @@ function renderCheckinPage_() {
   template.webAppUrl = JSON.stringify(ScriptApp.getService().getUrl());
   template.appVersion = APP_VERSION;
   template.bonusTypesJson = JSON.stringify(BONUS_TYPE_RULES_dw_);
+  // Site Q contact info for the client's "something went wrong" error banner — same Config
+  // sheet row (bound/template spreadsheet, not any month's own tracker) that CreateNewTracker.js
+  // and Utilities.js's policy loader already read for admin/nag emails.
+  var siteQConfig = getConfigValue_(SpreadsheetApp.getActiveSpreadsheet(), 'Site Q', null) || {};
+  template.siteQName = siteQConfig.primary || 'Site Q';
+  template.siteQEmail = siteQConfig.secondary || '';
   // HtmlService serves this inside an IFRAME-sandboxed wrapper that does not honor a
   // <meta name="viewport"> tag written in the template's own <head> — it must be set via
   // addMetaTag, or mobile browsers render the desktop layout zoomed out instead of fitting
@@ -374,6 +450,62 @@ function getTrackerLayout_(trackerSheet, sheetId) {
   } catch (e) { /* payload too large or cache unavailable — the read above still succeeded */ }
 
   return { row2: row2, row3: row3 };
+}
+
+var FULL_ROSTER_CACHE_TTL_SECONDS_ = 21600; // CacheService's max.
+
+function trackerValuesCacheKey_(sheetId) {
+  return 'go30dash:trackerValues:' + sheetId;
+}
+
+function responsesValuesCacheKey_(sheetId) {
+  return 'go30dash:responsesValues:' + sheetId;
+}
+
+/** Dates aren't JSON-safe for CacheService — same marker-object convention as
+ *  serializeRow3ForCache_/deserializeRow3FromCache_ above, generalized to a full 2D range
+ *  (Responses' Timestamp column and any date-typed Tracker cell both need this). */
+function serializeSheetValuesForCache_(values) {
+  return (values || []).map(function(row) {
+    return row.map(function(v) { return v instanceof Date ? { __d: v.toISOString() } : v; });
+  });
+}
+
+function deserializeSheetValuesFromCache_(values) {
+  return (values || []).map(function(row) {
+    return row.map(function(v) { return (v && typeof v === 'object' && v.__d) ? new Date(v.__d) : v; });
+  });
+}
+
+/**
+ * Cache-only half of getCachedOrFreshSheetValues_ — same split as getCachedTrackerLayoutOnly_/
+ * getTrackerLayout_ above.
+ * @returns {Array<Array>|null} null on a miss or corrupt entry.
+ */
+function getCachedSheetValuesOnly_(cacheKey) {
+  var cache = CacheService.getScriptCache();
+  var cached;
+  try { cached = cache.get(cacheKey); } catch (e) { cached = null; }
+  if (!cached) return null;
+  try { return deserializeSheetValuesFromCache_(JSON.parse(cached)); } catch (e) { return null; }
+}
+
+function setCachedSheetValues_(cacheKey, values) {
+  try {
+    CacheService.getScriptCache().put(cacheKey, JSON.stringify(serializeSheetValuesForCache_(values)), FULL_ROSTER_CACHE_TTL_SECONDS_);
+  } catch (e) { /* payload too large or cache unavailable — the caller's fresh read still succeeded */ }
+}
+
+/**
+ * Explicit write-through invalidation for the whole-sheet caches above — call at the point of
+ * any write to a month's Tracker (day check-ins, -1 marking) or Responses (signups) sheet. This
+ * is the primary invalidation path; ensurePaxCacheFresh_'s Drive-modtime gate (PaxCache.js) is
+ * the backstop for writes that don't go through this webapp's own code (a human editing the
+ * sheet directly, or a future code path that forgets to call this).
+ */
+function invalidateFullRosterCache_(sheetId) {
+  try { CacheService.getScriptCache().remove(trackerValuesCacheKey_(sheetId)); } catch (e) { /* best-effort */ }
+  try { CacheService.getScriptCache().remove(responsesValuesCacheKey_(sheetId)); } catch (e) { /* best-effort */ }
 }
 
 /**
@@ -570,8 +702,12 @@ function getPriorMonthTailValues_(monthInfo, f3Name, windowSize) {
 /**
  * Full-roster identity resolution for the dashboard's team/board view, which needs every PAX's
  * Tracker row (contrast resolveCheckinIdentityLean_, used by identify/checkin-submit, which
- * only ever need one PAX's own row). There's no way to avoid a full-range read here — but
- * since every row is already in memory, this opportunistically writes each one into PaxCache's
+ * only ever need one PAX's own row). Both full-range reads (Responses, Tracker) go through
+ * getCachedSheetValuesOnly_/setCachedSheetValues_ — CacheService-backed, invalidated explicitly
+ * by handleCheckinSubmit_ (the primary write path) and by ensurePaxCacheFresh_'s Drive-modtime
+ * gate as a backstop (PaxCache.js) — so a month with no new writes since its last dashboard load
+ * doesn't pay for a full-sheet read on every single request, only the first one. Since every row
+ * is already in memory either way, this also opportunistically writes each one into PaxCache's
  * per-PAX row cache and rebuilds the roster index as a side effect, so the very next
  * identify/checkin for any of these PAX (same day) hits the lean per-PAX path instead of
  * another scan.
@@ -580,6 +716,7 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var t0 = Date.now();
   var targetSs = SpreadsheetApp.openById(monthInfo.sheetId);
   var openMs = Date.now() - t0;
+  if (ensurePaxCacheFresh_dw_) ensurePaxCacheFresh_dw_(monthInfo.sheetId);
 
   var responsesSheet = targetSs.getSheetByName('Responses');
   if (!responsesSheet) return { matched: false, months: months };
@@ -587,9 +724,14 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var t1 = Date.now();
   var headers = responsesSheet.getRange(1, 1, 1, responsesSheet.getLastColumn()).getValues()[0];
   var columns = resolveResponseColumns_dw_(headers);
-  var dataRows = responsesSheet.getLastRow() > 1
-    ? responsesSheet.getRange(2, 1, responsesSheet.getLastRow() - 1, responsesSheet.getLastColumn()).getValues()
-    : [];
+  var responsesCacheKey = responsesValuesCacheKey_(monthInfo.sheetId);
+  var dataRows = getCachedSheetValuesOnly_(responsesCacheKey);
+  if (!dataRows) {
+    dataRows = responsesSheet.getLastRow() > 1
+      ? responsesSheet.getRange(2, 1, responsesSheet.getLastRow() - 1, responsesSheet.getLastColumn()).getValues()
+      : [];
+    setCachedSheetValues_(responsesCacheKey, dataRows);
+  }
   var match = findSignupMatchByF3NameOnly_dw_(dataRows, f3Name, columns);
   var responsesMs = Date.now() - t1;
   if (!match) {
@@ -609,9 +751,14 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
 
   var t2 = Date.now();
   var layout = getTrackerLayout_(trackerSheet, monthInfo.sheetId);
-  var lastRow = trackerSheet.getLastRow();
-  var lastCol = trackerSheet.getLastColumn();
-  var trackerValues = trackerSheet.getRange(4, 1, lastRow - 3, lastCol).getValues();
+  var trackerCacheKey = trackerValuesCacheKey_(monthInfo.sheetId);
+  var trackerValues = getCachedSheetValuesOnly_(trackerCacheKey);
+  if (!trackerValues) {
+    var lastRow = trackerSheet.getLastRow();
+    var lastCol = trackerSheet.getLastColumn();
+    trackerValues = trackerSheet.getRange(4, 1, lastRow - 3, lastCol).getValues();
+    setCachedSheetValues_(trackerCacheKey, trackerValues);
+  }
   var trackerMs = Date.now() - t2;
 
   var rosterIndex = {};
@@ -815,21 +962,37 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
 
   if (payload.value === null) cell.clearContent(); else cell.setValue(payload.value);
   // Write-through: this PAX's own row changed, so drop just their cached copy rather than the
-  // whole sheet's — the next read (identify/checkin/dashboard) repopulates it with one row read.
+  // whole sheet's — the next lean identify/checkin repopulates it with one row read.
   deletePaxCacheRow_dw_('tracker', target.sheetId, payload.f3Name);
+  // The dashboard/board's full-roster cache (resolveCheckinIdentityFull_) has no per-PAX
+  // granularity — any single check-in invalidates the whole sheet's cached copy, same as every
+  // other write-through call in this file.
+  invalidateFullRosterCache_(target.sheetId);
   GasLogger.log('checkinWebapp.checkin', { f3Name: payload.f3Name, day: payload.day, value: payload.value });
   return { ok: true };
 }
 
 /**
- * Bonus Tracker section of the check-in page — bonusList/bonusAdd/bonusEdit all resolve
- * identity the same way checkin does (name-only match, see resolveCheckinIdentity_) rather than
- * trusting a client-supplied name, then delegate to bonusWebapp.js for the actual sheet work.
- * Writes always use the canonical Tracker name (identity.trackerRow), not whatever variant the
- * client sent, so Bonus Tracker rows always "match Tracker exactly" per the sheet's own rule.
+ * Bonus Tracker section of the check-in page — bonusList/bonusAdd/bonusEdit all resolve the
+ * PAX's identity against whichever month sheet corresponds to dateIso (default: real today),
+ * via the same TrackerDB date-navigation resolver the dashboard's date arrows use
+ * (resolveDashboardMonth_/resolveCheckinIdentityLean_), rather than the current/next/smoke
+ * enum resolveCheckinIdentity_ uses — the client trusts a client-supplied name here either way,
+ * so identity is always re-derived server-side. Writes always use the canonical Tracker name
+ * (identity.trackerRow), not whatever variant the client sent, so Bonus Tracker rows always
+ * "match Tracker exactly" per the sheet's own rule.
+ * @param {string=} dateIso "YYYY-MM-DD" identifying which month's sheet to resolve against —
+ *   handleBonusList_ passes the dashboard's viewed context day (payload.dateISO) so the bonus
+ *   list matches whatever month the PAX is looking at; handleBonusAdd_/handleBonusEdit_ pass
+ *   the bonus entry's own date (payload.whenIso) so a save always lands in the month sheet that
+ *   date actually belongs to, regardless of which month the dashboard happens to be viewing.
  */
-function resolveBonusSheet_(templateSpreadsheet, payload) {
-  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth);
+function resolveBonusSheet_(templateSpreadsheet, payload, dateIso) {
+  var targetDate = dateIso ? parseIsoDateLocal_(dateIso) : new Date();
+  if (isNaN(targetDate.getTime())) targetDate = new Date();
+  var monthInfo = resolveDashboardMonth_(targetDate);
+  if (!monthInfo) return { error: 'not_found' };
+  var identity = resolveCheckinIdentityLean_(monthInfo, payload.f3Name, payload.email, null);
   if (!identity.matched) return { error: 'not_found' };
   var bonusSheet = identity.targetSs.getSheetByName('Bonus Tracker');
   if (!bonusSheet) return { error: 'bonus_sheet_not_found' };
@@ -837,28 +1000,96 @@ function resolveBonusSheet_(templateSpreadsheet, payload) {
 }
 
 function handleBonusList_(templateSpreadsheet, payload) {
-  var resolved = resolveBonusSheet_(templateSpreadsheet, payload);
+  var resolved = resolveBonusSheet_(templateSpreadsheet, payload, payload.dateISO);
   if (resolved.error) return { ok: false, error: resolved.error };
   return {
     ok: true,
-    entries: listBonusEntriesForPax_dw_(resolved.bonusSheet, resolved.canonicalName),
+    entries: listBonusEntriesForPax_dw_(resolved.bonusSheet, resolved.canonicalName, resolved.bonusSheet.getParent().getId()),
     bonusTypes: BONUS_TYPE_RULES_dw_,
   };
 }
 
 function handleBonusAdd_(templateSpreadsheet, payload) {
-  var resolved = resolveBonusSheet_(templateSpreadsheet, payload);
+  var resolved = resolveBonusSheet_(templateSpreadsheet, payload, payload.whenIso);
   if (resolved.error) return { ok: false, error: resolved.error };
   var result = addBonusEntry_dw_(resolved.bonusSheet, resolved.canonicalName, payload);
   if (result.ok) GasLogger.log('checkinWebapp.bonusAdd', { f3Name: resolved.canonicalName, type: payload.type });
   return result;
 }
 
+/**
+ * Cheap month lookup only (TrackerDB row scan on the already-open bound spreadsheet) — no
+ * SpreadsheetApp.openById of the target month's own tracker spreadsheet, no Responses/Tracker
+ * identity matching. Used by handleBonusEdit_ to decide whether a cross-month move is even
+ * happening *before* paying for the expensive per-month identity resolution twice.
+ * @returns {{sheetId:string}|null}
+ */
+function resolveBonusMonthOnly_(dateIso) {
+  var targetDate = dateIso ? parseIsoDateLocal_(dateIso) : new Date();
+  if (isNaN(targetDate.getTime())) targetDate = new Date();
+  return resolveDashboardMonth_(targetDate);
+}
+
+/**
+ * Edits an existing Bonus Tracker entry. payload.rowIndex is only ever a *hint* — the actual row
+ * is relocated by matching payload.original (the entry's pre-edit Name+Type+When+What+Link, as
+ * last seen in the bonusList response) against sheet content, inside findBonusRowByIdentity_'s
+ * lock. A bare row number can't be trusted to still identify the same entry by save time: besides
+ * concurrent app writes, a human could have manually sorted the Bonus Tracker sheet in between —
+ * see F3Go30 bonus "that entry no longer belongs to you" investigation.
+ *
+ * If the edited whenIso moves the entry into a different month's sheet (payload.originalWhenIso,
+ * the pre-edit date, resolves to a different sheet than the new whenIso), that also means the row
+ * has to be relocated in a *different* sheet than the one being written to: append a fresh row in
+ * the new sheet first, then clear the old one — added-before-cleared so a failure partway through
+ * leaves a recoverable duplicate rather than silently losing the entry.
+ *
+ * Perf note: resolveBonusSheet_'s identity resolution (SpreadsheetApp.openById + Responses/
+ * Tracker matching) is the expensive part of this whole request — cheaply check via
+ * resolveBonusMonthOnly_ (TrackerDB-only, no remote spreadsheet open) whether this edit is even
+ * cross-month before paying for that resolution twice. The overwhelming majority of edits don't
+ * change the month, so this keeps a same-month edit down to the one resolution it always needed.
+ */
 function handleBonusEdit_(templateSpreadsheet, payload) {
-  var resolved = resolveBonusSheet_(templateSpreadsheet, payload);
-  if (resolved.error) return { ok: false, error: resolved.error };
-  var result = editBonusEntry_dw_(resolved.bonusSheet, resolved.canonicalName, payload.rowIndex, payload);
-  if (result.ok) GasLogger.log('checkinWebapp.bonusEdit', { f3Name: resolved.canonicalName, rowIndex: payload.rowIndex });
+  var newMonth = resolveBonusMonthOnly_(payload.whenIso);
+  if (!newMonth) return { ok: false, error: 'not_found' };
+
+  var originalWhenIso = payload.originalWhenIso || payload.whenIso;
+  var originalMonth = resolveBonusMonthOnly_(originalWhenIso);
+  if (!originalMonth) return { ok: false, error: 'not_found' };
+
+  var originalSnapshot = payload.original || null;
+
+  if (originalMonth.sheetId !== newMonth.sheetId) {
+    var resolved = resolveBonusSheet_(templateSpreadsheet, payload, payload.whenIso);
+    if (resolved.error) return { ok: false, error: resolved.error };
+    var original = resolveBonusSheet_(templateSpreadsheet, payload, originalWhenIso);
+    if (original.error) return { ok: false, error: original.error };
+
+    var located = findBonusRowByIdentity_dw_(original.bonusSheet, original.canonicalName, originalSnapshot, payload.rowIndex);
+    if (!located) return { ok: false, error: 'not_found' };
+
+    var addResult = addBonusEntry_dw_(resolved.bonusSheet, resolved.canonicalName, payload);
+    if (!addResult.ok) return addResult;
+
+    var clearResult = clearBonusEntry_dw_(original.bonusSheet, original.canonicalName, located, originalSnapshot);
+    if (!clearResult.ok) {
+      GasLogger.log('checkinWebapp.bonusEdit.clearFailed', {
+        f3Name: resolved.canonicalName, oldRowIndex: located, newRowIndex: addResult.rowIndex, error: clearResult.error,
+      });
+    }
+    GasLogger.log('checkinWebapp.bonusEdit', {
+      f3Name: resolved.canonicalName, rowIndex: addResult.rowIndex, movedMonths: true,
+    });
+    return addResult;
+  }
+
+  // Same month: exactly one identity resolution, same as before the cross-month fix existed.
+  var resolvedSame = resolveBonusSheet_(templateSpreadsheet, payload, payload.whenIso);
+  if (resolvedSame.error) return { ok: false, error: resolvedSame.error };
+
+  var result = editBonusEntry_dw_(resolvedSame.bonusSheet, resolvedSame.canonicalName, payload.rowIndex, payload, originalSnapshot);
+  if (result.ok) GasLogger.log('checkinWebapp.bonusEdit', { f3Name: resolvedSame.canonicalName, rowIndex: result.rowIndex });
   return result;
 }
 
@@ -892,8 +1123,9 @@ function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, t
     daySegments: buildDaySegments_(dayValues, totalDays),
     rollingAverage: buildRollingAverage_(dayValues, ROLLING_AVERAGE_WINDOW_DAYS_),
     // F3Go30-y55y: per-PAX, same as score/streak — every board tile gets its own bonus totals,
-    // not just the logged-in PAX's own stat area (buildBonusByType_'s own blank-cell default
-    // covers a caller that omits this, e.g. a row with no Tracker data at all).
+    // not just the logged-in PAX's own stat area. Callers pass the date-scoped/capped result of
+    // computeBonusPillsAsOf_, not a raw Tracker column read; the all-zero default below covers
+    // a caller that omits this (e.g. a row with no Bonus Tracker entries at all).
     bonusByType: bonusByType || { fe: 0, q: 0, ins: 0, eh: 0 },
   };
 }
@@ -959,12 +1191,22 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   // clamped past the last reported column) — fall back to showing the latest reported day.
   if (viewDayIndex === -1) viewDayIndex = currentDay - 1;
 
+  // Date-scoped, weekly-capped bonus pills (F3Go30-y55y follow-up) — read once per tracker
+  // spreadsheet (cached; see getAllBonusEntriesCached_) rather than the Tracker's own C-F
+  // per-type columns, which are neither date-scoped nor capped at 1/period the way the pills
+  // need to be. Bonus Tracker missing entirely (a very old tracker copy) degrades to all-zero
+  // pills rather than failing the whole dashboard load.
+  var bonusSheet = identity.targetSs.getSheetByName('Bonus Tracker');
+  var bonusEntries = bonusSheet ? getAllBonusEntriesCached_dw_(bonusSheet, monthInfo.sheetId) : [];
+  var reportedDayDates = reportedDayCols.map(function(d) { return d.date; });
+
   var allPaxRows = [];
   var userRow = null;
   identity.trackerValues.forEach(function(row, idx) {
     var name = row[TRACKER_NAME_COL_];
     if (!String(name || '').trim()) return;
     var dayValues = reportedDayCols.map(function(d) { return row[d.col]; });
+    var bonusSeries = computeBonusSeriesForPax_(bonusEntries, paxCacheNormalizeName_dw_(name), reportedDayDates, monthInfo.startDate);
     var paxRow = buildDashboardPaxRow_(
       name,
       row[TRACKER_TEAM_COL_],
@@ -974,15 +1216,17 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
       dayValues,
       totalDays,
       currentDay,
-      buildBonusByType_(row)
+      bonusSeries[bonusSeries.length - 1]
     );
+    paxRow.bonusByTypeSeries = bonusSeries;
     allPaxRows.push(paxRow);
     if (idx === identity.rowIndex) userRow = paxRow;
   });
 
   var userDayValues = reportedDayCols.map(function(d) { return identity.trackerValues[identity.rowIndex][d.col]; });
   var outcomes = countOutcomes_(userDayValues);
-  var bonusByType = buildBonusByType_(identity.trackerValues[identity.rowIndex]);
+  var bonusByType = userRow.bonusByType;
+  var userBonusByTypeSeries = userRow.bonusByTypeSeries;
 
   // Early-month days would otherwise show an artificially short rolling-average window (e.g.
   // day 2 of July only has 2 days to average) — reach into the previous month's tracker so the
@@ -1052,6 +1296,10 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
     missed: outcomes.missed,
     absent: outcomes.absent,
     bonusByType: bonusByType,
+    // One bonusByType per reported day, aligned with dayDates — lets the client scrub the
+    // date-nav arrows and show pills accurate to that day (F3Go30-y55y follow-up) instead of
+    // always showing today's month-to-date totals.
+    bonusByTypeSeries: userBonusByTypeSeries,
     myTeam: myTeamMembers,
     paxBoard: paxBoard,
   };
@@ -1068,7 +1316,6 @@ if (typeof module !== 'undefined' && module.exports) {
     needsYesterdayCheckin_: needsYesterdayCheckin_,
     dayValueStatus_: dayValueStatus_,
     groupByTeam_: groupByTeam_,
-    buildBonusByType_: buildBonusByType_,
     buildDashboardPaxRow_: buildDashboardPaxRow_,
     buildDaySegments_: buildDaySegments_,
     buildRollingAverage_: buildRollingAverage_,
@@ -1077,5 +1324,15 @@ if (typeof module !== 'undefined' && module.exports) {
     getCachedTrackerLayoutOnly_: getCachedTrackerLayoutOnly_,
     trackerLayoutCacheKey_: trackerLayoutCacheKey_,
     serializeRow3ForCache_: serializeRow3ForCache_,
+    weekOfMonth_: weekOfMonth_,
+    computeBonusPillsAsOf_: computeBonusPillsAsOf_,
+    computeBonusSeriesForPax_: computeBonusSeriesForPax_,
+    serializeSheetValuesForCache_: serializeSheetValuesForCache_,
+    deserializeSheetValuesFromCache_: deserializeSheetValuesFromCache_,
+    getCachedSheetValuesOnly_: getCachedSheetValuesOnly_,
+    setCachedSheetValues_: setCachedSheetValues_,
+    trackerValuesCacheKey_: trackerValuesCacheKey_,
+    responsesValuesCacheKey_: responsesValuesCacheKey_,
+    invalidateFullRosterCache_: invalidateFullRosterCache_,
   };
 }

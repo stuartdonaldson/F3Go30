@@ -15,10 +15,22 @@
  *
  * Workflow coverage: 9 test PAX (3 teams x 3 PAX) sign up, each is checked in for today, and
  * one bonus entry of each type (EHing FNG, Fellowship, Q Point, Inspire) is added — one type
- * per recipient PAX, spread across teams. Each step's write is verified by reading it back
- * through the same webapp read path a real user would hit (identify / bonusList), not by
- * re-deriving expected sheet contents — the human pause is reserved for what only a human can
- * judge (the Bonus Tracker's spilled-formula Multiplier/Uncapped Points/Complete columns).
+ * per recipient PAX, spread across teams. One of those entries is then edited in place
+ * (same-month — see the cross-month note below) and the dashboard/board view is loaded and
+ * checked for the expected roster/team shape. Each step's write is verified by reading it back
+ * through the same webapp read path a real user would hit (identify / bonusList / dashboard),
+ * not by re-deriving expected sheet contents — the human pause is reserved for what only a
+ * human can judge (the Bonus Tracker's spilled-formula Multiplier/Uncapped Points/Complete
+ * columns).
+ *
+ * NOT covered: cross-month bonus edits (an edit whose date moves the entry into a different
+ * month's Bonus Tracker sheet — see handleBonusEdit_'s add-then-clear relocation in
+ * dashboardWebapp.js). This smoke run is deliberately a single isolated tracker month, and the
+ * public signup action only supports targetMonth 'current'/'next'/'smoke' — there's no way to
+ * put the same test PAX into a second, genuinely separate synthetic month without either
+ * touching a real production month or adding new write-capable admin/signup surface area. If
+ * that relocation path regresses again, it needs either that new surface area or a live check
+ * against real (already-existing) adjacent months instead.
  */
 
 'use strict';
@@ -426,7 +438,79 @@ async function main() {
     }
     console.log('   ✓ All 4 bonus types recorded and read back correctly');
 
-    // Step 7 (continued): pull Tracker + Bonus Tracker previews for the human review pause below
+    // Step 8: Edit one of the just-added bonus entries in place (same month — the cross-month
+    // relocation path (findBonusRowByIdentity_/handleBonusEdit_'s add-then-clear move) needs a
+    // second, genuinely separate month this isolated single-tracker smoke run can't safely stand
+    // up — see tools/README or the F3Go30 bonus row-relocation investigation for why. This at
+    // least exercises editBonusEntry_'s live write path, which previously had zero live coverage
+    // despite being the code that shipped the original "that entry no longer belongs to you" bug.
+    console.log('');
+    console.log('8️⃣  Editing one bonus entry (same month)...');
+    const editTarget = bonuses[0]; // the EHing FNG entry for pax[0]
+    const beforeEdit = await post(checkinUrl, { action: 'bonusList', f3Name: editTarget.pax.f3Name, email: editTarget.pax.email, targetMonth: 'smoke' });
+    const originalEntry = beforeEdit?.ok && (beforeEdit.entries || []).find((en) => en.type === editTarget.type && en.message === editTarget.message);
+    if (!originalEntry) {
+      console.error(`❌ Could not find the ${editTarget.type} entry for ${editTarget.pax.f3Name} to edit`);
+      process.exit(1);
+    }
+    const updatedMessage = editTarget.message + ' (edited)';
+    const edit = await post(checkinUrl, {
+      action: 'bonusEdit',
+      f3Name: editTarget.pax.f3Name,
+      email: editTarget.pax.email,
+      rowIndex: originalEntry.rowIndex,
+      type: originalEntry.type,
+      whenIso: originalEntry.whenIso,
+      message: updatedMessage,
+      link: originalEntry.link,
+      originalWhenIso: originalEntry.whenIso,
+      original: { type: originalEntry.type, whenIso: originalEntry.whenIso, message: originalEntry.message, link: originalEntry.link },
+      targetMonth: 'smoke',
+    });
+    if (!edit?.ok) {
+      console.error(`❌ Bonus edit failed for ${editTarget.pax.f3Name}: ${edit?.error || 'unknown error'}`);
+      process.exit(1);
+    }
+    const afterEdit = await post(checkinUrl, { action: 'bonusList', f3Name: editTarget.pax.f3Name, email: editTarget.pax.email, targetMonth: 'smoke' });
+    const editedEntry = afterEdit?.ok && (afterEdit.entries || []).find((en) => en.rowIndex === originalEntry.rowIndex);
+    if (!editedEntry || editedEntry.message !== updatedMessage) {
+      console.error(`❌ Bonus edit for ${editTarget.pax.f3Name} did not read back correctly (row ${originalEntry.rowIndex})`);
+      process.exit(1);
+    }
+    if ((afterEdit.entries || []).length !== 1) {
+      console.error(`❌ ${editTarget.pax.f3Name} has ${afterEdit.entries.length} bonus entries after edit — expected exactly 1 (edit must not create a duplicate row)`);
+      process.exit(1);
+    }
+    console.log(`   ✓ ${editTarget.type} bonus for ${editTarget.pax.f3Name} edited in place (row ${originalEntry.rowIndex}), message updated and read back correctly`);
+
+    // Step 9: Dashboard/board view — previously never exercised live at all (resolveCheckin
+    // IdentityFull_'s uncached full-roster read, and its new cache, had zero live verification).
+    console.log('');
+    console.log('9️⃣  Loading the dashboard/board view...');
+    const dashPax = pax[0];
+    const dashboard = await post(checkinUrl, { action: 'dashboard', f3Name: dashPax.f3Name, email: dashPax.email, targetMonth: 'smoke' });
+    if (!dashboard?.ok) {
+      console.error(`❌ Dashboard load failed for ${dashPax.f3Name}: ${dashboard?.error || 'unknown error'}`);
+      process.exit(1);
+    }
+    if (dashboard.f3Name !== dashPax.f3Name || dashboard.team !== dashPax.team) {
+      console.error(`❌ Dashboard identity mismatch: expected ${dashPax.f3Name}/${dashPax.team}, got ${dashboard.f3Name}/${dashboard.team}`);
+      process.exit(1);
+    }
+    const boardTotal = (dashboard.paxBoard || []).reduce((sum, group) => sum + group.members.length, 0);
+    if (boardTotal !== pax.length) {
+      console.error(`❌ Dashboard paxBoard has ${boardTotal} PAX across all teams — expected ${pax.length}`);
+      process.exit(1);
+    }
+    const myTeamNames = (dashboard.myTeam || []).map((m) => m.name).sort();
+    const expectedTeamNames = pax.filter((p) => p.team === dashPax.team).map((p) => p.f3Name).sort();
+    if (JSON.stringify(myTeamNames) !== JSON.stringify(expectedTeamNames)) {
+      console.error(`❌ Dashboard myTeam mismatch: expected [${expectedTeamNames}], got [${myTeamNames}]`);
+      process.exit(1);
+    }
+    console.log(`   ✓ Dashboard loaded for ${dashPax.f3Name}: ${boardTotal} PAX across ${dashboard.paxBoard.length} teams, myTeam has ${myTeamNames.length} of ${dashPax.team}`);
+
+    // Step 9 (continued): pull Tracker + Bonus Tracker previews for the human review pause below
     console.log('');
     console.log('   Fetching Tracker and Bonus Tracker previews...');
     const trackerSheet = await callAdmin_('getSheet', { sheetId: trackerId, sheetName: 'Tracker' }, { env, settings });
@@ -450,17 +534,17 @@ async function main() {
       console.error(`⚠️  Failed to fetch Bonus Tracker sheet preview: ${bonusSheet?.error || 'unknown error'}`);
     }
 
-    // Step 8: Human pause
+    // Step 10: Human pause
     const url = spreadsheetUrl_(trackerId);
     await humanPause_(url, [
       `Tracker sheet: all 9 PAX present, 3 per team (${teamNames.join(', ')}), each showing today's check-in filled in.`,
       'Tracker sheet columns C–F (Fellowship/Q Point/Inspire/EHing FNG month-to-date totals): the one bonus each recipient PAX earned shows up as a nonzero total for that PAX\'s row.',
-      'Bonus Tracker sheet: 4 rows, one per type, with columns B–E (Period/Uncapped Points/Multiplier/Complete — a spilled formula, not written by this script) computed correctly for each type\'s rules (EHing FNG x5 + link, Fellowship x1 no link, Q Point x1 + link, Inspire x1 + link).',
+      'Bonus Tracker sheet: 4 rows, one per type, with columns B–E (Period/Uncapped Points/Multiplier/Complete — a spilled formula, not written by this script) computed correctly for each type\'s rules (EHing FNG x5 + link, Fellowship x1 no link, Q Point x1 + link, Inspire x1 + link), and the edited EHing FNG row shows the "(edited)" message.',
     ]);
 
-    // Step 9: Cleanup
+    // Step 11: Cleanup
     console.log('');
-    console.log('9️⃣  Cleaning up tracker...');
+    console.log('1️⃣1️⃣ Cleaning up tracker...');
     const cleanup = await callAdmin_(
       'cleanupTracker',
       { sheetId: trackerId, trashSpreadsheet: true },
@@ -474,9 +558,9 @@ async function main() {
     console.log('   ✓ PaxDB entries cleaned');
     console.log('   ✓ Spreadsheet trashed');
 
-    // Step 10: Clear properties
+    // Step 12: Clear properties
     console.log('');
-    console.log('🔟 Clearing smoke mode properties...');
+    console.log('1️⃣2️⃣ Clearing smoke mode properties...');
     const clear = await callAdmin_(
       'setScriptProperties',
       { properties: { SMOKE_MODE: '', SMOKE_TRACKER_ID: '' } },
@@ -487,9 +571,9 @@ async function main() {
     }
     console.log('   ✓ Properties cleared');
 
-    // Step 11: Confirm clean
+    // Step 13: Confirm clean
     console.log('');
-    console.log('1️⃣1️⃣ Confirming clean state...');
+    console.log('1️⃣3️⃣ Confirming clean state...');
     const final = await callAdmin_('getSmokeStatus', {}, { env, settings });
     console.log(`   ✓ smokeMode: ${final.smokeMode}`);
     console.log(`   ✓ smokeTrackerId: ${final.smokeTrackerId || '(not set)'}`);

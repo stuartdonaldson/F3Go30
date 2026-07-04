@@ -39,6 +39,22 @@ global.LockService = {
 };
 global.GasLogger = { log: function() {}, run: function(name, fn) { return fn(); } };
 
+// In-memory stand-in for CacheService.getScriptCache() — ensurePaxCacheFresh_ also clears
+// dashboardWebapp.js's full-roster cache keys (go30dash:trackerValues:/go30dash:responsesValues:)
+// on a modtime-detected change; this just needs to satisfy get/put/remove.
+var fakeCache_;
+function makeFakeCache_() {
+  var store = {};
+  return {
+    get: function(key) { return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null; },
+    put: function(key, value) { store[key] = value; },
+    remove: function(key) { delete store[key]; },
+    _store: store,
+  };
+}
+fakeCache_ = makeFakeCache_();
+global.CacheService = { getScriptCache: function() { return fakeCache_; } };
+
 const {
   paxCacheNormalizeName_,
   getPaxCacheRow_,
@@ -214,6 +230,39 @@ function resetProps_() {
 
   assert.equal(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), null);
   assert.equal(getPaxCacheRow_('responses', 'sheet1', 'Crazy Ivan'), null);
+})();
+
+(function testFreshnessGateClearsDashboardWebappFullRosterCacheKeysOnModTimeAdvance() {
+  resetProps_();
+  fakeCache_ = makeFakeCache_();
+  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
+
+  fakeDriveModTimes['sheet1'] = 1000;
+  ensurePaxCacheFresh_('sheet1'); // records asOf = 1000 for this (fresh) execution
+  fakeCache_.put('go30dash:trackerValues:sheet1', 'stale-tracker');
+  fakeCache_.put('go30dash:responsesValues:sheet1', 'stale-responses');
+
+  resetPaxCacheFreshnessMemo_();
+  fakeDriveModTimes['sheet1'] = 2000;
+  ensurePaxCacheFresh_('sheet1');
+
+  assert.equal(fakeCache_.get('go30dash:trackerValues:sheet1'), null);
+  assert.equal(fakeCache_.get('go30dash:responsesValues:sheet1'), null);
+})();
+
+(function testFreshnessGateLeavesDashboardWebappCacheKeysAloneWhenModTimeUnchanged() {
+  resetProps_();
+  fakeCache_ = makeFakeCache_();
+  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
+
+  fakeDriveModTimes['sheet1'] = 1000;
+  ensurePaxCacheFresh_('sheet1');
+  fakeCache_.put('go30dash:trackerValues:sheet1', 'fresh-tracker');
+
+  resetPaxCacheFreshnessMemo_();
+  ensurePaxCacheFresh_('sheet1'); // same modtime — no change detected
+
+  assert.equal(fakeCache_.get('go30dash:trackerValues:sheet1'), 'fresh-tracker');
 })();
 
 (function testFreshnessGateIsMemoizedPerExecution() {

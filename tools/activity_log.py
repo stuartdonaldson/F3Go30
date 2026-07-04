@@ -35,7 +35,9 @@ _ENV_TARGET = {"sit": "TEST", "prod": "TEMPLATE"}
 
 def _fmt_time(iso_str: str) -> str:
     try:
-        return datetime.fromisoformat(iso_str.replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M:%S')
+        dt_utc = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+        dt_local = dt_utc.astimezone()
+        return dt_local.strftime('%Y-%m-%d %H:%M:%S')
     except (ValueError, AttributeError):
         return iso_str
 
@@ -79,7 +81,7 @@ def _summarize(event: dict) -> str | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--limit", "-n", type=int, default=200, help="Max events to return (default: 200)")
+    parser.add_argument("--limit", "-n", type=int, default=200, help="Max summaries to output (default: 200)")
     parser.add_argument("--since", default="24h", help="How far back to look, e.g. 30m, 2h, 1d (default: 24h)")
     parser.add_argument("--env", choices=["sit", "prod"], help="Filter to SIT (TEST) or PROD (TEMPLATE) deploy target")
     args = parser.parse_args()
@@ -97,7 +99,7 @@ def main() -> int:
 
     result = query(
         dataset, token,
-        limit=args.limit,
+        limit=args.limit * 3,
         since=_parse_duration(args.since),
         side=None,
         name=None,
@@ -107,6 +109,7 @@ def main() -> int:
 
     summaries = [s for s in (_summarize(e) for e in matches) if s]
     summaries.reverse()  # chronological, oldest first
+    summaries = summaries[:args.limit]
 
     print(f"\n{len(summaries)} activities, {args.since} lookback")
     print("=" * 90)
