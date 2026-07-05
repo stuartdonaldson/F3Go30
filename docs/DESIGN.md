@@ -74,7 +74,7 @@ class BG1,BG3 lightgreen
 | Tracker Lifecycle | `CreateNewTracker.js`, `CopyTemplate.js`, `addResponseOnSubmit.js`, `markMinusOne.js`, `nag.js` | Copy-and-init workflow, template-copy mechanics, form-submit handler, nightly miss marking, daily reminder email workflow — all triggers installed once on the Template and dispatching by `TrackerDB` lookup (ADR-010) |
 | Dispatch / TrackerDB | `go30tools.js` | `TrackerDB`/`PaxDB` schema, cross-tracker aggregation, and (per ADR-010) the context-date → target-spreadsheet resolution used by every centrally-dispatched function |
 | Web Apps | `WebApp.js`, `signupWebapp.js`, `SignupApp.html`, `dashboardWebapp.js`, `CheckinApp.html`, `HomeApp.html`, `bonusWebapp.js` | `doGet`/`doPost` dispatcher by `cmd` query param (`signup`, `checkin`, `admin`); each `cmd` renders its own `HtmlService` template and handles its own `action`-keyed POST body. `signupWebapp.js`/`SignupApp.html` = HC sign-up; `dashboardWebapp.js`/`CheckinApp.html` = daily check-in + PAX dashboard, reading/writing the current month's Tracker sheet directly (no separate data store); `bonusWebapp.js` = bonus-list/add/edit actions under the same `checkin` cmd; no `cmd` (or an unrecognized one) renders `HomeApp.html`, a landing page linking to sign-up, check-in/dashboard, and the current month's tracker spreadsheet |
-| Identity / Check-in | `IdentityToken.js` | Bookmarkable identity-token flow — issues and resolves a per-PAX token so a returning PAX can reload the check-in/dashboard page without re-entering F3 Name + Email each visit |
+| Identity / Check-in | `IdentityToken.js` | Bookmarkable identity-token flow — issues and resolves a per-PAX token so a returning PAX can reload the check-in/dashboard page without re-entering F3 Name + Email each visit; see the token/redirect/bookmark-fallback decision below |
 | Bonus Rules | `BonusTypes.js` | Centralized bonus-type registry (rule definitions: points, link requirement, cap) consumed by `dashboardWebapp.js`/`bonusWebapp.js` chip rendering and validation |
 | Email | `onboardingEmail.js`, `responseSettingsEmail.js`, `signupEmail.js`, `signupReuse.js` + matching `*Template.html` files | Site-Q onboarding email, response-settings confirmation email, sign-up confirmation email, and repeat-signup detection/reuse |
 | UI / Notifications | `NotificationSBCode.js`, `NotificationSidebar.html` | Sidebar panel: log streaming, prompts, HTML link generation |
@@ -126,6 +126,23 @@ that cannot guarantee a sidebar context must call `Logger.log()` directly.
   single trust boundary and lets `resolveCheckinIdentity_` reuse `signupWebapp.js`'s
   anti-enumeration `findSignupMatch_` check unchanged. Trade-off: no stronger authentication than
   "knows the PAX's name and email" — acceptable for this internal, low-sensitivity data.
+
+- **Bookmarkable check-in link via token + top-level redirect (IdentityToken.js, CheckinApp.html)
+  — DECIDED:** After a typed `identify` succeeds, the client never renders the check-in step
+  itself from that response — it always hands off to a `?cmd=checkin&id=<identityToken>` URL
+  (`attemptTopRedirect_`, a `window.top.location.href` navigation, escaping the GAS sandbox
+  iframe the same way a real `target="_top"` link click does) so a PAX ends up on a URL that
+  already carries their token and is safe to bookmark / Add to Home Screen without re-typing
+  name+email next time. Because that top-level navigation is triggered from script after an
+  async API call rather than directly from the click, some browsers block it (lost "user
+  activation"); a 400ms fallback timer (`attemptTopRedirect_`'s `fallback` arg) detects the
+  no-op and reveals a manual "Tap here to continue to check-in" link
+  (`#continueManuallyLink`/`#continueManuallyNote`) carrying the same tokened URL — the PAX
+  taps it themselves, a real user-initiated navigation that browsers don't block. Once on the
+  tokened URL, a one-time nudge (`#bookmarkHereNote`,
+  gated by the server-computed `recentlyMinted` flag on the token's own mint timestamp — no
+  client storage needed) tells the PAX to bookmark this page; it does not reappear on later
+  visits to the same bookmarked link.
 
 - **Dashboard team grouping (F3Go30-ln1x) — DECIDED:** "My Team" and the PAX board group by
   whatever string currently lives in the Tracker's column B (Goal/Team), not a separately

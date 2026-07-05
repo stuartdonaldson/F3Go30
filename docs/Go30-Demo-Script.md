@@ -85,6 +85,11 @@ period) and real community (a PAX board everyone can see).
 > answering one question: 'Did it' or 'Didn't do it.' If yesterday is still blank, that shows up
 > too, so a PAX doesn't lose a day just because they checked in late."
 
+> "The first time you identify yourself, the app swaps you onto your own personal link and
+> nudges you to bookmark it or add it to your Home Screen — so next time you skip typing your
+> name entirely. On some phones the swap can't happen automatically, so you'll see a 'Tap here
+> to continue' link instead — one tap gets you to the same personal, bookmarkable link."
+
 ---
 
 ## Screen 4 — Dashboard
@@ -155,5 +160,6 @@ period) and real community (a PAX board everyone can see).
   and admin tooling, not in the PAX-facing screens shown here. Keep the demo scoped to what a PAX
   actually sees.
 - Bonus point values (EHing FNG ×5, Fellowship ×1, Q Point ×1, Inspire ×1, link-required rules)
-  are defined in `script/bonusWebapp.js`'s `BONUS_TYPE_RULES_` — confirm current values before
+  are defined in `script/BonusTypes.js`'s `BONUS_TYPE_DEFS_` (the single source of truth;
+  `bonusWebapp.js`'s `BONUS_TYPE_RULES_` is derived from it) — confirm current values before
   recording in case they've changed.

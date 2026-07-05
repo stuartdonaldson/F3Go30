@@ -273,12 +273,18 @@ Primary Flow:
    from browser storage if they previously signed up or checked in on the same device
 2. Script verifies the pair against the current month's Responses sheet (same anti-enumeration
    match used by sign-up) and locates the matching Tracker row
-3. PAX taps "Did it" / "Didn't do it" for today; if yesterday's Tracker cell is still blank, the
+3. On a successful typed identify, the app redirects the PAX to a personal `?cmd=checkin&id=<token>`
+   URL (an identity token, see `IdentityToken.js`) instead of rendering check-in directly, so the
+   PAX ends up on — and can bookmark / Add to Home Screen — a link that skips the name+email form
+   on future visits. If the browser blocks that automatic redirect, the app shows a "Tap here to
+   continue to check-in" link carrying the same tokened URL for the PAX to follow manually; either
+   way, the first time the PAX lands on the tokened URL a one-time "bookmark this" note is shown
+4. PAX taps "Did it" / "Didn't do it" for today; if yesterday's Tracker cell is still blank, the
    same choice is also offered for yesterday
-4. Script writes the chosen value(s) into the matching date column(s) of the PAX's Tracker row
-5. PAX is taken to the dashboard: streak, month progress, total score, weekly bonus points, a
+5. Script writes the chosen value(s) into the matching date column(s) of the PAX's Tracker row
+6. PAX is taken to the dashboard: streak, month progress, total score, weekly bonus points, a
    "My Team" tile row, and a PAX board grouped by the Tracker's Team/Goal column
-6. PAX taps the "…" button to open the underlying tracker spreadsheet directly
+7. PAX taps the "…" button to open the underlying tracker spreadsheet directly
 
 Alternate Flows:
 A1: F3 Name + Email do not match any current-month sign-up → generic "not found" message,
@@ -286,6 +292,8 @@ A1: F3 Name + Email do not match any current-month sign-up → generic "not foun
 A2: PAX taps "Dashboard" without checking in → dashboard loads without writing any check-in value
 A3: Target Tracker cell is a formula (unexpected sheet layout) → write is refused; check-in
     is not recorded and the client shows the error banner
+A4: Automatic redirect to the tokened URL is blocked by the browser → manual "Tap here to
+    continue" link is shown instead (see Primary Flow step 3)
 
 Postconditions:
 - Today's (and, if applicable, yesterday's) Tracker cell holds the PAX's reported 1/0 value
