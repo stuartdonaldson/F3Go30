@@ -82,8 +82,8 @@ period) and real community (a PAX board everyone can see).
 
 > "Every day, the PAX opens the check-in link, enters their F3 name and email — it remembers them
 > after the first time — and sees their WHO, WHAT, and HOW right there as a reminder before
-> answering one question: 'Did it' or 'Didn't do it.' If yesterday is still blank, that shows up
-> too, so a PAX doesn't lose a day just because they checked in late."
+> tapping one of three buttons: 'I Hit it!', 'Missed it', or 'No Check-in.' If yesterday is still
+> blank, that shows up too, so a PAX doesn't lose a day just because they checked in late."
 
 > "The first time you identify yourself, the app swaps you onto your own personal link and
 > nudges you to bookmark it or add it to your Home Screen — so next time you skip typing your
@@ -134,8 +134,8 @@ period) and real community (a PAX board everyone can see).
 
 **Script:**
 
-> "That's the full loop: sign up with a WHO, a WHAT, and a HOW; check in every day — Did it or
-> Didn't do it; watch your streak and score build on the dashboard; and log the bonus moments that
+> "That's the full loop: sign up with a WHO, a WHAT, and a HOW; check in every day — I Hit it or
+> Missed it; watch your streak and score build on the dashboard; and log the bonus moments that
 > make F3 more than a workout — EHing a new guy, fellowship, taking a Q, inspiring someone else.
 > Small and consistent, tracked honestly, done alongside other HIMs who won't let you quit. That's
 > Go30."

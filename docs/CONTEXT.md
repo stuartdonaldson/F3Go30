@@ -279,8 +279,8 @@ Primary Flow:
    on future visits. If the browser blocks that automatic redirect, the app shows a "Tap here to
    continue to check-in" link carrying the same tokened URL for the PAX to follow manually; either
    way, the first time the PAX lands on the tokened URL a one-time "bookmark this" note is shown
-4. PAX taps "Did it" / "Didn't do it" for today; if yesterday's Tracker cell is still blank, the
-   same choice is also offered for yesterday
+4. PAX taps "I Hit it!" / "Missed it" / "No Check-in" for today; if yesterday's Tracker cell is
+   still blank, the same choice is also offered for yesterday
 5. Script writes the chosen value(s) into the matching date column(s) of the PAX's Tracker row
 6. PAX is taken to the dashboard: streak, month progress, total score, weekly bonus points, a
    "My Team" tile row, and a PAX board grouped by the Tracker's Team/Goal column
