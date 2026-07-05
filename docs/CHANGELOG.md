@@ -4,6 +4,31 @@ User-facing record of notable releases, written from the PAX/Site-Q perspective.
 authoritative version/date is `script/version.js`. Developer-level, per-session detail lives in
 `work-log.md`; forward-looking work lives in `docs/ROADMAP.md` and bd.
 
+**What belongs here (and what doesn't).** An entry earns a place only if a PAX or a
+Site-Q/administrator would both *notice and care* about the change. Refactors, test/build/deploy
+mechanics, and fixes with no user-visible symptom do not — they live in git history and
+`work-log.md`. This is deliberately decoupled from the deploy version churn:
+
+| Change tier | Version movement | Recorded in |
+|---|---|---|
+| SIT build churn | 4th segment (`2.3.13.7`), many/day | git history only |
+| PROD patch release | 3rd segment (`2.3.13`), per release | git history + `work-log.md` |
+| User/admin-facing capability | rolls up to a **minor** series (`2.3`) | **this file** |
+
+Headings are **minor-series** (`v2.3`, `v2.4`), never per-patch or per-build. Accumulate
+user/admin-facing bullets under **Unreleased** as they land — however many patch/build bumps happen
+underneath — and promote them to a dated minor heading when the series is cut as a coherent release.
+Stamp with the minor series + date; note a specific PROD patch inline only when one item's exact
+go-live matters.
+
+---
+
+## Unreleased
+
+_User/admin-facing changes landed since the last minor release, awaiting the next series cut._
+
+- _(none yet)_
+
 ---
 
 ## v2.3 — PAX-facing web apps (2026-07)

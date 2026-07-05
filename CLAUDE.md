@@ -34,6 +34,8 @@
 - New terms → docs/CONTEXT.md §Glossary
 - New risk identified → `bd remember`
 - New initiative → docs/ROADMAP.md §Funnel
+- User/admin-facing change worth announcing → docs/CHANGELOG.md §Unreleased (minor-series level;
+  NOT per-deploy/patch/build — see that file's "What belongs here")
 
 ## Maintenance Protocol
 
