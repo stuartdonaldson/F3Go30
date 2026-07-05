@@ -144,7 +144,7 @@
 <body>
   <div class="header">
     <div id="headerLeft">
-      <div class="header-name" id="headerName">F3 Go30</div>
+      <div class="header-name" id="headerName"><?!= nameSpace ?></div>
       <div class="header-sub" id="headerSub"></div>
     </div>
     <div class="header-right">
@@ -195,13 +195,19 @@
       <div id="emailMismatchNote" class="warning-text hidden"></div>
 
       <!-- Shown when this page was itself reached via a saved-link token — nothing to
-           navigate to, since the page already showing is the one worth saving. Dismissible
-           (localStorage flag) since it'd otherwise repeat every visit, including for PAX who
-           already bookmarked it. -->
-      <div id="bookmarkHereNote" class="hidden" style="font-size:13px;color:#6b6255;margin:-4px 0 14px;">
+           navigate to, since the page already showing is the one worth saving. Styled as an
+           alert (.warning-text, same treatment as emailMismatchNote) because it disappears
+           without warning: recentlyMinted is only evaluated once, server-side, at the identify
+           call behind this page load — it does NOT re-check on a timer while the page stays
+           open, so a PAX who lingers past IDENTITY_TOKEN_FRESH_WINDOW_MS_ (dashboardWebapp.js)
+           still sees it fine on *this* view, but it silently won't be there on their next visit.
+           The "Got it" dismiss is a same-view, no-network, synchronous classList toggle — it
+           exists so a PAX can clear it immediately instead of scrolling past it, not to work
+           around the timeout (there's no client-side auto-hide to race). -->
+      <div id="bookmarkHereNote" class="hidden warning-text">
         This is your personal check-in page — use your browser's Share or menu button to
         bookmark it or Add to Home Screen so you can get back here without typing your name.
-        <button id="bookmarkHereDismiss" type="button" style="background:none;border:none;color:#999;text-decoration:underline;cursor:pointer;font-size:12px;padding:0;margin-left:4px;">Got it</button>
+        <button id="bookmarkHereDismiss" type="button" style="background:none;border:none;color:#8a6d00;text-decoration:underline;cursor:pointer;font-size:12px;padding:0;margin-left:4px;">Got it</button>
       </div>
 
       <div id="goalsReminder" class="hidden"></div>
@@ -322,6 +328,7 @@
   var BONUS_TYPE_RULES_ = <?!= bonusTypesJson ?>;
   var SITE_Q_NAME = <?!= JSON.stringify(siteQName) ?>;
   var SITE_Q_EMAIL = <?!= JSON.stringify(siteQEmail) ?>;
+  var NAME_SPACE = <?!= JSON.stringify(nameSpace) ?>;
 
   // Same storage key the signup webapp uses (SignupApp.html) — a PAX who already signed up
   // gets their F3 Name/Email prefilled here without retyping.
@@ -428,7 +435,7 @@
   // monthLabel is shown elsewhere (checkinSub) once identified — the header itself only ever
   // needs the PAX's name and team (upper-left), so it's accepted here but not displayed.
   function updateHeaderIdentity_(f3Name, team, monthLabel) {
-    $('headerName').textContent = 'F3 Go30: ' + f3Name;
+    $('headerName').textContent = NAME_SPACE + ': ' + f3Name;
     $('headerSub').textContent = team || '';
   }
 

@@ -299,6 +299,13 @@ function buildRollingAverageWithLookback_(dayValues, windowSize, priorMonthTailV
 // verified against the live TEST_APP deployment, same boundary as signupWebapp.js).
 // ─────────────────────────────────────────────────────────────────────────
 
+// Hosted from the public GitHub repo (raw.githubusercontent.com) rather than Apps Script itself
+// — HtmlService has no static asset hosting for binary files, clasp push only syncs .gs/.html/
+// manifest sources, and HtmlOutput.setFaviconUrl() explicitly requires an external URL (favicon
+// <link> tags written directly in an Apps Script HTML file are documented as ignored). Keep this
+// in sync with docs/references/Go30-Logo.png's committed path.
+var CHECKIN_PAGE_FAVICON_URL_ = 'https://raw.githubusercontent.com/stuartdonaldson/F3Go30/main/docs/references/Go30-Logo.png';
+
 /**
  * Renders the cmd=checkin HTML page.
  * @param {Object=} e The doGet request event — needed for e.parameter.id (a saved-link
@@ -307,12 +314,17 @@ function buildRollingAverageWithLookback_(dayValues, windowSize, priorMonthTailV
  *   nested sandbox iframe whose own src carries no query string at all (confirmed live via
  *   Playwright frame inspection, 2026-07-04), so a deep-link param only reaches the client if
  *   it's read here, server-side, and templated in explicitly (savedIdentityTokenJson below).
+ *   The page <title> has the same constraint — client-side document.title changes inside that
+ *   sandboxed iframe don't reach the top-level (bookmarkable) document, so a personal-link
+ *   token's f3Name is decoded here, server-side (cheap signature check only, no spreadsheet
+ *   open), purely to make the title/bookmark name recognizable per-PAX.
  */
 function renderCheckinPage_(e) {
   var template = HtmlService.createTemplateFromFile('CheckinApp');
   template.webAppUrl = JSON.stringify(ScriptApp.getService().getUrl());
   template.appVersion = APP_VERSION;
-  template.savedIdentityTokenJson = JSON.stringify((e && e.parameter && e.parameter.id) || null);
+  var savedToken = (e && e.parameter && e.parameter.id) || null;
+  template.savedIdentityTokenJson = JSON.stringify(savedToken);
   template.bonusTypesJson = JSON.stringify(bonusTypeClientRules_dw_());
   template.bonusTypeCodesJson = JSON.stringify(bonusTypeDisplayList_dw_());
   // Site Q contact info for the client's "something went wrong" error banner — same Config
@@ -321,11 +333,19 @@ function renderCheckinPage_(e) {
   var siteQConfig = getConfigValue_(SpreadsheetApp.getActiveSpreadsheet(), 'Site Q', null) || {};
   template.siteQName = siteQConfig.primary || 'Site Q';
   template.siteQEmail = siteQConfig.secondary || '';
+  var nameSpaceConfig = getConfigValue_(SpreadsheetApp.getActiveSpreadsheet(), 'NameSpace', null) || {};
+  var nameSpace = nameSpaceConfig.primary || 'F3 Go30';
+  template.nameSpace = nameSpace;
+  var decodedToken = savedToken && verifyIdentityToken_dw_(savedToken);
+  var pageTitle = decodedToken && decodedToken.f3Name ? (nameSpace + ': ' + decodedToken.f3Name) : nameSpace;
   // HtmlService serves this inside an IFRAME-sandboxed wrapper that does not honor a
   // <meta name="viewport"> tag written in the template's own <head> — it must be set via
   // addMetaTag, or mobile browsers render the desktop layout zoomed out instead of fitting
   // the device width.
-  return template.evaluate().setTitle('Go30 Dashboard').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  return template.evaluate()
+    .setTitle(pageTitle)
+    .setFaviconUrl(CHECKIN_PAGE_FAVICON_URL_)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 /** Dispatches a cmd=checkin doPost JSON body ({action, ...}) to the matching handler. */
