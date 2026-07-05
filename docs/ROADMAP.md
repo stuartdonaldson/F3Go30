@@ -5,12 +5,15 @@
 - Menu item to announce next month signup in current tracker
 - Evaluate README.md word count — currently ~2,000 words vs. 800-word Minimal tier target; determine if section-level scaling is needed
 
-## Recently Delivered (2026-05)
+## Recently Delivered
 
-- Scheduled auto-creation of next month's tracker (time-based trigger, unattended flow)
-- Tracker-month registration confirmation email on form submit
-- Template-based Links upsert keyed by `SheetId` and `Sheet Template` Config lineage
-- Outbound email test-mode policy (send to Site Q only with intended-recipient annotation)
+- **v2.3 (2026-07)** — PAX-facing web apps: sign-up, daily check-in, dashboard, and bonus-point
+  logging, with identify-once "remember me". See `docs/CHANGELOG.md` for the full feature list.
+- **(2026-05)**
+  - Scheduled auto-creation of next month's tracker (time-based trigger, unattended flow)
+  - Tracker-month registration confirmation email on form submit
+  - Template-based Links upsert keyed by `SheetId` and `Sheet Template` Config lineage
+  - Outbound email test-mode policy (send to Site Q only with intended-recipient annotation)
 
 ## Review
 

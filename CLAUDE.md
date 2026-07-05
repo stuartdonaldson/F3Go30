@@ -23,6 +23,7 @@
 | Technical decisions | /adr/ |
 | Strategic themes | docs/VISION.md _(when created)_ |
 | Roadmap, funnel | docs/ROADMAP.md |
+| Release notes (user-facing, version-stamped) | docs/CHANGELOG.md |
 | Go30 Q tutorial narration script | /docs/references/go30-q-tutorial-script.md |
 
 ## Placement Rules
