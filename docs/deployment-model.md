@@ -1,7 +1,10 @@
 # F3Go30 Deployment Model
 
-> Status: **Proposed** — describes the target state and the plan to get there.
-> Current state is documented in `docs/OPERATIONS.md §Deployment`.
+> Status: **Implemented.** The migration plan below has been executed — `.clasp.json` is
+> written per-environment by `tools/manage-deployments.js`, `APP_DEPLOY_TARGET` is set in
+> `script/version.js`, and `templateScriptId`/`testScriptId` are in `local.settings.json`.
+> Kept for the rationale behind the model; `docs/OPERATIONS.md §Deployment` is the operational
+> reference for current state.
 
 ---
 

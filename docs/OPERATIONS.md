@@ -305,11 +305,12 @@ For go-live validation, use Smoke mode (see §Smoke Mode above).
 (`{f3Name,email}`, read-only, anti-enumeration — response shape is identical whether or not the
 PAX is found except for the presence of data), `checkin` (`{f3Name,email,day,value}` where
 `day` is `'today'|'yesterday'` and `value` is `1|0` — writes a single Tracker day cell for the
-current month), `dashboard` (`{f3Name,email}`, read-only). `checkin` writes real Tracker data —
-never call it against a real PAX's name/email outside Smoke mode. The `SmokeTest` /
-`smoke@example.com` PAX left over from a prior sign-up smoke test (§Smoke Mode) is safe to reuse
-for `cmd=checkin` write testing without a full smoke tracker cycle, since it's already
-test-only data in a `Smoke Test` team group.
+current month), `dashboard` (`{f3Name,email}`, read-only), and the bonus-point actions `bonusList`
+(`{f3Name,email}`, read-only), `bonusAdd`/`bonusEdit` (write a PAX's Bonus Tracker entry).
+`checkin`/`bonusAdd`/`bonusEdit` write real Tracker data — never call them against a real PAX's
+name/email outside Smoke mode. The `SmokeTest` / `smoke@example.com` PAX left over from a prior
+sign-up smoke test (§Smoke Mode) is safe to reuse for `cmd=checkin` write testing without a full
+smoke tracker cycle, since it's already test-only data in a `Smoke Test` team group.
 
 **Always confirm the environment before writing:** call `{ "action": "getSmokeStatus" }` and
 verify `deployTarget` matches your intended environment. `identify` is read-only and safe against

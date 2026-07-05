@@ -1,11 +1,9 @@
 # Requirements: Web-Based HC Signup Form (`cmd=signup`)
 
-> Status: **Mockup approved — moving toward backend implementation.**
-> A clickable mockup (`docs/references/F3 Go30 signup design.zip`) was reviewed against this
-> document and matches it. This is not yet an accepted capability; it does not belong in
-> `docs/CONTEXT.md` until built and accepted.
-> Scope of this document: enough domain + UX detail to drive backend implementation in this repo.
-> It does not yet pin the exact `doPost` JSON contract — see §Open Questions.
+> Status: **Historical.** `signupWebapp.js` is fully implemented, live, and tested
+> (`test_signup_webapp.js`); it is now an accepted capability documented in `docs/CONTEXT.md`
+> and `docs/DESIGN.md`. Kept for the original domain/UX rationale behind the design; the actual
+> `doPost` JSON contract is the code in `signupWebapp.js`, not this document.
 
 ---
 

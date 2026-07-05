@@ -1,8 +1,13 @@
 # GAS Best-Practices Review for F3Go30
 
+> Status: **Historical.** Written before the web-app layer existed. F3Go30 now has an
+> extensive `doGet`/`doPost` dispatcher (`WebApp.js`) and Playwright-based web-app tests
+> (`tests/playwright/`), so the "no web app" framing and any applicability judgments below
+> that depend on it no longer hold. Kept as a record of the original review.
+
 Source: `/mnt/c/dev/GAS-Practices/best-practices/` (extracted from AudioTrackCombiner and WingTools).
 
-## F3Go30 context (what shapes applicability)
+## F3Go30 context (what shapes applicability, at time of review)
 
 - **Bound** Apps Script project (attached to the Tracker spreadsheet). No web app, no `/exec` URL, no `doGet`.
 - Triggers: `onFormSubmit`, daily nag, monthly auto-generate, plus an HtmlService **sidebar** (`NotificationSidebar.html`) opened from sheet-internal flows.

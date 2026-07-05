@@ -61,7 +61,7 @@ month's tracker in minutes without manual sheet or trigger configuration in the 
 - Shorten tracker and form URLs via TinyURL (or Bitly) and surface them in a notification sidebar
 - Set sharing permissions on the new tracker to anyone-with-link/view
 - Set up a daily 1 AM trigger to mark empty check-in cells as −1 after a 24-hour grace period
-- Send a basic daily nag email to opted-in team members when teammates missed the previous day's check-in; this workflow exists in code but is not yet aligned with the finalized FunFacts-based reminder design
+- Send a daily nag email to opted-in team members when teammates missed the previous day's check-in, using a randomly-selected `FunFacts` entry for motivational content
 - Set up a form-submit trigger to populate the Tracker sheet when a PAX submits the HC form and send a registration confirmation email summarizing the current goals for that tracker month
 - Auto-generate next month's tracker and HC form via a scheduled trigger on the 20th of each
   month; email Site Q with links and a ready-to-paste Slack message on success or failure
@@ -256,7 +256,7 @@ Postconditions:
 - Opted-in team members may receive a nag email about missing prior-day check-ins
 
 Constraints:
-- Current implementation is partial: the nag email exists in code, but it does not yet use the finalized FunFacts-based motivation content or the final reminder template design
+- Motivation content is sourced from a randomly-selected `FunFacts` sheet entry, per the reminder workflow design decision
 
 ---
 
@@ -304,7 +304,6 @@ Constraints:
   endpoints reading/writing the region's own spreadsheet directly — no external hosting, API, or
   database of their own
 - Does not automate the initial one-time form linking step when bootstrapping a new region
-- Does not yet deliver the finalized reminder-email experience described by the reminder workflow design; the existing nag email path is partial and still needs alignment with the FunFacts-based template and content decisions
 - No automated testing or CI/CD pipeline
 
 ---

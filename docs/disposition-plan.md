@@ -1,5 +1,9 @@
 # Disposition Plan — F3Go30
 
+> Status: **Historical.** Every item in this plan (README, ADRs, CLAUDE.md, PLAN.md, /adr/,
+> /docs/framework/) has been completed. Kept for record only — see CLAUDE.md and
+> docs/framework/ for the current structure.
+
 Generated: 2026-03-02  
 Phase: 1.5 — Disposition Planning  
 Tier: Minimal
