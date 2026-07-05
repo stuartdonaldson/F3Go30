@@ -193,6 +193,12 @@
       <p>Your Hard Commit is saved for <strong id="savedMonthLabel"></strong>.</p>
       <p class="muted">A confirmation email is on its way to <span id="savedEmailLabel"></span>.</p>
       <a id="savedTrackerLink" href="#" target="_blank" style="display:inline-block;color:#0b5c86;font-weight:bold;font-size:15px;text-decoration:none;border-bottom:1px solid #0b5c86;padding-bottom:1px;">Open the tracker &rarr;</a>
+      <!-- Only shown when a current-month signup's automatic handoff into the check-in app
+           didn't fire (see attemptTopRedirect_) — the normal case is this page is never seen
+           at all, since the PAX lands directly on check-in instead. -->
+      <div id="goToCheckinNote" class="hidden" style="margin-top:14px;">
+        <a id="goToCheckinLink" href="#" target="_top" style="display:inline-block;color:#2f5d50;font-weight:bold;font-size:15px;text-decoration:none;border-bottom:1px solid #2f5d50;padding-bottom:1px;">Continue to check in for today &rarr;</a>
+      </div>
       <div style="margin-top:26px;">
         <button id="restartBtn" style="padding:11px 22px;border:1px solid #d8cfbf;border-radius:9px;background:transparent;color:#2f5d50;font-size:14px;font-weight:bold;cursor:pointer;font-family:inherit;">Start over</button>
       </div>
@@ -224,18 +230,12 @@
 
   var IDENTITY_STORAGE_KEY = 'go30SignupIdentity';
 
-  /** Reads a query-string param off the page's own URL — GAS preserves the full query string
-   * (cmd=signup&...) on the served doGet page, so a deep link from the check-in app
-   * (?cmd=signup&targetMonth=current&autoStart=1) is readable client-side with no server change. */
-  function getUrlParam_(name) {
-    try {
-      return new URLSearchParams(window.location.search).get(name);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  var urlTargetMonth_ = getUrlParam_('targetMonth');
+  // A ?targetMonth=/?autoStart= deep link from the check-in app's "not registered yet" nudge
+  // can't be read client-side via window.location — the page content runs inside a nested
+  // sandbox iframe whose own src carries no query string at all (confirmed live 2026-07-04), so
+  // renderSignupPage_ (WebApp.js) reads them server-side and templates them in here instead.
+  var urlTargetMonth_ = <?!= urlTargetMonthJson ?>;
+  var URL_AUTO_START_ = <?!= JSON.stringify(urlAutoStart) ?>;
 
   /** Remembers F3 Name/Email locally so a returning user doesn't have to retype them. */
   function saveIdentityToStorage_(f3Name, email) {
@@ -489,6 +489,24 @@
   $('phoneInput').addEventListener('input', function() { state.phone = this.value; });
   $('nagInput').addEventListener('change', function() { state.nag = this.checked; });
 
+  /** Attempts a real top-level navigation to `url` — escapes the GAS sandbox iframe the same
+   * way a real user-clicked target="_top" link does (confirmed live 2026-07-04), but triggered
+   * from script after an async API call rather than directly from the click itself. Relies on
+   * the original click's "user activation" still being sticky despite that gap, which isn't
+   * guaranteed on every browser — `fallback()` always runs a short moment later if the
+   * navigation didn't actually happen. A successful navigation tears the whole page (and this
+   * timer) down before it can fire, so there's never a moment where both the redirect and the
+   * fallback UI are visible at once. */
+  function attemptTopRedirect_(url, fallback) {
+    var fallbackTimer = setTimeout(fallback, 400);
+    try {
+      window.top.location.href = url;
+    } catch (e) {
+      clearTimeout(fallbackTimer);
+      fallback();
+    }
+  }
+
   function performSave_(triggerBtn) {
     hideApiError_();
     setButtonLoading_(triggerBtn, true, 'Saving…');
@@ -507,7 +525,18 @@
       $('feedbackNotSent').classList.remove('hidden');
       $('feedbackSent').classList.add('hidden');
       renderFeedbackStars();
-      showStep('done');
+      if (res.identityToken) {
+        // Current-month signup (see handleSignupSave_) — they can check in today, so send them
+        // straight into the check-in app instead of stranding them on this confirmation screen.
+        var checkinUrl = WEBAPP_URL + '?cmd=checkin&id=' + encodeURIComponent(res.identityToken);
+        $('goToCheckinLink').href = checkinUrl;
+        attemptTopRedirect_(checkinUrl, function() {
+          $('goToCheckinNote').classList.remove('hidden');
+          showStep('done');
+        });
+      } else {
+        showStep('done');
+      }
     }).catch(function(err) {
       showApiError_('save', err);
     }).finally(function() { setButtonLoading_(triggerBtn, false); });
@@ -577,7 +606,7 @@
   // Deep link from the check-in app (?autoStart=1) — F3 Name/email are already known (via
   // localStorage, same IDENTITY_STORAGE_KEY both apps use), so skip the intro/identify steps
   // and go straight to goal verification instead of making the PAX retype anything.
-  if (getUrlParam_('autoStart') === '1' && state.f3Name && state.email) {
+  if (URL_AUTO_START_ && state.f3Name && state.email) {
     showStep('identify');
     $('identifyBtn').click();
   } else {

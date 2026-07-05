@@ -38,6 +38,12 @@ var signupWebappSmokeModeModule_ = (typeof module !== 'undefined' && module.expo
 var getSmokeTrackerId_sw_ = (signupWebappSmokeModeModule_ && signupWebappSmokeModeModule_.getSmokeTrackerId_)
   || (typeof globalThis !== 'undefined' && globalThis.getSmokeTrackerId_);
 
+var signupWebappIdentityTokenModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./IdentityToken.js')
+  : null;
+var mintIdentityToken_sw_ = (signupWebappIdentityTokenModule_ && signupWebappIdentityTokenModule_.mintIdentityToken_)
+  || (typeof globalThis !== 'undefined' && globalThis.mintIdentityToken_);
+
 function normalizeTeamValue_(value) {
   return String(value || '').trim();
 }
@@ -690,7 +696,15 @@ function handleSignupSave_(templateSpreadsheet, payload) {
   }
 
   sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, !match);
-  return { ok: true, savedMonth: targetMonth.label, trackerUrl: targetMonth.trackerUrl };
+  var response = { ok: true, savedMonth: targetMonth.label, trackerUrl: targetMonth.trackerUrl };
+  // A current-month signup means this PAX can check in today — hand them a token (see
+  // IdentityToken.js) so SignupApp.html can send them straight into the check-in app instead of
+  // leaving them on the signup confirmation with no obvious next step. A next-month signup has
+  // nothing to check into yet, so no token (and no handoff) for that case.
+  if (months.current && targetMonth.sheetId === months.current.sheetId) {
+    response.identityToken = mintIdentityToken_sw_(payload.f3Name, payload.email);
+  }
+  return response;
 }
 
 function sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, isNew) {

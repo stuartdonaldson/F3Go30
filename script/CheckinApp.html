@@ -117,6 +117,8 @@
   .bonus-badge { font-size: 12px; font-weight: bold; padding: 2px 8px; border-radius: 10px; }
   .bonus-badge.complete { background: #eef3f0; color: #2f5d50; }
   .bonus-badge.pending { background: #fdf6e3; color: #8a6d00; }
+  .bonus-badge.extra { background: #eef2fa; color: #35538a; }
+  .bonus-entry-note { font-size: 12.5px; color: #35538a; margin-top: 6px; line-height: 1.35; }
   .bonus-edit-btn { background: transparent; border: none; color: #0b5c86; font-size: 14px; cursor: pointer; font-family: inherit; text-decoration: underline; padding: 0; }
   .card-head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .card-head-row h2 { margin: 0; white-space: nowrap; }
@@ -160,6 +162,10 @@
 
   <div class="wrap">
 
+    <div id="step-tokenLoading" class="hidden">
+      <div class="card"><p class="muted">Signing you in…</p></div>
+    </div>
+
     <div id="step-identify">
       <div class="card">
         <h1>Daily Check-in</h1>
@@ -171,13 +177,32 @@
         <div id="idError" class="error-text hidden"></div>
         <button class="primary" id="identifyBtn">Continue</button>
         <button class="secondary hidden" id="idSignupBtn" style="margin-top:10px;">Sign up &rarr;</button>
+        <!-- Shown only if the automatic redirect to the personal check-in link (see
+             attemptTopRedirect_) didn't fire — most browsers never show this at all, since
+             success tears this page down before the fallback timer gets a chance to run. -->
+        <div id="continueManuallyNote" class="hidden" style="margin-top:14px;font-size:13px;">
+          <a id="continueManuallyLink" href="#" target="_top">Tap here to continue to check-in &rarr;</a>
+        </div>
       </div>
     </div>
 
     <div id="step-checkin" class="card hidden">
-      <h2 id="checkinHeading">Welcome back!</h2>
+      <div class="card-head-row">
+        <h2 id="checkinHeading">Welcome back!</h2>
+        <a id="notYouLink" href="#" target="_top" class="bonus-edit-btn">Not you?</a>
+      </div>
       <p class="muted" id="checkinSub"></p>
       <div id="emailMismatchNote" class="warning-text hidden"></div>
+
+      <!-- Shown when this page was itself reached via a saved-link token — nothing to
+           navigate to, since the page already showing is the one worth saving. Dismissible
+           (localStorage flag) since it'd otherwise repeat every visit, including for PAX who
+           already bookmarked it. -->
+      <div id="bookmarkHereNote" class="hidden" style="font-size:13px;color:#6b6255;margin:-4px 0 14px;">
+        This is your personal check-in page — use your browser's Share or menu button to
+        bookmark it or Add to Home Screen so you can get back here without typing your name.
+        <button id="bookmarkHereDismiss" type="button" style="background:none;border:none;color:#999;text-decoration:underline;cursor:pointer;font-size:12px;padding:0;margin-left:4px;">Got it</button>
+      </div>
 
       <div id="goalsReminder" class="hidden"></div>
 
@@ -289,6 +314,11 @@
 <script>
   var WEBAPP_URL = <?!= webAppUrl ?>;
   var APP_VERSION = <?!= JSON.stringify(appVersion) ?>;
+  // A ?id=<token> deep-link param can't be read client-side via window.location — the page
+  // content runs inside a nested sandbox iframe whose own src carries no query string at all
+  // (confirmed live 2026-07-04), so renderCheckinPage_ (dashboardWebapp.js) reads it
+  // server-side and templates it in here instead.
+  var SAVED_IDENTITY_TOKEN = <?!= savedIdentityTokenJson ?>;
   var BONUS_TYPE_RULES_ = <?!= bonusTypesJson ?>;
   var SITE_Q_NAME = <?!= JSON.stringify(siteQName) ?>;
   var SITE_Q_EMAIL = <?!= JSON.stringify(siteQEmail) ?>;
@@ -406,11 +436,81 @@
   $('idF3Name').value = state.f3Name;
   $('idEmail').value = state.email;
 
+  // "Not you?" always points back at the bare URL (no saved-link token) — a real target="_top"
+  // navigation, not a script redirect, so it works the same way regardless of how this page was
+  // reached (typed identify or an auto-applied token). Also clears the localStorage prefill
+  // (the older, pre-token remember-me mechanism — see saveIdentityToStorage_) so the identify
+  // form the reload lands on doesn't just immediately re-show the same person's name/email.
+  $('notYouLink').href = WEBAPP_URL + '?cmd=checkin';
+  $('notYouLink').addEventListener('click', function() {
+    try { localStorage.removeItem(IDENTITY_STORAGE_KEY); } catch (e) { /* not fatal */ }
+  });
+
+  // No localStorage flag needed — res.recentlyMinted (server-computed from the token's own
+  // embedded mint timestamp) already stops this note from reappearing on later visits, so "Got
+  // it" only needs to hide it for the rest of this one view.
+  $('bookmarkHereDismiss').addEventListener('click', function() {
+    $('bookmarkHereNote').classList.add('hidden');
+  });
+
+  /** Attempts a real top-level navigation to `url` — escapes the GAS sandbox iframe the same
+   * way a real user-clicked target="_top" link does (confirmed live 2026-07-04), but triggered
+   * from script after an async API call rather than directly from the click itself. Relies on
+   * the original click's "user activation" still being sticky despite that gap, which isn't
+   * guaranteed on every browser — `fallback()` always runs a short moment later if the
+   * navigation didn't actually happen. A successful navigation tears the whole page (and this
+   * timer) down before it can fire, so there's never a moment where both the redirect and the
+   * fallback UI are visible at once. */
+  function attemptTopRedirect_(url, fallback) {
+    var fallbackTimer = setTimeout(fallback, 400);
+    try {
+      window.top.location.href = url;
+    } catch (e) {
+      clearTimeout(fallbackTimer);
+      fallback();
+    }
+  }
+
+  /** Renders a successful identify response (always reached via a saved-link token — either
+   * this page's own URL carried one, or a typed identify's automatic redirect landed here) into
+   * the checkin step. */
+  function applyIdentifySuccess_(res) {
+    state.f3Name = res.f3Name;
+    state.email = res.email;
+    $('idSignupBtn').classList.add('hidden');
+    saveIdentityToStorage_(res.f3Name, res.email);
+    state.monthCache = {};
+    state.viewDate = null;
+    updateHeaderIdentity_(res.f3Name, res.team, res.monthLabel);
+    $('checkinHeading').textContent = 'Welcome back, ' + res.f3Name + '!';
+    $('checkinSub').textContent = res.monthLabel + ' — How did you do on your commitment for today?';
+    renderGoalsReminder_(res.goals);
+    renderCheckinStatus_('today', res.todayStatus);
+    $('yesterdayBlock').classList.toggle('hidden', !res.yesterdayAvailable);
+    if (res.yesterdayAvailable) renderCheckinStatus_('yesterday', res.yesterdayStatus);
+    // Name matched but the email doesn't match our record — non-blocking, still proceed
+    // (see F3Go30-rvde: name is the only real gate right now).
+    $('emailMismatchNote').textContent = "Note: this email doesn't match what we have on file for " + res.f3Name + ', but we found your check-in.';
+    $('emailMismatchNote').classList.toggle('hidden', !res.emailMismatch);
+    // res.nextMonthRegistered is null when there's no next-month tracker yet (nothing to
+    // sign up for) — only nudge when it's explicitly false.
+    $('nextMonthNoteText').textContent = "You're not signed up for " + res.nextMonthLabel + ' yet — verify or update your goals before the month starts.';
+    $('nextMonthNote').classList.toggle('hidden', res.nextMonthRegistered !== false);
+    // res.recentlyMinted (from the token's own embedded mint timestamp — see
+    // IDENTITY_TOKEN_FRESH_WINDOW_MS_, dashboardWebapp.js) is true only in the first minute
+    // after this exact link was generated, distinguishing "you're seeing your new personal link
+    // for the first time, go bookmark it" from a bookmark/Home Screen icon reopened any later —
+    // no client-side storage needed to remember which case this is.
+    $('bookmarkHereNote').classList.toggle('hidden', !res.recentlyMinted);
+    showStep('checkin');
+  }
+
   $('identifyBtn').addEventListener('click', function() {
     var f3Name = $('idF3Name').value.trim();
     var email = $('idEmail').value.trim();
     $('idError').classList.add('hidden');
     hideApiError_();
+    $('continueManuallyNote').classList.add('hidden');
     if (!f3Name || !email) {
       $('idError').textContent = 'Please enter both your F3 name and email.';
       $('idError').classList.remove('hidden');
@@ -422,8 +522,8 @@
     var btn = this;
     callApi('identify', { f3Name: f3Name, email: email })
       .then(function(res) {
-        setButtonLoading_(btn, false);
         if (!res.matched) {
+          setButtonLoading_(btn, false);
           $('idError').textContent = "We couldn't find a signup with that name and email for the current month. Please sign up first.";
           $('idError').classList.remove('hidden');
           // Prefill the signup page with what they just typed, even though it didn't match.
@@ -431,32 +531,47 @@
           $('idSignupBtn').classList.remove('hidden');
           return;
         }
-        $('idSignupBtn').classList.add('hidden');
-        saveIdentityToStorage_(f3Name, email);
-        state.monthCache = {};
-        state.viewDate = null;
-        updateHeaderIdentity_(res.f3Name, res.team, res.monthLabel);
-        $('checkinHeading').textContent = 'Welcome back, ' + res.f3Name + '!';
-        $('checkinSub').textContent = res.monthLabel + ' — How did you do on your commitment for today?';
-        renderGoalsReminder_(res.goals);
-        renderCheckinStatus_('today', res.todayStatus);
-        $('yesterdayBlock').classList.toggle('hidden', !res.yesterdayAvailable);
-        if (res.yesterdayAvailable) renderCheckinStatus_('yesterday', res.yesterdayStatus);
-        // Name matched but the email doesn't match our record — non-blocking, still proceed
-        // (see F3Go30-rvde: name is the only real gate right now).
-        $('emailMismatchNote').textContent = "Note: this email doesn't match what we have on file for " + res.f3Name + ', but we found your check-in.';
-        $('emailMismatchNote').classList.toggle('hidden', !res.emailMismatch);
-        // res.nextMonthRegistered is null when there's no next-month tracker yet (nothing to
-        // sign up for) — only nudge when it's explicitly false.
-        $('nextMonthNoteText').textContent = "You're not signed up for " + res.nextMonthLabel + ' yet — verify or update your goals before the month starts.';
-        $('nextMonthNote').classList.toggle('hidden', res.nextMonthRegistered !== false);
-        showStep('checkin');
+        // Typed identify never renders the checkin step itself — it always hands off to the
+        // token'd URL (attemptTopRedirect_), so entering the checkin step happens exactly one
+        // way regardless of how a PAX got there. Keeps the "Checking…" label up through the
+        // redirect attempt; the fallback branch below is what turns it back off.
+        var checkinUrl = WEBAPP_URL + '?cmd=checkin&id=' + encodeURIComponent(res.identityToken);
+        attemptTopRedirect_(checkinUrl, function() {
+          setButtonLoading_(btn, false);
+          $('continueManuallyLink').href = checkinUrl;
+          $('continueManuallyNote').classList.remove('hidden');
+        });
       })
       .catch(function(err) {
         setButtonLoading_(btn, false);
         showApiError_('identify', err);
       });
   });
+
+  // A saved-link token (?id=..., see IdentityToken.js) bypasses the identify form entirely —
+  // tokenInvalid (stale/tampered/roster-changed link) falls through to the normal blank form
+  // silently, with no error text, since the PAX didn't type anything wrong. step-identify is
+  // hidden behind a brief "Signing you in…" state while the token round-trip is in flight,
+  // rather than flashing the (localStorage-prefilled) identify form first — the identify step
+  // is visible by default in the static HTML, and the token check is an async server call.
+  if (SAVED_IDENTITY_TOKEN) {
+    $('step-identify').classList.add('hidden');
+    $('step-tokenLoading').classList.remove('hidden');
+    callApi('identify', { token: SAVED_IDENTITY_TOKEN })
+      .then(function(res) {
+        if (res.matched) {
+          applyIdentifySuccess_(res);
+        } else {
+          $('step-identify').classList.remove('hidden');
+        }
+      })
+      .catch(function() {
+        $('step-identify').classList.remove('hidden'); // fall through to the blank identify form
+      })
+      .then(function() {
+        $('step-tokenLoading').classList.add('hidden');
+      });
+  }
 
   // ── Step: checkin ──────────────────────────────────────────────────────
   var CHECKIN_STATUS_TEXT_ = {
@@ -554,9 +669,14 @@
   /** Opens the signup app deep-linked past the intro/identify steps straight to goal
    * verification — identity is already in localStorage (saveIdentityToStorage_) under the
    * same key SignupApp.html reads, and targetMonth/autoStart tell it which month + to skip
-   * ahead rather than making the PAX retype their name/email there too. */
+   * ahead rather than making the PAX retype their name/email there too.
+   *
+   * Same-tab (target="_top" style navigation, not window.open in a new tab) — a signup
+   * completed for the current month redirects back into this exact check-in flow (see
+   * SignupApp.html's post-save handoff), which only works as one continuous flow in a single
+   * tab, not two independent tabs with no way to hand off between them. */
   function openSignup_(targetMonth) {
-    window.open(WEBAPP_URL + '?cmd=signup&targetMonth=' + targetMonth + '&autoStart=1', '_blank');
+    window.top.location.href = WEBAPP_URL + '?cmd=signup&targetMonth=' + targetMonth + '&autoStart=1';
   }
 
   $('idSignupBtn').addEventListener('click', function() { openSignup_('current'); });
@@ -577,22 +697,21 @@
   // streak figures identically when date-nav scrubs to a different day within an already-fetched
   // month (see computeWindowedStreaks_ below).
   var MAX_STREAK_WINDOW_DAYS_ = 30;
-  // Matches dashboardWebapp.js's buildBonusByType_ keys (fe/q/ins/eh) — short codes so all four
-  // fit beside the score number rather than stacking below it.
-  var BONUS_TYPE_CODES_ = [
-    { key: 'fe', label: 'FE' },
-    { key: 'q', label: 'Q' },
-    { key: 'ins', label: 'Ins' },
-    { key: 'eh', label: 'EH' },
-  ];
-  // Same four types, reordered for the Total Score tile's 2-column grid — a row-major grid
-  // filled in this order lands FE/Ins on row one and Q/EH on row two.
-  var BONUS_GRID_ORDER_ = [
-    { key: 'fe', label: 'FE' },
-    { key: 'ins', label: 'Ins' },
-    { key: 'q', label: 'Q' },
-    { key: 'eh', label: 'EH' },
-  ];
+  // {key, label} per registered bonus type, server-supplied from BonusTypes.js's
+  // BONUS_TYPE_DEFS_ (bonusTypeCodesJson) — adding a bonus type needs no edit here. Each
+  // pillKey still needs a manual .bonus-type-code.<key> CSS color rule (see the stylesheet
+  // above); chip color isn't a fact the registry can express.
+  var BONUS_TYPE_CODES_ = <?!= bonusTypeCodesJson ?>;
+  // Same types, reordered for the Total Score tile's 2-column grid — a row-major grid filled
+  // in this key order lands FE/Ins on row one and Q/EH on row two. This ordering is a fixed
+  // layout choice for a 2-column grid, not a per-type fact, so it stays a local key list;
+  // a 5th bonus type would need this list revisited regardless of where the label/color live.
+  var BONUS_GRID_ORDER_KEYS_ = ['fe', 'ins', 'q', 'eh'];
+  var BONUS_TYPE_CODE_BY_KEY_ = {};
+  BONUS_TYPE_CODES_.forEach(function(code) { BONUS_TYPE_CODE_BY_KEY_[code.key] = code; });
+  var BONUS_GRID_ORDER_ = BONUS_GRID_ORDER_KEYS_
+    .map(function(key) { return BONUS_TYPE_CODE_BY_KEY_[key]; })
+    .filter(Boolean);
 
   function escapeHtml_(s) {
     var div = document.createElement('div');
@@ -1109,15 +1228,21 @@
       var row = document.createElement('div');
       row.className = 'bonus-entry';
       var dateLabel = entry.whenIso ? formatNavDate_(parseIsoDate_(entry.whenIso)) : '';
+      var isExtra = !!entry.complete && entry.counts === false;
+      var badgeClass = !entry.complete ? 'pending' : (isExtra ? 'extra' : 'complete');
+      var badgeText = !entry.complete ? 'Needs link' : (isExtra ? 'Logged (extra)' : '✓ Counted');
       row.innerHTML =
         '<div class="bonus-entry-top">' +
           '<span class="bonus-entry-type">' + escapeHtml_(entry.type) + '</span>' +
           '<span class="bonus-entry-date">' + escapeHtml_(dateLabel) + '</span>' +
         '</div>' +
         '<div class="bonus-entry-message">' + escapeHtml_(entry.message) + '</div>' +
+        (isExtra
+          ? '<div class="bonus-entry-note">Great job getting out there! Only one ' + escapeHtml_(entry.type) +
+            ' counts per week, so this one won’t add extra points — keep up the good work.</div>'
+          : '') +
         '<div class="bonus-entry-bottom">' +
-          '<span class="bonus-badge ' + (entry.complete ? 'complete' : 'pending') + '">' +
-            (entry.complete ? '✓ Counted' : 'Needs link') + '</span>' +
+          '<span class="bonus-badge ' + badgeClass + '">' + badgeText + '</span>' +
           '<button class="bonus-edit-btn" data-row="' + entry.rowIndex + '">Edit</button>' +
         '</div>';
       el.appendChild(row);

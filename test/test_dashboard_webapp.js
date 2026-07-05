@@ -30,9 +30,6 @@ const {
   getCachedTrackerLayoutOnly_,
   trackerLayoutCacheKey_,
   serializeRow3ForCache_,
-  weekOfMonth_,
-  computeBonusPillsAsOf_,
-  computeBonusSeriesForPax_,
   serializeSheetValuesForCache_,
   deserializeSheetValuesFromCache_,
   getCachedSheetValuesOnly_,
@@ -329,106 +326,6 @@ const {
   assert.equal(getCachedSheetValuesOnly_(trackerValuesCacheKey_('sheet-x')), null);
   assert.equal(getCachedSheetValuesOnly_(responsesValuesCacheKey_('sheet-x')), null);
   assert.deepEqual(getCachedSheetValuesOnly_(trackerValuesCacheKey_('sheet-y')), [['untouched']]);
-})();
-
-// ── weekOfMonth_ ────────────────────────────────────────────────────────────
-(function testWeekOfMonthFirstWeekWhenMonthStartsOnSunday() {
-  var monthStart = new Date(2026, 10, 1); // Nov 1 2026 is a Sunday
-  assert.equal(weekOfMonth_(new Date(2026, 10, 1), monthStart), 1);
-  assert.equal(weekOfMonth_(new Date(2026, 10, 7), monthStart), 1); // Saturday, still period 1
-  assert.equal(weekOfMonth_(new Date(2026, 10, 8), monthStart), 2); // next Sunday
-})();
-
-(function testWeekOfMonthShortFirstPeriodWhenMonthStartsMidWeek() {
-  // July 2026 starts on a Wednesday — first period is Jul 1 (Wed) through Jul 4 (Sat) only.
-  var monthStart = new Date(2026, 6, 1);
-  assert.equal(monthStart.getDay(), 3); // sanity: Wednesday
-  assert.equal(weekOfMonth_(new Date(2026, 6, 1), monthStart), 1);
-  assert.equal(weekOfMonth_(new Date(2026, 6, 4), monthStart), 1); // Saturday
-  assert.equal(weekOfMonth_(new Date(2026, 6, 5), monthStart), 2); // Sunday — new period
-})();
-
-(function testWeekOfMonthShortLastPeriodWhenMonthEndsMidWeek() {
-  // Same July 2026 tracker: the last period starts on the last Sunday (Jul 26) and runs
-  // through Jul 31 (Friday) — a short last period, not padded into August.
-  var monthStart = new Date(2026, 6, 1);
-  assert.equal(weekOfMonth_(new Date(2026, 6, 26), monthStart), 5);
-  assert.equal(weekOfMonth_(new Date(2026, 6, 31), monthStart), 5);
-})();
-
-// ── computeBonusPillsAsOf_ ───────────────────────────────────────────────────
-(function testComputeBonusPillsAsOfExcludesEntriesAfterViewDate() {
-  var monthStart = new Date(2026, 6, 1);
-  var entries = [
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 10), type: 'Fellowship', complete: true },
-  ];
-  // Scrubbed to a date before the entry — the bonus point must not show or count.
-  assert.deepEqual(computeBonusPillsAsOf_(entries, 'crazy ivan', new Date(2026, 6, 9), monthStart), { fe: 0, q: 0, ins: 0, eh: 0 });
-  // On or after the entry's date, it counts.
-  assert.deepEqual(computeBonusPillsAsOf_(entries, 'crazy ivan', new Date(2026, 6, 10), monthStart), { fe: 1, q: 0, ins: 0, eh: 0 });
-})();
-
-(function testComputeBonusPillsAsOfCapsFellowshipQPointInspireAtOnePerPeriod() {
-  var monthStart = new Date(2026, 6, 1); // Jul 2026, period 1 = Jul 1-4
-  var entries = [
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 1), type: 'Fellowship', complete: true },
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 2), type: 'Fellowship', complete: true },
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 3), type: 'Q Point', complete: true },
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 4), type: 'Q Point', complete: true },
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 4), type: 'Inspire', complete: true },
-  ];
-  var pills = computeBonusPillsAsOf_(entries, 'crazy ivan', new Date(2026, 6, 31), monthStart);
-  assert.deepEqual(pills, { fe: 1, q: 1, ins: 1, eh: 0 });
-})();
-
-(function testComputeBonusPillsAsOfUncapsEhingFng() {
-  var monthStart = new Date(2026, 6, 1);
-  var entries = [
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 1), type: 'EHing FNG', complete: true },
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 2), type: 'EHing FNG', complete: true },
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 3), type: 'EHing FNG', complete: true },
-  ];
-  var pills = computeBonusPillsAsOf_(entries, 'crazy ivan', new Date(2026, 6, 31), monthStart);
-  assert.equal(pills.eh, 15); // 3 EHs x 5 points, no weekly cap
-})();
-
-(function testComputeBonusPillsAsOfSeparatePeriodsEachGetTheirOwnCap() {
-  var monthStart = new Date(2026, 6, 1); // period 1: Jul 1-4, period 2: Jul 5-11
-  var entries = [
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 2), type: 'Fellowship', complete: true },
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 6), type: 'Fellowship', complete: true },
-  ];
-  var pills = computeBonusPillsAsOf_(entries, 'crazy ivan', new Date(2026, 6, 31), monthStart);
-  assert.equal(pills.fe, 2); // one point per period, two periods = 2
-})();
-
-(function testComputeBonusPillsAsOfExcludesIncompleteEntries() {
-  var monthStart = new Date(2026, 6, 1);
-  var entries = [
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 2), type: 'Q Point', complete: false },
-  ];
-  var pills = computeBonusPillsAsOf_(entries, 'crazy ivan', new Date(2026, 6, 31), monthStart);
-  assert.equal(pills.q, 0);
-})();
-
-(function testComputeBonusPillsAsOfIgnoresOtherPax() {
-  var monthStart = new Date(2026, 6, 1);
-  var entries = [
-    { nameNorm: 'little john', date: new Date(2026, 6, 2), type: 'Fellowship', complete: true },
-  ];
-  var pills = computeBonusPillsAsOf_(entries, 'crazy ivan', new Date(2026, 6, 31), monthStart);
-  assert.deepEqual(pills, { fe: 0, q: 0, ins: 0, eh: 0 });
-})();
-
-// ── computeBonusSeriesForPax_ ────────────────────────────────────────────────
-(function testComputeBonusSeriesForPaxTracksDateOfEachEntry() {
-  var monthStart = new Date(2026, 6, 1);
-  var entries = [
-    { nameNorm: 'crazy ivan', date: new Date(2026, 6, 2), type: 'Fellowship', complete: true },
-  ];
-  var dayDates = [new Date(2026, 6, 1), new Date(2026, 6, 2), new Date(2026, 6, 3)];
-  var series = computeBonusSeriesForPax_(entries, 'crazy ivan', dayDates, monthStart);
-  assert.deepEqual(series.map(function(p) { return p.fe; }), [0, 1, 1]);
 })();
 
 console.log('test_dashboard_webapp.js: all assertions passed');

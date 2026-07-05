@@ -63,10 +63,34 @@ var clearBonusEntry_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusMo
   || (typeof globalThis !== 'undefined' && globalThis.clearBonusEntry_);
 var findBonusRowByIdentity_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusModule_.findBonusRowByIdentity_)
   || (typeof globalThis !== 'undefined' && globalThis.findBonusRowByIdentity_);
-var BONUS_TYPE_RULES_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusModule_.BONUS_TYPE_RULES_)
-  || (typeof globalThis !== 'undefined' && globalThis.BONUS_TYPE_RULES_);
 var getAllBonusEntriesCached_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusModule_.getAllBonusEntriesCached_)
   || (typeof globalThis !== 'undefined' && globalThis.getAllBonusEntriesCached_);
+
+var dashboardWebappIdentityTokenModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./IdentityToken.js')
+  : null;
+var mintIdentityToken_dw_ = (dashboardWebappIdentityTokenModule_ && dashboardWebappIdentityTokenModule_.mintIdentityToken_)
+  || (typeof globalThis !== 'undefined' && globalThis.mintIdentityToken_);
+var verifyIdentityToken_dw_ = (dashboardWebappIdentityTokenModule_ && dashboardWebappIdentityTokenModule_.verifyIdentityToken_)
+  || (typeof globalThis !== 'undefined' && globalThis.verifyIdentityToken_);
+
+var dashboardWebappBonusTypesModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./BonusTypes.js')
+  : null;
+var bonusTypeClientRules_dw_ = (dashboardWebappBonusTypesModule_ && dashboardWebappBonusTypesModule_.bonusTypeClientRules_)
+  || (typeof globalThis !== 'undefined' && globalThis.bonusTypeClientRules_);
+var bonusTypeDisplayList_dw_ = (dashboardWebappBonusTypesModule_ && dashboardWebappBonusTypesModule_.bonusTypeDisplayList_)
+  || (typeof globalThis !== 'undefined' && globalThis.bonusTypeDisplayList_);
+var emptyBonusPills_dw_ = (dashboardWebappBonusTypesModule_ && dashboardWebappBonusTypesModule_.emptyBonusPills_)
+  || (typeof globalThis !== 'undefined' && globalThis.emptyBonusPills_);
+var weekOfMonth_dw_ = (dashboardWebappBonusTypesModule_ && dashboardWebappBonusTypesModule_.weekOfMonth_)
+  || (typeof globalThis !== 'undefined' && globalThis.weekOfMonth_);
+var computeBonusPillsAsOf_dw_ = (dashboardWebappBonusTypesModule_ && dashboardWebappBonusTypesModule_.computeBonusPillsAsOf_)
+  || (typeof globalThis !== 'undefined' && globalThis.computeBonusPillsAsOf_);
+var computeBonusSeriesForPax_dw_ = (dashboardWebappBonusTypesModule_ && dashboardWebappBonusTypesModule_.computeBonusSeriesForPax_)
+  || (typeof globalThis !== 'undefined' && globalThis.computeBonusSeriesForPax_);
+var annotateBonusEntryCountStatus_dw_ = (dashboardWebappBonusTypesModule_ && dashboardWebappBonusTypesModule_.annotateBonusEntryCountStatus_)
+  || (typeof globalThis !== 'undefined' && globalThis.annotateBonusEntryCountStatus_);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Pure functions (unit-tested — test/test_dashboard_webapp.js)
@@ -266,97 +290,31 @@ function buildRollingAverageWithLookback_(dayValues, windowSize, priorMonthTailV
   return buildRollingAverage_(combined, windowSize).slice(tail.length);
 }
 
-/** Maps a Bonus Tracker "Type" string to the short pill code the client renders. */
-var BONUS_TYPE_KEY_BY_NAME_ = {
-  'Fellowship': 'fe',
-  'Q Point': 'q',
-  'Inspire': 'ins',
-  'EHing FNG': 'eh',
-};
-
-/** Types capped at one point per Sun-Sat period — everything except EHing FNG (F3Go30-y55y:
- *  the live spreadsheet's own weekly Bonus-column formula does not enforce this cap today; this
- *  is an intentional correction applied only to the dashboard's fe/q/ins/eh pills, not to the
- *  sheet's own Score column). */
-var BONUS_CAPPED_TYPES_ = { 'Fellowship': true, 'Q Point': true, 'Inspire': true };
-
-/**
- * Sun-Sat week-of-month number (1-based), matching the spreadsheet's Periods sheet formula
- * `WEEKNUM(date,1) - WEEKNUM(DATE(YEAR(date),MONTH(date),1),1) + 1` without an ISO-week
- * dependency: day-of-month (0-based) plus the 1st's weekday, bucketed into 7s. A month starting
- * mid-week naturally gets a short first period (start of month through the first Saturday); a
- * month ending mid-week naturally gets a short last period (last Sunday through end of month) —
- * both fall out of this arithmetic without separate boundary-clamping.
- * @param {Date} date
- * @param {Date} monthStart First-of-month date for the tracker date belongs to.
- * @returns {number} 1-based period number.
- */
-function weekOfMonth_(date, monthStart) {
-  var firstWeekday = monthStart.getDay(); // 0 = Sunday
-  var dayOffset = date.getDate() - 1 + firstWeekday;
-  return Math.floor(dayOffset / 7) + 1;
-}
-
-/**
- * Per-type bonus pill totals for one PAX, as of asOfDate — entries dated after asOfDate are
- * excluded entirely (this is what makes the dashboard's bonus pills accurate when the date-nav
- * arrows are scrubbed to a day before a bonus was logged). Capped types (see
- * BONUS_CAPPED_TYPES_) contribute at most one multiplier's worth per Sun-Sat period regardless
- * of how many complete entries land in it; EHing FNG is uncapped.
- * @param {Array<{nameNorm:string, date:Date, type:string, complete:boolean}>} entries Every
- *   PAX's Bonus Tracker rows for the tracker's month (see bonusWebapp.js's
- *   readAllBonusEntries_/getAllBonusEntriesCached_).
- * @param {string} f3NameNorm Already-normalized name (paxCacheNormalizeName_) to match.
- * @param {Date} asOfDate
- * @param {Date} monthStart
- * @returns {{fe:number,q:number,ins:number,eh:number}}
- */
-function computeBonusPillsAsOf_(entries, f3NameNorm, asOfDate, monthStart) {
-  var pills = { fe: 0, q: 0, ins: 0, eh: 0 };
-  var periodCredited = { fe: {}, q: {}, ins: {} };
-  (entries || []).forEach(function(entry) {
-    if (entry.nameNorm !== f3NameNorm || !entry.complete || entry.date > asOfDate) return;
-    var key = BONUS_TYPE_KEY_BY_NAME_[entry.type];
-    if (!key) return;
-    var rules = BONUS_TYPE_RULES_dw_[entry.type];
-    var multiplier = (rules && rules.multiplier) || 0;
-    if (BONUS_CAPPED_TYPES_[entry.type]) {
-      var period = weekOfMonth_(entry.date, monthStart);
-      if (periodCredited[key][period]) return; // already credited this period
-      periodCredited[key][period] = true;
-    }
-    pills[key] += multiplier;
-  });
-  return pills;
-}
-
-/**
- * One computeBonusPillsAsOf_ result per date in dayDates, aligned 1:1 — lets the client scrub
- * the date-nav arrows locally against a per-day series, the same pattern already used for
- * dayValues/daySegments, instead of re-deriving pill totals with a server round trip per day.
- * @param {Array<Object>} entries See computeBonusPillsAsOf_.
- * @param {string} f3NameNorm
- * @param {Array<Date>} dayDates Calendar dates for this month's day columns, in order.
- * @param {Date} monthStart
- * @returns {Array<{fe:number,q:number,ins:number,eh:number}>}
- */
-function computeBonusSeriesForPax_(entries, f3NameNorm, dayDates, monthStart) {
-  return (dayDates || []).map(function(d) {
-    return computeBonusPillsAsOf_(entries, f3NameNorm, d, monthStart);
-  });
-}
+/** Bonus pill/score computation (weekOfMonth_, computeBonusPillsAsOf_, computeBonusSeriesForPax_,
+ *  annotateBonusEntryCountStatus_) lives in BonusTypes.js — see the require block above for the
+ *  *_dw_ bindings used below. */
 
 // ─────────────────────────────────────────────────────────────────────────
 // GAS orchestration (not unit-tested — composes the pure functions above,
 // verified against the live TEST_APP deployment, same boundary as signupWebapp.js).
 // ─────────────────────────────────────────────────────────────────────────
 
-/** Renders the cmd=checkin HTML page. */
-function renderCheckinPage_() {
+/**
+ * Renders the cmd=checkin HTML page.
+ * @param {Object=} e The doGet request event — needed for e.parameter.id (a saved-link
+ *   identity token, see IdentityToken.js). NOTE: the served page's own client-side JS cannot
+ *   read the request's query string itself — Apps Script injects the page content into a
+ *   nested sandbox iframe whose own src carries no query string at all (confirmed live via
+ *   Playwright frame inspection, 2026-07-04), so a deep-link param only reaches the client if
+ *   it's read here, server-side, and templated in explicitly (savedIdentityTokenJson below).
+ */
+function renderCheckinPage_(e) {
   var template = HtmlService.createTemplateFromFile('CheckinApp');
   template.webAppUrl = JSON.stringify(ScriptApp.getService().getUrl());
   template.appVersion = APP_VERSION;
-  template.bonusTypesJson = JSON.stringify(BONUS_TYPE_RULES_dw_);
+  template.savedIdentityTokenJson = JSON.stringify((e && e.parameter && e.parameter.id) || null);
+  template.bonusTypesJson = JSON.stringify(bonusTypeClientRules_dw_());
+  template.bonusTypeCodesJson = JSON.stringify(bonusTypeDisplayList_dw_());
   // Site Q contact info for the client's "something went wrong" error banner — same Config
   // sheet row (bound/template spreadsheet, not any month's own tracker) that CreateNewTracker.js
   // and Utilities.js's policy loader already read for admin/nag emails.
@@ -885,13 +843,44 @@ function resolveCheckinDayTarget_(identity, f3Name, targetDate) {
   }
 }
 
+// A token still showing this young when verified means the PAX almost certainly just tapped
+// "open your personal check-in link" and is seeing this exact page for the first time — old
+// enough to rule out slow taps/loading, short enough that a token this age could only mean a
+// genuinely new bookmark/Home Screen icon, not one reopened days or weeks later. Lets the
+// client decide whether to prompt for bookmarking without needing any client-side storage to
+// remember "have I already asked this browser to bookmark it" (see CheckinApp.html).
+var IDENTITY_TOKEN_FRESH_WINDOW_MS_ = 60 * 1000;
+
 function handleCheckinIdentify_(templateSpreadsheet, payload) {
   var t0 = Date.now();
-  GasLogger.log('checkinWebapp.identify', { f3Name: payload.f3Name });
-  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth);
+  // A saved-link token (see IdentityToken.js) stands in for typed f3Name/email — decoding it
+  // only proves it was signed by this script, it does NOT bypass the resolveCheckinIdentity_
+  // lookup below, so a token can never outlive the PAX's actual roster entry (removed/renamed).
+  // tokenInvalid distinguishes "your saved link stopped working" (show a blank form, no error
+  // text) from "we couldn't find a signup for what you typed" (show the sign-up prompt).
+  var f3Name = payload.f3Name;
+  var email = payload.email;
+  var tokenInvalid = false;
+  var tokenRecentlyMinted = false;
+  if (payload.token) {
+    var decoded = verifyIdentityToken_dw_(payload.token);
+    if (decoded) {
+      f3Name = decoded.f3Name;
+      email = decoded.email;
+      tokenRecentlyMinted = (Date.now() - decoded.mintedAtMs) < IDENTITY_TOKEN_FRESH_WINDOW_MS_;
+    } else {
+      tokenInvalid = true;
+    }
+  }
+  GasLogger.log('checkinWebapp.identify', { f3Name: f3Name, viaToken: !!payload.token });
+  if (tokenInvalid) {
+    GasLogger.log('checkinWebapp.identify.result', { matched: false, tokenInvalid: true, durationMs: Date.now() - t0 });
+    return { ok: true, matched: false, tokenInvalid: true };
+  }
+  var identity = resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, payload.targetMonth);
   if (!identity.matched) {
     GasLogger.log('checkinWebapp.identify.result', { matched: false, durationMs: Date.now() - t0 });
-    return { ok: true, matched: false };
+    return { ok: true, matched: false, tokenInvalid: !!payload.token };
   }
 
   var classified = classifyTrackerColumns_(identity.row2, identity.row3);
@@ -907,11 +896,11 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
 
   // Yesterday may belong to a different month's tracker than today's (e.g. today is the 1st) —
   // resolveCheckinDayTarget_ falls back to that prior tracker rather than reporting unavailable.
-  var yesterdayTarget = resolveCheckinDayTarget_(identity, payload.f3Name, yesterday);
+  var yesterdayTarget = resolveCheckinDayTarget_(identity, f3Name, yesterday);
   var yesterdayAvailable = !!yesterdayTarget;
   var yesterdayStatus = yesterdayAvailable ? dayValueStatus_(yesterdayTarget.value) : null;
 
-  var nextMonth = checkNextMonthRegistration_(identity.months, payload.f3Name);
+  var nextMonth = checkNextMonthRegistration_(identity.months, f3Name);
 
   GasLogger.log('checkinWebapp.identify.result', {
     matched: true, f3Name: trackerRow[TRACKER_NAME_COL_], emailMismatch: identity.emailMismatch,
@@ -922,6 +911,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     matched: true,
     emailMismatch: !!identity.emailMismatch,
     f3Name: trackerRow[TRACKER_NAME_COL_],
+    email: email,
     team: trackerRow[TRACKER_TEAM_COL_],
     monthLabel: identity.monthInfo.label,
     goals: identity.goals,
@@ -930,6 +920,15 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     yesterdayStatus: yesterdayStatus,
     nextMonthLabel: nextMonth ? nextMonth.monthLabel : null,
     nextMonthRegistered: nextMonth ? nextMonth.registered : null,
+    // True only when this request's own token (not the one about to be re-minted below) was
+    // signed within the last few minutes — see IDENTITY_TOKEN_FRESH_WINDOW_MS_. Meaningless
+    // (always false) for a typed-credentials identify, which has no incoming token at all.
+    recentlyMinted: tokenRecentlyMinted,
+    // Minted fresh on every successful identify (typed or token) — the canonical Tracker name
+    // rather than whatever variant was typed, so a corrected/re-typed name still round-trips
+    // through the saved link consistently. Client embeds this in the "save your check-in page"
+    // link (CheckinApp.html); see IdentityToken.js for why this exists instead of localStorage.
+    identityToken: mintIdentityToken_dw_(trackerRow[TRACKER_NAME_COL_], email),
   };
 }
 
@@ -996,16 +995,17 @@ function resolveBonusSheet_(templateSpreadsheet, payload, dateIso) {
   if (!identity.matched) return { error: 'not_found' };
   var bonusSheet = identity.targetSs.getSheetByName('Bonus Tracker');
   if (!bonusSheet) return { error: 'bonus_sheet_not_found' };
-  return { bonusSheet: bonusSheet, canonicalName: identity.trackerRow[TRACKER_NAME_COL_] };
+  return { bonusSheet: bonusSheet, canonicalName: identity.trackerRow[TRACKER_NAME_COL_], monthStart: monthInfo.startDate };
 }
 
 function handleBonusList_(templateSpreadsheet, payload) {
   var resolved = resolveBonusSheet_(templateSpreadsheet, payload, payload.dateISO);
   if (resolved.error) return { ok: false, error: resolved.error };
+  var entries = listBonusEntriesForPax_dw_(resolved.bonusSheet, resolved.canonicalName, resolved.bonusSheet.getParent().getId());
   return {
     ok: true,
-    entries: listBonusEntriesForPax_dw_(resolved.bonusSheet, resolved.canonicalName, resolved.bonusSheet.getParent().getId()),
-    bonusTypes: BONUS_TYPE_RULES_dw_,
+    entries: annotateBonusEntryCountStatus_dw_(entries, resolved.monthStart),
+    bonusTypes: bonusTypeClientRules_dw_(),
   };
 }
 
@@ -1126,7 +1126,7 @@ function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, t
     // not just the logged-in PAX's own stat area. Callers pass the date-scoped/capped result of
     // computeBonusPillsAsOf_, not a raw Tracker column read; the all-zero default below covers
     // a caller that omits this (e.g. a row with no Bonus Tracker entries at all).
-    bonusByType: bonusByType || { fe: 0, q: 0, ins: 0, eh: 0 },
+    bonusByType: bonusByType || emptyBonusPills_dw_(),
   };
 }
 
@@ -1206,7 +1206,7 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
     var name = row[TRACKER_NAME_COL_];
     if (!String(name || '').trim()) return;
     var dayValues = reportedDayCols.map(function(d) { return row[d.col]; });
-    var bonusSeries = computeBonusSeriesForPax_(bonusEntries, paxCacheNormalizeName_dw_(name), reportedDayDates, monthInfo.startDate);
+    var bonusSeries = computeBonusSeriesForPax_dw_(bonusEntries, paxCacheNormalizeName_dw_(name), reportedDayDates, monthInfo.startDate);
     var paxRow = buildDashboardPaxRow_(
       name,
       row[TRACKER_TEAM_COL_],
@@ -1324,9 +1324,6 @@ if (typeof module !== 'undefined' && module.exports) {
     getCachedTrackerLayoutOnly_: getCachedTrackerLayoutOnly_,
     trackerLayoutCacheKey_: trackerLayoutCacheKey_,
     serializeRow3ForCache_: serializeRow3ForCache_,
-    weekOfMonth_: weekOfMonth_,
-    computeBonusPillsAsOf_: computeBonusPillsAsOf_,
-    computeBonusSeriesForPax_: computeBonusSeriesForPax_,
     serializeSheetValuesForCache_: serializeSheetValuesForCache_,
     deserializeSheetValuesFromCache_: deserializeSheetValuesFromCache_,
     getCachedSheetValuesOnly_: getCachedSheetValuesOnly_,

@@ -14,19 +14,23 @@
  *   A Name | B Period(formula) | C Uncapped Points(formula) | D Multiplier(formula)
  *   | E Complete(formula) | F Type | G When | H What/Where/Who | I Slack Link
  *
- * BONUS_TYPE_RULES_ mirrors the Controls sheet's per-type rules (multiplier, link-required).
- * The Controls sheet only exposes Multiplier/Uncapped columns — "link required" only exists
- * today as embedded logic in the Bonus Tracker's column-E Complete formula, so it has no live
- * source of truth to read programmatically. This table is a manual mirror of that formula
- * logic; if Controls' type list or link requirements ever change, update this table by hand.
+ * Per-type rules (multiplier, link-required, weekly cap) live in BonusTypes.js's
+ * BONUS_TYPE_DEFS_, the single registry both this module's validation and dashboardWebapp.js's
+ * pill/score computation read through — see that file's header for why "link required" has no
+ * live spreadsheet source of truth and must be kept in sync by hand.
  */
 
-var BONUS_TYPE_RULES_ = {
-  'EHing FNG': { multiplier: 5, requiresLink: true },
-  'Fellowship': { multiplier: 1, requiresLink: false },
-  'Q Point': { multiplier: 1, requiresLink: true },
-  'Inspire': { multiplier: 1, requiresLink: true },
-};
+var bonusWebappBonusTypesModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./BonusTypes.js')
+  : null;
+var bonusTypeDef_bw_ = (bonusWebappBonusTypesModule_ && bonusWebappBonusTypesModule_.bonusTypeDef_)
+  || (typeof globalThis !== 'undefined' && globalThis.bonusTypeDef_);
+var bonusTypeClientRules_bw_ = (bonusWebappBonusTypesModule_ && bonusWebappBonusTypesModule_.bonusTypeClientRules_)
+  || (typeof globalThis !== 'undefined' && globalThis.bonusTypeClientRules_);
+
+/** {typeName: {multiplier, requiresLink}} — kept as a plain object (not a function call) since
+ *  this is also what's sent to the check-in client as-is (CheckinApp.html's bonusTypesJson). */
+var BONUS_TYPE_RULES_ = bonusTypeClientRules_bw_();
 
 var BONUS_TRACKER_HEADER_ROW_ = 1;
 var BONUS_TRACKER_NAME_COL_ = 1;   // A
@@ -64,23 +68,24 @@ function formatBonusDateLocal_(d) {
 }
 
 /**
- * Validates a bonus entry payload ({type, whenIso, message, link}) against BONUS_TYPE_RULES_.
- * Pure — no Sheet access — so it's the single gate both the client (for instant feedback) and
- * the server (the real gate — never trust the client's own validation) can share the same rules
- * against, without duplicating the link-required table in two places.
+ * Validates a bonus entry payload ({type, whenIso, message, link}) against BonusTypes.js's
+ * registry. Pure — no Sheet access — so it's the single gate both the client (for instant
+ * feedback, via BONUS_TYPE_RULES_ below) and the server (the real gate — never trust the
+ * client's own validation) can share the same rules against, without duplicating the
+ * link-required table in two places.
  * @returns {{ok:true}|{ok:false, error:string}}
  */
 function validateBonusEntry_(payload) {
   var p = payload || {};
-  var rules = BONUS_TYPE_RULES_[p.type];
-  if (!rules) return { ok: false, error: 'invalid_type' };
+  var def = bonusTypeDef_bw_(p.type);
+  if (!def) return { ok: false, error: 'invalid_type' };
 
   var when = parseBonusDateLocal_(p.whenIso);
   if (!when || isNaN(when.getTime())) return { ok: false, error: 'invalid_when' };
 
   if (!String(p.message || '').trim()) return { ok: false, error: 'message_required' };
 
-  if (rules.requiresLink) {
+  if (def.requiresLink) {
     var link = String(p.link || '').trim();
     if (!link) return { ok: false, error: 'link_required' };
     if (!BONUS_LINK_PATTERN_.test(link)) return { ok: false, error: 'invalid_link' };

@@ -48,8 +48,16 @@ function renderHomePage_() {
   return template.evaluate().setTitle('Go30').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
-/** Renders the cmd=signup HTML page, injecting live ListDB/Links data server-side. */
-function renderSignupPage_() {
+/**
+ * Renders the cmd=signup HTML page, injecting live ListDB/Links data server-side.
+ * @param {Object=} e The doGet request event — needed for e.parameter.targetMonth/autoStart
+ *   (the check-in app's "not registered yet" deep link). NOTE: the served page's own
+ *   client-side JS cannot read the request's query string itself — Apps Script injects page
+ *   content into a nested sandbox iframe whose own src carries no query string at all
+ *   (confirmed live via Playwright frame inspection, 2026-07-04) — so these must be read here,
+ *   server-side, and templated in explicitly, exactly like CheckinApp.html's saved-link token.
+ */
+function renderSignupPage_(e) {
   var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   var lists = readTeamLists_(spreadsheet);
   var months = getCurrentAndNextMonths_(spreadsheet);
@@ -63,6 +71,8 @@ function renderSignupPage_() {
   // embedded in a page anonymous users can view source on.
   template.monthsJson = JSON.stringify({ current: months.current, next: months.next });
   template.appVersion = APP_VERSION;
+  template.urlTargetMonthJson = JSON.stringify((e && e.parameter && e.parameter.targetMonth) || null);
+  template.urlAutoStart = !!(e && e.parameter && e.parameter.autoStart === '1');
   return template.evaluate().setTitle('Go30 Hard Commit Signup').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -189,6 +199,14 @@ function handleAdminPost_(e) {
       var paxRowsRemoved = deletePaxDbRowsBySheetId_(ss, payload.sheetId);
       var formTrashed = false;
       var trashed = false;
+      var triggerCleared = false;
+      try {
+        var triggerSs = SpreadsheetApp.openById(payload.sheetId);
+        clearFormSubmitTrigger(triggerSs);
+        triggerCleared = true;
+      } catch (triggerErr) {
+        GasLogger.log('handleAdminPost_.clearFormSubmitTriggerFailed', { error: triggerErr.message });
+      }
       if (payload.trashSpreadsheet) {
         try {
           var trackerSs = SpreadsheetApp.openById(payload.sheetId);
@@ -212,8 +230,60 @@ function handleAdminPost_(e) {
           GasLogger.log('handleAdminPost_.trashSpreadsheetFailed', { error: trashErr.message });
         }
       }
-      GasLogger.log('handleAdminPost_.cleanupTracker', { sheetId: payload.sheetId, trackerRemoved: trackerRemoved, paxRowsRemoved: paxRowsRemoved, formTrashed: formTrashed, trashed: trashed });
-      return jsonOutput_({ ok: true, trackerRemoved: trackerRemoved, paxRowsRemoved: paxRowsRemoved, formTrashed: formTrashed, trashed: trashed });
+      GasLogger.log('handleAdminPost_.cleanupTracker', { sheetId: payload.sheetId, trackerRemoved: trackerRemoved, paxRowsRemoved: paxRowsRemoved, formTrashed: formTrashed, trashed: trashed, triggerCleared: triggerCleared });
+      return jsonOutput_({ ok: true, trackerRemoved: trackerRemoved, paxRowsRemoved: paxRowsRemoved, formTrashed: formTrashed, trashed: trashed, triggerCleared: triggerCleared });
+    }
+    if (payload.action === 'listTriggers') {
+      // Diagnostic: every trigger on this script project plus whether its source file
+      // (spreadsheet/form) still exists. A trashed/missing source with a lingering trigger
+      // is exactly what accumulates toward the project's trigger-count cap (cleanupTracker
+      // now clears these going forward, but pre-existing leaks need this to find).
+      var allTriggers = ScriptApp.getProjectTriggers().map(function(trigger) {
+        var sourceId = trigger.getTriggerSourceId();
+        var sourceExists = null;
+        if (sourceId) {
+          try {
+            sourceExists = !DriveApp.getFileById(sourceId).isTrashed();
+          } catch (e) {
+            sourceExists = false; // file gone entirely
+          }
+        }
+        return {
+          handlerFunction: trigger.getHandlerFunction(),
+          eventType: String(trigger.getEventType()),
+          sourceId: sourceId || null,
+          sourceExists: sourceExists
+        };
+      });
+      return jsonOutput_({ ok: true, count: allTriggers.length, triggers: allTriggers });
+    }
+    if (payload.action === 'deleteOrphanedTriggers') {
+      // Removes only onFormSubmit triggers (FORM_SUBMIT_HANDLER_/LEGACY_FORM_SUBMIT_HANDLER_)
+      // whose source spreadsheet is trashed or gone — the leak cleanupTracker used to leave
+      // behind before it started calling clearFormSubmitTrigger. Never touches other trigger
+      // types (e.g. the monthly auto-generate trigger) regardless of source state.
+      var formHandlers = [FORM_SUBMIT_HANDLER_, LEGACY_FORM_SUBMIT_HANDLER_];
+      var removed = [];
+      ScriptApp.getProjectTriggers().forEach(function(trigger) {
+        if (formHandlers.indexOf(trigger.getHandlerFunction()) === -1) return;
+        var sourceId = trigger.getTriggerSourceId();
+        var orphaned = false;
+        if (!sourceId) {
+          orphaned = true;
+        } else {
+          try {
+            orphaned = DriveApp.getFileById(sourceId).isTrashed();
+          } catch (e) {
+            orphaned = true; // file gone entirely
+          }
+        }
+        if (orphaned) {
+          removed.push({ handlerFunction: trigger.getHandlerFunction(), sourceId: sourceId || null });
+          ScriptApp.deleteTrigger(trigger);
+        }
+      });
+      GasLogger.log('handleAdminPost_.deleteOrphanedTriggers', { removedCount: removed.length });
+      return jsonOutput_({ ok: true, removedCount: removed.length, removed: removed });
     }
     if (payload.action === 'getSmokeStatus') {
       // Returns the current environment and smoke mode state — use to confirm which
@@ -389,10 +459,10 @@ function doGet(e) {
   return GasLogger.run('doGet', function() {
     GasLogger.log('doGet', buildWebAppRequestLog_(e));
     if (e && e.parameter && e.parameter.cmd === 'signup') {
-      return renderSignupPage_();
+      return renderSignupPage_(e);
     }
     if (e && e.parameter && e.parameter.cmd === 'checkin') {
-      return renderCheckinPage_();
+      return renderCheckinPage_(e);
     }
     return renderHomePage_();
   });

@@ -86,10 +86,21 @@ def query(dataset: str, token: str, *, limit: int, since: timedelta,
         raise RuntimeError(f"Axiom query failed ({e.code}): {e.read().decode()[:500]}") from e
 
 
+def _is_empty(v) -> bool:
+    """True for None/''/{} and for dicts whose values are all themselves empty — catches fields
+    like a stray DBG:{a:None,b:None} that schema-backfill adds to every row once any event has
+    ever set it, which `v not in (None, "", {})` alone doesn't (a dict of Nones isn't `{}`)."""
+    if v in (None, "", {}):
+        return True
+    if isinstance(v, dict):
+        return all(_is_empty(x) for x in v.values())
+    return False
+
+
 def _print_table(matches: list[dict]) -> None:
     for m in matches:
         data = m.get("data", {})
-        nonnull = {k: v for k, v in data.items() if v not in (None, "", {})}
+        nonnull = {k: v for k, v in data.items() if not _is_empty(v)}
         side = nonnull.pop("side", "?")
         name = nonnull.pop("name", "?")
         nonnull.pop("version", None)

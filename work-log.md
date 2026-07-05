@@ -786,3 +786,125 @@ A misleading code comment ("re-enables/relabels the nav buttons via renderDateNa
 that the referenced function only handled one of the two buttons it claimed to — worth treating
 comments describing a function's effects as a hypothesis to verify against the actual code,
 not as ground truth, especially when tracking down a "button stuck disabled" symptom.
+
+## 2026-07-05 06:25:22
+
+### Summary:
+Reviewed the BonusTypes.js refactor (registry-based bonus rules replacing three duplicated
+tables across bonusWebapp.js/dashboardWebapp.js/CheckinApp.html) and completed the
+presentational cleanup left out of scope: added `bonusTypeDisplayList_()` so CheckinApp.html's
+pill labels/order derive from the registry instead of a hardcoded mirror (per-type CSS color
+stays manual by design — not a fact the registry can express).
+
+Live-tested the assumed "spreadsheet double-counts weekly-capped bonus points" bug (recorded in
+a 2026-07-04 work-log entry and BonusTypes.js's own comments) against SIT and found it does NOT
+reproduce: the Tracker's period Bonus column sums against `UBonus_*` named ranges built via
+`=UNIQUE('Bonus Tracker'!A:F)`, which already collapses two same-type/same-period complete
+entries to one row before the SUMIFS runs, since capped types have no varying column to keep
+them distinct. Uncapped types (EHing FNG) stay distinct because their "Uncapped Points" column
+holds the entry's own Slack link. Recommend correcting the stale assumption rather than
+"fixing" a formula that isn't broken.
+
+While setting up that live test, found and fixed a real trigger-leak bug: `cleanupTracker`
+trashed a smoke tracker's spreadsheet/form but never removed its `onFormSubmit` installable
+trigger, silently accumulating orphaned triggers on SIT's script project across past smoke-test
+sessions until it hit Apps Script's trigger cap and started failing `createTrackerForMonth`
+outright. Fixed `cleanupTracker` to call `clearFormSubmitTrigger`, added `listTriggers`/
+`deleteOrphanedTriggers` admin diagnostics, and purged 17 stray triggers on SIT.
+
+Created epic F3Go30-4j4o ("Re-architect SIT/smoke test tooling around on-demand tracker
+provisioning") and reparented related existing issues (F3Go30-jldr, F3Go30-31w5, F3Go30-w6y3)
+under it, plus two new children: F3Go30-4j4o.1 (bonus actions can't target a smoke tracker —
+`resolveBonusSheet_` resolves by date only, ignoring `targetMonth`, unlike identify/checkin) and
+F3Go30-4j4o.2 (cross-month bonus-edit test gap, elevated from an existing bd memory).
+
+Diagnosed the root cause of prod reports of PAX having to re-enter their name/email on the
+signup/check-in webapps: not a TTL in our code (plain localStorage, no expiry), but Safari/iOS
+WebKit's Intelligent Tracking Prevention, which caps all script-writable storage to 7 days
+without a genuine top-level visit to the storage-owning domain — and Apps Script's content
+always renders inside a nested sandboxed iframe served from a googleusercontent.com subdomain
+the user never directly navigates to, so that domain never earns "top-level visit" credit no
+matter how often the outer script.google.com page is visited. Confirmed "Chrome on iPhone" user
+reports are consistent with this (all iOS browsers are WebKit under the hood per Apple's App
+Store rules), and confirmed live on SIT that a real `target="_top"` link (not a script redirect)
+can carry a URL param back to the actual script.google.com address bar, escaping the sandbox.
+
+Built the fix: script/IdentityToken.js (new) mints/verifies stateless signed tokens
+(`mintedAtMs|f3Name|email` + HMAC-SHA256) for a bookmarkable "remember me" check-in link, wired
+into `handleCheckinIdentify_`/`handleSignupSave_`. Iterated the UX through several rounds of
+user feedback into a final design: typed identify always hands off to `?cmd=checkin&id=token`
+via a best-effort `window.top.location` redirect (escaping the sandbox), falling back to a
+real, always-working manual link if the browser rejects the redirect (confirmed live this
+happens inconsistently — Chromium sometimes blocks it with "no user activation" if the async
+API round-trip outlasts the click's activation window); landing on a valid token shows
+"Welcome back" plus a bookmark/Add-to-Home-Screen prompt only when the token's own embedded
+mint timestamp is under 1 minute old (IDENTITY_TOKEN_FRESH_WINDOW_MS_), distinguishing "you're
+seeing this link for the first time" from "reopened an old bookmark" without any client-side
+storage. A current-month signup now mints the same token and hands off into check-in
+automatically (with the same redirect/fallback pattern) instead of stranding the PAX on the
+signup confirmation screen.
+
+Found and fixed the same latent bug in SignupApp.html's existing `targetMonth`/`autoStart` deep
+link (used by check-in's "not registered" nudge): it read `window.location.search`
+client-side, which is empty inside the nested sandbox iframe — silently broken since it was
+built. Fixed the same way as the new token (`renderSignupPage_(e)` injects params server-side
+into the template). Also changed check-in's "Sign up" button from `window.open(...,'_blank')`
+to a same-tab redirect, since the new signup->checkin handoff only works as one continuous flow.
+
+Verified every branch live on SIT via ad hoc Playwright specs (written, run, then deleted —
+not kept as permanent tests): typed-identify auto-redirect + fallback, token arrival with
+fresh/stale bookmark messaging, invalid-token fallthrough, and the full signup->checkin handoff
+including the fallback-link path. All 20 `npm test` suites pass throughout.
+
+### Stopping point / what's next:
+- User asked whether the live-verification Playwright specs used today should be made
+  permanent (this area has real regression risk — the activation-timing race, sandbox iframe
+  mechanics, and redirect/fallback behavior can't be caught by `tools/smokeTest.js`'s API-only
+  checks). Recommended a new standalone spec (`tests/playwright/identity-token-flow.spec.js`,
+  outside the plain `npm test` run like `demo:screenshots`/`test:gaslogger`), with a dedicated
+  idempotent test PAX and an explicit negative case (next-month signup should NOT redirect).
+  Not yet built — awaiting go-ahead.
+- Not yet done: correcting the stale "spreadsheet double-counts" comment in BonusTypes.js's
+  header now that live testing disproved it.
+- `F3Go30-y55y` looks complete (all AC met, verified live per an earlier session) but is still
+  `in_progress` — flagged for closing, not yet closed.
+- Today's changes (BonusTypes.js, IdentityToken.js, CheckinApp.html/SignupApp.html/
+  dashboardWebapp.js/signupWebapp.js/WebApp.js changes) are deployed to SIT but uncommitted and
+  not yet on PROD.
+
+### Key Learnings:
+Apps Script serves web app content inside a nested sandboxed iframe from a per-deployment
+`googleusercontent.com` subdomain whose own `src` carries no query string at all — confirmed via
+direct Playwright frame-URL inspection. Any deep-link parameter (`?targetMonth=`, `?id=`, etc.)
+read via `window.location.search` inside that content is silently broken; it must be read
+server-side (`doGet(e)` -> `e.parameter`) and templated into the page explicitly. This is a
+general pattern for this codebase, not specific to one feature — worth checking any future
+`?param=` deep link against it before assuming client-side URL parsing works.
+A `target="_top"` link (or `window.top.location` assignment) can escape Apps Script's sandbox
+iframe and land the real browser tab on our own script.google.com URL, but only reliably when
+triggered by a genuine, recent user click — a script-driven attempt after an async API
+round-trip is a coin flip depending on how long the round-trip took relative to the browser's
+"sticky activation" window, confirmed inconsistent across runs against the identical code path.
+Any such "best-effort auto-redirect" needs an always-working manual fallback, not just a retry.
+A `setTimeout`-based fallback works cleanly for detecting a blocked navigation specifically
+because a *successful* top-level navigation tears down the entire page (including the timer)
+before it can fire — so the fallback UI and the redirect's destination page can never both be
+visible at once, regardless of which one actually happens.
+The `UNIQUE()`-based `UBonus Tracker` mirror (`=UNIQUE('Bonus Tracker'!A:F)`, columns
+Name/Period/UncappedPoints/Multiplier/Complete/Type — deliberately excluding When/What/Link)
+incidentally enforces the weekly bonus cap by collapsing duplicate-tuple rows before the
+Tracker's SUMIFS ever runs, and deliberately does NOT collapse uncapped-type entries because
+their "Uncapped Points" column holds the entry's own (normally-unique) Slack link. A formula
+that looks like it has "no cap logic" by reading just the final SUMIFS in isolation may have the
+real logic sitting upstream in how its named-range source is constructed — worth checking the
+full dependency chain before concluding a spreadsheet formula is missing a rule.
+
+## 2026-07-05 06:50:28
+
+### Summary:
+Continued from the earlier 2026-07-05 session (identity-token / bonus-refactor work, still uncommitted). Built the permanent Playwright regression spec that was left as the open decision: `tests/playwright/identity-token-flow.spec.js`, covering the signup→check-in identity-token flow end to end against live SIT — current-month signup minting a token and redirecting into check-in, reopening a bookmarked token link (bypasses the identify form), "Not you?" clearing storage back to a blank form, and a negative case confirming next-month-only signups do NOT mint a token or redirect (self-skips when SIT has no next-month tracker). Added `npm run test:identity-token`. Used two dedicated idempotent test PAX (TokenFlowTest, TokenFlowNextMonth) distinct from the demo-screenshots PAX.
+
+### Key Learnings:
+`attemptTopRedirect_`'s `window.top.location.href` navigation (CheckinApp.html / SignupApp.html) is genuinely non-deterministic under Playwright's synthetic clicks in headless Chromium — the same code path sometimes auto-redirects and sometimes falls back to the manual "Tap here to continue" link, run to run, matching the code's own comment that sticky user-activation isn't guaranteed on every browser. A naive `page.waitForURL()` flakes; the fix is a polling helper (`followTokenRedirect`) that watches for either the URL changing or the fallback link becoming visible and follows whichever happens, rather than assuming one path.
+
+Loose ends still open (not done this pass): commit today's work (nothing committed yet, all deployed to SIT only), fix the stale double-counting comment in BonusTypes.js's header, and close out F3Go30-y55y which looks complete but is still in_progress.
