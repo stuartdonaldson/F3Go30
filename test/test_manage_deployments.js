@@ -3,7 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { replaceConst, stampVersion, bumpPatchVersion_ } = require('../tools/manage-deployments');
+const { replaceConst, stampVersion, bumpPatchVersion_, bumpBuildNumber_, resetBuildNumber_ } = require('../tools/manage-deployments');
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f3go30-deploy-test-'));
@@ -82,11 +82,89 @@ function testBumpPatchVersionIsIdempotentAcrossCalls() {
   });
 }
 
+function testBumpPatchVersionDoesNotTouchBuild() {
+  withTempDir((dir) => {
+    const pkgPath = path.join(dir, 'package.json');
+    fs.writeFileSync(pkgPath, JSON.stringify({ version: '2.2.1', build: 7 }), 'utf8');
+
+    bumpPatchVersion_(pkgPath);
+
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    assert.equal(pkg.build, 7);
+  });
+}
+
+function testBumpBuildNumberIncrementsFromZeroWhenMissing() {
+  withTempDir((dir) => {
+    const pkgPath = path.join(dir, 'package.json');
+    fs.writeFileSync(pkgPath, JSON.stringify({ version: '2.3.13' }), 'utf8');
+
+    const build = bumpBuildNumber_(pkgPath);
+
+    assert.equal(build, 1);
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    assert.equal(pkg.build, 1);
+    assert.equal(pkg.version, '2.3.13'); // version untouched by a SIT build bump
+  });
+}
+
+function testBumpBuildNumberIsIdempotentAcrossCalls() {
+  withTempDir((dir) => {
+    const pkgPath = path.join(dir, 'package.json');
+    fs.writeFileSync(pkgPath, JSON.stringify({ version: '2.3.13', build: 0 }), 'utf8');
+
+    bumpBuildNumber_(pkgPath);
+    bumpBuildNumber_(pkgPath);
+    const build = bumpBuildNumber_(pkgPath);
+
+    assert.equal(build, 3);
+  });
+}
+
+function testResetBuildNumberZeroesExistingCount() {
+  withTempDir((dir) => {
+    const pkgPath = path.join(dir, 'package.json');
+    fs.writeFileSync(pkgPath, JSON.stringify({ version: '2.3.13', build: 12 }), 'utf8');
+
+    resetBuildNumber_(pkgPath);
+
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    assert.equal(pkg.build, 0);
+    assert.equal(pkg.version, '2.3.13'); // version untouched by a build reset
+  });
+}
+
+function testStampVersionUsesVersionOverride() {
+  withTempDir((dir) => {
+    const pkgPath = path.join(dir, 'package.json');
+    const versionPath = path.join(dir, 'version.js');
+
+    fs.writeFileSync(pkgPath, JSON.stringify({ version: '2.3.13', build: 4 }), 'utf8');
+    fs.writeFileSync(versionPath, "const APP_VERSION = '0.0.0';\nconst APP_VERSION_DATE = '';\nconst APP_DEPLOY_TARGET = '';\n", 'utf8');
+
+    const { version } = stampVersion('TEST', {
+      pkgPath,
+      versionPath,
+      now: '2026-06-05T12:34:56.000Z',
+      versionOverride: '2.3.13.4',
+    });
+
+    assert.equal(version, '2.3.13.4');
+    const out = fs.readFileSync(versionPath, 'utf8');
+    assert.ok(out.includes("const APP_VERSION = '2.3.13.4';"));
+  });
+}
+
 function run() {
   testReplaceConstAppendsWhenMissing();
   testStampVersionUpdatesAllFields();
+  testStampVersionUsesVersionOverride();
   testBumpPatchVersionIncrementsPatchOnly();
   testBumpPatchVersionIsIdempotentAcrossCalls();
+  testBumpPatchVersionDoesNotTouchBuild();
+  testBumpBuildNumberIncrementsFromZeroWhenMissing();
+  testBumpBuildNumberIsIdempotentAcrossCalls();
+  testResetBuildNumberZeroesExistingCount();
   console.log('test_manage_deployments: all tests passed');
 }
 

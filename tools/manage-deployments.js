@@ -3,13 +3,17 @@
  * F3Go30 Deployment Manager
  *
  * Run via npm scripts:
- *   npm run push            # bump patch + stamp TEMPLATE + clasp push -f to template scriptId
- *   npm run deploy:test     # bump patch + stamp TEST     + clasp push -f to test scriptId
+ *   npm run push            # bump patch, reset build + stamp TEMPLATE + clasp push -f to template scriptId
+ *   npm run deploy:test     # bump build only          + stamp TEST     + clasp push -f to test scriptId
  *
- * Every deploy bumps package.json's patch version first (unless --skip-bump), so each pushed/
- * deployed version is unique and traceable via APP_VERSION in the stamped version.js and the
- * named deployment's `clasp deploy --description`. release:patch/minor/major already bump via
- * `npm version`, so they pass --skip-bump to avoid double-bumping.
+ * package.json carries two counters: "version" (semver, PROD-facing) and "build" (a plain
+ * integer, SIT-facing). A test (SIT) deploy leaves "version" untouched and bumps "build"
+ * instead (unless --skip-bump), so repeated SIT deploys between PROD releases don't burn
+ * through patch numbers; the SIT-stamped APP_VERSION is `${version}.${build}` (e.g. "2.3.13.7"),
+ * so each SIT push is still uniquely identifiable. A template (PROD) deploy bumps the patch
+ * segment of "version" (unless --skip-bump) and *always* resets "build" back to 0 — even under
+ * --skip-bump — since shipping to PROD closes out the SIT cycle for whatever version is being
+ * released; PROD only ever sees the bare patch version, never a build suffix.
  *
  * Direct invocation:
  *   node tools/manage-deployments.js --deploy-template
@@ -88,7 +92,9 @@ function stampVersion(label, options = {}) {
   const now = options.now || new Date().toISOString();
 
   const pkg     = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-  const version = pkg.version || '0.0.0';
+  // versionOverride lets callers stamp a display string that differs from the bare
+  // package.json "version" — e.g. deploy()'s SIT path appends ".<build>".
+  const version = options.versionOverride || pkg.version || '0.0.0';
 
   let src = fs.readFileSync(versionPath, 'utf8');
 
@@ -104,9 +110,8 @@ function stampVersion(label, options = {}) {
 
 /**
  * Increments the patch segment of package.json's semver "version" field and writes it back.
- * Every deploy() call bumps this first (unless --skip-bump), so each pushed/deployed version is
- * unique and traceable — see APP_VERSION in the stamped version.js and the named deployment's
- * `clasp deploy --description`.
+ * Called by deploy()'s template (PROD) path only (unless --skip-bump) — see bumpBuildNumber_
+ * for the SIT-side counter, which this does not touch.
  */
 function bumpPatchVersion_(pkgPath) {
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
@@ -118,6 +123,34 @@ function bumpPatchVersion_(pkgPath) {
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
 
   return newVersion;
+}
+
+/**
+ * Increments package.json's "build" field (a plain integer, not part of semver "version") and
+ * writes it back. Called by deploy()'s test (SIT) path only (unless --skip-bump) — this is what
+ * lets repeated SIT deploys get unique, traceable APP_VERSION stamps (`${version}.${build}`)
+ * without burning through the PROD-facing patch counter on every SIT push.
+ */
+function bumpBuildNumber_(pkgPath) {
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  const build = (parseInt(pkg.build, 10) || 0) + 1;
+
+  pkg.build = build;
+  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+
+  return build;
+}
+
+/**
+ * Resets package.json's "build" counter to 0. Called unconditionally (even under --skip-bump)
+ * by deploy()'s template (PROD) path — shipping to PROD closes out the SIT cycle for whatever
+ * version is being released, so the next SIT deploy after a PROD release starts back at
+ * "<version>.1" instead of continuing an old count.
+ */
+function resetBuildNumber_(pkgPath) {
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  pkg.build = 0;
+  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
 }
 
 /**
@@ -209,14 +242,28 @@ function deploy(targetKey, options = {}) {
   writeClasp(scriptId);
   console.log(`✅ .clasp.json written (rootDir: script, scriptId: ${scriptId.slice(0, 12)}…)`);
 
-  // Every deploy gets a unique version unless the caller already bumped via `npm version`
-  // (release:patch/minor/major) — see bumpPatchVersion_ above.
-  if (!options.skipBump) {
-    const bumped = bumpPatchVersion_(PKG_PATH);
-    console.log(`🔢 package.json version bumped to v${bumped}`);
+  // TEST (SIT) bumps the build counter and leaves "version" alone; TEMPLATE (PROD) bumps the
+  // patch version and always resets build to 0 — see bumpBuildNumber_/resetBuildNumber_/
+  // bumpPatchVersion_ above for why these are split.
+  let version;
+  if (targetKey === 'test') {
+    if (!options.skipBump) {
+      const build = bumpBuildNumber_(PKG_PATH);
+      console.log(`🔢 build number bumped to ${build}`);
+    }
+    const pkg = JSON.parse(fs.readFileSync(PKG_PATH, 'utf8'));
+    version = `${pkg.version}.${pkg.build || 0}`;
+  } else {
+    if (!options.skipBump) {
+      const bumped = bumpPatchVersion_(PKG_PATH);
+      console.log(`🔢 package.json version bumped to v${bumped}`);
+    }
+    resetBuildNumber_(PKG_PATH);
+    console.log('🔢 build counter reset to 0');
+    version = JSON.parse(fs.readFileSync(PKG_PATH, 'utf8')).version;
   }
 
-  const { version } = stampVersion(label);
+  stampVersion(label, { versionOverride: version });
 
   console.log(`\n🚀 Running: clasp push -f  (clasp_config_auth=${claspAuthPath})\n`);
   execSync('clasp push -f', {
@@ -302,5 +349,7 @@ module.exports = {
   replaceConst,
   stampVersion,
   bumpPatchVersion_,
+  bumpBuildNumber_,
+  resetBuildNumber_,
   TARGETS,
 };
