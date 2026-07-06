@@ -67,6 +67,13 @@ period) and real community (a PAX board everyone can see).
 > 'HOW are you going to be successful this month?'
 > That's the whole framework. No jargon, no long form — just three honest sentences."
 
+**Screenshot:** `04-signup-choose-month.png`
+
+> "Once next month's tracker is open, you get one extra choice here: this month or next.
+> It defaults to next month — most sign-ups happen ahead of the month starting — but you can
+> switch to the current one instead. If next month isn't open yet, this step is skipped entirely
+> and it just saves you into the current month."
+
 **Screenshot:** `05-signup-done.png`
 
 > "Submit, and you're committed. A confirmation email is on its way, and there's a link straight

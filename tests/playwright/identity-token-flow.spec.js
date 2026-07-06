@@ -85,6 +85,26 @@ async function followTokenRedirect(page, fallbackLinkLocator, timeout = 20000) {
   throw new Error('Neither the automatic top-redirect nor its fallback link appeared within timeout');
 }
 
+/**
+ * Same attemptTopRedirect_ reliability caveat as followTokenRedirect, but for the
+ * known-but-unregistered fallback, whose fallback UI is a real button (#idSignupBtn,
+ * CheckinApp.html) rather than an anchor — click it instead of following an href, and wait
+ * for the resulting navigation into ?cmd=signup rather than ?cmd=checkin&id=.
+ */
+async function followSignupFallthroughRedirect(page, fallbackButtonLocator, timeout = 20000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (page.url().includes('cmd=signup')) return;
+    if (await fallbackButtonLocator.isVisible().catch(() => false)) {
+      await fallbackButtonLocator.click();
+      await page.waitForURL((url) => url.href.includes('cmd=signup'), { timeout: timeout });
+      return;
+    }
+    await page.waitForTimeout(300);
+  }
+  throw new Error('Neither the automatic top-redirect nor its fallback button appeared within timeout');
+}
+
 /** Fills the signup app's who/what/how + team for the given PAX up through the info step. */
 async function fillSignupInfo(app, pax) {
   await app.locator('#idF3Name').fill(pax.f3Name);
@@ -225,11 +245,17 @@ test.describe('Identity-token check-in flow (SIT)', () => {
   // Check-in's PaxDB fallback (handleCheckinIdentify_, dashboardWebapp.js) carries a PAX known
   // to PaxDB from a prior signup — but absent from the CURRENT month's tracker — straight into
   // a prefilled signup instead of a dead-end "we couldn't find you" message. Requires a fixture
-  // PAX that's in PaxDB (via a completed prior-month signup + scanTrackers) but not on the
-  // current tracker's roster — see the bead's "FIXTURE DECISION" note. Not yet established as of
-  // Stage 2; the plan explicitly allows deferring these to Stage 4 once the fixture exists.
+  // PAX that's in PaxDB but not on the current tracker's roster — see the bead's "FIXTURE
+  // DECISION" note. Established in Stage 4: LateSignupTest/latesignup@example.com signed up
+  // for the "next" month (August 2026, created via createTrackerForMonth) using the normal
+  // signup webapp save action, then runScanTrackers ingested that tracker into PaxDB. Being
+  // registered for next-month-only (not current) is sufficient to be "known but unregistered
+  // this month" — findPaxDbMatch_ searches PaxDB across every sheetId, not just prior months,
+  // so this is behaviorally identical to a stale prior-month signup for this test's purposes.
+  // See docs/OPERATIONS.md's fixture note for the exact setup steps (reusable — don't re-run
+  // signup unless the fixture needs re-establishing).
   const LATE_SIGNUP_PAX = { f3Name: 'LateSignupTest', email: 'latesignup@example.com' };
-  const KNOWN_NOT_REGISTERED_FIXTURE_READY = false; // flip once Stage 4 establishes the fixture
+  const KNOWN_NOT_REGISTERED_FIXTURE_READY = true;
 
   test('typed identify for a truly-unknown name+email shows the sign-up prompt without auto-redirecting', async ({ page }) => {
     await page.goto(checkinUrl, { waitUntil: 'networkidle' });
@@ -255,7 +281,10 @@ test.describe('Identity-token check-in flow (SIT)', () => {
     await app.locator('#idEmail').fill(LATE_SIGNUP_PAX.email);
     await app.locator('#identifyBtn').click();
 
-    await page.waitForURL((url) => url.href.includes('cmd=signup'), { timeout: 15000 });
+    // Same attemptTopRedirect_ reliability caveat as followTokenRedirect above — the typed-miss
+    // branch's fallback UI is the (real) #idSignupBtn button (CheckinApp.html), not an anchor,
+    // so follow it the same way a real user would tap it when the automatic redirect doesn't fire.
+    await followSignupFallthroughRedirect(page, app.locator('#idSignupBtn'));
     const app2 = page.frameLocator('iframe').frameLocator('iframe');
     await expect(app2.locator('#step-info')).toBeVisible({ timeout: 15000 });
     await expect(app2.locator('#infoF3Name')).toHaveText(LATE_SIGNUP_PAX.f3Name);
@@ -271,6 +300,6 @@ test.describe('Identity-token check-in flow (SIT)', () => {
     await app.locator('#idF3Name').fill(LATE_SIGNUP_PAX.f3Name);
     await app.locator('#idEmail').fill(LATE_SIGNUP_PAX.email);
     await app.locator('#identifyBtn').click();
-    await page.waitForURL((url) => url.href.includes('cmd=signup'), { timeout: 15000 });
+    await followSignupFallthroughRedirect(page, app.locator('#idSignupBtn'));
   });
 });

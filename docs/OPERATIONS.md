@@ -175,11 +175,34 @@ curl -s -X POST "https://script.google.com/macros/s/<deploymentId>/exec?cmd=chec
 ```
 
 `runScanTrackers` must have run (PaxDB is scan-derived, not written synchronously by sign-up)
-after any fixture PAX's tracker is placed and before this check — see the bead's fixture note
-for the do-once setup that established the current fixture. A truly-unknown F3 Name + Email
+after any fixture PAX's tracker is placed and before this check. A truly-unknown F3 Name + Email
 (present in neither PaxDB nor the current tracker) must still show the generic message with no
 auto-redirect — the two cases are deliberately visually indistinguishable except for that
 redirect, preserving the anti-enumeration property described in `docs/DESIGN.md`.
+
+**Established SIT fixture (F3Go30-xj1q.1, Stage 4):** `LateSignupTest` /
+`latesignup@example.com`, signed up for the "next" month only. There was no supported way to
+write a PAX row directly into an existing prior-month tracker (no admin action for it, and
+hand-editing a live spreadsheet via browser automation was correctly refused as an unsanctioned
+write path) — a normal `save` signup call against a freshly created "next" month tracker gives
+the same fixture shape (`PaxDB` entry tied to a non-current `sheetId`) via a fully supported
+path:
+```bash
+# One-time setup (already done on SIT as of 2026-07; re-run only if the fixture needs
+# re-establishing, e.g. after the "next" month becomes "current" and rolls this PAX in):
+node tools/callWebapp.js createTrackerForMonth --env sit --body '{"startDateIso":"2026-08-01"}'
+node tools/callWebapp.js save --cmd signup --env sit --body \
+  '{"f3Name":"LateSignupTest","email":"latesignup@example.com","targetMonth":"next",
+    "teamType":"AO","team":"Crucible","who":"Fixture WHO for known-but-unregistered test",
+    "what":"Fixture WHAT for known-but-unregistered test","how":"Fixture HOW for known-but-unregistered test"}'
+node tools/callWebapp.js runScanTrackers --env sit
+```
+This PAX is intentionally left in place (same rationale as `Go30-Demo-Script.md`'s NoSadClown) —
+it's reused by both `tests/playwright/identity-token-flow.spec.js` and
+`tests/playwright/demo-screenshots.spec.js`'s `06b-checkin-known-not-enrolled.png` shot. It will
+need to be re-established once "next" rolls forward into "current" (at that point it would start
+resolving as registered, breaking the fixture) — watch for that if these tests start failing
+after a month boundary passes.
 
 ### CopyTemplate — standing up a new environment
 

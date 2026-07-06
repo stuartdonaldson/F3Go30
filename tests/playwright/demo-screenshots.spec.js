@@ -48,6 +48,12 @@ const BONUS_ENTRY_EDITED = {
   message: "Brought Splinter out to the Hawk's Nest AO this morning (edited during demo)",
 };
 
+// Known-but-not-registered-this-month fallthrough fixture (F3Go30-xj1q.1) — same fixture PAX
+// as tests/playwright/identity-token-flow.spec.js. Registered for "next" month only (not
+// current), so check-in's PaxDB fallback treats them as known-but-unregistered. See
+// docs/OPERATIONS.md's fixture note for how this PAX was established.
+const KNOWN_NOT_REGISTERED_PAX = { f3Name: 'LateSignupTest', email: 'latesignup@example.com' };
+
 // Public PAX web apps need no Google login and no real-viewport GAS editor
 // interactions, so unlike the rest of the suite this spec can run headless.
 test.use({ storageState: undefined, viewport: { width: 390, height: 844 }, headless: true });
@@ -194,5 +200,23 @@ test.describe('Go30 demo screenshots (SIT)', () => {
     await expect(app.locator('#bonusFormCard')).toBeHidden({ timeout: 15000 });
     await expect(app.locator('#bonusList')).toContainText(BONUS_ENTRY_EDITED.message, { timeout: 15000 });
     await shot(page, '14-bonus-edited.png');
+  });
+
+  test('check-in known-but-unregistered fallthrough into prefilled signup', async ({ page }) => {
+    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
+    await dismissGasBanner(page);
+    const app = page.frameLocator('iframe').frameLocator('iframe');
+
+    await app.locator('#idF3Name').fill(KNOWN_NOT_REGISTERED_PAX.f3Name);
+    await app.locator('#idEmail').fill(KNOWN_NOT_REGISTERED_PAX.email);
+    await app.locator('#identifyBtn').click();
+
+    // The known-but-unregistered fallback auto-redirects the whole page into a prefilled
+    // signup (?cmd=signup&autoStart=1&targetMonth=current) rather than showing check-in.
+    await page.waitForURL((url) => url.href.includes('cmd=signup'), { timeout: 15000 });
+    await dismissGasBanner(page);
+    const signupApp = page.frameLocator('iframe').frameLocator('iframe');
+    await expect(signupApp.locator('#step-info')).toBeVisible({ timeout: 15000 });
+    await shot(page, '06b-checkin-known-not-enrolled.png');
   });
 });
