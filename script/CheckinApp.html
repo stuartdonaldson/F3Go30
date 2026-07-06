@@ -320,6 +320,10 @@
 <script>
   var WEBAPP_URL = <?!= webAppUrl ?>;
   var APP_VERSION = <?!= JSON.stringify(appVersion) ?>;
+  var CMD_ = 'checkin'; // read by IdentityCore's callApi() to post to ?cmd=checkin
+</script>
+<?!= include_('IdentityCore') ?>
+<script>
   // A ?id=<token> deep-link param can't be read client-side via window.location — the page
   // content runs inside a nested sandbox iframe whose own src carries no query string at all
   // (confirmed live 2026-07-04), so renderCheckinPage_ (dashboardWebapp.js) reads it
@@ -329,25 +333,6 @@
   var SITE_Q_NAME = <?!= JSON.stringify(siteQName) ?>;
   var SITE_Q_EMAIL = <?!= JSON.stringify(siteQEmail) ?>;
   var NAME_SPACE = <?!= JSON.stringify(nameSpace) ?>;
-
-  // Same storage key the signup webapp uses (SignupApp.html) — a PAX who already signed up
-  // gets their F3 Name/Email prefilled here without retyping.
-  var IDENTITY_STORAGE_KEY = 'go30SignupIdentity';
-
-  function saveIdentityToStorage_(f3Name, email) {
-    try {
-      localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify({ f3Name: f3Name, email: email }));
-    } catch (e) { /* localStorage unavailable — not fatal */ }
-  }
-
-  function loadIdentityFromStorage_() {
-    try {
-      var raw = localStorage.getItem(IDENTITY_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) {
-      return null;
-    }
-  }
 
   var savedIdentity = loadIdentityFromStorage_();
   var state = {
@@ -377,22 +362,6 @@
     if (name === 'checkin' || name === 'dashboard') state.bonusReturnStep = name;
   }
 
-  /** Rejects on any failure (HTTP error, bad JSON, {ok:false}) so every caller has one .catch(). */
-  function callApi(action, payload) {
-    var body = Object.assign({ action: action }, payload);
-    return fetch(WEBAPP_URL + '?cmd=checkin', {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(body),
-    }).then(function(res) {
-      if (!res.ok) throw new Error('Server returned HTTP ' + res.status);
-      return res.json();
-    }).then(function(json) {
-      if (!json.ok) throw new Error(json.error || 'Server reported an error with no detail');
-      return json;
-    });
-  }
-
   function showApiError_(action, err) {
     var detail =
       'Time: ' + new Date().toISOString() + '\n' +
@@ -412,24 +381,6 @@
     }
 
     $('apiErrorBanner').classList.remove('hidden');
-  }
-
-  function hideApiError_() {
-    $('apiErrorBanner').classList.add('hidden');
-  }
-
-  function setButtonLoading_(btn, isLoading, loadingText) {
-    if (isLoading) {
-      // Only capture the true original label on the not-loading -> loading transition, so a
-      // second setButtonLoading_(btn, true, ...) call (e.g. relabeling "Saving…" to "Loading
-      // dashboard…" mid-flow) doesn't clobber it with the current loading text.
-      if (!btn.disabled) btn.dataset.originalText = btn.textContent;
-      btn.textContent = loadingText || 'Working…';
-      btn.disabled = true;
-    } else {
-      btn.textContent = btn.dataset.originalText || btn.textContent;
-      btn.disabled = false;
-    }
   }
 
   // monthLabel is shown elsewhere (checkinSub) once identified — the header itself only ever
@@ -459,24 +410,6 @@
   $('bookmarkHereDismiss').addEventListener('click', function() {
     $('bookmarkHereNote').classList.add('hidden');
   });
-
-  /** Attempts a real top-level navigation to `url` — escapes the GAS sandbox iframe the same
-   * way a real user-clicked target="_top" link does (confirmed live 2026-07-04), but triggered
-   * from script after an async API call rather than directly from the click itself. Relies on
-   * the original click's "user activation" still being sticky despite that gap, which isn't
-   * guaranteed on every browser — `fallback()` always runs a short moment later if the
-   * navigation didn't actually happen. A successful navigation tears the whole page (and this
-   * timer) down before it can fire, so there's never a moment where both the redirect and the
-   * fallback UI are visible at once. */
-  function attemptTopRedirect_(url, fallback) {
-    var fallbackTimer = setTimeout(fallback, 400);
-    try {
-      window.top.location.href = url;
-    } catch (e) {
-      clearTimeout(fallbackTimer);
-      fallback();
-    }
-  }
 
   /** Renders a successful identify response (always reached via a saved-link token — either
    * this page's own URL carried one, or a typed identify's automatic redirect landed here) into

@@ -1,0 +1,88 @@
+<script>
+  // Shared identity/HTTP client plumbing for SignupApp.html and CheckinApp.html — pulled in via
+  // <?!= include_('IdentityCore') ?> (WebApp.js's include_) so this isn't copy-pasted per page.
+  // Each including page must define `WEBAPP_URL` and `var CMD_ = 'signup'|'checkin';` BEFORE this
+  // include, so callApi() posts to the right ?cmd= endpoint for that page.
+  //
+  // NOT included here (deliberately left page-specific, not identical between the two apps as of
+  // the Stage 1 line-by-line diff — F3Go30-xj1q.1):
+  //   - showApiError_: CheckinApp's banner includes a Site-Q mailto contact link
+  //     (SITE_Q_NAME/SITE_Q_EMAIL, only known post-identify on that page); SignupApp's is the
+  //     simpler "screenshot this and send to your Site Q" text. Collapsing these would be a
+  //     user-visible behavior change on one page or the other, which Stage 1 (pure refactor, no
+  //     behavior change) must not do.
+
+  var IDENTITY_STORAGE_KEY = 'go30SignupIdentity';
+
+  /** Remembers F3 Name/Email locally so a returning user doesn't have to retype them. */
+  function saveIdentityToStorage_(f3Name, email) {
+    try {
+      localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify({ f3Name: f3Name, email: email }));
+    } catch (e) { /* localStorage unavailable (private browsing, etc.) — not fatal */ }
+  }
+
+  function loadIdentityFromStorage_() {
+    try {
+      var raw = localStorage.getItem(IDENTITY_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /** Rejects on any failure (HTTP error, bad JSON, {ok:false}) so every caller has one .catch(). */
+  function callApi(action, payload) {
+    var body = Object.assign({ action: action }, payload);
+    return fetch(WEBAPP_URL + '?cmd=' + CMD_, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(body),
+    }).then(function(res) {
+      if (!res.ok) throw new Error('Server returned HTTP ' + res.status);
+      return res.json();
+    }).then(function(json) {
+      if (!json.ok) throw new Error(json.error || 'Server reported an error with no detail');
+      return json;
+    });
+  }
+
+  function hideApiError_() {
+    $('apiErrorBanner').classList.add('hidden');
+  }
+
+  /**
+   * Disables a button and swaps its label while an async callApi() call is in flight, so a
+   * click is never left looking like it didn't register during the round-trip to the server.
+   * Only captures the true original label on the not-loading -> loading transition, so a second
+   * setButtonLoading_(btn, true, ...) call (e.g. relabeling "Saving…" to "Loading dashboard…"
+   * mid-flow) doesn't clobber it with the current loading text.
+   */
+  function setButtonLoading_(btn, isLoading, loadingText) {
+    if (isLoading) {
+      if (!btn.disabled) btn.dataset.originalText = btn.textContent;
+      btn.textContent = loadingText || 'Working…';
+      btn.disabled = true;
+    } else {
+      btn.textContent = btn.dataset.originalText || btn.textContent;
+      btn.disabled = false;
+    }
+  }
+
+  /** Attempts a real top-level navigation to `url` — escapes the GAS sandbox iframe the same
+   * way a real user-clicked target="_top" link does (confirmed live 2026-07-04), but triggered
+   * from script after an async API call rather than directly from the click itself. Relies on
+   * the original click's "user activation" still being sticky despite that gap, which isn't
+   * guaranteed on every browser — `fallback()` always runs a short moment later if the
+   * navigation didn't actually happen. A successful navigation tears the whole page (and this
+   * timer) down before it can fire, so there's never a moment where both the redirect and the
+   * fallback UI are visible at once. */
+  function attemptTopRedirect_(url, fallback) {
+    var fallbackTimer = setTimeout(fallback, 400);
+    try {
+      window.top.location.href = url;
+    } catch (e) {
+      clearTimeout(fallbackTimer);
+      fallback();
+    }
+  }
+</script>

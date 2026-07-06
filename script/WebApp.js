@@ -30,6 +30,16 @@ function jsonOutput_(obj) {
 }
 
 /**
+ * Inlines an HtmlService-served file's raw content — used by templates rendered via
+ * createTemplateFromFile (SignupApp/CheckinApp) to pull in a shared <script>-only fragment
+ * with `<?!= include_('IdentityCore') ?>`, so identity/HTTP client plumbing shared by both
+ * apps lives in one file (script/IdentityCore.html) instead of being copy-pasted per page.
+ */
+function include_(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+/**
  * Renders the default (no-cmd) landing page: links to Sign Up, Dashboard/Check-in, and the
  * current month's tracker spreadsheet. Replaces the old bare {"status":"ok"} JSON response.
  */
