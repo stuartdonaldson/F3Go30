@@ -31,6 +31,8 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   get stuck re-typing their name/email every visit, or land back on the sign-in form after
   reopening the app) — the bookmark link is now assigned the instant identify succeeds instead of
   via a follow-up redirect that some phone browsers could block.
+- Removed an unnecessary "tap here to continue" step after entering your name/email on check-in —
+  you now land straight on the check-in screen (with the bookmark note) in one step.
 - A PAX known from a prior month who isn't yet signed up for the current month is now carried
   straight into a pre-filled sign-up instead of being told they can't be found.
 - The check-in page's browser tab now shows your own name and the group's logo once you've
