@@ -922,3 +922,101 @@ Version 2.3.13 was manually bumped and deployed to PROD by the user during this 
 Apps Script's `HtmlOutput` renders page content inside a cross-origin sandboxed iframe, so client-side `document.title` changes never reach the top-level (bookmarkable) document — the only way to control a per-PAX page title is server-side, via `HtmlOutput.setTitle()` at render time, decoding whatever identity is available from the request (here, the saved-link token) before the template ever evaluates.
 `HtmlOutput.setFaviconUrl()` is the only supported way to set a web app's favicon — Apps Script's own docs state `<link rel="icon">` tags written directly in an HTML file are ignored, and it requires an externally-hosted URL since clasp has no static binary-asset hosting. A public GitHub repo's `raw.githubusercontent.com` link is sufficient; no GitHub Pages setup needed.
 `recentlyMinted`/token-freshness UI (the bookmark note) is evaluated once, server-side, at page load — there's no client-side timer re-checking it while the page stays open, so a note gated that way can look like it "should" auto-hide on a timeout but actually only stops appearing on the *next* fresh page load after the window passes; a manual dismiss control is still needed for the current view regardless of the window length.
+
+## 2026-07-05 16:48:49
+
+### Summary:
+Documentation audit against code-as-source-of-truth, plus planning a web-app identity
+hardening effort. On branch `hardening/identify-once` (cut from main this session).
+
+**Doc reconciliation (commits a718901, c2753bf, 9f1c182):**
+- Ran code-to-doc consistency audit across all docs vs the 62-file GAS source.
+- DESIGN.md: removed dead `macros.js` module/risk rows (file deleted, F3Go30-j1t closed) and the
+  resolved nag.js/FunFacts "known drift" note (issues closed, code already reads FunFacts); added
+  ~14 missing modules to the architecture table (IdentityToken.js, BonusTypes.js, email modules,
+  utilities, etc.).
+- CONTEXT.md/OPERATIONS.md: cleared the same stale nag/FunFacts language; documented the
+  bonusList/bonusAdd/bonusEdit web-app actions.
+- Marked four planning-stage docs Historical (their proposed/pending headers no longer matched
+  shipped state): disposition-plan.md, deployment-model.md, signup-webapp-requirements.md,
+  gas-best-practices-review.md.
+- PLAN.md: deleted the fully-closed "Hardening work" backlog + stale About-menu note.
+- Documented the identity-token bookmark/redirect/fallback flow in DESIGN.md + CONTEXT.md + demo
+  script; fixed check-in button terminology to actual UI ("I Hit it!"/"Missed it"/"No Check-in",
+  three states) and bonus-rule attribution (BonusTypes.js BONUS_TYPE_DEFS_, not bonusWebapp.js).
+
+**Hardening plan + beads:**
+- Wrote a 4-stage plan to consolidate signup/check-in identity plumbing (shared IdentityCore.html
+  partial) and auto-carry a known-but-current-month-unregistered PAX into signup; reviewed it on
+  Opus and resolved findings (PaxDB fallback belongs only in the resolveCheckinIdentity_ miss
+  branch, not tokenInvalid; signup side needs zero changes; anti-enum stays exact-both-fields).
+- Created bd epic F3Go30-xj1q (Web app hardening) with children .1 (identity consolidation +
+  fallthrough, full plan in Design), .2 (qualify scanTrackers sources, smoke-safe, folder-scoped),
+  .3 (CopyTemplate safe-Config + rename copies by NameSpace + document env-standup vision).
+- SIT test fixture decision: copy a prior tracker into existing SIT folder, rename with SIT
+  marker, runScanTrackers before check-in identify.
+
+**Release tracking (commits eb704b8, f164549):**
+- Created docs/CHANGELOG.md (user-facing) with v2.3 PAX web-app feature list; registered it in
+  CLAUDE.md Document Map + ROADMAP pointer.
+- Defined the changelog inclusion rule to decouple from deploy churn: 3 tiers (SIT build = git
+  only; PROD patch = git + work-log; user/admin-facing = changelog at minor-series level), with an
+  Unreleased bucket and a CLAUDE.md placement rule.
+
+### Key Learnings:
+- Version scheme (manage-deployments.js): package.json carries two counters — semver `version`
+  (PROD, 3-segment) and integer `build` (SIT, appended as 4th segment). SIT deploys bump build
+  only; PROD deploys bump patch + reset build. So patch/build churn must not drive changelog entries.
+- copyTemplate.js renames the template copy (line 115) but NOT the tracker copies (line 132), and
+  copies Config verbatim — a stood-up test env inherits PROD's Email Test Mode (live-email risk)
+  and NameSpace (collision). Captured as hardening bead .3.
+- PaxDB is scan-derived (signupWebapp.js:524) — signup does not populate it synchronously; any
+  "known in PaxDB" test fixture must runScanTrackers first.
+
+## 2026-07-05 21:22:48
+
+### Summary:
+Finished Stage 4 (final stage) of F3Go30-xj1q.1 on branch `hardening/identify-once`, continuing
+from a prior agent's Stages 1-3. Established the SIT fixture the Stage 2 e2e tests were deferred
+on (LateSignupTest/latesignup@example.com, signed up for "next" month only via the normal signup
+save action + `runScanTrackers`), flipped on and fixed the two previously-skipped
+known-but-unregistered fallthrough tests in `identity-token-flow.spec.js` (they needed the same
+`attemptTopRedirect_` fallback-button-click pattern as the existing token-redirect tests, not a
+bare `waitForURL`). Added a new `demo-screenshots.spec.js` test capturing
+`06b-checkin-known-not-enrolled.png` and referenced it plus the newly-exercised
+`04-signup-choose-month.png` in `Go30-Demo-Script.md`. Documented the fixture setup in
+OPERATIONS.md. Full verification green against deployed SIT: `npm test` (20 suites),
+`test:identity-token` (7/7), `demo:screenshots` (3/3). Committed as `cca93ba`. Closed bd issue
+F3Go30-xj1q.1 and, since all 3 children were now done, closed the parent epic F3Go30-xj1q too.
+
+### Key Learnings:
+- `scanTrackers`'s folder walk re-registers any qualifying spreadsheet still physically present
+  in the sibling folder on every run — de-registering a stray tracker from TrackerDB without
+  trashing the file is not durable; it just gets re-added on the next scan. Actual removal
+  requires `cleanupTracker` with `trashSpreadsheet:true` (Drive-trash, recoverable).
+- Discovered and fixed pre-existing SIT debris unrelated to this branch: two duplicate TrackerDB
+  registrations sharing the same StartDate (July 1 and June 1 2026) made
+  `resolveTrackerDbRowForContextDate_` throw on ambiguous match, breaking the dashboard for any
+  date in those months (surfaced as `demo-screenshots.spec.js`'s dashboard step failing with
+  `no_tracker_for_date`). Removed the orphaned duplicates; the actively-used registration per
+  month was left in place.
+- `findPaxDbMatch_` (and the check-in PaxDB fallback built on it) searches PaxDB across every
+  `sheetId`, not just prior months — so a next-month-only signup is a valid, fully-supported way
+  to construct a "known but unregistered this month" fixture, without needing to hand-edit a
+  live tracker spreadsheet (which the sandbox correctly refused as an unsanctioned write path).
+- Never background a long-running command with a bare shell `&` inside a Bash tool call when
+  `run_in_background: true` is available — the two can end up running concurrently against the
+  same live SIT fixtures, producing flaky/racy test failures that look like real bugs.
+
+## 2026-07-06 13:55:17
+
+### Summary:
+Diagnosed and fixed the identify/bookmark-link flow end to end. Root-caused three separate live bugs (redirect to login page, exceptionally slow sign-in, repeated-identify loop) down to bfcache/suspended-tab resume, Apps Script platform request queueing, and a browser "sticky activation" timing gap in the old script-driven redirect. Replaced the signed IdentityToken.js scheme with a new CheckinSessions.js GUID-session store (PaxCache-style roster index, lock-free touch, automatic migration of pre-rollout tokens preserving their original mint time, nightly cleanup trigger). Redesigned typed-identify as a real form POST that bakes its session guid into the form's own `action` URL before submission, then attempts an immediate on-load top-level redirect — reliable this time because it fires the instant the fresh page loads (activated by the very navigation that got there), unlike the old post-async-gap redirect. Fixed the resulting UX flicker (contradictory "Welcome back" + "tap below to open your link" shown together), made the "Welcome" vs "Welcome back" + bookmark-nudge decision exact (Created-At-vs-Last-Used-At comparison) instead of a 60s heuristic, fixed the same flicker class in SignupApp's autoStart path, fixed HomeApp.html's missing `target="_top"` on internal links, gated the next-month signup nudge to a 3-day window, and auto-redirected known-but-unregistered typed identifies straight into a prefilled signup instead of requiring a manual click. Added `test_checkin_sessions.js` and nudge-window tests; verified everything live on SIT via Playwright (9/9) and the full unit suite (23 files) after every change, catching and fixing several regressions the tests themselves surfaced (a var-hoisting bug, a dual-trigger race between the typed-form and saved-token identify paths, and stale test expectations from the old flaky-redirect era).
+
+### Key Learnings:
+- Apps Script webapp requests can queue for tens of seconds before `doPost` even begins executing — invisible to our own `GasLogger` timers (which only start once the function body runs). Confirmed by correlating a captured HAR's request timestamps against Axiom log timestamps for the same request; the gap between them is pure platform queueing, not our code.
+- Browser "sticky activation" for a sandboxed iframe's script-triggered top-level navigation is a race against time, not a hard permission: attempting the redirect immediately on a fresh page load (the load itself was just activated by the navigation that produced it) is reliable; attempting the same redirect later, after an async round trip on an already-loaded page, is not — that gap is exactly what made the old typed-identify flow intermittently strand PAX on the identify form.
+- A `<form>` POST's resulting address bar only ever reflects the form's `action` URL — never anything from the POST body. A server-computed value (a freshly minted session id) can't retroactively appear in the URL; the fix is to decide the identifier *before* the POST (mint a placeholder guid, bake it into the form's `action`) rather than trying to inject it after the fact.
+- GAS/JS `var` declarations are hoisted but unassigned until their line actually executes. Calling a function synchronously that reads a `var` declared *later* in the same script (e.g. from a template-injected result processed inline) hits `undefined` — the async-callback paths in this codebase never hit this because by the time their `.then()` fires, the whole script has already run top-to-bottom. `setTimeout(fn, 0)` reproduces that same "runs after everything's defined" timing without a real network wait.
+- Feeding the same identifier into two different "which flow am I in" checks in one function (a typed-form's session guid also satisfying the bookmarked-token check) fires both — causing two live UI updates to race for the same DOM. Each entry point needs a signal that's exclusively true for it, not a value that happens to also look valid to a sibling code path.
+- Silent flakiness (redirected to login, "stuck" on a screen) is often the *symptom*, not the bug — the two live incidents this session (Little John, Crazy Ivan) both traced back to timing/state assumptions (bfcache resume; activation-expiry) that only failed intermittently, never in a way a single manual test would reliably reproduce. Server-side logs proving "every request that reached us succeeded" was the key signal that the failure was happening *before* the server ever saw it.

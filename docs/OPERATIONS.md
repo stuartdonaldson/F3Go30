@@ -255,7 +255,7 @@ visible only when the spreadsheet is opened by the owner account.
 | Menu Item | Function | When to Use |
 |-----------|----------|------------|
 | Copy and Initialize | `copyAndInit()` | Start of each new month (manual). Registers the new tracker in `TrackerDB` and installs its form-submit trigger directly — no separate trigger step needed on the copy. |
-| Initialize Template Dispatch Triggers (Template only!) | `initializeTemplateDispatchTriggers()` | Once, on the Template only — installs the daily minus-one and nag-email dispatch triggers. Warns if run elsewhere. |
+| Initialize Template Dispatch Triggers (Template only!) | `initializeTemplateDispatchTriggers()` | Once, on the Template only — installs the daily minus-one, nag-email, and check-in session cleanup dispatch triggers. Warns if run elsewhere. |
 | Initialize Monthly Trigger | `initializeMonthlyTrigger()` | Once on the template spreadsheet to schedule auto-generate |
 | Reinitialize this spreadsheet | `reinitializeSheets()` | Development or reset |
 | Run test function (DEV) | `testFunction()` | Developer use only |
@@ -264,7 +264,10 @@ visible only when the spreadsheet is opened by the owner account.
 > workflow. Form-submit triggers are installed per-tracker at creation time (`copyAndInit()` /
 > `autoGenerateNextMonthTracker()`); daily −1 marking and nag-email triggers are installed once,
 > on the Template, via "Initialize Template Dispatch Triggers". All three dispatch to the correct
-> tracker by resolving against `TrackerDB` or the firing event (ADR-010).
+> tracker by resolving against `TrackerDB` or the firing event (ADR-010). A fourth trigger,
+> `cleanupStaleCheckinSessions` (`CheckinSessions.js`), is installed the same way and prunes
+> abandoned/stale check-in bookmark sessions nightly — it does not resolve a tracker, since the
+> `CheckinSessions` sheet lives on the Template itself.
 
 ### LogFile Verification (UC-5)
 

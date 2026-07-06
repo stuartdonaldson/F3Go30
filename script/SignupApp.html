@@ -115,6 +115,15 @@
       </div>
     </div>
 
+    <!-- Shown only while a ?autoStart=1 deep link's identify() call is in flight (see the
+         bottom of this file) — flashing the real, empty-looking identify step for a moment
+         before it's immediately replaced by step-info was confusing (F3Go30 hardening work
+         2026-07): the PAX never actually needs to see or use that form on this path, since
+         F3 Name/email are already known from localStorage. -->
+    <div id="step-autoStartLoading" class="card hidden">
+      <p class="muted">Loading…</p>
+    </div>
+
     <div id="step-identify" class="card hidden">
       <h2>Identify yourself</h2>
       <p class="muted">Enter your F3 name and email so we can find any existing signup.</p>
@@ -266,6 +275,9 @@
       $('step-' + s).classList.toggle('hidden', s !== name);
     });
     $('step-feedback').classList.toggle('hidden', name !== 'done');
+    // Whichever real step is being shown, the ?autoStart=1 loading placeholder (if it was ever
+    // shown) is done serving its purpose — see the bottom of this file.
+    $('step-autoStartLoading').classList.add('hidden');
     renderStepDots();
   }
 
@@ -531,9 +543,13 @@
 
   // Deep link from the check-in app (?autoStart=1) — F3 Name/email are already known (via
   // localStorage, same IDENTITY_STORAGE_KEY both apps use), so skip the intro/identify steps
-  // and go straight to goal verification instead of making the PAX retype anything.
+  // and go straight to goal verification instead of making the PAX retype anything. Shows the
+  // lightweight step-autoStartLoading placeholder instead of the real (empty-looking) identify
+  // step while identifyBtn's click handler resolves — briefly flashing that real form before it
+  // was immediately replaced by step-info was confusing (F3Go30 hardening work 2026-07), since
+  // the PAX never actually needs to see or interact with it on this path.
   if (URL_AUTO_START_ && state.f3Name && state.email) {
-    showStep('identify');
+    $('step-autoStartLoading').classList.remove('hidden');
     $('identifyBtn').click();
   } else {
     showStep('intro');

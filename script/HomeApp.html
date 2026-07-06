@@ -28,8 +28,12 @@
       <div class="title">Go30</div>
     </div>
     <div class="card">
-      <a class="link-btn primary" href="<?!= signupUrl ?>">Sign Up / Update My Commit</a>
-      <a class="link-btn secondary" href="<?!= checkinUrl ?>">Daily Check-in &amp; Dashboard</a>
+      <!-- target="_top" escapes HtmlService's sandboxed iframe — without it, clicking these
+           tries to navigate the nested iframe itself to a script.google.com URL, which the
+           sandbox doesn't allow (see CheckinApp.html/IdentityCore.html's attemptTopRedirect_
+           notes for the same escape mechanism used elsewhere in this app). -->
+      <a class="link-btn primary" href="<?!= signupUrl ?>" target="_top">Sign Up / Update My Commit</a>
+      <a class="link-btn secondary" href="<?!= checkinUrl ?>" target="_top">Daily Check-in &amp; Dashboard</a>
       <? if (trackerUrl) { ?>
         <a class="link-btn tertiary" href="<?!= trackerUrl ?>" target="_blank">Open Tracker Spreadsheet</a>
       <? } else { ?>

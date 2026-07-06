@@ -27,7 +27,17 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
-- _(none yet)_
+- Fixed the bookmarked check-in link intermittently failing to appear after identify (a PAX could
+  get stuck re-typing their name/email every visit, or land back on the sign-in form after
+  reopening the app) — the bookmark link is now assigned the instant identify succeeds instead of
+  via a follow-up redirect that some phone browsers could block.
+- A PAX known from a prior month who isn't yet signed up for the current month is now carried
+  straight into a pre-filled sign-up instead of being told they can't be found.
+- The check-in page's browser tab now shows your own name and the group's logo once you've
+  identified, instead of a generic title/icon — helpful when it's saved to your phone's home
+  screen alongside other apps.
+- The "sign up for next month" nudge on check-in now only appears in the few days before next
+  month starts, instead of the whole month before.
 
 ---
 

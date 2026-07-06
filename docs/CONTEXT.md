@@ -279,12 +279,11 @@ Primary Flow:
    from browser storage if they previously signed up or checked in on the same device
 2. Script verifies the pair against the current month's Responses sheet (same anti-enumeration
    match used by sign-up) and locates the matching Tracker row
-3. On a successful typed identify, the app redirects the PAX to a personal `?cmd=checkin&id=<token>`
-   URL (an identity token, see `IdentityToken.js`) instead of rendering check-in directly, so the
-   PAX ends up on — and can bookmark / Add to Home Screen — a link that skips the name+email form
-   on future visits. If the browser blocks that automatic redirect, the app shows a "Tap here to
-   continue to check-in" link carrying the same tokened URL for the PAX to follow manually; either
-   way, the first time the PAX lands on the tokened URL a one-time "bookmark this" note is shown
+3. The typed-identify form submits to a personal `?cmd=checkin&id=<session guid>` URL (a
+   server-stored check-in session, see `CheckinSessions.js`) baked into the form's own `action`
+   before submission, so the address bar is already correct the instant identify succeeds — the
+   PAX ends up on, and can bookmark / Add to Home Screen, a link that skips the name+email form on
+   future visits. The first time the PAX lands on that URL, a one-time "bookmark this" note is shown
 4. PAX taps "I Hit it!" / "Missed it" / "No Check-in" for today; if yesterday's Tracker cell is
    still blank, the same choice is also offered for yesterday
 5. Script writes the chosen value(s) into the matching date column(s) of the PAX's Tracker row

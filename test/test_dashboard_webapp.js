@@ -45,6 +45,7 @@ const {
   responsesValuesCacheKey_,
   invalidateFullRosterCache_,
   handleCheckinIdentify_,
+  checkNextMonthRegistration_,
 } = require('../script/dashboardWebapp.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
@@ -412,5 +413,42 @@ var PAXDB_HEADERS_ = ['F3 Name', 'Email', 'SheetId', 'Team', 'WHO', 'WHAT', 'HOW
 })();
 
 console.log('test_dashboard_webapp.js: PaxDB-fallback assertions passed');
+
+// ── checkNextMonthRegistration_'s nudge-window gate (F3Go30 hardening work 2026-07) ─────────
+// Don't push a PAX to sign up for next month more than NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_ (3)
+// days before it starts — showing up 3 weeks early reads as noise, not a helpful reminder.
+(function testCheckNextMonthRegistrationSkipsWhenFarInAdvance() {
+  var farFuture = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000); // 20 days out
+  // No SpreadsheetApp global at all — if the date gate doesn't short-circuit before ever
+  // opening a spreadsheet, this throws a ReferenceError and fails loudly rather than silently.
+  var result = checkNextMonthRegistration_({ next: { sheetId: 'sheet-next', label: 'August 2026', startDate: farFuture } }, 'Anchor');
+  assert.equal(result, null);
+})();
+
+(function testCheckNextMonthRegistrationProceedsWithinWindow() {
+  var soon = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000); // 2 days out — inside the window
+  var responsesHeaders = [
+    'Timestamp', 'Email Address', 'Are you currently participating in Go30?', 'F3 Name',
+    'Team type', 'Team', 'Goal or other team name', 'WHO do you ultimately want to become?',
+    'WHAT is your Go30 Challenge?', 'HOW are you going to be successful this month?',
+    'Cell Phone Number', 'NAG email?', 'Constructive Comments',
+  ];
+  var fakeResponsesSheet = {
+    getRange: function(row, col, numRows, numCols) {
+      if (row === 1) return { getValues: function() { return [responsesHeaders]; } };
+      return { getValues: function() { return []; } };
+    },
+    getLastRow: function() { return 1; }, // header only — this PAX has no row yet
+    getLastColumn: function() { return responsesHeaders.length; },
+  };
+  global.SpreadsheetApp = {
+    openById: function() { return { getSheetByName: function(name) { return name === 'Responses' ? fakeResponsesSheet : null; } }; },
+  };
+  var result = checkNextMonthRegistration_({ next: { sheetId: 'sheet-next', label: 'August 2026', startDate: soon } }, 'Anchor');
+  assert.deepEqual(result, { registered: false, monthLabel: 'August 2026' });
+  delete global.SpreadsheetApp;
+})();
+
+console.log('test_dashboard_webapp.js: nudge-window assertions passed');
 
 console.log('test_dashboard_webapp.js: all assertions passed');

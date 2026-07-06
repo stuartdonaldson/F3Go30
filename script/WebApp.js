@@ -456,6 +456,12 @@ function doPost(e) {
       return handleSignupPost_(e);
     }
     if (cmd === 'checkin') {
+      // A real <form target="_top"> submit from the typed-identify button (marked by the
+      // hidden formIdentify field) is form-urlencoded and must render the full page — the
+      // JSON action dispatch below is only for the page's own script-driven callApi() calls.
+      if (e && e.parameter && e.parameter.formIdentify === '1') {
+        return renderCheckinPageForTypedIdentify_(e);
+      }
       return handleCheckinPost_(e);
     }
     return jsonOutput_({ status: 'ok' });

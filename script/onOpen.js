@@ -194,23 +194,27 @@ function showAbout() {
 }
 
 /**
- * Installs the two daily ADR-010 dispatch triggers — minus-one marking (markMinusOne.js)
- * and nag email (nag.js) — exactly once, on the Go30 Template only. Both triggers now
- * resolve their target tracker per run via TrackerDB (resolveTrackerForContextDate), so
- * they must not be installed per monthly copy; form-submit trigger setup happens
- * automatically per tracker in CreateNewTracker.js and is not part of this menu item.
+ * Installs the daily ADR-010 dispatch triggers — minus-one marking (markMinusOne.js), nag
+ * email (nag.js), and check-in session cleanup (CheckinSessions.js) — exactly once, on the
+ * Go30 Template only. All three now resolve their own target per run rather than needing
+ * per-monthly-copy setup; form-submit trigger setup happens automatically per tracker in
+ * CreateNewTracker.js and is not part of this menu item.
  */
 function initializeTemplateDispatchTriggers() {
   return GasLogger.run('initializeTemplateDispatchTriggers', function() {
     if (typeof isTemplateHost_ === 'function' && !isTemplateHost_()) {
       SpreadsheetApp.getUi().alert(
-        'This installs the daily ADR-010 dispatch triggers (minus-one marking, nag email). ' +
-        'Run this once, on the Go30 Template only — not on a monthly tracker copy.'
+        'This installs the daily ADR-010 dispatch triggers (minus-one marking, nag email, ' +
+        'check-in session cleanup). Run this once, on the Go30 Template only — not on a ' +
+        'monthly tracker copy.'
       );
     }
     setupDailyMinusOneTrigger();
     if (typeof setupDailyNagTrigger === 'function') {
       try { setupDailyNagTrigger(); } catch (e) { GasLogger.log('initializeTemplateDispatchTriggers.setupDailyNagTriggerFailed', { error: e.message }); }
+    }
+    if (typeof setupCheckinSessionCleanupTrigger_ === 'function') {
+      try { setupCheckinSessionCleanupTrigger_(); } catch (e) { GasLogger.log('initializeTemplateDispatchTriggers.setupCheckinSessionCleanupTriggerFailed', { error: e.message }); }
     }
   });
 }

@@ -149,11 +149,29 @@ test.describe('Go30 demo screenshots (SIT)', () => {
   test('check-in, dashboard, and bonus points flow', async ({ page }) => {
     await page.goto(checkinUrl, { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
-    const app = page.frameLocator('iframe').frameLocator('iframe');
+    let app = page.frameLocator('iframe').frameLocator('iframe');
 
     await app.locator('#idF3Name').fill(DEMO_PAX.f3Name);
     await app.locator('#idEmail').fill(DEMO_PAX.email);
-    await app.locator('#identifyBtn').click();
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle' }),
+      app.locator('#identifyBtn').click(),
+    ]);
+
+    // A matched typed-identify never shows step-checkin on this page directly — it attempts an
+    // immediate automatic redirect to the real token'd URL, falling back to a bare
+    // step-saveLink tap-through link if that doesn't fire (reliably the case under Playwright's
+    // synthetic clicks in headless Chromium — see identity-token-flow.spec.js's
+    // submitCheckinIdentify for the full explanation).
+    app = page.frameLocator('iframe').frameLocator('iframe');
+    const saveLink = app.locator('#saveLinkAnchor');
+    if (await saveLink.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle' }),
+        saveLink.click(),
+      ]);
+      app = page.frameLocator('iframe').frameLocator('iframe');
+    }
     await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
 
     await shot(page, '06-checkin.png');
@@ -209,14 +227,28 @@ test.describe('Go30 demo screenshots (SIT)', () => {
 
     await app.locator('#idF3Name').fill(KNOWN_NOT_REGISTERED_PAX.f3Name);
     await app.locator('#idEmail').fill(KNOWN_NOT_REGISTERED_PAX.email);
-    await app.locator('#identifyBtn').click();
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle' }),
+      app.locator('#identifyBtn').click(),
+    ]);
 
-    // The known-but-unregistered fallback auto-redirects the whole page into a prefilled
-    // signup (?cmd=signup&autoStart=1&targetMonth=current) rather than showing check-in.
-    await page.waitForURL((url) => url.href.includes('cmd=signup'), { timeout: 15000 });
-    await dismissGasBanner(page);
-    const signupApp = page.frameLocator('iframe').frameLocator('iframe');
+    // As of the later 2026-07 hardening work, this auto-redirects straight into a prefilled
+    // signup using the same immediate-on-load redirect trick as a matched typed identify
+    // (reliable because it fires the instant this fresh page loads, activated by the form
+    // submission itself) — step-signupRedirect's bare tap-through link is only the fallback for
+    // whichever browsers still decline it.
+    let signupApp = page.frameLocator('iframe').frameLocator('iframe');
+    const signupRedirectLink = signupApp.locator('#signupRedirectAnchor');
+    if (await signupRedirectLink.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await shot(page, '06b-checkin-known-not-enrolled.png');
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle' }),
+        signupRedirectLink.click(),
+      ]);
+      await dismissGasBanner(page);
+      signupApp = page.frameLocator('iframe').frameLocator('iframe');
+    }
     await expect(signupApp.locator('#step-info')).toBeVisible({ timeout: 15000 });
-    await shot(page, '06b-checkin-known-not-enrolled.png');
+    await shot(page, '06c-checkin-known-not-enrolled-signup.png');
   });
 });

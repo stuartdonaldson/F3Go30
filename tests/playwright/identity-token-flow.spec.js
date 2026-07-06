@@ -86,23 +86,36 @@ async function followTokenRedirect(page, fallbackLinkLocator, timeout = 20000) {
 }
 
 /**
- * Same attemptTopRedirect_ reliability caveat as followTokenRedirect, but for the
- * known-but-unregistered fallback, whose fallback UI is a real button (#idSignupBtn,
- * CheckinApp.html) rather than an anchor — click it instead of following an href, and wait
- * for the resulting navigation into ?cmd=signup rather than ?cmd=checkin&id=.
+ * Fills CheckinApp's identify form and submits it. As of the 2026-07 hardening work this is a
+ * real <form target="_top"> POST straight to renderCheckinPageForTypedIdentify_
+ * (dashboardWebapp.js) — every submission, matched or not, produces a genuine top-level
+ * navigation, but a MATCHED one never shows any "welcome"/bookmark content on this page
+ * directly: it immediately attempts a second, automatic redirect to the real token'd URL, and
+ * only falls back to a bare step-saveLink tap-through link if that redirect doesn't fire.
+ * Playwright's synthetic clicks reliably hit that fallback in headless Chromium (same
+ * "activation" quirk documented on attemptTopRedirect_'s history) — this helper follows it
+ * through either way and returns the iframe locator for wherever the journey actually ends
+ * (step-checkin on a match, or the identify step with idError on a non-match).
  */
-async function followSignupFallthroughRedirect(page, fallbackButtonLocator, timeout = 20000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (page.url().includes('cmd=signup')) return;
-    if (await fallbackButtonLocator.isVisible().catch(() => false)) {
-      await fallbackButtonLocator.click();
-      await page.waitForURL((url) => url.href.includes('cmd=signup'), { timeout: timeout });
-      return;
-    }
-    await page.waitForTimeout(300);
+async function submitCheckinIdentify(page, f3Name, email) {
+  const app = page.frameLocator('iframe').frameLocator('iframe');
+  await app.locator('#idF3Name').fill(f3Name);
+  await app.locator('#idEmail').fill(email);
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'networkidle' }),
+    app.locator('#identifyBtn').click(),
+  ]);
+
+  let app2 = page.frameLocator('iframe').frameLocator('iframe');
+  const saveLink = app2.locator('#saveLinkAnchor');
+  if (await saveLink.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle' }),
+      saveLink.click(),
+    ]);
+    app2 = page.frameLocator('iframe').frameLocator('iframe');
   }
-  throw new Error('Neither the automatic top-redirect nor its fallback button appeared within timeout');
+  return app2;
 }
 
 /** Fills the signup app's who/what/how + team for the given PAX up through the info step. */
@@ -171,20 +184,33 @@ test.describe('Identity-token check-in flow (SIT)', () => {
   });
 
   test('reopening the bookmarked token link signs in directly, with no identify form', async ({ page }) => {
-    // Get a fresh token for this PAX the same way the "current-month" test does, then
-    // simulate a real bookmark reopen: a brand-new navigation straight to that URL.
+    // A typed-identify form POST lands on the bare exec URL (a POST body's fields never show
+    // up in the address bar) and immediately attempts an automatic redirect to the real
+    // token'd URL — grab that URL from wherever it actually ends up (the address bar if the
+    // redirect succeeded, or step-saveLink's fallback link's href if it didn't) WITHOUT using
+    // submitCheckinIdentify, which follows the fallback link through to completion — this test
+    // needs the URL itself, to simulate a real bookmark reopen: a brand-new navigation straight
+    // to it.
     await page.goto(checkinUrl, { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
-    let app = page.frameLocator('iframe').frameLocator('iframe');
-    await app.locator('#idF3Name').fill(CURRENT_MONTH_PAX.f3Name);
-    await app.locator('#idEmail').fill(CURRENT_MONTH_PAX.email);
-    await app.locator('#identifyBtn').click();
-    await followTokenRedirect(page, app.locator('#continueManuallyLink'));
-    const tokenUrl = page.url();
+    const app0 = page.frameLocator('iframe').frameLocator('iframe');
+    await app0.locator('#idF3Name').fill(CURRENT_MONTH_PAX.f3Name);
+    await app0.locator('#idEmail').fill(CURRENT_MONTH_PAX.email);
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle' }),
+      app0.locator('#identifyBtn').click(),
+    ]);
+    let tokenUrl = page.url();
+    if (!tokenUrl.includes('cmd=checkin&id=')) {
+      const app1 = page.frameLocator('iframe').frameLocator('iframe');
+      await expect(app1.locator('#saveLinkAnchor')).toBeVisible({ timeout: 15000 });
+      tokenUrl = await app1.locator('#saveLinkAnchor').getAttribute('href');
+    }
+    expect(tokenUrl).toContain('cmd=checkin&id=');
 
     await page.goto(tokenUrl, { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
-    app = page.frameLocator('iframe').frameLocator('iframe');
+    const app = page.frameLocator('iframe').frameLocator('iframe');
 
     // The identify form must never appear on a token'd reopen — the token round-trip
     // (SAVED_IDENTITY_TOKEN, see CheckinApp.html) bypasses it entirely.
@@ -196,13 +222,7 @@ test.describe('Identity-token check-in flow (SIT)', () => {
   test('"Not you?" returns to a blank identify form at the bare URL', async ({ page }) => {
     await page.goto(checkinUrl, { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
-    let app = page.frameLocator('iframe').frameLocator('iframe');
-    await app.locator('#idF3Name').fill(CURRENT_MONTH_PAX.f3Name);
-    await app.locator('#idEmail').fill(CURRENT_MONTH_PAX.email);
-    await app.locator('#identifyBtn').click();
-    await followTokenRedirect(page, app.locator('#continueManuallyLink'));
-
-    app = page.frameLocator('iframe').frameLocator('iframe');
+    let app = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
     await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
 
     await app.locator('#notYouLink').click();
@@ -260,46 +280,48 @@ test.describe('Identity-token check-in flow (SIT)', () => {
   test('typed identify for a truly-unknown name+email shows the sign-up prompt without auto-redirecting', async ({ page }) => {
     await page.goto(checkinUrl, { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
-    const app = page.frameLocator('iframe').frameLocator('iframe');
-    await app.locator('#idF3Name').fill('TrulyUnknownPax');
-    await app.locator('#idEmail').fill('trulyunknownpax@example.com');
-    await app.locator('#identifyBtn').click();
+    const app = await submitCheckinIdentify(page, 'TrulyUnknownPax', 'trulyunknownpax@example.com');
 
     await expect(app.locator('#idError')).toBeVisible({ timeout: 15000 });
     await expect(app.locator('#idSignupBtn')).toBeVisible();
     // No PaxDB match -> no auto-redirect into signup; stays on the check-in identify step.
-    await page.waitForTimeout(1000); // attemptTopRedirect_'s fallback window is 400ms
     expect(page.url()).not.toContain('cmd=signup');
   });
 
-  test('typed identify for a known-but-unregistered PAX auto-redirects into prefilled signup', async ({ page }) => {
+  // As of the 2026-07 hardening work, a known-but-unregistered typed identify no longer
+  // auto-redirects into signup (that used attemptTopRedirect_ too — exactly the flaky
+  // script-driven-navigation mechanism the form-POST identify flow exists to avoid). It's
+  // treated the same as a plain non-match: idError + idSignupBtn shown, and the PAX taps
+  // "Sign up" themselves — a direct click-triggered navigation (openSignup_), never flaky
+  // since there's no async gap between the click and the navigation it triggers.
+  // As of the later 2026-07 hardening work, a known-but-unregistered typed identify auto-
+  // redirects straight into a prefilled signup — using the same immediate-on-load redirect
+  // trick as the matched path (reliable because it fires the instant this fresh page loads,
+  // activated by the form submission itself, not after an async gap). step-signupRedirect's
+  // bare tap-through link is only the fallback for whichever browsers still decline it.
+  test('typed identify for a known-but-unregistered PAX redirects into prefilled signup', async ({ page }) => {
     test.skip(!KNOWN_NOT_REGISTERED_FIXTURE_READY, 'known-but-unregistered SIT fixture not yet established — see Stage 4');
     await page.goto(checkinUrl, { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     const app = page.frameLocator('iframe').frameLocator('iframe');
     await app.locator('#idF3Name').fill(LATE_SIGNUP_PAX.f3Name);
     await app.locator('#idEmail').fill(LATE_SIGNUP_PAX.email);
-    await app.locator('#identifyBtn').click();
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle' }),
+      app.locator('#identifyBtn').click(),
+    ]);
 
-    // Same attemptTopRedirect_ reliability caveat as followTokenRedirect above — the typed-miss
-    // branch's fallback UI is the (real) #idSignupBtn button (CheckinApp.html), not an anchor,
-    // so follow it the same way a real user would tap it when the automatic redirect doesn't fire.
-    await followSignupFallthroughRedirect(page, app.locator('#idSignupBtn'));
-    const app2 = page.frameLocator('iframe').frameLocator('iframe');
+    let app2 = page.frameLocator('iframe').frameLocator('iframe');
+    const signupRedirectLink = app2.locator('#signupRedirectAnchor');
+    if (await signupRedirectLink.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle' }),
+        signupRedirectLink.click(),
+      ]);
+      app2 = page.frameLocator('iframe').frameLocator('iframe');
+    }
+    expect(page.url()).toContain('cmd=signup');
     await expect(app2.locator('#step-info')).toBeVisible({ timeout: 15000 });
     await expect(app2.locator('#infoF3Name')).toHaveText(LATE_SIGNUP_PAX.f3Name);
-  });
-
-  test('reopening a stale bookmark for a known-but-unregistered PAX auto-redirects into prefilled signup', async ({ page }) => {
-    test.skip(!KNOWN_NOT_REGISTERED_FIXTURE_READY, 'known-but-unregistered SIT fixture not yet established — see Stage 4');
-    // Get a token'd URL for the fixture PAX (whatever month it currently resolves against —
-    // the token itself only carries f3Name/email, verified fresh server-side on every request).
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
-    await dismissGasBanner(page);
-    let app = page.frameLocator('iframe').frameLocator('iframe');
-    await app.locator('#idF3Name').fill(LATE_SIGNUP_PAX.f3Name);
-    await app.locator('#idEmail').fill(LATE_SIGNUP_PAX.email);
-    await app.locator('#identifyBtn').click();
-    await followSignupFallthroughRedirect(page, app.locator('#idSignupBtn'));
   });
 });

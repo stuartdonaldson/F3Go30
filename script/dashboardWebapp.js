@@ -71,10 +71,19 @@ var getAllBonusEntriesCached_dw_ = (dashboardWebappBonusModule_ && dashboardWeba
 var dashboardWebappIdentityTokenModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./IdentityToken.js')
   : null;
-var mintIdentityToken_dw_ = (dashboardWebappIdentityTokenModule_ && dashboardWebappIdentityTokenModule_.mintIdentityToken_)
-  || (typeof globalThis !== 'undefined' && globalThis.mintIdentityToken_);
+// mintIdentityToken_dw_ is gone — checkin bookmark links are GUID sessions now (CheckinSessions.js);
+// verifyIdentityToken_dw_ stays only as resolveCheckinToken_dw_'s fallback for tokens minted
+// before that rollout (see its docstring for the retirement plan).
 var verifyIdentityToken_dw_ = (dashboardWebappIdentityTokenModule_ && dashboardWebappIdentityTokenModule_.verifyIdentityToken_)
   || (typeof globalThis !== 'undefined' && globalThis.verifyIdentityToken_);
+
+var dashboardWebappCheckinSessionsModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./CheckinSessions.js')
+  : null;
+var resolveCheckinSession_dw_ = (dashboardWebappCheckinSessionsModule_ && dashboardWebappCheckinSessionsModule_.resolveCheckinSession_)
+  || (typeof globalThis !== 'undefined' && globalThis.resolveCheckinSession_);
+var createOrTouchCheckinSession_dw_ = (dashboardWebappCheckinSessionsModule_ && dashboardWebappCheckinSessionsModule_.createOrTouchCheckinSession_)
+  || (typeof globalThis !== 'undefined' && globalThis.createOrTouchCheckinSession_);
 
 var dashboardWebappBonusTypesModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./BonusTypes.js')
@@ -311,7 +320,7 @@ var CHECKIN_PAGE_FAVICON_URL_ = 'https://raw.githubusercontent.com/stuartdonalds
 /**
  * Renders the cmd=checkin HTML page.
  * @param {Object=} e The doGet request event — needed for e.parameter.id (a saved-link
- *   identity token, see IdentityToken.js). NOTE: the served page's own client-side JS cannot
+ *   check-in session guid, see CheckinSessions.js). NOTE: the served page's own client-side JS cannot
  *   read the request's query string itself — Apps Script injects the page content into a
  *   nested sandbox iframe whose own src carries no query string at all (confirmed live via
  *   Playwright frame inspection, 2026-07-04), so a deep-link param only reaches the client if
@@ -321,12 +330,34 @@ var CHECKIN_PAGE_FAVICON_URL_ = 'https://raw.githubusercontent.com/stuartdonalds
  *   token's f3Name is decoded here, server-side (cheap signature check only, no spreadsheet
  *   open), purely to make the title/bookmark name recognizable per-PAX.
  */
-function renderCheckinPage_(e) {
+/**
+ * Shared CheckinApp.html template builder for both entry points that can serve this page:
+ * a plain doGet (optionally carrying a saved-link token) and a real top-level form POST from
+ * the typed-identify button (renderCheckinPageForTypedIdentify_ below). Baking a pre-resolved
+ * typedIdentifyResult into the page — instead of returning JSON for client-side script to act
+ * on — is what lets the typed-identify button be a genuine <form target="_top"> submission: a
+ * real user-gesture navigation the browser always honors, rather than a script-triggered
+ * redirect after an async round trip (see attemptTopRedirect_'s history, F3Go30 hardening
+ * work 2026-07).
+ * @param {?string} savedToken A saved-link token to auto-apply client-side (doGet path), or
+ *   null. Ignored when typedIdentifyResult is given (that result already carries its own
+ *   session guid).
+ * @param {?Object} typedIdentifyResult The exact object handleCheckinIdentify_ returns, or
+ *   null for the plain doGet path.
+ * @param {string} formGuid The session guid to embed in the identify form's own `action` URL
+ *   (raw, not JSON — see CheckinApp.html) — always present, even when nothing has resolved yet,
+ *   since it's what makes a subsequent typed-identify POST land on a fixed, already-correct
+ *   address bar in one interaction (see CheckinSessions.js's file header).
+ */
+function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid) {
   var template = HtmlService.createTemplateFromFile('CheckinApp');
-  template.webAppUrl = JSON.stringify(ScriptApp.getService().getUrl());
+  var webAppUrl = ScriptApp.getService().getUrl();
+  template.webAppUrl = JSON.stringify(webAppUrl);
+  template.webAppUrlRaw = webAppUrl;
+  template.formGuid = formGuid;
   template.appVersion = APP_VERSION;
-  var savedToken = (e && e.parameter && e.parameter.id) || null;
-  template.savedIdentityTokenJson = JSON.stringify(savedToken);
+  template.savedIdentityTokenJson = JSON.stringify(savedToken || null);
+  template.typedIdentifyResultJson = JSON.stringify(typedIdentifyResult || null);
   template.bonusTypesJson = JSON.stringify(bonusTypeClientRules_dw_());
   template.bonusTypeCodesJson = JSON.stringify(bonusTypeDisplayList_dw_());
   // Site Q contact info for the client's "something went wrong" error banner — same Config
@@ -338,8 +369,9 @@ function renderCheckinPage_(e) {
   var nameSpaceConfig = getConfigValue_(SpreadsheetApp.getActiveSpreadsheet(), 'NameSpace', null) || {};
   var nameSpace = nameSpaceConfig.primary || 'F3 Go30';
   template.nameSpace = nameSpace;
-  var decodedToken = savedToken && verifyIdentityToken_dw_(savedToken);
-  var pageTitle = decodedToken && decodedToken.f3Name ? (nameSpace + ': ' + decodedToken.f3Name) : nameSpace;
+  var titleF3Name = (typedIdentifyResult && typedIdentifyResult.f3Name) ||
+    (savedToken && (resolveCheckinToken_dw_(SpreadsheetApp.getActiveSpreadsheet(), savedToken) || {}).f3Name);
+  var pageTitle = titleF3Name ? (nameSpace + ': ' + titleF3Name) : nameSpace;
   // HtmlService serves this inside an IFRAME-sandboxed wrapper that does not honor a
   // <meta name="viewport"> tag written in the template's own <head> — it must be set via
   // addMetaTag, or mobile browsers render the desktop layout zoomed out instead of fitting
@@ -348,6 +380,47 @@ function renderCheckinPage_(e) {
     .setTitle(pageTitle)
     .setFaviconUrl(CHECKIN_PAGE_FAVICON_URL_)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+function renderCheckinPage_(e) {
+  var savedToken = (e && e.parameter && e.parameter.id) || null;
+  // A fresh visit (no incoming id) still needs a guid to bake into the identify form's action
+  // URL — see CheckinSessions.js's file header. Reusing an incoming-but-unresolvable id here
+  // (rather than always minting a new one) is harmless: it just gets bound on the next typed
+  // identify instead of being wasted.
+  var formGuid = savedToken || Utilities.getUuid();
+  return buildCheckinPageOutput_(savedToken, null, formGuid);
+}
+
+/**
+ * Serves the cmd=checkin page for a real <form target="_top"> POST from the typed-identify
+ * button (as opposed to handleCheckinPost_'s JSON action dispatch, used by the token-auto-apply
+ * and in-page calls). Resolving identity synchronously and baking the result into the page
+ * render means the button click IS the navigation — no script-triggered redirect afterward that
+ * could silently fail to fire (see F3Go30 hardening work 2026-07, Crazy Ivan's repeated-identify
+ * reports). Reuses handleCheckinIdentify_ wholesale so PaxDB fallthrough / session-binding-on-
+ * match behavior never drifts between the JSON and form-POST entry points.
+ */
+function renderCheckinPageForTypedIdentify_(e) {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var f3Name = (e.parameter && e.parameter.f3Name) || '';
+  var email = (e.parameter && e.parameter.email) || '';
+  // The form's own action URL already carries this exact guid (see CheckinApp.html /
+  // renderCheckinPage_'s formGuid) — that's what makes the resulting address bar correct in
+  // one interaction, with nothing left to redirect to afterward.
+  var guid = (e.parameter && e.parameter.id) || Utilities.getUuid();
+  var result = handleCheckinIdentify_(spreadsheet, { f3Name: f3Name, email: email, guid: guid });
+  // Echoed back only for the not-matched case, so the identify form can be re-populated with
+  // what was just typed — a fresh page render doesn't otherwise know what the PAX entered.
+  result.submittedF3Name = f3Name;
+  result.submittedEmail = email;
+  // savedToken (first arg) is deliberately null here, even on a match — passing it would also
+  // make the client's SAVED_IDENTITY_TOKEN branch fire, re-running an async identify(token) call
+  // in parallel with TYPED_IDENTIFY_RESULT's own handling and clobbering its saveLinkNote UI
+  // once that second call resolves (confirmed live during the 2026-07 SIT verification of this
+  // change). The guid still reaches the client via typedIdentifyResult.identityToken, which is
+  // all saveLinkNote/saveLinkAnchor need — and the form's action already used it for the URL.
+  return buildCheckinPageOutput_(null, result, guid);
 }
 
 /** Dispatches a cmd=checkin doPost JSON body ({action, ...}) to the matching handler. */
@@ -696,7 +769,9 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var t0 = Date.now();
   var targetSs = SpreadsheetApp.openById(monthInfo.sheetId);
   var openMs = Date.now() - t0;
+  var tFresh = Date.now();
   if (ensurePaxCacheFresh_dw_) ensurePaxCacheFresh_dw_(monthInfo.sheetId);
+  var freshCheckMs = Date.now() - tFresh;
 
   var responsesSheet = targetSs.getSheetByName('Responses');
   if (!responsesSheet) return { matched: false, months: months };
@@ -715,7 +790,7 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var match = findSignupMatchByF3NameOnly_dw_(dataRows, f3Name, columns);
   var responsesMs = Date.now() - t1;
   if (!match) {
-    GasLogger.log('checkinWebapp.resolveIdentity.timing', { matched: false, lean: false, openMs: openMs, responsesMs: responsesMs, totalMs: Date.now() - t0 });
+    GasLogger.log('checkinWebapp.resolveIdentity.timing', { matched: false, lean: false, openMs: openMs, freshCheckMs: freshCheckMs, responsesMs: responsesMs, totalMs: Date.now() - t0 });
     return { matched: false, months: months };
   }
 
@@ -741,6 +816,7 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   }
   var trackerMs = Date.now() - t2;
 
+  var t3 = Date.now();
   var rosterIndex = {};
   var rowsByName = {};
   trackerValues.forEach(function(row, idx) {
@@ -753,13 +829,15 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   // One PropertiesService.setProperties() call for the whole roster instead of one
   // setProperty() per PAX — every row is already in memory from the full-range read above.
   setPaxCacheRowsBulk_dw_('tracker', monthInfo.sheetId, rowsByName, rosterIndex);
+  var cacheWriteMs = Date.now() - t3;
 
   var rowIndex = rosterIndex[paxCacheNormalizeName_dw_(f3Name)];
   if (rowIndex === undefined) return { matched: false, months: months };
 
   GasLogger.log('checkinWebapp.resolveIdentity.timing', {
     matched: true, lean: false, emailMismatch: emailMismatch,
-    openMs: openMs, responsesMs: responsesMs, trackerMs: trackerMs, totalMs: Date.now() - t0,
+    openMs: openMs, freshCheckMs: freshCheckMs, responsesMs: responsesMs, trackerMs: trackerMs,
+    cacheWriteMs: cacheWriteMs, totalMs: Date.now() - t0,
   });
 
   return {
@@ -776,11 +854,19 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   };
 }
 
+// How close to next month's start the nudge is allowed to appear — a PAX who hasn't signed up
+// yet three weeks out isn't neglecting anything, they just haven't gotten there; nagging them
+// that early reads as noise, not a reminder. Someone who wants to sign up further ahead always
+// can, unprompted, via the plain signup URL — this only gates the automatic nudge shown on the
+// check-in page.
+var NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_ = 3;
+
 /**
  * Checks whether f3Name has a live (non-DELETED) Responses row for months.next — surfaced to a
  * PAX who's actively checking in for the current month as a nudge that they haven't signed up
  * for the month coming next, with a link into the signup flow. Returns null when there's no
- * next-month tracker yet at all (nothing to register for), so the caller skips the nudge.
+ * next-month tracker yet at all (nothing to register for), or when next month's start is still
+ * more than NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_ away — either way, the caller skips the nudge.
  * Deliberately called from handleCheckinIdentify_, not the dashboard: identify() already pays
  * for months.next via getCurrentAndNextMonths_dw_ (resolveCheckinIdentityLean_), so this adds
  * one Responses lookup rather than a second TrackerDB read on every dashboard load.
@@ -788,6 +874,8 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
 function checkNextMonthRegistration_(months, f3Name) {
   if (!months || !months.next) return null;
   var nextMonth = months.next;
+  var daysUntilNextMonth = (new Date(nextMonth.startDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+  if (daysUntilNextMonth > NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_) return null;
   var targetSs = SpreadsheetApp.openById(nextMonth.sheetId);
   var responsesSheet = targetSs.getSheetByName('Responses');
   if (!responsesSheet) return null;
@@ -865,31 +953,75 @@ function resolveCheckinDayTarget_(identity, f3Name, targetDate) {
   }
 }
 
-// A token still showing this young when verified means the PAX almost certainly just tapped
-// "open your personal check-in link" and is seeing this exact page for the first time — old
-// enough to rule out slow taps/loading, short enough that a token this age could only mean a
-// genuinely new bookmark/Home Screen icon, not one reopened days or weeks later. Lets the
-// client decide whether to prompt for bookmarking without needing any client-side storage to
-// remember "have I already asked this browser to bookmark it" (see CheckinApp.html).
-var IDENTITY_TOKEN_FRESH_WINDOW_MS_ = 60 * 1000;
+/**
+ * Resolves a saved-link `token` param to {f3Name, email, mintedAtMs, viaLegacyToken, firstUse},
+ * or null — tries the current CheckinSessions store first, then falls back to IdentityToken.js's
+ * signed token for anything minted before the 2026-07 GUID-session rollout. Logs
+ * checkinWebapp.identify.legacyTokenUsed on every legacy hit so Axiom can be watched for it to
+ * taper off; once it's been silent for a full old-token's practical lifetime, the
+ * verifyIdentityToken_dw_ fallback here (and IdentityToken.js itself) can be deleted.
+ *
+ * firstUse is exact, not a time-window guess — CheckinSessions tracks Created At and Last Used
+ * At precisely, so "has this exact session ever been resolved again since the moment it was
+ * created" is a direct comparison, not an inferred "still looks new-ish" heuristic the way the
+ * old signed token's mintedAtMs-vs-now window had to be (there was no session store to ask
+ * before). A legacy token is never firstUse: resolving one at all means the PAX already has and
+ * has used this bookmark before — migrating its storage backend isn't a "welcome, first time"
+ * moment for them.
+ */
+function resolveCheckinToken_dw_(spreadsheet, token) {
+  var session = resolveCheckinSession_dw_(spreadsheet, token);
+  if (session) {
+    return {
+      f3Name: session.f3Name,
+      email: session.email,
+      mintedAtMs: new Date(session.createdAt).getTime(),
+      viaLegacyToken: false,
+      firstUse: session.createdAt === session.lastUsedAt,
+    };
+  }
+  var decoded = verifyIdentityToken_dw_(token);
+  if (decoded) {
+    GasLogger.log('checkinWebapp.identify.legacyTokenUsed', {});
+    return { f3Name: decoded.f3Name, email: decoded.email, mintedAtMs: decoded.mintedAtMs, viaLegacyToken: true, firstUse: false };
+  }
+  return null;
+}
 
 function handleCheckinIdentify_(templateSpreadsheet, payload) {
   var t0 = Date.now();
-  // A saved-link token (see IdentityToken.js) stands in for typed f3Name/email — decoding it
-  // only proves it was signed by this script, it does NOT bypass the resolveCheckinIdentity_
-  // lookup below, so a token can never outlive the PAX's actual roster entry (removed/renamed).
-  // tokenInvalid distinguishes "your saved link stopped working" (show a blank form, no error
-  // text) from "we couldn't find a signup for what you typed" (show the sign-up prompt).
+  // A saved-link token stands in for typed f3Name/email — resolving it only proves this exact
+  // guid has a live session (or, for a pre-rollout link, a valid signature) bound to an
+  // identity; it does NOT bypass the resolveCheckinIdentity_ lookup below, so neither can ever
+  // outlive the PAX's actual roster entry (removed/renamed). tokenInvalid distinguishes "your
+  // saved link stopped working" (show a blank form, no error text) from "we couldn't find a
+  // signup for what you typed" (show the sign-up prompt).
   var f3Name = payload.f3Name;
   var email = payload.email;
   var tokenInvalid = false;
-  var tokenRecentlyMinted = false;
+  // The typed-identify form-POST path always creates a brand-new guid (baked into the form's
+  // action URL before submission, so nothing could have used it yet) — unconditionally a first
+  // use. The returning-bookmark path (payload.token) overrides this below once resolved, per
+  // resolveCheckinToken_dw_'s exact createdAt-vs-lastUsedAt comparison.
+  var firstUse = !payload.token;
+  // payload.guid: the typed-identify form-POST path — identity not yet known, guid already is
+  // (baked into the form's action URL at render time). payload.token: the returning-bookmark
+  // path — guid known, identity not, resolved here from the session store. Never both at once
+  // in practice, but either name works regardless of which call site is asking.
+  var sessionGuid = payload.guid || payload.token || null;
+  // Set only when this request resolved via a pre-rollout signed IdentityToken.js token (never
+  // via an already-migrated session) — used below to seed the migrated session's Created At with
+  // the token's own original mint time rather than "now", so a long-bookmarked link doesn't
+  // suddenly look brand new (firstUse, the "go bookmark me" nudge) just because today happened
+  // to be the first time it got migrated into CheckinSessions.
+  var legacyTokenMintedAtIso = null;
   if (payload.token) {
-    var decoded = verifyIdentityToken_dw_(payload.token);
-    if (decoded) {
-      f3Name = decoded.f3Name;
-      email = decoded.email;
-      tokenRecentlyMinted = (Date.now() - decoded.mintedAtMs) < IDENTITY_TOKEN_FRESH_WINDOW_MS_;
+    var resolved = resolveCheckinToken_dw_(templateSpreadsheet, payload.token);
+    if (resolved) {
+      f3Name = resolved.f3Name;
+      email = resolved.email;
+      firstUse = resolved.firstUse;
+      if (resolved.viaLegacyToken) legacyTokenMintedAtIso = new Date(resolved.mintedAtMs).toISOString();
     } else {
       tokenInvalid = true;
     }
@@ -941,6 +1073,23 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
 
   var nextMonth = checkNextMonthRegistration_(identity.months, f3Name);
 
+  // Binds sessionGuid to the canonical Tracker name (not whatever variant was typed, so a
+  // corrected/re-typed name still round-trips through the saved link consistently) the first
+  // time it's ever seen, or just bumps Last Used At on a returning bookmarked visit — see
+  // CheckinSessions.js. Never re-mints a new guid on every identify the way the old signed
+  // token did; the same guid persists for this browser/device's whole session lifetime.
+  //
+  // This is also the entire migration path for a pre-rollout signed token still in the wild:
+  // sessionGuid IS that token string when payload.token resolved via the legacy fallback (see
+  // resolveCheckinToken_dw_), so the very act of successfully using an old bookmark plants it
+  // into CheckinSessions under its own token value — no separate migration pass needed. Every
+  // request after this one for that same URL resolves via the session store directly, without
+  // ever reaching verifyIdentityToken_dw_ again. There's nothing left to monitor before
+  // retiring IdentityToken.js's verify path except confirming every still-active old bookmark
+  // has been used at least once since this rollout — the nightly cleanup then prunes it like
+  // any other session once it goes unused for CHECKIN_SESSION_STALE_DAYS_.
+  if (sessionGuid) createOrTouchCheckinSession_dw_(templateSpreadsheet, sessionGuid, trackerRow[TRACKER_NAME_COL_], email, legacyTokenMintedAtIso);
+
   GasLogger.log('checkinWebapp.identify.result', {
     matched: true, f3Name: trackerRow[TRACKER_NAME_COL_], emailMismatch: identity.emailMismatch,
     nextMonthRegistered: nextMonth ? nextMonth.registered : null, durationMs: Date.now() - t0,
@@ -959,15 +1108,17 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     yesterdayStatus: yesterdayStatus,
     nextMonthLabel: nextMonth ? nextMonth.monthLabel : null,
     nextMonthRegistered: nextMonth ? nextMonth.registered : null,
-    // True only when this request's own token (not the one about to be re-minted below) was
-    // signed within the last few minutes — see IDENTITY_TOKEN_FRESH_WINDOW_MS_. Meaningless
-    // (always false) for a typed-credentials identify, which has no incoming token at all.
-    recentlyMinted: tokenRecentlyMinted,
-    // Minted fresh on every successful identify (typed or token) — the canonical Tracker name
-    // rather than whatever variant was typed, so a corrected/re-typed name still round-trips
-    // through the saved link consistently. Client embeds this in the "save your check-in page"
-    // link (CheckinApp.html); see IdentityToken.js for why this exists instead of localStorage.
-    identityToken: mintIdentityToken_dw_(trackerRow[TRACKER_NAME_COL_], email),
+    // True exactly when this session has never been resolved before this request (a precise
+    // createdAt-vs-lastUsedAt comparison, not a time-window guess — see
+    // resolveCheckinToken_dw_) — the "Welcome" vs "Welcome back" heading and the "go bookmark
+    // this" nudge are both driven by this one field (CheckinApp.html).
+    firstUse: firstUse,
+    // The same guid this request came in with (typed path: baked into the form's action URL
+    // before submission; token path: the one just being re-verified) — never re-minted, unlike
+    // the old signed token, so a bookmark stays valid under the same URL for as long as
+    // CheckinSessions keeps its row alive. Client embeds this in the "save your check-in page"
+    // link (CheckinApp.html); see CheckinSessions.js for why this replaced IdentityToken.js here.
+    identityToken: sessionGuid,
   };
 }
 
@@ -1371,5 +1522,6 @@ if (typeof module !== 'undefined' && module.exports) {
     responsesValuesCacheKey_: responsesValuesCacheKey_,
     invalidateFullRosterCache_: invalidateFullRosterCache_,
     handleCheckinIdentify_: handleCheckinIdentify_,
+    checkNextMonthRegistration_: checkNextMonthRegistration_,
   };
 }

@@ -85,4 +85,17 @@
       fallback();
     }
   }
+
+  // Chrome/Firefox's back/forward cache (and mobile Safari's suspended-tab resume) can hand a
+  // reopened tab back its exact pre-navigation DOM/JS state instead of doing a fresh load —
+  // event.persisted is true on exactly that path. Without this, reopening a bookmark/Home
+  // Screen icon that was left mid-flow (e.g. showing the blank identify form after an earlier
+  // failed/expired attempt) shows that frozen state forever, with no new network request ever
+  // firing to correct it — indistinguishable from the token actually being rejected. Forcing a
+  // real reload here always re-runs this page's own identify logic from scratch. Confirmed via
+  // HAR + server-log correlation (F3Go30 hardening work 2026-07) that opening DevTools — which
+  // disables bfcache while attached — was masking this exact bug.
+  window.addEventListener('pageshow', function(e) {
+    if (e.persisted) location.reload();
+  });
 </script>

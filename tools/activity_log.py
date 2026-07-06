@@ -86,8 +86,9 @@ def _classify(event: dict) -> dict | None:
 
     if name == 'checkinWebapp.identify':
         f3_name = data.get('f3Name', '?')
+        via = "token" if data.get('viaToken') else "identity form"
         return {'ts': epoch, 'ts_str': ts_str, 'group': _SESSION, 'f3Name': f3_name,
-                'label': 'VIEW CHECKIN', 'detail': "check-in page"}
+                'label': 'VIEW CHECKIN', 'detail': f"check-in page (via {via})"}
 
     if name == 'checkinWebapp.checkin':
         f3_name = data.get('f3Name', '?')

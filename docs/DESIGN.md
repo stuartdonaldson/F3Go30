@@ -74,7 +74,7 @@ class BG1,BG3 lightgreen
 | Tracker Lifecycle | `CreateNewTracker.js`, `CopyTemplate.js`, `addResponseOnSubmit.js`, `markMinusOne.js`, `nag.js` | Copy-and-init workflow, template-copy mechanics, form-submit handler, nightly miss marking, daily reminder email workflow — all triggers installed once on the Template and dispatching by `TrackerDB` lookup (ADR-010) |
 | Dispatch / TrackerDB | `go30tools.js` | `TrackerDB`/`PaxDB` schema, cross-tracker aggregation, and (per ADR-010) the context-date → target-spreadsheet resolution used by every centrally-dispatched function |
 | Web Apps | `WebApp.js`, `signupWebapp.js`, `SignupApp.html`, `dashboardWebapp.js`, `CheckinApp.html`, `IdentityCore.html`, `HomeApp.html`, `bonusWebapp.js` | `doGet`/`doPost` dispatcher by `cmd` query param (`signup`, `checkin`, `admin`); each `cmd` renders its own `HtmlService` template and handles its own `action`-keyed POST body. `signupWebapp.js`/`SignupApp.html` = HC sign-up; `dashboardWebapp.js`/`CheckinApp.html` = daily check-in + PAX dashboard, reading/writing the current month's Tracker sheet directly (no separate data store); `bonusWebapp.js` = bonus-list/add/edit actions under the same `checkin` cmd; `IdentityCore.html` = client-side identity/HTTP plumbing shared by both `SignupApp.html` and `CheckinApp.html` (see `include_()` below); no `cmd` (or an unrecognized one) renders `HomeApp.html`, a landing page linking to sign-up, check-in/dashboard, and the current month's tracker spreadsheet |
-| Identity / Check-in | `IdentityToken.js` | Bookmarkable identity-token flow — issues and resolves a per-PAX token so a returning PAX can reload the check-in/dashboard page without re-entering F3 Name + Email each visit; see the token/redirect/bookmark-fallback decision below |
+| Identity / Check-in | `CheckinSessions.js`, `IdentityToken.js` | Bookmarkable check-in link — `CheckinSessions.js` mints/resolves a server-stored GUID session so a returning PAX can reload the check-in/dashboard page without re-entering F3 Name + Email each visit; `IdentityToken.js`'s signed-token verify path is kept only to honor links minted before the rollout (see the decision below) |
 | Bonus Rules | `BonusTypes.js` | Centralized bonus-type registry (rule definitions: points, link requirement, cap) consumed by `dashboardWebapp.js`/`bonusWebapp.js` chip rendering and validation |
 | Email | `onboardingEmail.js`, `responseSettingsEmail.js`, `signupEmail.js`, `signupReuse.js` + matching `*Template.html` files | Site-Q onboarding email, response-settings confirmation email, sign-up confirmation email, and repeat-signup detection/reuse |
 | UI / Notifications | `NotificationSBCode.js`, `NotificationSidebar.html` | Sidebar panel: log streaming, prompts, HTML link generation |
@@ -128,24 +128,29 @@ that cannot guarantee a sidebar context must call `Logger.log()` directly.
   anti-enumeration `findSignupMatch_` check unchanged. Trade-off: no stronger authentication than
   "knows the PAX's name and email" — acceptable for this internal, low-sensitivity data.
 
-- **Bookmarkable check-in link via token + top-level redirect (IdentityToken.js, CheckinApp.html,
-  SignupApp.html) — DECIDED:** After a typed `identify` succeeds on either app, the client never
-  renders the next step itself from that response — it always hands off via a top-level
-  navigation (`attemptTopRedirect_`, a `window.top.location.href` assignment, escaping the GAS
-  sandbox iframe the same way a real `target="_top"` link click does): check-in hands off to a
-  `?cmd=checkin&id=<identityToken>` URL so a PAX ends up on — and can bookmark / Add to Home
-  Screen — a link that skips the name+email form on future visits; sign-up's current-month save
-  hands off the same way into that same tokened check-in URL. Because that top-level navigation
-  is triggered from script after an async API call rather than directly from the click, some
-  browsers block it (lost "user activation"); a 400ms fallback timer (`attemptTopRedirect_`'s
-  `fallback` arg) detects the no-op and reveals a manual link/button carrying the same target
-  URL — the PAX taps it themselves, a real user-initiated navigation that browsers don't block.
-  Once on the tokened check-in URL, a one-time nudge (`#bookmarkHereNote`, gated by the
-  server-computed `recentlyMinted` flag on the token's own mint timestamp — no client storage
-  needed) tells the PAX to bookmark this page; it does not reappear on later visits to the same
-  bookmarked link. `attemptTopRedirect_`, plus the rest of the identity/HTTP client plumbing
-  both apps share (`saveIdentityToStorage_`/`loadIdentityFromStorage_`, `callApi`,
-  `hideApiError_`, `setButtonLoading_`), was consolidated (F3Go30-xj1q.1) into one
+- **Bookmarkable check-in link via GUID session, baked into the form's own `action` URL
+  (`CheckinSessions.js`, `CheckinApp.html`, `SignupApp.html`) — DECIDED, supersedes the original
+  token+redirect design:** The original approach (a signed `IdentityToken.js` token minted only
+  *after* a typed identify resolved, then handed to the PAX via a script-triggered
+  `window.top.location.href` redirect) intermittently failed to redirect at all — the redirect
+  fires after an async API round trip, and a sandboxed iframe's "sticky user activation" for a
+  script-triggered top-level navigation is a race against time, not a guarantee, so the gap
+  between click and redirect could exceed it (confirmed via live incident correlation, F3Go30
+  hardening work 2026-07). The fix flips the order: a random opaque session GUID is minted
+  *before* identity is known and baked directly into the identify `<form target="_top">`'s own
+  `action` URL at render time, so the address bar is already correct the instant the page loads —
+  the form POST *is* the top-level navigation, with no separate redirect step afterward that
+  could fail to fire. `CheckinSessions.js` is the server-side session store this trades in for
+  (GUID → F3 Name/Email/Created At/Last Used At, PaxCache-style roster-index + per-row cache,
+  nightly-pruned by `cleanupStaleCheckinSessions_`); `IdentityToken.js`'s verify path is kept
+  only to honor links minted before this rollout (see `resolveCheckinToken_dw_` in
+  `dashboardWebapp.js`) and can be retired once Axiom shows no more legacy-token hits. Sign-up's
+  current-month save still hands off into a tokened check-in URL the same way. Once on the
+  session URL, a one-time nudge (`#bookmarkHereNote`, gated by an exact Created-At-vs-Last-Used-
+  At comparison rather than a time-window heuristic) tells the PAX to bookmark this page; it does
+  not reappear on later visits to the same bookmarked link. The identity/HTTP client plumbing
+  both apps share (`attemptTopRedirect_`, `saveIdentityToStorage_`/`loadIdentityFromStorage_`,
+  `callApi`, `hideApiError_`, `setButtonLoading_`) was consolidated (F3Go30-xj1q.1) into one
   `IdentityCore.html` `<script>`-only partial, pulled into both `SignupApp.html` and
   `CheckinApp.html` via a new `include_(filename)` helper (`WebApp.js`,
   `HtmlService.createHtmlOutputFromFile(filename).getContent()`) — each page sets

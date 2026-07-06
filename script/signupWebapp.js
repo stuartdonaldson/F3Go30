@@ -38,11 +38,11 @@ var signupWebappSmokeModeModule_ = (typeof module !== 'undefined' && module.expo
 var getSmokeTrackerId_sw_ = (signupWebappSmokeModeModule_ && signupWebappSmokeModeModule_.getSmokeTrackerId_)
   || (typeof globalThis !== 'undefined' && globalThis.getSmokeTrackerId_);
 
-var signupWebappIdentityTokenModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./IdentityToken.js')
+var signupWebappCheckinSessionsModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./CheckinSessions.js')
   : null;
-var mintIdentityToken_sw_ = (signupWebappIdentityTokenModule_ && signupWebappIdentityTokenModule_.mintIdentityToken_)
-  || (typeof globalThis !== 'undefined' && globalThis.mintIdentityToken_);
+var createOrTouchCheckinSession_sw_ = (signupWebappCheckinSessionsModule_ && signupWebappCheckinSessionsModule_.createOrTouchCheckinSession_)
+  || (typeof globalThis !== 'undefined' && globalThis.createOrTouchCheckinSession_);
 
 function normalizeTeamValue_(value) {
   return String(value || '').trim();
@@ -697,12 +697,14 @@ function handleSignupSave_(templateSpreadsheet, payload) {
 
   sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, !match);
   var response = { ok: true, savedMonth: targetMonth.label, trackerUrl: targetMonth.trackerUrl };
-  // A current-month signup means this PAX can check in today — hand them a token (see
-  // IdentityToken.js) so SignupApp.html can send them straight into the check-in app instead of
-  // leaving them on the signup confirmation with no obvious next step. A next-month signup has
-  // nothing to check into yet, so no token (and no handoff) for that case.
+  // A current-month signup means this PAX can check in today — hand them a check-in session
+  // (see CheckinSessions.js) so SignupApp.html can send them straight into the check-in app
+  // instead of leaving them on the signup confirmation with no obvious next step. A next-month
+  // signup has nothing to check into yet, so no session (and no handoff) for that case.
   if (months.current && targetMonth.sheetId === months.current.sheetId) {
-    response.identityToken = mintIdentityToken_sw_(payload.f3Name, payload.email);
+    var checkinSessionGuid = Utilities.getUuid();
+    createOrTouchCheckinSession_sw_(templateSpreadsheet, checkinSessionGuid, payload.f3Name, payload.email);
+    response.identityToken = checkinSessionGuid;
   }
   return response;
 }
