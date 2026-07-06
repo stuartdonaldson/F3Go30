@@ -159,9 +159,16 @@ deploying or initializing anything:
 1. Copies the Template spreadsheet into a new sibling Drive folder named `<folderName>` — the
    bound Apps Script project comes along automatically (Drive file copies of a container-bound
    spreadsheet duplicate the bound script too).
-2. Copies the N most recent **real** (non-smoke, non-expired) monthly tracker spreadsheets from
-   TrackerDB into that same new folder.
-3. Rebuilds the new Template copy's `TrackerDB`/`PaxDB` sheets from scratch, using only the
+2. Forces the copied Template's Config sheet to safe defaults — **`Email Test Mode` = `Yes`**
+   (fail-safe; the operator never has to remember to set this) and **`NameSpace` = `<folderName>`**
+   (the copy gets its own identity instead of inheriting PROD's — `<folderName>` is one
+   identifier used for the folder name, the Template-copy name suffix, the Config `NameSpace`,
+   and the tracker-rename marker below). These are the *only* Config values that differ from a
+   verbatim PROD copy — see `CopyTemplate.js`'s module header for why that must stay true.
+3. Copies the N most recent **real** (non-smoke, non-expired) monthly tracker spreadsheets from
+   TrackerDB into that same new folder, each renamed to `<original name> (<folderName>)` so a
+   copied tracker is never visually indistinguishable from its PROD original.
+4. Rebuilds the new Template copy's `TrackerDB`/`PaxDB` sheets from scratch, using only the
    copied trackers' new SheetIds — the raw copy would otherwise carry over the *entire* source
    TrackerDB/PaxDB history (both live inside the Template spreadsheet), pointing at the old
    trackers' original SheetIds instead of the copies.

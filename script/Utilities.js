@@ -423,6 +423,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     escapeHtml_: escapeHtml_,
     getConfigValue_: getConfigValue_,
+    upsertConfigSheetRow_: upsertConfigSheetRow_,
     initializeConfigSheet_: initializeConfigSheet_,
     sanitizeEmailDisplayName_: sanitizeEmailDisplayName_,
     buildEmailRecipientList_: buildEmailRecipientList_,

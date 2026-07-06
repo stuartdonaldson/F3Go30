@@ -169,6 +169,29 @@ that cannot guarantee a sidebar context must call `Logger.log()` directly.
   is left to F3Go30-xj1q.3's planned collapse of `CopyTemplate`'s bespoke rebuild onto
   `scanTrackers` as the single populate path.
 
+- **CopyTemplate safe-Config defaults + rename (F3Go30-xj1q.3) — DECIDED:**
+  `copyTemplateToNewEnvironment_` (`CopyTemplate.js`) stands up a realistic-prod-data test/SIT
+  environment by copying the Template (+ bound script) and recent trackers verbatim; the ONLY
+  meaningful PROD→test delta it must apply is the Config sheet, so the copy can never be
+  mistaken for PROD or silently send live email. `folderName` (operator-supplied) is unified as
+  the single identifier for the new environment: it names the Drive folder, the copied
+  Template's spreadsheet name suffix, the new Config `NameSpace` value, and the marker appended
+  to every copied tracker's name. Right after the Template copy is made (before the tracker
+  copy loop), `applySafeConfigDefaults_`/`computeSafeConfigDefaults_` force the copied Config's
+  `Email Test Mode` to `Yes` (fail-safe, regardless of what PROD's Config carried) and its
+  `NameSpace` to `folderName` — via `upsertConfigSheetRow_` (`Utilities.js`, now exported for
+  Node/testing), same primary/secondary Config-row convention used everywhere else. Copied
+  historical tracker spreadsheets are renamed via `buildRenamedTrackerName_`, which **appends**
+  `" (<folderName>)"` to the source name rather than substituting the NameSpace segment of
+  `"YYYY-MM-<oldNs>"` — appending was chosen as the safer default (bead's own design notes):
+  it can't collide with or corrupt an unexpected source naming convention and keeps the
+  original name fully intact for traceability back to PROD. The module header on
+  `CopyTemplate.js` states this vision explicitly so a future maintainer does not "clean up"
+  the copy's Config back toward PROD's values and silently re-arm live email. Out of scope for
+  this bead (deferred, see the `scanTrackers` entry above): collapsing `CopyTemplate`'s bespoke
+  TrackerDB/PaxDB rebuild (`buildCopiedTrackerDbRow_`/`ct_updateTrackerDB`/`ct_updatePaxDB`)
+  onto qualified `scanTrackers` as the single populate path.
+
 ---
 
 ## Data Model
