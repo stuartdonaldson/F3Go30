@@ -463,11 +463,25 @@
     callApi('identify', { f3Name: f3Name, email: email })
       .then(function(res) {
         if (!res.matched) {
+          // Prefill the signup page with what they just typed, even though it didn't match.
+          saveIdentityToStorage_(f3Name, email);
+          if (res.knownPaxNotRegistered) {
+            // Known PAX (PaxDB, exact name+email match — see handleCheckinIdentify_), just not
+            // signed up for the CURRENT month's tracker: carry them straight into a prefilled
+            // signup instead of a dead-end "we couldn't find you" message (F3Go30-xj1q.1).
+            // Mirrors openSignup_('current')'s URL exactly.
+            var signupCurrentMonthUrl = WEBAPP_URL + '?cmd=signup&targetMonth=current&autoStart=1';
+            attemptTopRedirect_(signupCurrentMonthUrl, function() {
+              setButtonLoading_(btn, false);
+              $('idError').textContent = "We couldn't find a signup with that name and email for the current month. Please sign up first.";
+              $('idError').classList.remove('hidden');
+              $('idSignupBtn').classList.remove('hidden');
+            });
+            return;
+          }
           setButtonLoading_(btn, false);
           $('idError').textContent = "We couldn't find a signup with that name and email for the current month. Please sign up first.";
           $('idError').classList.remove('hidden');
-          // Prefill the signup page with what they just typed, even though it didn't match.
-          saveIdentityToStorage_(f3Name, email);
           $('idSignupBtn').classList.remove('hidden');
           return;
         }
@@ -501,6 +515,16 @@
       .then(function(res) {
         if (res.matched) {
           applyIdentifySuccess_(res);
+        } else if (res.knownPaxNotRegistered) {
+          // Same known-but-unregistered fallthrough as the typed path above (F3Go30-xj1q.1) —
+          // a stale/no-longer-current bookmark for a PAX who's known to PaxDB but hasn't signed
+          // up for THIS month carries them into a prefilled signup instead of a blank form.
+          saveIdentityToStorage_(res.f3Name, res.email);
+          var signupCurrentMonthUrl = WEBAPP_URL + '?cmd=signup&targetMonth=current&autoStart=1';
+          attemptTopRedirect_(signupCurrentMonthUrl, function() {
+            $('step-identify').classList.remove('hidden');
+            $('idSignupBtn').classList.remove('hidden');
+          });
         } else {
           $('step-identify').classList.remove('hidden');
         }

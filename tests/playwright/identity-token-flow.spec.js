@@ -220,4 +220,57 @@ test.describe('Identity-token check-in flow (SIT)', () => {
     await page.waitForTimeout(1000); // attemptTopRedirect_'s fallback window is 400ms
     expect(page.url()).not.toContain('cmd=checkin');
   });
+
+  // ── Known-but-not-registered-this-month fallthrough (F3Go30-xj1q.1) ──────────────────────
+  // Check-in's PaxDB fallback (handleCheckinIdentify_, dashboardWebapp.js) carries a PAX known
+  // to PaxDB from a prior signup — but absent from the CURRENT month's tracker — straight into
+  // a prefilled signup instead of a dead-end "we couldn't find you" message. Requires a fixture
+  // PAX that's in PaxDB (via a completed prior-month signup + scanTrackers) but not on the
+  // current tracker's roster — see the bead's "FIXTURE DECISION" note. Not yet established as of
+  // Stage 2; the plan explicitly allows deferring these to Stage 4 once the fixture exists.
+  const LATE_SIGNUP_PAX = { f3Name: 'LateSignupTest', email: 'latesignup@example.com' };
+  const KNOWN_NOT_REGISTERED_FIXTURE_READY = false; // flip once Stage 4 establishes the fixture
+
+  test('typed identify for a truly-unknown name+email shows the sign-up prompt without auto-redirecting', async ({ page }) => {
+    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
+    await dismissGasBanner(page);
+    const app = page.frameLocator('iframe').frameLocator('iframe');
+    await app.locator('#idF3Name').fill('TrulyUnknownPax');
+    await app.locator('#idEmail').fill('trulyunknownpax@example.com');
+    await app.locator('#identifyBtn').click();
+
+    await expect(app.locator('#idError')).toBeVisible({ timeout: 15000 });
+    await expect(app.locator('#idSignupBtn')).toBeVisible();
+    // No PaxDB match -> no auto-redirect into signup; stays on the check-in identify step.
+    await page.waitForTimeout(1000); // attemptTopRedirect_'s fallback window is 400ms
+    expect(page.url()).not.toContain('cmd=signup');
+  });
+
+  test('typed identify for a known-but-unregistered PAX auto-redirects into prefilled signup', async ({ page }) => {
+    test.skip(!KNOWN_NOT_REGISTERED_FIXTURE_READY, 'known-but-unregistered SIT fixture not yet established — see Stage 4');
+    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
+    await dismissGasBanner(page);
+    const app = page.frameLocator('iframe').frameLocator('iframe');
+    await app.locator('#idF3Name').fill(LATE_SIGNUP_PAX.f3Name);
+    await app.locator('#idEmail').fill(LATE_SIGNUP_PAX.email);
+    await app.locator('#identifyBtn').click();
+
+    await page.waitForURL((url) => url.href.includes('cmd=signup'), { timeout: 15000 });
+    const app2 = page.frameLocator('iframe').frameLocator('iframe');
+    await expect(app2.locator('#step-info')).toBeVisible({ timeout: 15000 });
+    await expect(app2.locator('#infoF3Name')).toHaveText(LATE_SIGNUP_PAX.f3Name);
+  });
+
+  test('reopening a stale bookmark for a known-but-unregistered PAX auto-redirects into prefilled signup', async ({ page }) => {
+    test.skip(!KNOWN_NOT_REGISTERED_FIXTURE_READY, 'known-but-unregistered SIT fixture not yet established — see Stage 4');
+    // Get a token'd URL for the fixture PAX (whatever month it currently resolves against —
+    // the token itself only carries f3Name/email, verified fresh server-side on every request).
+    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
+    await dismissGasBanner(page);
+    let app = page.frameLocator('iframe').frameLocator('iframe');
+    await app.locator('#idF3Name').fill(LATE_SIGNUP_PAX.f3Name);
+    await app.locator('#idEmail').fill(LATE_SIGNUP_PAX.email);
+    await app.locator('#identifyBtn').click();
+    await page.waitForURL((url) => url.href.includes('cmd=signup'), { timeout: 15000 });
+  });
 });

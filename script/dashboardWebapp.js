@@ -23,6 +23,8 @@ var selectTargetMonth_dw_ = (dashboardWebappSignupModule_ && dashboardWebappSign
   || (typeof globalThis !== 'undefined' && globalThis.selectTargetMonth_);
 var findSignupMatchByF3NameOnly_dw_ = (dashboardWebappSignupModule_ && dashboardWebappSignupModule_.findSignupMatchByF3NameOnly_)
   || (typeof globalThis !== 'undefined' && globalThis.findSignupMatchByF3NameOnly_);
+var findPaxDbMatch_dw_ = (dashboardWebappSignupModule_ && dashboardWebappSignupModule_.findPaxDbMatch_)
+  || (typeof globalThis !== 'undefined' && globalThis.findPaxDbMatch_);
 
 var dashboardWebappResponseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./response_utils.js')
@@ -899,6 +901,23 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
   }
   var identity = resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, payload.targetMonth);
   if (!identity.matched) {
+    // PaxDB fallback (F3Go30-xj1q.1): only here, in the typed/token-decoded miss branch — never
+    // in the tokenInvalid branch above, where f3Name/email come from an unverified client and a
+    // PaxDB lookup would be a name+email enumeration oracle. findPaxDbMatch_ (signupWebapp.js)
+    // requires an EXACT match on both fields — the same anti-enumeration boundary the signup
+    // app's own identify already exposes, so this doesn't open anything new. A PaxDB hit here
+    // means "known PAX, just not signed up for the CURRENT month's tracker" — the client uses
+    // knownPaxNotRegistered to auto-carry them into signup instead of a dead-end message.
+    var paxDbMatch = findPaxDbMatch_dw_(templateSpreadsheet, f3Name, email);
+    if (paxDbMatch) {
+      GasLogger.log('checkinWebapp.identify.result', {
+        matched: false, knownPaxNotRegistered: true, tokenInvalid: !!payload.token, durationMs: Date.now() - t0,
+      });
+      return {
+        ok: true, matched: false, tokenInvalid: !!payload.token,
+        knownPaxNotRegistered: true, f3Name: paxDbMatch.f3Name, email: paxDbMatch.email,
+      };
+    }
     GasLogger.log('checkinWebapp.identify.result', { matched: false, durationMs: Date.now() - t0 });
     return { ok: true, matched: false, tokenInvalid: !!payload.token };
   }
@@ -1351,5 +1370,6 @@ if (typeof module !== 'undefined' && module.exports) {
     trackerValuesCacheKey_: trackerValuesCacheKey_,
     responsesValuesCacheKey_: responsesValuesCacheKey_,
     invalidateFullRosterCache_: invalidateFullRosterCache_,
+    handleCheckinIdentify_: handleCheckinIdentify_,
   };
 }

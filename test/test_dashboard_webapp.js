@@ -12,6 +12,13 @@ function makeFakeScriptCache_() {
 
 var fakeScriptCache_ = makeFakeScriptCache_();
 global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+global.GasLogger = { log: function() {}, logError: function() {}, run: function(name, fn) { return fn(); } };
+
+// In-memory stand-in for PropertiesService.getScriptProperties() — only dependency pulled in
+// transitively via signupWebapp.js's getCurrentAndNextMonths_ -> SmokeMode.js's
+// getSmokeTrackerId_ (F3Go30-xj1q.1's handleCheckinIdentify_ PaxDB-fallback tests below).
+var fakeScriptProperties_ = { getProperty: function() { return null; } };
+global.PropertiesService = { getScriptProperties: function() { return fakeScriptProperties_; } };
 
 const {
   classifyTrackerColumns_,
@@ -37,6 +44,7 @@ const {
   trackerValuesCacheKey_,
   responsesValuesCacheKey_,
   invalidateFullRosterCache_,
+  handleCheckinIdentify_,
 } = require('../script/dashboardWebapp.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
@@ -327,5 +335,82 @@ const {
   assert.equal(getCachedSheetValuesOnly_(responsesValuesCacheKey_('sheet-x')), null);
   assert.deepEqual(getCachedSheetValuesOnly_(trackerValuesCacheKey_('sheet-y')), [['untouched']]);
 })();
+
+// ── handleCheckinIdentify_ PaxDB fallback (F3Go30-xj1q.1) ──────────────────────────────────
+// A PAX known to PaxDB from a prior signup, but absent from the CURRENT month's tracker, gets
+// knownPaxNotRegistered:true instead of a dead-end "we couldn't find you" — the client uses
+// this to auto-carry them into signup instead of stranding them. No TrackerDB sheet means
+// getCurrentAndNextMonths_ resolves no current month, so resolveCheckinIdentity_ misses fast
+// (dashboardWebapp.js:597) without needing a full Responses/Tracker fixture — exactly what lets
+// this test isolate the new PaxDB-fallback branch on its own.
+function makeFakePaxDbSpreadsheet_(paxDbRows) {
+  return {
+    getSheetByName: function(name) {
+      if (name === 'PaxDB') {
+        return { getDataRange: function() { return { getValues: function() { return paxDbRows; } }; } };
+      }
+      return null; // no TrackerDB -> months.current undefined -> resolveCheckinIdentity_ misses fast
+    },
+  };
+}
+
+var PAXDB_HEADERS_ = ['F3 Name', 'Email', 'SheetId', 'Team', 'WHO', 'WHAT', 'HOW', 'Team Type', 'Other Team', 'Phone', 'NAG Email'];
+
+(function testHandleCheckinIdentifyPaxDbHitReturnsKnownPaxNotRegistered() {
+  var fakeSpreadsheet = makeFakePaxDbSpreadsheet_([
+    PAXDB_HEADERS_,
+    ['LateSignupTest', 'latesignup@example.com', 'sheet-prior', 'Crucible', 'w', 'wh', 'ho', 'ao', '', '', ''],
+  ]);
+  var res = handleCheckinIdentify_(fakeSpreadsheet, { f3Name: 'LateSignupTest', email: 'latesignup@example.com' });
+  assert.equal(res.matched, false);
+  assert.equal(res.knownPaxNotRegistered, true);
+  assert.equal(res.f3Name, 'LateSignupTest');
+  assert.equal(res.email, 'latesignup@example.com');
+  assert.equal(res.tokenInvalid, false);
+  // No team/who/what/how leaked — signup re-fetches its own prefill (see the plan's Stage 2 note).
+  assert.equal(res.team, undefined);
+  assert.equal(res.who, undefined);
+})();
+
+(function testHandleCheckinIdentifyPaxDbMissLeavesMatchedFalseUnchanged() {
+  var fakeSpreadsheet = makeFakePaxDbSpreadsheet_([PAXDB_HEADERS_]); // header only, no rows
+  var res = handleCheckinIdentify_(fakeSpreadsheet, { f3Name: 'TrulyUnknown', email: 'unknown@example.com' });
+  assert.equal(res.matched, false);
+  assert.equal(res.knownPaxNotRegistered, undefined);
+  assert.equal(res.f3Name, undefined);
+})();
+
+(function testHandleCheckinIdentifyPaxDbFallbackRequiresExactBothFieldsMatch() {
+  // Anti-enumeration: a name-only or email-only match must not trigger the fallback — only an
+  // EXACT match on both fields (findPaxDbMatch_'s existing rule, reused as-is here).
+  var fakeSpreadsheet = makeFakePaxDbSpreadsheet_([
+    PAXDB_HEADERS_,
+    ['LateSignupTest', 'latesignup@example.com', 'sheet-prior', 'Crucible', 'w', 'wh', 'ho', 'ao', '', '', ''],
+  ]);
+  var nameOnly = handleCheckinIdentify_(fakeSpreadsheet, { f3Name: 'LateSignupTest', email: 'someone-else@example.com' });
+  assert.equal(nameOnly.knownPaxNotRegistered, undefined);
+  var emailOnly = handleCheckinIdentify_(fakeSpreadsheet, { f3Name: 'NotLateSignupTest', email: 'latesignup@example.com' });
+  assert.equal(emailOnly.knownPaxNotRegistered, undefined);
+})();
+
+(function testHandleCheckinIdentifyTokenInvalidNeverConsultsPaxDb() {
+  // The tokenInvalid branch (untrusted client-decoded f3Name/email) must never reach the PaxDB
+  // fallback — that would turn it into a name+email enumeration oracle. A malformed token
+  // (verifyIdentityToken_ returns null before ever needing a real signing key) exercises this.
+  var paxDbCalled = false;
+  var fakeSpreadsheet = {
+    getSheetByName: function(name) {
+      if (name === 'PaxDB') paxDbCalled = true;
+      return null;
+    },
+  };
+  var res = handleCheckinIdentify_(fakeSpreadsheet, { token: 'not-a-real-token', f3Name: 'LateSignupTest', email: 'latesignup@example.com' });
+  assert.equal(res.matched, false);
+  assert.equal(res.tokenInvalid, true);
+  assert.equal(res.knownPaxNotRegistered, undefined);
+  assert.equal(paxDbCalled, false);
+})();
+
+console.log('test_dashboard_webapp.js: PaxDB-fallback assertions passed');
 
 console.log('test_dashboard_webapp.js: all assertions passed');

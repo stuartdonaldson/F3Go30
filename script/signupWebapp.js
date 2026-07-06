@@ -781,6 +781,7 @@ if (typeof module !== 'undefined' && module.exports) {
     classifyTeam_,
     findSignupMatch_,
     findSignupMatchByF3NameOnly_,
+    findPaxDbMatch_,
     isDeletedSignupRow_,
     parseTeamListsFromListDbRows_,
     readTeamLists_,
