@@ -1,7 +1,11 @@
 const assert = require('node:assert/strict');
 
 // GAS global stubs — must be set before require.
-global.GasLogger = { log: function() {}, run: function(name, fn) { return fn(); } };
+var gasLoggerCalls = [];
+global.GasLogger = {
+  log: function(tag, data) { gasLoggerCalls.push({ tag: tag, data: data }); },
+  run: function(name, fn) { return fn(); }
+};
 global.LockService = { getScriptLock: function() { return { waitLock: function() {}, releaseLock: function() {} }; } };
 
 const {
@@ -12,7 +16,9 @@ const {
   findMostRecentPaxRecordForName_,
   findMostRecentPaxRecordForEmail_,
   deletePaxDbRowsBySheetId_,
-  _readPaxDbRowsBySheetId_
+  _readPaxDbRowsBySheetId_,
+  _qualifySourceFiles_,
+  _logExcludedSourceArtifacts_
 } = require('../script/go30tools.js');
 
 // Scanned row wins over an existing row for the same SheetId.
@@ -323,6 +329,59 @@ function makeFakePaxDbSpreadsheet(sheet) {
   assert.ok(!remaining.bySheetId['sheet-smoke'], 'smoke rows removed');
   assert.ok(remaining.bySheetId['sheet-keep'], 'keep rows preserved');
   assert.equal(remaining.bySheetId['sheet-keep'].length, 1);
+}
+
+// --- _qualifySourceFiles_ / _logExcludedSourceArtifacts_ (F3Go30-xj1q.2) ---
+{
+  var filesById = {
+    'sheet-real': { id: 'sheet-real', name: '2026-07 F3 Go30', lastUpdated: new Date('2026-07-05') },
+    'sheet-smoke-name': { id: 'sheet-smoke-name', name: '2026-08 F3 Go30 (Smoke)', lastUpdated: new Date('2026-08-01') },
+    'sheet-expired-name': { id: 'sheet-expired-name', name: '2026-01 F3 Go30 (Expired)', lastUpdated: new Date('2026-01-01') },
+    'sheet-smoke-id': { id: 'sheet-smoke-id', name: '2026-09 F3 Go30', lastUpdated: new Date('2026-09-01') }
+  };
+
+  // No smoke tracker id set: only name-qualified exclusions apply.
+  var qualifiedNoId = _qualifySourceFiles_(filesById, null);
+  assert.deepEqual(Object.keys(qualifiedNoId.included).sort(), ['sheet-real', 'sheet-smoke-id']);
+  assert.deepEqual(
+    qualifiedNoId.excluded.map(function(a) { return [a.id, a.reason]; }).sort(),
+    [['sheet-expired-name', 'name_expired'], ['sheet-smoke-name', 'name_smoke']]
+  );
+
+  // SMOKE_TRACKER_ID matches a file with no smoke-labeled name — still excluded (belt-and-braces).
+  var qualifiedWithId = _qualifySourceFiles_(filesById, 'sheet-smoke-id');
+  assert.deepEqual(Object.keys(qualifiedWithId.included).sort(), ['sheet-real']);
+  assert.deepEqual(
+    qualifiedWithId.excluded.map(function(a) { return [a.id, a.reason]; }).sort(),
+    [['sheet-expired-name', 'name_expired'], ['sheet-smoke-id', 'smoke_tracker_id'], ['sheet-smoke-name', 'name_smoke']]
+  );
+
+  // No exclusions -> included passes through unchanged, excluded is empty.
+  var cleanFiles = { 'sheet-real': filesById['sheet-real'] };
+  var qualifiedClean = _qualifySourceFiles_(cleanFiles, null);
+  assert.deepEqual(qualifiedClean.included, cleanFiles);
+  assert.deepEqual(qualifiedClean.excluded, []);
+
+  // Headless logging: enumerates every skipped artifact via GasLogger.log (also reaches
+  // Logger.log per GasLogger.js, so this is the "log a warning" AC requirement).
+  gasLoggerCalls.length = 0;
+  _logExcludedSourceArtifacts_(qualifiedWithId.excluded, 'scanTrackers');
+  assert.equal(gasLoggerCalls.length, 1);
+  assert.equal(gasLoggerCalls[0].tag, 'scanTrackers.smokeArtifactsExcluded');
+  assert.equal(gasLoggerCalls[0].data.count, 3);
+  assert.ok(/WARNING/.test(gasLoggerCalls[0].data.message), 'message flags this as a warning');
+  assert.ok(
+    gasLoggerCalls[0].data.artifacts.some(function(s) { return s.indexOf('2026-08 F3 Go30 (Smoke)') !== -1; }),
+    'excluded smoke-by-name artifact is enumerated'
+  );
+  assert.ok(
+    gasLoggerCalls[0].data.artifacts.some(function(s) { return s.indexOf('2026-01 F3 Go30 (Expired)') !== -1; }),
+    'excluded expired-by-name artifact is enumerated'
+  );
+  assert.ok(
+    gasLoggerCalls[0].data.artifacts.some(function(s) { return s.indexOf('smoke_tracker_id') !== -1; }),
+    'excluded smoke-by-id artifact is enumerated with its reason'
+  );
 }
 
 console.log('test_go30tools.js: PASS');

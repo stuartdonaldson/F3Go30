@@ -79,9 +79,22 @@ var PAX_DB_HEADERS_ = [
 
 /**
  * Scans sibling tracker spreadsheets in the active spreadsheet folder and refreshes TrackerDB/PaxDB.
+ * Source qualification (F3Go30-xj1q.2): every file found in the folder walk is checked
+ * against _qualifySourceFiles_ before scanning — a name containing "(Smoke)"/"(Expired)",
+ * or a SheetId matching the current SMOKE_TRACKER_ID script property (SmokeMode.js), is
+ * excluded by default so a stray smoke/expired tracker left in the folder never silently
+ * pollutes TrackerDB/PaxDB. Headless callers (admin action, time trigger) get exclusion +
+ * a GasLogger warning enumerating what was skipped, with no prompt. Interactive callers
+ * (opts.interactive === true, i.e. invoked from an onOpen menu item with a UI available)
+ * are offered include/exclude/remove per run, default exclude.
+ * @param {{interactive?: boolean}=} opts interactive: true when called from a UI context
+ *   (SpreadsheetApp.getUi() must be available) — offers an include/exclude/remove prompt
+ *   for any smoke/expired artifacts found instead of silently excluding them. Omit/false
+ *   for headless (admin action / time trigger) callers.
  * @returns {{scanned: number, processed: number, unchanged: number, tracked: number, skipped: number}} Run summary.
  */
-function scanTrackers() {
+function scanTrackers(opts) {
+	opts = opts || {};
 	return GasLogger.run('scanTrackers', function() {
 		var activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 		var parentFolder = _getFirstParentFolder_(activeSpreadsheet.getId());
@@ -89,8 +102,124 @@ function scanTrackers() {
 			throw new Error('scanTrackers: active spreadsheet is not in a Drive folder.');
 		}
 		var filesById = _collectSheetFilesInFolder_(parentFolder);
-		return _scanSheetFilesById_(filesById, 'scanTrackers');
+		var smokeTrackerId = getSmokeTrackerId_gt_ ? getSmokeTrackerId_gt_() : null;
+		var qualified = _qualifySourceFiles_(filesById, smokeTrackerId);
+		var finalFilesById = qualified.included;
+
+		if (qualified.excluded.length) {
+			if (opts.interactive) {
+				finalFilesById = _resolveSmokeArtifactsInteractively_(qualified);
+			} else {
+				_logExcludedSourceArtifacts_(qualified.excluded, 'scanTrackers');
+			}
+		}
+
+		return _scanSheetFilesById_(finalFilesById, 'scanTrackers');
 	});
+}
+
+/**
+ * Pure source-qualification filter for the scanTrackers folder walk (F3Go30-xj1q.2). Excludes
+ * any file whose name contains "(Smoke)" or "(Expired)" (same convention as CopyTemplate.js's
+ * selectRecentRealTrackerRows_, which applies the equivalent filter to TrackerDB rows rather
+ * than a folder walk), plus any file whose SheetId matches smokeTrackerId — the belt-and-braces
+ * check for a smoke tracker that was renamed without the "(Smoke)" label. No Drive/Sheets calls,
+ * so it's unit-testable without live GAS services.
+ * @param {Object<string,{id:string,name:string,lastUpdated:Date}>} filesById From _collectSheetFilesInFolder_.
+ * @param {string|null} smokeTrackerId Current SMOKE_TRACKER_ID script property value, or null.
+ * @returns {{included: Object<string,Object>, excluded: Array<{id:string,name:string,reason:string}>}}
+ */
+function _qualifySourceFiles_(filesById, smokeTrackerId) {
+	var included = {};
+	var excluded = [];
+
+	Object.keys(filesById || {}).forEach(function(sheetId) {
+		var fileMeta = filesById[sheetId] || {};
+		var name = fileMeta.name || '';
+		var reason = null;
+
+		if (smokeTrackerId && sheetId === smokeTrackerId) {
+			reason = 'smoke_tracker_id';
+		} else if (name.indexOf('(Smoke)') !== -1) {
+			reason = 'name_smoke';
+		} else if (name.indexOf('(Expired)') !== -1) {
+			reason = 'name_expired';
+		}
+
+		if (reason) {
+			excluded.push({ id: sheetId, name: name, reason: reason, fileMeta: fileMeta });
+		} else {
+			included[sheetId] = fileMeta;
+		}
+	});
+
+	return { included: included, excluded: excluded };
+}
+
+/**
+ * Headless-path logging for excluded smoke/expired artifacts — never prompts, just records a
+ * warning enumerating what was skipped so a headless run (admin action / time trigger) never
+ * silently includes smoke data. Also reaches Logger.log via GasLogger.log (see GasLogger.js),
+ * so it's visible in Stackdriver/clasp logs even without an Axiom sink configured.
+ * @param {Array<{id:string,name:string,reason:string}>} excluded
+ * @param {string} sourceLabel
+ */
+function _logExcludedSourceArtifacts_(excluded, sourceLabel) {
+	GasLogger.log(sourceLabel + '.smokeArtifactsExcluded', {
+		message: 'WARNING: excluded ' + excluded.length + ' smoke/expired artifact(s) from scan',
+		count: excluded.length,
+		artifacts: excluded.map(function(a) { return a.name + ' [' + a.reason + ']'; })
+	});
+}
+
+/**
+ * Interactive-path resolution for excluded smoke/expired artifacts — only reachable when
+ * scanTrackers() is called with opts.interactive === true from a context where
+ * SpreadsheetApp.getUi() is available (an onOpen menu item; there is no such menu item yet —
+ * see F3Go30-xj1q.3's planned collapse of CopyTemplate onto scanTrackers). Not unit-testable
+ * (Apps Script UI dialogs have no Node stand-in); kept deliberately thin — all the
+ * unit-testable logic (qualification, logging) lives in _qualifySourceFiles_ /
+ * _logExcludedSourceArtifacts_ above, this function only interprets the button the operator
+ * pressed.
+ *
+ * ui.alert only supports OK/CANCEL, YES/NO, YES/NO/CANCEL button sets — there is no native
+ * three-choice "include/exclude/remove" prompt, so this asks once per excluded artifact using
+ * YES = include, NO = exclude (default; also what closing the dialog does), CANCEL = remove
+ * (cleanupTracker the smoke artifact via cleanupTrackerArtifact_, then exclude it from this
+ * scan since it no longer exists).
+ * @param {{included: Object<string,Object>, excluded: Array<{id:string,name:string,reason:string}>}} qualified
+ * @returns {Object<string,Object>} The final filesById to scan.
+ */
+function _resolveSmokeArtifactsInteractively_(qualified) {
+	var ui = SpreadsheetApp.getUi();
+	var finalFilesById = Object.assign({}, qualified.included);
+
+	qualified.excluded.forEach(function(artifact) {
+		var response = ui.alert(
+			'Smoke/expired tracker found',
+			'"' + artifact.name + '" looks like a smoke or expired tracker (' + artifact.reason + ').\n\n' +
+			'Include it in this scan? YES = include, NO = exclude (default), CANCEL = remove it now.',
+			ui.ButtonSet.YES_NO_CANCEL
+		);
+
+		if (response === ui.Button.YES) {
+			GasLogger.log('scanTrackers.smokeArtifactIncluded', { fileId: artifact.id, fileName: artifact.name, reason: artifact.reason });
+			finalFilesById[artifact.id] = artifact.fileMeta;
+		} else if (response === ui.Button.CANCEL) {
+			try {
+				var result = cleanupTrackerArtifact_(artifact.id, true);
+				GasLogger.log('scanTrackers.smokeArtifactRemoved', Object.assign({ fileId: artifact.id, fileName: artifact.name }, result));
+			} catch (e) {
+				GasLogger.log('scanTrackers.smokeArtifactRemoveFailed', { fileId: artifact.id, fileName: artifact.name, error: e.message });
+				ui.alert('Could not remove "' + artifact.name + '": ' + e.message);
+			}
+			// Removed (or attempted) — either way, exclude from this scan.
+		} else {
+			GasLogger.log('scanTrackers.smokeArtifactExcluded', { fileId: artifact.id, fileName: artifact.name, reason: artifact.reason });
+		}
+	});
+
+	return finalFilesById;
 }
 
 /**
@@ -543,6 +672,64 @@ function removeTrackerDbRow_(sheetId) {
 	});
 	_updateTrackerDB(rows);
 	return true;
+}
+
+/**
+ * Removes a tracker from TrackerDB, its PaxDB rows, and optionally trashes the spreadsheet and
+ * its linked HC form. Primary use case: smoke test teardown (WebApp.js's `cleanupTracker` admin
+ * action, and scanTrackers()'s interactive "remove" choice — F3Go30-xj1q.2 — both call this
+ * single implementation so cleanup behavior can't drift between the two entry points).
+ * Order: unlink form -> trash form -> trash spreadsheet (GAS blocks trashing a spreadsheet
+ * while a live form destination points at it).
+ * @param {string} sheetId
+ * @param {boolean=} trashSpreadsheet Also trash the spreadsheet file (and its linked HC form). Default false.
+ * @returns {{trackerRemoved: boolean, paxRowsRemoved: number, formTrashed: boolean, trashed: boolean, triggerCleared: boolean}}
+ */
+function cleanupTrackerArtifact_(sheetId, trashSpreadsheet) {
+	if (!sheetId) {
+		throw new Error('cleanupTrackerArtifact_: sheetId is required');
+	}
+	var ss = SpreadsheetApp.getActiveSpreadsheet();
+	var trackerRemoved = removeTrackerDbRow_(sheetId);
+	var paxRowsRemoved = deletePaxDbRowsBySheetId_(ss, sheetId);
+	var formTrashed = false;
+	var trashed = false;
+	var triggerCleared = false;
+
+	try {
+		var triggerSs = SpreadsheetApp.openById(sheetId);
+		clearFormSubmitTrigger(triggerSs);
+		triggerCleared = true;
+	} catch (triggerErr) {
+		GasLogger.log('cleanupTrackerArtifact_.clearFormSubmitTriggerFailed', { error: triggerErr.message });
+	}
+
+	if (trashSpreadsheet) {
+		try {
+			var trackerSs = SpreadsheetApp.openById(sheetId);
+			var linkedFormUrl = trackerSs.getFormUrl();
+			if (linkedFormUrl) {
+				try {
+					var linkedForm = FormApp.openByUrl(linkedFormUrl);
+					var formId = linkedForm.getId();
+					linkedForm.removeDestination();
+					DriveApp.getFileById(formId).setTrashed(true);
+					GasLogger.log('cleanupTrackerArtifact_.trashForm', { formId: formId });
+					formTrashed = true;
+				} catch (formErr) {
+					GasLogger.log('cleanupTrackerArtifact_.trashFormFailed', { error: formErr.message });
+				}
+			}
+			DriveApp.getFileById(sheetId).setTrashed(true);
+			GasLogger.log('cleanupTrackerArtifact_.trashSpreadsheet', { sheetId: sheetId });
+			trashed = true;
+		} catch (trashErr) {
+			GasLogger.log('cleanupTrackerArtifact_.trashSpreadsheetFailed', { error: trashErr.message });
+		}
+	}
+
+	GasLogger.log('cleanupTrackerArtifact_.summary', { sheetId: sheetId, trackerRemoved: trackerRemoved, paxRowsRemoved: paxRowsRemoved, formTrashed: formTrashed, trashed: trashed, triggerCleared: triggerCleared });
+	return { trackerRemoved: trackerRemoved, paxRowsRemoved: paxRowsRemoved, formTrashed: formTrashed, trashed: trashed, triggerCleared: triggerCleared };
 }
 
 /**
@@ -1385,6 +1572,8 @@ if (typeof module !== 'undefined' && module.exports) {
 		_loadPaxData: _loadPaxData,
 		_updateTrackerDB: _updateTrackerDB,
 		_updatePaxDB: _updatePaxDB,
+		_qualifySourceFiles_: _qualifySourceFiles_,
+		_logExcludedSourceArtifacts_: _logExcludedSourceArtifacts_,
 		TRACKER_DB_HEADERS_: TRACKER_DB_HEADERS_,
 		PAX_DB_HEADERS_: PAX_DB_HEADERS_
 	};

@@ -189,49 +189,15 @@ function handleAdminPost_(e) {
     if (payload.action === 'cleanupTracker') {
       // Removes a tracker from TrackerDB, its PaxDB rows, and optionally trashes the
       // spreadsheet and its linked HC form. Primary use case: smoke test teardown.
-      // Order: unlink form → trash form → trash spreadsheet (GAS blocks trashing a
-      // spreadsheet while a live form destination points at it).
+      // cleanupTrackerArtifact_ (go30tools.js) holds the actual implementation — it's shared
+      // with scanTrackers()'s interactive "remove" choice (F3Go30-xj1q.2) so behavior can't
+      // drift between the two entry points.
       if (!payload.sheetId) {
         return jsonOutput_({ ok: false, error: 'sheetId is required' });
       }
-      var ss = SpreadsheetApp.getActiveSpreadsheet();
-      var trackerRemoved = removeTrackerDbRow_(payload.sheetId);
-      var paxRowsRemoved = deletePaxDbRowsBySheetId_(ss, payload.sheetId);
-      var formTrashed = false;
-      var trashed = false;
-      var triggerCleared = false;
-      try {
-        var triggerSs = SpreadsheetApp.openById(payload.sheetId);
-        clearFormSubmitTrigger(triggerSs);
-        triggerCleared = true;
-      } catch (triggerErr) {
-        GasLogger.log('handleAdminPost_.clearFormSubmitTriggerFailed', { error: triggerErr.message });
-      }
-      if (payload.trashSpreadsheet) {
-        try {
-          var trackerSs = SpreadsheetApp.openById(payload.sheetId);
-          var linkedFormUrl = trackerSs.getFormUrl();
-          if (linkedFormUrl) {
-            try {
-              var linkedForm = FormApp.openByUrl(linkedFormUrl);
-              var formId = linkedForm.getId();
-              linkedForm.removeDestination();
-              DriveApp.getFileById(formId).setTrashed(true);
-              GasLogger.log('handleAdminPost_.trashForm', { formId: formId });
-              formTrashed = true;
-            } catch (formErr) {
-              GasLogger.log('handleAdminPost_.trashFormFailed', { error: formErr.message });
-            }
-          }
-          DriveApp.getFileById(payload.sheetId).setTrashed(true);
-          GasLogger.log('handleAdminPost_.trashSpreadsheet', { sheetId: payload.sheetId });
-          trashed = true;
-        } catch (trashErr) {
-          GasLogger.log('handleAdminPost_.trashSpreadsheetFailed', { error: trashErr.message });
-        }
-      }
-      GasLogger.log('handleAdminPost_.cleanupTracker', { sheetId: payload.sheetId, trackerRemoved: trackerRemoved, paxRowsRemoved: paxRowsRemoved, formTrashed: formTrashed, trashed: trashed, triggerCleared: triggerCleared });
-      return jsonOutput_({ ok: true, trackerRemoved: trackerRemoved, paxRowsRemoved: paxRowsRemoved, formTrashed: formTrashed, trashed: trashed, triggerCleared: triggerCleared });
+      var cleanupResult = cleanupTrackerArtifact_(payload.sheetId, !!payload.trashSpreadsheet);
+      GasLogger.log('handleAdminPost_.cleanupTracker', Object.assign({ sheetId: payload.sheetId }, cleanupResult));
+      return jsonOutput_(Object.assign({ ok: true }, cleanupResult));
     }
     if (payload.action === 'listTriggers') {
       // Diagnostic: every trigger on this script project plus whether its source file

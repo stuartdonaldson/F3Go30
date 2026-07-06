@@ -127,6 +127,15 @@ node tools/callWebapp.js getSmokeStatus --env <env>
 - `runScanTrackers` admin action is blocked — prevents test data contaminating PaxDB.
 - Outbound emails redirect to Site Q address (same as Email Test Mode) with `[SMOKE]` subject prefix.
 
+**Source qualification (independent of SMOKE_MODE, F3Go30-xj1q.2):** even outside an active
+smoke run — e.g. teardown step 7/8 above was skipped or failed, or an old `" (Expired)"` tracker
+was never removed — `scanTrackers()` excludes any file in the folder named with `(Smoke)`/
+`(Expired)`, or whose SheetId matches `SMOKE_TRACKER_ID`, from every scan by default. It logs one
+`scanTrackers.smokeArtifactsExcluded` warning (visible via `tools/query_axiom.py` or Stackdriver)
+listing what it skipped; it never prompts or silently includes such files. If a leftover smoke
+tracker is found this way, clean it up with the normal `cleanupTracker` step above rather than
+leaving it for the next scan to keep excluding.
+
 **Addressing the smoke tracker deterministically:** the smoke tracker is created with the same
 `StartDate` a real tracker for that month would use, so it is *not* reliably `'current'` or
 `'next'` — in particular, the auto-generate path always dates it at next month's start, so
