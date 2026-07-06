@@ -166,27 +166,11 @@
       <div class="card"><p class="muted">Signing you in…</p></div>
     </div>
 
-    <!-- Fallback only: a typed-identify form POST always attempts an immediate top-level
-         redirect straight to the real token'd URL first (see the bottom of this file) — most
-         PAX never see this at all. It's deliberately minimal (no "Welcome" heading, no goals,
-         nothing from the real check-in page) because none of that page's content is actually
-         reachable from here yet; showing it alongside "tap below to open your link" read as
-         contradictory (F3Go30 hardening work 2026-07). The full welcome experience — including
-         the "bookmark this page" nudge — only ever renders on the real destination page,
-         whether reached by the automatic redirect succeeding or by tapping this link by hand. -->
-    <div id="step-saveLink" class="hidden">
-      <div class="card">
-        <p class="muted">
-          Tap below once to open your personal check-in link, then bookmark that page (or Add to
-          Home Screen) so you can get back here without typing your name again.
-        </p>
-        <a id="saveLinkAnchor" class="primary" style="display:block;text-align:center;padding:14px;border-radius:9px;background:#2f5d50;color:#f8f4ea;text-decoration:none;font-weight:bold;" href="#" target="_top">Open my personal check-in link &rarr;</a>
-      </div>
-    </div>
-
-    <!-- Fallback only, mirroring step-saveLink above: a known-to-PaxDB-but-not-registered-this-
-         month typed identify attempts an immediate top-level redirect straight into a prefilled
-         signup (targetMonth=current&autoStart=1) — most PAX never see this either. -->
+    <!-- Fallback only: a known-to-PaxDB-but-not-registered-this-month typed identify attempts
+         an immediate top-level redirect straight into a prefilled signup
+         (targetMonth=current&autoStart=1) — most PAX never see this. Still a real cross-cmd
+         navigation (checkin -> signup), unlike the matched case above, which no longer redirects
+         at all since the form's own action URL already is its destination. -->
     <div id="step-signupRedirect" class="hidden">
       <div class="card">
         <p class="muted">
@@ -455,14 +439,11 @@
     $('bookmarkHereNote').classList.add('hidden');
   });
 
-  /** Renders a successful identify response into the checkin step. Only ever reached via a
-   * saved-link session guid that's already resolvable server-side — either this page's own URL
-   * carried one (resolved async below via SAVED_IDENTITY_TOKEN), or a typed-identify form POST
-   * just redirected here (see the bottom of this file). A typed-identify match never calls this
-   * directly on its own pre-redirect page: that page's address bar has no token in it yet (a
-   * POST body's fields never appear in the URL), so there'd be nothing on it worth calling
-   * "welcome" or telling the PAX to bookmark — the real welcome experience only ever renders
-   * once landed on the actual token'd URL (F3Go30 hardening work 2026-07). */
+  /** Renders a successful identify response into the checkin step. Reached two ways: this
+   * page's own URL already carried a resolvable session guid (SAVED_IDENTITY_TOKEN, resolved
+   * async below), or a typed-identify form POST rendered this exact page directly
+   * (TYPED_IDENTIFY_RESULT, below) — its action URL already baked in the same guid before
+   * submission, so the address bar is correct here with no separate redirect step. */
   function applyIdentifySuccess_(res) {
     state.f3Name = res.f3Name;
     state.email = res.email;
@@ -525,33 +506,25 @@
   // a surprise exception.
   if (TYPED_IDENTIFY_RESULT) setTimeout(function() {
     if (TYPED_IDENTIFY_RESULT.matched) {
-      // Deliberately never calls applyIdentifySuccess_ / shows any "welcome"/bookmark content on
-      // THIS page — its own address bar has no token in it yet (a POST body's fields never
-      // appear in the URL), so there'd be nothing here worth calling "welcome" or telling the
-      // PAX to bookmark. Attempt an immediate top-level redirect straight to the real token'd
-      // URL instead — reliable (unlike the old typed-identify flow's attemptTopRedirect_)
-      // because it fires the instant this fresh page loads, which the form submit's own
-      // navigation just activated, rather than after an async round trip that gives "sticky
-      // activation" time to expire. step-saveLink (a bare tap-through link, no welcome heading —
-      // that lives only on the real destination page) is the fallback for whichever browsers
-      // still decline it; most PAX should never see either this page or that fallback at all.
-      var savedLinkUrl = WEBAPP_URL + '?cmd=checkin&id=' + encodeURIComponent(TYPED_IDENTIFY_RESULT.identityToken);
-      $('saveLinkAnchor').href = savedLinkUrl;
-      $('step-identify').classList.add('hidden');
-      $('step-tokenLoading').classList.remove('hidden');
-      attemptTopRedirect_(savedLinkUrl, function() {
-        $('step-tokenLoading').classList.add('hidden');
-        $('step-saveLink').classList.remove('hidden');
-      });
+      // The form's own action URL already IS the real token'd URL (?cmd=checkin&id=<guid>,
+      // baked in at render time — see renderCheckinPage_'s formGuid / CheckinSessions.js) — the
+      // POST that produced this page already landed the address bar on the correct destination.
+      // Only the POST *body* (f3Name/email) never reaches the URL; the guid was never in the
+      // body, so there's nothing left to redirect to. Render the welcome/bookmark content right
+      // here instead of tapping through a same-URL "click to continue" step (F3Go30 hardening
+      // work follow-up, 2026-07).
+      applyIdentifySuccess_(TYPED_IDENTIFY_RESULT);
     } else if (TYPED_IDENTIFY_RESULT.knownPaxNotRegistered) {
       // Known PAX (PaxDB, exact name+email match — see handleCheckinIdentify_), just not signed
       // up for the CURRENT month yet: carry them straight into a prefilled signup instead of a
-      // dead-end "we couldn't find you" message, using the same immediate-redirect trick as the
-      // matched branch above (reliable here for the same reason — it fires the instant this
-      // fresh page loads, activated by the form submission itself). Signup re-resolves their
-      // prior month's team/who/what/how itself from localStorage's f3Name/email (saved just
-      // below) — checkin's own identify deliberately never returns that PaxDB data directly
-      // (see handleCheckinIdentify_), so there's nothing more to hand off here than the name.
+      // dead-end "we couldn't find you" message. Unlike the matched branch above, this genuinely
+      // needs a top-level navigation — the destination is a different cmd (signup) that this
+      // page's own form action was never pointed at — so attemptTopRedirect_ still applies here,
+      // reliably firing instantly since this fresh page load was itself just activated by the
+      // form submission. Signup re-resolves their prior month's team/who/what/how itself from
+      // localStorage's f3Name/email (saved just below) — checkin's own identify deliberately
+      // never returns that PaxDB data directly (see handleCheckinIdentify_), so there's nothing
+      // more to hand off here than the name.
       saveIdentityToStorage_(TYPED_IDENTIFY_RESULT.f3Name, TYPED_IDENTIFY_RESULT.email);
       var signupUrl = WEBAPP_URL + '?cmd=signup&targetMonth=current&autoStart=1';
       $('signupRedirectAnchor').href = signupUrl;

@@ -87,15 +87,14 @@ async function followTokenRedirect(page, fallbackLinkLocator, timeout = 20000) {
 
 /**
  * Fills CheckinApp's identify form and submits it. As of the 2026-07 hardening work this is a
- * real <form target="_top"> POST straight to renderCheckinPageForTypedIdentify_
- * (dashboardWebapp.js) — every submission, matched or not, produces a genuine top-level
- * navigation, but a MATCHED one never shows any "welcome"/bookmark content on this page
- * directly: it immediately attempts a second, automatic redirect to the real token'd URL, and
- * only falls back to a bare step-saveLink tap-through link if that redirect doesn't fire.
- * Playwright's synthetic clicks reliably hit that fallback in headless Chromium (same
- * "activation" quirk documented on attemptTopRedirect_'s history) — this helper follows it
- * through either way and returns the iframe locator for wherever the journey actually ends
- * (step-checkin on a match, or the identify step with idError on a non-match).
+ * real <form target="_top"> POST whose own `action` URL already carries this page's session
+ * guid (baked in server-side before the form ever rendered — see CheckinSessions.js /
+ * renderCheckinPage_'s formGuid) straight to renderCheckinPageForTypedIdentify_
+ * (dashboardWebapp.js) — the POST navigation itself lands on the final, already-bookmarkable
+ * `cmd=checkin&id=<guid>` URL, with no second redirect step of any kind: a MATCHED result
+ * renders step-checkin (with the bookmark note) directly on the page this POST produced. Returns
+ * the iframe locator for wherever the single navigation ends (step-checkin on a match, or the
+ * identify step with idError on a non-match).
  */
 async function submitCheckinIdentify(page, f3Name, email) {
   const app = page.frameLocator('iframe').frameLocator('iframe');
@@ -105,17 +104,7 @@ async function submitCheckinIdentify(page, f3Name, email) {
     page.waitForNavigation({ waitUntil: 'networkidle' }),
     app.locator('#identifyBtn').click(),
   ]);
-
-  let app2 = page.frameLocator('iframe').frameLocator('iframe');
-  const saveLink = app2.locator('#saveLinkAnchor');
-  if (await saveLink.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle' }),
-      saveLink.click(),
-    ]);
-    app2 = page.frameLocator('iframe').frameLocator('iframe');
-  }
-  return app2;
+  return page.frameLocator('iframe').frameLocator('iframe');
 }
 
 /** Fills the signup app's who/what/how + team for the given PAX up through the info step. */
@@ -183,31 +172,30 @@ test.describe('Identity-token check-in flow (SIT)', () => {
     await expect(app.locator('#bookmarkHereNote')).toBeVisible();
   });
 
-  test('reopening the bookmarked token link signs in directly, with no identify form', async ({ page }) => {
-    // A typed-identify form POST lands on the bare exec URL (a POST body's fields never show
-    // up in the address bar) and immediately attempts an automatic redirect to the real
-    // token'd URL — grab that URL from wherever it actually ends up (the address bar if the
-    // redirect succeeded, or step-saveLink's fallback link's href if it didn't) WITHOUT using
-    // submitCheckinIdentify, which follows the fallback link through to completion — this test
-    // needs the URL itself, to simulate a real bookmark reopen: a brand-new navigation straight
-    // to it.
+  test('typed identify lands directly on the check-in screen with the bookmark note — no intermediate redirect step', async ({ page }) => {
     await page.goto(checkinUrl, { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
-    const app0 = page.frameLocator('iframe').frameLocator('iframe');
-    await app0.locator('#idF3Name').fill(CURRENT_MONTH_PAX.f3Name);
-    await app0.locator('#idEmail').fill(CURRENT_MONTH_PAX.email);
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle' }),
-      app0.locator('#identifyBtn').click(),
-    ]);
-    let tokenUrl = page.url();
-    if (!tokenUrl.includes('cmd=checkin&id=')) {
-      const app1 = page.frameLocator('iframe').frameLocator('iframe');
-      await expect(app1.locator('#saveLinkAnchor')).toBeVisible({ timeout: 15000 });
-      tokenUrl = await app1.locator('#saveLinkAnchor').getAttribute('href');
-    }
+    const app = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
+
+    // The single form-POST navigation must already be the final, bookmarkable URL — no
+    // separate "tap here to continue" step in between (see submitCheckinIdentify's docstring).
+    expect(page.url()).toContain('cmd=checkin&id=');
+    await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(app.locator('#checkinHeading')).toContainText(CURRENT_MONTH_PAX.f3Name);
+    // firstUse is exact (Created-At === Last-Used-At) — this is a brand-new session, so the
+    // one-time "bookmark this page" nudge must be showing right here, on this same screen.
+    await expect(app.locator('#bookmarkHereNote')).toBeVisible();
+  });
+
+  test('reopening the bookmarked token link signs in directly, with no identify form', async ({ page }) => {
+    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
+    await dismissGasBanner(page);
+    const app0 = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
+    await expect(app0.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    const tokenUrl = page.url();
     expect(tokenUrl).toContain('cmd=checkin&id=');
 
+    // Simulate a real bookmark reopen: a brand-new navigation straight to the saved URL.
     await page.goto(tokenUrl, { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     const app = page.frameLocator('iframe').frameLocator('iframe');
