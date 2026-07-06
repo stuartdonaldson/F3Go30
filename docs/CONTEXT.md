@@ -77,6 +77,12 @@ month's tracker in minutes without manual sheet or trigger configuration in the 
   Tracker entries (EHing FNG, Fellowship, Q Point, Inspire) without opening the spreadsheet — a
   Slack link is required before EHing FNG, Q Point, or Inspire entries count toward score, same
   rule the Bonus Tracker sheet's own formulas already enforce for manual entries
+- Identify once, remembered everywhere: a PAX's F3 Name + Email, once entered on either the
+  sign-up or check-in web app, is remembered (browser storage, plus a bookmarkable per-PAX link
+  on check-in) and carried across both apps and repeat visits — no separate accounts, no
+  re-typing, no hunting through a spreadsheet for "which row is mine." A PAX known from a past
+  month's sign-up but not yet registered for the current one is carried automatically into a
+  prefilled sign-up instead of hitting a dead end
 
 ---
 
@@ -287,13 +293,22 @@ Primary Flow:
 7. PAX taps the "…" button to open the underlying tracker spreadsheet directly
 
 Alternate Flows:
-A1: F3 Name + Email do not match any current-month sign-up → generic "not found" message,
-    indistinguishable from a partial (name-only or email-only) match
+A1: F3 Name + Email match a PAX known to a prior month's sign-up (found in the historical
+    `PaxDB` roster, requiring an EXACT match on both fields — the same anti-enumeration
+    boundary as a current-month match) but not registered for the CURRENT month → instead of a
+    dead-end message, the PAX is carried automatically (same browser-storage handoff as a
+    completed sign-up) into a prefilled sign-up for the current month, arriving via the same
+    deep link (`?cmd=signup&targetMonth=current&autoStart=1`) the dashboard's own "Sign up for
+    next month" nudge uses. A truly unknown F3 Name + Email (no match anywhere, current or
+    historical) still gets the generic "not found" message with a manual "Sign up" button —
+    the two cases are visually indistinguishable except for the automatic redirect, preserving
+    the anti-enumeration property (a truly-unknown pair reveals nothing more than one that's
+    merely unregistered this month)
 A2: PAX taps "Dashboard" without checking in → dashboard loads without writing any check-in value
 A3: Target Tracker cell is a formula (unexpected sheet layout) → write is refused; check-in
     is not recorded and the client shows the error banner
-A4: Automatic redirect to the tokened URL is blocked by the browser → manual "Tap here to
-    continue" link is shown instead (see Primary Flow step 3)
+A4: Automatic redirect (to the tokened check-in URL, or to sign-up per A1) is blocked by the
+    browser → a manual link/button is shown instead, carrying the same target URL
 
 Postconditions:
 - Today's (and, if applicable, yesterday's) Tracker cell holds the PAX's reported 1/0 value
@@ -302,6 +317,10 @@ Postconditions:
 Constraints:
 - Identity is F3 Name + Email only — there is no password; anyone who knows both can check in
   or view the dashboard for that PAX, the same trust model as the sign-up web app
+- The A1 PaxDB fallback is consulted only when the submitted F3 Name + Email were typed (or
+  decoded from a still-valid saved link) and failed to match the current month — never when the
+  saved link itself fails to verify (tampered/stale), which falls through to a blank form with
+  no error text and no PaxDB lookup, so a broken link can never be used to probe PaxDB
 
 ---
 

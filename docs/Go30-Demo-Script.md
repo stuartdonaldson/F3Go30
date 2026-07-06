@@ -90,6 +90,13 @@ period) and real community (a PAX board everyone can see).
 > name entirely. On some phones the swap can't happen automatically, so you'll see a 'Tap here
 > to continue' link instead — one tap gets you to the same personal, bookmarkable link."
 
+**Screenshot:** `06b-checkin-known-not-enrolled.png`
+
+> "One more thing check-in handles for you: if you've done Go30 before but haven't signed up yet
+> for THIS month, it recognizes you anyway — it just carries you straight into a pre-filled
+> sign-up instead of a dead end telling you it can't find you. Type the same name and email you
+> used last time, and you land right back at the WHO/WHAT/HOW questions with nothing to retype."
+
 ---
 
 ## Screen 4 — Dashboard
@@ -152,6 +159,11 @@ period) and real community (a PAX board everyone can see).
 - NoSadClown's SIT signup and PaxDB rows are intentionally left in place (per team decision) so
   the demo can be re-run or re-recorded without re-signing-up. This is SIT, which already carries
   other test/smoke rows (Splinter, Splatter, etc.) — one more test PAX is harmless.
+- The `06b-checkin-known-not-enrolled.png` beat uses a dedicated fixture PAX known to `PaxDB`
+  from a prior month but not signed up for the current one (see the "known-but-unregistered"
+  fixture note on F3Go30-xj1q.1 and `docs/OPERATIONS.md`'s verification steps) — deliberately
+  not NoSadClown, since NoSadClown must stay registered for the current month for the earlier
+  screens in this same script to keep working.
 - The dashboard's ring legend (Done / Missed / Absent) and the −1 "Absent" penalty are the real
   accountability mechanism — don't soften this to a generic "streak app" framing; the deadline and
   the −1 are part of why Go30 works.

@@ -150,6 +150,37 @@ separately excludes the smoke tracker from its own date matching unconditionally
 a candidate for real dispatch regardless of `targetMonth`. Both behaviors are centralized in
 `script/SmokeMode.js` — see its file header for why.
 
+### Verifying the check-in "known but unregistered" fallthrough (F3Go30-xj1q.1)
+
+Manual/SIT verification for the PaxDB fallback: a PAX known from a prior month's sign-up but
+absent from the CURRENT month's tracker should be auto-carried into a prefilled sign-up, not
+shown a dead-end "not found" message. There's no separate smoke toggle for this — it just needs
+a PAX present in `PaxDB` (any prior month, scanned in via `runScanTrackers`) but absent from the
+current month's Tracker roster.
+
+```bash
+# 1. Confirm a fixture PAX exists in PaxDB but not on the current tracker (see the
+#    "known-but-unregistered" fixture note below for how one is established/reused).
+node tools/callWebapp.js getSheet --env sit --body '{"sheetName":"PaxDB"}'
+node tools/callWebapp.js getSheet --env sit --body '{"sheetName":"Tracker"}'   # current tracker's roster
+
+# 2. Call identify directly against cmd=checkin with that PAX's f3Name/email — expect
+#    { ok: true, matched: false, knownPaxNotRegistered: true, f3Name, email } (no tokenInvalid).
+curl -s -X POST "https://script.google.com/macros/s/<deploymentId>/exec?cmd=checkin" \
+  --data-raw '{"action":"identify","f3Name":"<fixture name>","email":"<fixture email>"}'
+
+# 3. In a browser (or the Playwright identity-token-flow spec), confirm the check-in identify
+#    form auto-redirects to ?cmd=signup&targetMonth=current&autoStart=1 with the name/email
+#    prefilled, rather than showing the generic "we couldn't find you" message.
+```
+
+`runScanTrackers` must have run (PaxDB is scan-derived, not written synchronously by sign-up)
+after any fixture PAX's tracker is placed and before this check — see the bead's fixture note
+for the do-once setup that established the current fixture. A truly-unknown F3 Name + Email
+(present in neither PaxDB nor the current tracker) must still show the generic message with no
+auto-redirect — the two cases are deliberately visually indistinguishable except for that
+redirect, preserving the anti-enumeration property described in `docs/DESIGN.md`.
+
 ### CopyTemplate — standing up a new environment
 
 `node tools/copyTemplate.js <folderName> [--env sit|prod] [--tracker-count 3]` stands up the
