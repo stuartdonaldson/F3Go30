@@ -43,6 +43,8 @@ var signupWebappCheckinSessionsModule_ = (typeof module !== 'undefined' && modul
   : null;
 var createOrTouchCheckinSession_sw_ = (signupWebappCheckinSessionsModule_ && signupWebappCheckinSessionsModule_.createOrTouchCheckinSession_)
   || (typeof globalThis !== 'undefined' && globalThis.createOrTouchCheckinSession_);
+var resolveOrCreateCheckinSessionGuid_sw_ = (signupWebappCheckinSessionsModule_ && signupWebappCheckinSessionsModule_.resolveOrCreateCheckinSessionGuid_)
+  || (typeof globalThis !== 'undefined' && globalThis.resolveOrCreateCheckinSessionGuid_);
 
 function normalizeTeamValue_(value) {
   return String(value || '').trim();
@@ -695,21 +697,27 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     sortTrackerSheet_(trackerSheet);
   }
 
-  sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, !match);
+  // Resolve (or mint) this PAX's bookmarkable check-in session up front so the SAME guid is used
+  // for both the confirmation email's links and the client redirect below — never two sessions
+  // for one save. resolveOrCreateCheckinSessionGuid_ reuses an existing session when this PAX
+  // already has one (e.g. an edit/reconfirm), so re-signing up doesn't proliferate rows.
+  var checkinSessionGuid = resolveOrCreateCheckinSessionGuid_sw_
+    ? resolveOrCreateCheckinSessionGuid_sw_(templateSpreadsheet, payload.f3Name, payload.email)
+    : null;
+
+  sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, !match, checkinSessionGuid);
   var response = { ok: true, savedMonth: targetMonth.label, trackerUrl: targetMonth.trackerUrl };
-  // A current-month signup means this PAX can check in today — hand them a check-in session
-  // (see CheckinSessions.js) so SignupApp.html can send them straight into the check-in app
-  // instead of leaving them on the signup confirmation with no obvious next step. A next-month
-  // signup has nothing to check into yet, so no session (and no handoff) for that case.
-  if (months.current && targetMonth.sheetId === months.current.sheetId) {
-    var checkinSessionGuid = Utilities.getUuid();
-    createOrTouchCheckinSession_sw_(templateSpreadsheet, checkinSessionGuid, payload.f3Name, payload.email);
+  // A current-month signup means this PAX can check in today — hand the client the same session
+  // guid so SignupApp.html can send them straight into the check-in app instead of leaving them
+  // on the confirmation with no obvious next step. A next-month signup has nothing to check into
+  // yet, so no handoff for that case (the emailed bookmark still works once the month starts).
+  if (checkinSessionGuid && months.current && targetMonth.sheetId === months.current.sheetId) {
     response.identityToken = checkinSessionGuid;
   }
   return response;
 }
 
-function sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, isNew) {
+function sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, isNew, checkinSessionGuid) {
   var recipient = sanitizeEmailAddressForSend_(payload.email);
   if (!recipient) { GasLogger.log('signupWebapp.confirmEmail.skipped', { reason: 'invalid_email' }); return; }
   var safeF3Name = sanitizeTextForEmailLine_(payload.f3Name) || '(unknown)';
@@ -727,7 +735,7 @@ function sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, target
     mode: isNew ? 'new_signup' : 'confirmation',
     f3Name: safeF3Name,
     trackerUrl: targetMonth.trackerUrl,
-    prefilledUrl: null,
+    checkinSessionGuid: checkinSessionGuid,
     summaryLines: summaryLines,
     registrationMonth: targetMonth.label
   });

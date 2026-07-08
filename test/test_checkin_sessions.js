@@ -99,6 +99,8 @@ const {
   touchCheckinSession_,
   createOrTouchCheckinSession_,
   cleanupStaleCheckinSessions_,
+  findCheckinSessionByIdentity_,
+  resolveOrCreateCheckinSessionGuid_,
 } = require('../script/CheckinSessions.js');
 
 // resolveCheckinSession_ returns null for a guid that's never existed.
@@ -203,6 +205,61 @@ const {
 
   var index = JSON.parse(fakeProps.getProperty('CHECKIN_SESSION_ROSTER_INDEX'));
   assert.deepEqual(index, { fresh: 2 });
+}
+
+// findCheckinSessionByIdentity_ matches on F3 Name + Email case-insensitively, prefers the most
+// recent (bottom-most) matching row, and returns null on no match or a missing sheet.
+{
+  fakeProps = makeFakeProperties_();
+  var sheet = makeFakeSessionsSheet_([
+    ['guid-old', 'Anchor', 'anchor@example.com', '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z'],
+    ['guid-new', 'Anchor', 'anchor@example.com', '2026-06-01T00:00:00.000Z', '2026-06-10T00:00:00.000Z'],
+    ['guid-ivan', 'Crazy Ivan', 'ivan@example.com', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z'],
+  ]);
+  var ss = makeFakeSpreadsheet_(sheet);
+
+  var hit = findCheckinSessionByIdentity_(ss, '  anchor ', 'ANCHOR@example.com');
+  assert.equal(hit.guid, 'guid-new', 'prefers the most recent matching session row');
+  assert.equal(hit.row, 3);
+
+  assert.equal(findCheckinSessionByIdentity_(ss, 'Anchor', 'wrong@example.com'), null, 'email must also match');
+  assert.equal(findCheckinSessionByIdentity_(ss, 'Nobody', 'ivan@example.com'), null, 'f3Name must also match');
+  assert.equal(findCheckinSessionByIdentity_(makeFakeSpreadsheet_(makeFakeSessionsSheet_([])), 'Anchor', 'anchor@example.com'), null);
+}
+
+// resolveOrCreateCheckinSessionGuid_ returns an existing identity's guid (and touches it), and
+// on a miss logs a warning then mints + stores a fresh session, returning its guid.
+{
+  fakeProps = makeFakeProperties_();
+  var sheet = makeFakeSessionsSheet_([
+    ['guid-existing', 'Anchor', 'anchor@example.com', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z'],
+  ]);
+  var ss = makeFakeSpreadsheet_(sheet);
+
+  var reused = resolveOrCreateCheckinSessionGuid_(ss, 'Anchor', 'anchor@example.com');
+  assert.equal(reused, 'guid-existing', 'reuses the existing session guid for a known identity');
+  assert.equal(sheet._rows.length, 1, 'reuse must not append a new row');
+  assert.notEqual(sheet._rows[0][4], '2026-06-01T00:00:00.000Z', 'reuse bumps Last Used At to keep the bookmark alive');
+
+  var warnings = [];
+  var savedLog = global.GasLogger.log;
+  global.GasLogger.log = function(tag, data) { warnings.push({ tag: tag, data: data || {} }); };
+  var minted = resolveOrCreateCheckinSessionGuid_(ss, 'Fresh Meat', 'fng@example.com');
+  global.GasLogger.log = savedLog;
+
+  assert.ok(minted, 'mints a guid on a miss');
+  assert.equal(sheet._rows.length, 2, 'creates a new session row on a miss');
+  assert.equal(sheet._rows[1][0], minted);
+  assert.deepEqual(sheet._rows[1].slice(1, 3), ['Fresh Meat', 'fng@example.com']);
+  assert.ok(
+    warnings.some(function(w) { return /warn/i.test(w.data.level || '') || /warn/i.test(w.tag); }),
+    'logs a warning when no existing session was found'
+  );
+
+  // Missing identity fields → no guid, no row.
+  assert.equal(resolveOrCreateCheckinSessionGuid_(ss, '', 'x@example.com'), null);
+  assert.equal(resolveOrCreateCheckinSessionGuid_(ss, 'X', ''), null);
+  assert.equal(sheet._rows.length, 2, 'missing identity must not create a row');
 }
 
 console.log('test_checkin_sessions.js: all assertions passed');

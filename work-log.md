@@ -1020,3 +1020,88 @@ Diagnosed and fixed the identify/bookmark-link flow end to end. Root-caused thre
 - GAS/JS `var` declarations are hoisted but unassigned until their line actually executes. Calling a function synchronously that reads a `var` declared *later* in the same script (e.g. from a template-injected result processed inline) hits `undefined` — the async-callback paths in this codebase never hit this because by the time their `.then()` fires, the whole script has already run top-to-bottom. `setTimeout(fn, 0)` reproduces that same "runs after everything's defined" timing without a real network wait.
 - Feeding the same identifier into two different "which flow am I in" checks in one function (a typed-form's session guid also satisfying the bookmarked-token check) fires both — causing two live UI updates to race for the same DOM. Each entry point needs a signal that's exclusively true for it, not a value that happens to also look valid to a sibling code path.
 - Silent flakiness (redirected to login, "stuck" on a screen) is often the *symptom*, not the bug — the two live incidents this session (Little John, Crazy Ivan) both traced back to timing/state assumptions (bfcache resume; activation-expiry) that only failed intermittently, never in a way a single manual test would reliably reproduce. Server-side logs proving "every request that reached us succeeded" was the key signal that the failure was happening *before* the server ever saw it.
+
+## 2026-07-07 09:28:45
+
+### Summary:
+Released the identify-once/check-in-session hardening work (branch `hardening/identify-once`) to
+PROD as v2.3.14, then v2.3.15. Merged 9 commits into `main`, updated DESIGN.md/CONTEXT.md/
+OPERATIONS.md to describe the new `CheckinSessions.js` GUID-session model replacing the old
+`IdentityToken.js` redirect scheme, and added CHANGELOG.md Unreleased entries for the user-facing
+fixes. Left several unrelated untracked reference files (FAQ docs, design zip, old dashboard
+prototype export) uncommitted per user's choice.
+
+After deploying, the user reported a UX regression they'd noticed live: after typed check-in
+identify, PAX landed on an unnecessary "tap here to continue" step instead of going straight to
+the check-in screen with the bookmark note. Root-caused it to a leftover `attemptTopRedirect_`
+call in the matched branch of `CheckinApp.html` that redirected to the *same* URL the form's
+`action` attribute had already navigated to (the guid is baked into the form action before
+submission, per the redesign) — a fully redundant hop that either worked invisibly or surfaced the
+fallback UI. Fixed by calling `applyIdentifySuccess_` directly instead, and removed the now-dead
+`step-saveLink` markup. Found that `identity-token-flow.spec.js`'s `submitCheckinIdentify` test
+helper had been silently clicking through that same fallback link whenever it appeared, which is
+exactly why the existing suite didn't catch the regression — simplified the helper to expect a
+single navigation and added a new test asserting the typed-identify POST lands directly on
+`step-checkin` with `#bookmarkHereNote` visible. Verified live on SIT (7/7 identity-token tests,
+full unit suite), then released to PROD as v2.3.15 after explicit user confirmation (the auto-mode
+classifier correctly blocked the first `npm run release:patch` attempt since the user's message was
+a bug report, not a deploy instruction).
+
+Also explained the exact `firstUse` criteria that gates the bookmark note (server-computed via
+`CheckinSessions`' `Created At === Last Used At` comparison, not a client-side flag or time
+window), and created two new user-facing docs — `docs/Go30-FAQ.md` and `docs/Go30-Intro.md` —
+reconciling the stale pre-web-app `Go30 FAQ.docx`/`Go30 Intro.docx` and the newer but still-dated
+`docs/references/Go30-FAQ-2026-06.md` against the actual current app (bookmarkable check-in link,
+exact button labels including "No Check-in" as an undo, dashboard contents, bonus-entry UI).
+Neither new doc has been committed yet.
+
+### Key Learnings:
+A same-URL "redirect" is easy to introduce by accident once a design changes so the destination is
+already reached by the time the redirect code runs — the fix (baking the session guid into the
+form's own `action` URL) made a later `attemptTopRedirect_` call to that same URL fully redundant,
+but nothing failed loudly: it either no-op'd silently or degraded to an extra manual tap, so it
+took a live user report to surface. When a test helper "handles" a fallback/alternate path by
+following it through unconditionally, it stops being able to prove that path *didn't* need to be
+taken — `submitCheckinIdentify`'s auto-click-through on `#saveLinkAnchor` visibility is exactly why
+7/7 passing tests didn't catch this regression; the fix had to tighten the helper's expectation
+(single navigation only) before a new test could assert the direct-landing behavior.
+
+## 2026-07-07 12:19:47
+
+### Summary:
+Reviewed and cleaned up newcomer-facing Go30 docs (docs/Go30-Intro.md, docs/Go30-FAQ.md). Removed
+the non-standard "Fireteam" term (traced to a stray line in the original Go30 Intro.docx source),
+replacing it with plain F3 "Team" language and a stronger "You are it! Both Warrior and Q of your
+own life" opening. Added proper attribution for the Identity/Process/Outcome model to James Clear's
+*Atomic Habits*, linking both jamesclear.com and his Habits Cheat Sheet PDF (verified the PDF's
+actual content via download + pypdf extraction to confirm no inconsistency). Consolidated the
+Hit/Miss/No-report (1/0/-1) scoring model into one clear explanation in both docs, and clarified the
+Tracker sheet as the underlying shared spreadsheet (dropped stale "legacy" wording). Merged the
+Intro's dry "Teams" section with the SignupApp.html's punchier "Strength in Numbers" copy so both
+carry the same practical facts (3-5 man teams, AO grouping, Shieldlock, solo is fine) and the same
+persuasive tone, then propagated the finalized wording into script/SignupApp.html so all three
+surfaces match. Additionally duplicated the "How it Works" explainer panel into script/CheckinApp.html
+(dashboard step, after PAX BOARD) since most users never revisit the signup page post-signup;
+left source comments in both HTML files pointing back to docs/Go30-Intro.md as canonical, and filed
+bd issue F3Go30-e3co to consolidate the now four-way content duplication once a sustainable
+f3pugetsound.com URL exists to link to instead. Moved original .docx/.png source files and
+superseded FAQ draft versions into new docs/archive/ folder. None of these changes have been
+deployed (npm run deploy:sit/prod) yet.
+
+### Key Learnings:
+Google Drive "view" links can't be fetched directly by WebFetch (returns only a loading-screen
+thumbnail); the reliable path is the `https://drive.usercontent.google.com/download?id=...&export=download`
+redirect target, downloaded with curl and parsed locally with pypdf (installed into the project's
+uv1 venv) since neither `pdftotext` nor the system Python had a working PDF library.
+
+## 2026-07-07 18:45:01
+
+### Summary:
+Finished and closed F3Go30-g7bm (confirmation email: check-in page primary with bookmarkable session link). Deployed to SIT (@138), all unit tests green including new test_signup_email.js. Live-verified against SIT: guid resolve-or-create never duplicates a session (single CheckinSessions row for the identity; re-save reused the same guid 02942475-... and only bumped Last Used), check-in deep link (?cmd=checkin&id=<guid>) lands identified, signup deep link (?cmd=signup&id=<guid>) injects identity + auto-opens goals prefilled. User visually confirmed delivered email copy/CTA ordering (check-in primary, edit + demoted tracker).
+
+Filed F3Go30-awhw (P2 bug) from a defect surfaced during verification: dashboard date-nav into an earlier month where the acting PAX has no Tracker row makes handleCheckinDashboard_ (dashboardWebapp.js:1362) hard-error with not_found and blanks the whole dashboard instead of degrading gracefully. Second defect captured: that identity-miss early return logs nothing, so the failure is invisible in Axiom. Corrected the repro identity to G7bmWebapp (confirmed via Axiom; "Little John" in the error banner is the owner/notify name, not the actor).
+
+### Key Learnings:
+- The check-in error banner's "notify <name>" is the configured owner/notify contact, not the acting identity — don't infer the actor from it.
+- handleCheckinDashboard_ distinguishes no_tracker_for_date (correct error) from identity-miss not_found (the bug); only the latter should degrade gracefully.
+- The dashboard success path logs checkinWebapp.dashboard at the end, but the identity-miss early return is silent — a failed load leaves zero Axiom trace.

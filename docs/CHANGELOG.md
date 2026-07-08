@@ -40,6 +40,10 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   screen alongside other apps.
 - The "sign up for next month" nudge on check-in now only appears in the few days before next
   month starts, instead of the whole month before.
+- The signup confirmation email now leads with your personal, bookmarkable check-in link (your
+  F3 name/email already built in, so it skips the sign-in form) as the main call to action,
+  followed by an "update my registration" link and a de-emphasised Tracker-sheet link. Opening
+  the registration link drops you straight onto your goals, pre-filled with your current details.
 
 ---
 

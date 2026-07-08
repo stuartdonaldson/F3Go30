@@ -74,6 +74,7 @@
         <p class="muted" style="font-size:12px;text-align:center;margin-bottom:0;">Already signed up? We'll load your info when you enter your F3 name and email.</p>
       </div>
 
+      <!-- Content mirrors docs/Go30-Intro.md — keep both in sync when editing. -->
       <div class="card" style="margin-top:10px;padding:0;overflow:hidden;">
         <button class="how-btn" id="howBtn">
           <span>How it Works</span>
@@ -84,6 +85,7 @@
           <p style="margin:0 0 14px;">Execute a Daily Challenge that aligns with your Ultimate Goals, supported by the accountability of your fellow HIMs.</p>
 
           <p class="how-section-head">THREE LAYERS OF CHANGE</p>
+          <p style="margin:0 0 10px;">Adapted from the Identity/Process/Outcome model in <a href="https://jamesclear.com" target="_blank" rel="noopener">James Clear</a>'s <em>Atomic Habits</em> — see also his <a href="https://drive.google.com/file/d/1QX2KSlKxmgkaijfLK4QMrtniqydSkV1L/view" target="_blank" rel="noopener">Habits Cheat Sheet</a>.</p>
           <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
             <div style="display:flex;gap:10px;align-items:flex-start;">
               <div class="how-badge">W</div>
@@ -100,9 +102,10 @@
           </div>
 
           <p class="how-section-head">YOUR DAILY MISSION</p>
+          <p style="margin:0 0 10px;">Each day scores one of three ways: <strong>Hit</strong> (1) if you did it, <strong>Miss</strong> (0) if you didn't, or <strong>No-report</strong> (&minus;1) if you forget to check in — so it always pays to report, even a miss.</p>
           <ol style="margin:0 0 14px;padding-left:18px;display:flex;flex-direction:column;gap:6px;">
             <li><strong>Choose your challenge</strong> — small, specific, actionable (e.g. 15 min stretching, daily journaling).</li>
-            <li><strong>Record your score</strong> — tap "I Hit it!" / "Missed it" each day on the <a href="#" id="howCheckinLink">Go30 check-in page</a> (link also in your confirmation email). Right after you check in you'll see your dashboard: streak, total score, weekly bonus points, and your team's board. You can also check in from the legacy Go30 Tracker sheet — enter <strong>1</strong> for success / <strong>0</strong> for a miss directly in the sheet, or open it any time from the chart icon (&#128202;) on the check-in page — either way updates the same tracker.</li>
+            <li><strong>Record your score</strong> — tap "I Hit it!" / "Missed it" each day on the <a href="#" id="howCheckinLink">Go30 check-in page</a> (link also in your confirmation email). Right after you check in you'll see your dashboard: streak, total score, weekly bonus points, and your team's board. All Go30 data lives in a shared Google Sheet called the Tracker — you never need to open it, but if you prefer, you can check in by entering <strong>1</strong> for a Hit / <strong>0</strong> for a Miss directly in its Tracker tab, or open it any time from the chart icon (&#128202;) on the check-in page — either way updates the same record.</li>
             <li><strong>Beat the deadline</strong> — report by 10:00 AM the next day. There's a short grace period, but it expires that same day — after that the system automatically marks it a &minus;1 for you, so don't rely on it.</li>
           </ol>
 
@@ -110,7 +113,8 @@
           <p style="margin:0 0 14px;">Beyond your daily challenge, log EHing an FNG, a Fellowship moment, taking a Q, or an Inspire moment for extra points — EHing an FNG counts most. Add these from the check-in page's Bonus Points section, or directly in the Bonus Tracker sheet. EHing FNG, Q Point, and Inspire need a link to Slack as evidence before they count.</p>
 
           <p class="how-section-head">STRENGTH IN NUMBERS</p>
-          <p style="margin:0;">You can go it alone — but you won't go as far. Work with 3–5 fellow HIMs who share your drive: hold each other to the standard, call out the misses, celebrate the wins. Men who pursue hard things together become men who achieve them.</p>
+          <p style="margin:0;">You can go it alone — but you won't go as far. Team up with 3–5 fellow HIMs who share your drive, usually grouped by AO since Shieldlock works best with proximity: hold each other to the standard, call out the misses, celebrate the wins. Joining a team is optional but highly encouraged — you can also participate solo.</p>
+          <p style="margin:8px 0 0;">Men who pursue hard things together become men who achieve them.</p>
         </div>
       </div>
     </div>
@@ -246,8 +250,14 @@
   // renderSignupPage_ (WebApp.js) reads them server-side and templates them in here instead.
   var urlTargetMonth_ = <?!= urlTargetMonthJson ?>;
   var URL_AUTO_START_ = <?!= JSON.stringify(urlAutoStart) ?>;
+  // {f3Name, email} resolved server-side from a ?id=<session guid> deep link (the confirmation
+  // email's "Update my registration" link), or null. Takes precedence over localStorage so the
+  // link works on any device — see renderSignupPage_ (WebApp.js).
+  var URL_IDENTITY_ = <?!= urlIdentityJson ?>;
 
-  var savedIdentity = loadIdentityFromStorage_();
+  var savedIdentity = (URL_IDENTITY_ && URL_IDENTITY_.f3Name && URL_IDENTITY_.email)
+    ? URL_IDENTITY_
+    : loadIdentityFromStorage_();
 
   var state = {
     step: 'intro',
@@ -548,7 +558,11 @@
   // step while identifyBtn's click handler resolves — briefly flashing that real form before it
   // was immediately replaced by step-info was confusing (F3Go30 hardening work 2026-07), since
   // the PAX never actually needs to see or interact with it on this path.
-  if (URL_AUTO_START_ && state.f3Name && state.email) {
+  // A ?id= deep link (confirmation email "Update my registration") behaves like autoStart — the
+  // identity is already known (resolved from the session guid server-side), so skip straight to
+  // the goal step prefilled with their current/most-recent registration instead of the identify
+  // form. URL_IDENTITY_ already seeded state.f3Name/email above.
+  if ((URL_AUTO_START_ || (URL_IDENTITY_ && URL_IDENTITY_.f3Name && URL_IDENTITY_.email)) && state.f3Name && state.email) {
     $('step-autoStartLoading').classList.remove('hidden');
     $('identifyBtn').click();
   } else {

@@ -129,6 +129,72 @@ function resolveCheckinSession_(spreadsheet, guid) {
   return null;
 }
 
+function normalizeCheckinIdentityField_(value) {
+  return String(value == null ? '' : value).trim().toLowerCase();
+}
+
+/**
+ * Reverse lookup: find the session a given PAX already holds, keyed by their {f3Name, email}
+ * rather than by guid. Scans bottom-up and returns the most recent (last-written) match, so a
+ * PAX with several device sessions gets handed their newest one. Case-insensitive on both
+ * fields; both must match. Returns {guid, row, f3Name, email, createdAt, lastUsedAt} or null.
+ *
+ * Unlike resolveCheckinSession_'s guid path there's no roster-index fast lane here — the index
+ * is keyed by guid, not identity — but this is only ever called off the (rare) confirmation-email
+ * path, never per check-in, so a full scan is fine. Read-only: never provisions the sheet.
+ */
+function findCheckinSessionByIdentity_(spreadsheet, f3Name, email) {
+  var wantName = normalizeCheckinIdentityField_(f3Name);
+  var wantEmail = normalizeCheckinIdentityField_(email);
+  if (!wantName || !wantEmail) return null;
+  var sheet = spreadsheet.getSheetByName(CHECKIN_SESSIONS_SHEET_NAME_);
+  if (!sheet) return null;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  var values = sheet.getRange(2, 1, lastRow - 1, CHECKIN_SESSIONS_HEADERS_.length).getValues();
+  for (var i = values.length - 1; i >= 0; i--) {
+    var r = values[i];
+    if (normalizeCheckinIdentityField_(r[CHECKIN_SESSION_COL_F3NAME_]) === wantName &&
+        normalizeCheckinIdentityField_(r[CHECKIN_SESSION_COL_EMAIL_]) === wantEmail) {
+      return {
+        guid: r[CHECKIN_SESSION_COL_ID_],
+        row: i + 2,
+        f3Name: r[CHECKIN_SESSION_COL_F3NAME_],
+        email: r[CHECKIN_SESSION_COL_EMAIL_],
+        createdAt: r[CHECKIN_SESSION_COL_CREATED_],
+        lastUsedAt: r[CHECKIN_SESSION_COL_LAST_USED_],
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Returns a bookmarkable session guid for {f3Name, email} — the existing one if this PAX already
+ * has a session (bumping its Last Used At so handing it back out as an emailed bookmark keeps it
+ * from being pruned), otherwise mints a fresh session and returns its guid. The confirmation
+ * email uses this so the check-in/edit links it sends are already bound to a real session and
+ * skip the name/email form on first tap.
+ *
+ * A miss is expected on a brand-new PAX's very first signup, but on an *edit/reconfirm* it can
+ * mean their session was pruned or their identity drifted — worth a warning either way (never
+ * fatal: we create one regardless). Returns null only when identity is incomplete or the guid
+ * source (Utilities) isn't available (e.g. Node without GAS globals).
+ */
+function resolveOrCreateCheckinSessionGuid_(spreadsheet, f3Name, email) {
+  if (!normalizeCheckinIdentityField_(f3Name) || !normalizeCheckinIdentityField_(email)) return null;
+  var existing = findCheckinSessionByIdentity_(spreadsheet, f3Name, email);
+  if (existing) {
+    touchCheckinSession_(spreadsheet, existing.row);
+    return existing.guid;
+  }
+  GasLogger.log('checkinSession.resolveOrCreate.noExistingSession', { level: 'warn' });
+  if (typeof Utilities === 'undefined' || !Utilities.getUuid) return null;
+  var guid = Utilities.getUuid();
+  createOrTouchCheckinSession_(spreadsheet, guid, f3Name, email);
+  return guid;
+}
+
 /** Single-cell write, no lock — see file header on why this must stay lock-free. */
 function touchCheckinSession_(spreadsheet, sessionRow) {
   var sheet = _openOrCreateCheckinSessionsSheet_(spreadsheet);
@@ -271,5 +337,7 @@ if (typeof module !== 'undefined' && module.exports) {
     touchCheckinSession_: touchCheckinSession_,
     createOrTouchCheckinSession_: createOrTouchCheckinSession_,
     cleanupStaleCheckinSessions_: cleanupStaleCheckinSessions_,
+    findCheckinSessionByIdentity_: findCheckinSessionByIdentity_,
+    resolveOrCreateCheckinSessionGuid_: resolveOrCreateCheckinSessionGuid_,
   };
 }

@@ -25,21 +25,25 @@
             </div>
           <? } ?>
 
-          <? if (prefilledUrl && ctaIntro) { ?>
-            <p style="margin:0 0 16px;"><?= ctaIntro ?></p>
-            <p style="margin:0 0 16px;"><a href="<?= prefilledUrl ?>" style="color:#0b5c86;font-weight:bold;"><?= ctaLabel ?></a></p>
-
-            <? if (newSignupUrl) { ?>
-              <p style="margin:0 0 16px;">We also have a new sign-up page — try it here:</p>
-              <p style="margin:0 0 16px;"><a href="<?= newSignupUrl ?>" style="color:#0b5c86;font-weight:bold;">Open new sign-up page</a></p>
-            <? } ?>
+          <? if (checkinUrl) { ?>
+            <div style="margin:20px 0 8px;border-top:1px solid #e6ddcc;padding-top:20px;">
+              <h2 style="margin:0 0 8px;font-size:18px;color:#2f5d50;"><?= copy.checkinHeading ?></h2>
+            </div>
+            <p style="margin:0 0 14px;"><?= copy.checkinIntro ?></p>
+            <p style="margin:0 0 14px;">
+              <a href="<?= checkinUrl ?>" style="display:inline-block;background:#2f5d50;color:#f8f4ea;text-decoration:none;font-weight:bold;padding:11px 20px;border-radius:8px;"><?= copy.checkinLabel ?></a>
+            </p>
+            <p style="margin:0 0 20px;font-size:13px;color:#555;"><?= copy.dashboardNote ?></p>
           <? } ?>
 
-          <p style="margin:0 0 16px;">Tracker: <a href="<?= trackerUrl ?>" style="color:#0b5c86;font-weight:bold;">View tracker</a></p>
+          <? if (editGoalsUrl) { ?>
+            <h3 style="margin:0 0 6px;font-size:15px;"><?= copy.editHeading ?></h3>
+            <p style="margin:0 0 8px;"><?= copy.editIntro ?></p>
+            <p style="margin:0 0 20px;"><a href="<?= editGoalsUrl ?>" style="color:#0b5c86;font-weight:bold;"><?= copy.editLabel ?></a></p>
+          <? } ?>
 
-          <? if (checkinUrl) { ?>
-            <p style="margin:0 0 16px;">Also give the new check-in page and dashboard a try:</p>
-            <p style="margin:0 0 16px;"><a href="<?= checkinUrl ?>" style="color:#0b5c86;font-weight:bold;">Open check-in &amp; dashboard</a></p>
+          <? if (trackerUrl) { ?>
+            <p style="margin:0 0 16px;font-size:13px;color:#555;"><?= copy.trackerIntro ?> <a href="<?= trackerUrl ?>" style="color:#0b5c86;"><?= copy.trackerLabel ?></a></p>
           <? } ?>
 
           <p style="margin:20px 0 0;">Thanks,<br>F3 Go30</p>

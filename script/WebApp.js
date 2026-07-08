@@ -83,6 +83,20 @@ function renderSignupPage_(e) {
   template.appVersion = APP_VERSION;
   template.urlTargetMonthJson = JSON.stringify((e && e.parameter && e.parameter.targetMonth) || null);
   template.urlAutoStart = !!(e && e.parameter && e.parameter.autoStart === '1');
+  // ?id=<session guid> deep link (from the confirmation email's "Update my registration" link):
+  // resolve the guid to its bound {f3Name, email} server-side — the sandboxed page can't read the
+  // query string itself (see the note above), and this is the same CheckinSessions store the
+  // check-in app uses. Handing the identity in lets SignupApp.html skip the identify form and open
+  // the goal step prefilled, exactly like ?autoStart=1 but without relying on localStorage.
+  var incomingSessionId = (e && e.parameter && e.parameter.id) || '';
+  var sessionIdentity = null;
+  if (incomingSessionId && typeof resolveCheckinSession_ === 'function') {
+    var session = resolveCheckinSession_(spreadsheet, incomingSessionId);
+    if (session && session.f3Name && session.email) {
+      sessionIdentity = { f3Name: session.f3Name, email: session.email };
+    }
+  }
+  template.urlIdentityJson = JSON.stringify(sessionIdentity);
   return template.evaluate().setTitle('Go30 Hard Commit Signup').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 

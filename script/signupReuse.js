@@ -22,6 +22,11 @@ var signupReuseGo30ToolsModule_ = (typeof module !== 'undefined' && module.expor
 var signupReuseCreateNewTrackerModule_ = (typeof module !== 'undefined' && module.exports)
     ? require('./CreateNewTracker.js')
     : null;
+var signupReuseCheckinSessionsModule_ = (typeof module !== 'undefined' && module.exports)
+    ? require('./CheckinSessions.js')
+    : null;
+var resolveOrCreateCheckinSessionGuid_sr_ = (signupReuseCheckinSessionsModule_ && signupReuseCheckinSessionsModule_.resolveOrCreateCheckinSessionGuid_)
+    || (typeof globalThis !== 'undefined' && globalThis.resolveOrCreateCheckinSessionGuid_);
 
 var findMostRecentPaxRecordForName_ = (signupReuseGo30ToolsModule_ && signupReuseGo30ToolsModule_.findMostRecentPaxRecordForName_)
     || (typeof globalThis !== 'undefined' && globalThis.findMostRecentPaxRecordForName_);
@@ -362,6 +367,25 @@ function getPriorResponse(templateSpreadsheet, f3Name, excludeSheetId) {
     }
 }
 
+/**
+ * Resolves (or mints) this PAX's bookmarkable check-in session guid so the confirmation email's
+ * check-in/edit links land them in-app already identified. These emails run in a monthly
+ * tracker's context, but CheckinSessions live in the Template (alongside PaxDB) — so resolve the
+ * Template first. Best-effort: any failure just drops the guid (the links fall back to the plain
+ * ?cmd=checkin / ?cmd=signup routes), never blocking the email.
+ */
+function resolveCheckinGuidForEmail_(trackerSpreadsheet, f3Name, email) {
+    if (!resolveOrCreateCheckinSessionGuid_sr_ || typeof getTemplateSpreadsheetForInit_ !== 'function') return null;
+    try {
+        var templateSpreadsheet = getTemplateSpreadsheetForInit_(trackerSpreadsheet, trackerSpreadsheet.getSheetByName('Config'));
+        if (!templateSpreadsheet) return null;
+        return resolveOrCreateCheckinSessionGuid_sr_(templateSpreadsheet, f3Name, email) || null;
+    } catch (e) {
+        Logger.log('resolveCheckinGuidForEmail_: ' + (e && e.message));
+        return null;
+    }
+}
+
 function sendGoalReuseEmail(spreadsheet, emailAddress, f3Name, trackerUrl, prefilledUrl, summaryLines, usedPriorGoals) {
     var recipient = sanitizeEmailAddressForSend_(emailAddress);
     if (!recipient) { Logger.log('sendGoalReuseEmail: invalid email'); return; }
@@ -370,7 +394,7 @@ function sendGoalReuseEmail(spreadsheet, emailAddress, f3Name, trackerUrl, prefi
         usedPriorGoals: !!usedPriorGoals,
         f3Name: safeF3Name,
         trackerUrl: trackerUrl,
-        prefilledUrl: prefilledUrl,
+        checkinSessionGuid: resolveCheckinGuidForEmail_(spreadsheet, f3Name, emailAddress),
         summaryLines: summaryLines || []
     });
 
@@ -404,7 +428,7 @@ function sendRegistrationConfirmationEmail_(spreadsheet, emailAddress, f3Name, t
         mode: 'confirmation',
         f3Name: safeF3Name,
         trackerUrl: trackerUrl,
-        prefilledUrl: prefilledUrl,
+        checkinSessionGuid: resolveCheckinGuidForEmail_(spreadsheet, f3Name, emailAddress),
         summaryLines: summaryLines || [],
         registrationMonth: safeRegistrationMonth
     });
