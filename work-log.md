@@ -1105,3 +1105,21 @@ Filed F3Go30-awhw (P2 bug) from a defect surfaced during verification: dashboard
 - The check-in error banner's "notify <name>" is the configured owner/notify contact, not the acting identity — don't infer the actor from it.
 - handleCheckinDashboard_ distinguishes no_tracker_for_date (correct error) from identity-miss not_found (the bug); only the latter should degrade gracefully.
 - The dashboard success path logs checkinWebapp.dashboard at the end, but the identity-miss early return is silent — a failed load leaves zero Axiom trace.
+
+## 2026-07-09 12:47:16
+_session 4765f7b6 · v3 · 07-09_
+
+### Objective 1: Reframe the "missing check-in" reminder email around the check-in web app
+Rationale: "change the missing check-in email to direct them to the webapp where they can bookmark their session with their identity first, and give them the link to the tracker after that if they want to use the older sheet interface." The daily nag email still led with the Tracker sheet as its primary CTA; the check-in web app (identify once, then bookmark a personal link) is now the intended primary path, and the Tracker sheet is the legacy fallback.
+Rejected: embedding a per-recipient bookmarkable guid in the nag email — structurally impossible, since the nag is one shared message sent to a team's opted-in members at once, so any guid in the body mis-identifies everyone but one recipient. The generic `?cmd=checkin` link (identify-then-bookmark) is the only correct form for a broadcast message.
+Outcome [user-facing]: Reminder email (HTML + plaintext + HTML fallback) now leads with the check-in web app CTA and bookmark copy, and demotes the Tracker sheet to an "older sheet interface" link; when no web app URL is configured it still degrades to the Tracker-only layout.
+Outcome [developer-facing]: Added test_nag.js coverage for the configured-web-app path (check-in link present, bookmark copy, precedes the demoted tracker link, no longer leads with "Open the tracker here:"); full suite green.
+Outcome [user-facing]: Deployed to SIT @139 and triggered runNagCheck — 14 reminder emails dispatched against 07-08's column; human-verified as good.
+
+### Objective 2: Analyze whether check-in identity can be made durable on iOS  [accreted]
+Transition: the reminder-email framing surfaced the question of how a returning PAX keeps their identity, so the context was warm to reason through the persistence guarantees before proposing any keep-alive mechanism.
+Rationale: Explored several proposals to keep the localStorage-saved identity alive against iOS Safari's ITP 7-day script-writable-storage cap — re-writing storage on every entry, re-seeding on any Hit/Missed interaction, and detecting stale storage then top-level-navigating to `?cmd=checkin&id=<guid>&action=…` to "reset" it. All fail: ITP resets on first-party interaction, not on writes; the app runs in a cross-origin googleusercontent.com iframe so no in-iframe gesture is ever first-party for the storage origin; the re-navigation would need the guid it's trying to rescue (so it's redundant when it can run and can't run when it's needed); and the "is storage stale?" check can't fire in the exact case the storage was wiped. The durable identity carrier is the guid in the URL, which is not storage at all — and it's already delivered per-recipient by the signup/confirmation email (g7bm), so the broadcast nag email correctly stays generic.
+Outcome [internal]: Decision — leave the nag email generic; add no client-side keep-alive / re-navigation mechanism; the per-person durable link already exists via the signup email. Confirmed the guid auto-identify path already re-seeds localStorage (applyIdentifySuccess_ → saveIdentityToStorage_) and the bare `?cmd=checkin` form already defaults-from-storage-and-is-editable, so no code change was warranted.
+
+### Key Learnings:
+Google Apps Script web apps render inside a cross-origin `*.googleusercontent.com` sandboxed iframe under a top-level `script.google.com` document, so app-written localStorage lives on a third-party origin the user never visits as first party — under WebKit ITP that storage is on a ~7-day eviction cycle no client-side gesture can reset. F3Go30-4j4o.2 is cross-month bonus-edit test coverage, NOT anything to do with the nag email (earlier mis-citation corrected).

@@ -27,6 +27,9 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+- The daily "missing check-in" reminder email now leads with the check-in web app — a PAX taps in
+  their F3 name once, then bookmarks the page so it remembers them — and demotes the Tracker sheet
+  to an "older sheet interface" fallback link, instead of leading with the Tracker sheet.
 - Fixed the bookmarked check-in link intermittently failing to appear after identify (a PAX could
   get stuck re-typing their name/email every visit, or land back on the sign-in form after
   reopening the app) — the bookmark link is now assigned the instant identify succeeds instead of

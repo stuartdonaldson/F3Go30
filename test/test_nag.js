@@ -127,6 +127,37 @@ assert.match(message.htmlBody, /<li>Anchor - goal: Leader<\/li>/);
 assert.match(message.htmlBody, /<li>Torch<\/li>/);
 assert.match(message.htmlBody, /Tracker/);
 
+// When a web app URL is configured, the check-in page becomes the primary CTA and the
+// Tracker sheet is demoted to the "older sheet interface" fallback.
+const savedPropertiesService = global.PropertiesService;
+global.PropertiesService = {
+  getScriptProperties: function() {
+    return { getProperty: function(key) { return key === 'WEBAPP_URL' ? 'https://webapp.example/exec' : null; } };
+  }
+};
+
+const checkinMessage = buildReminderEmailTemplate_({
+  teamName: 'Team Test',
+  targetDateString: '05/08/2026',
+  trackerUrl: 'https://docs.google.com/spreadsheets/d/mock/edit#gid=456',
+  funFact: '',
+  missing: [{ name: 'Anchor', who: 'Leader' }],
+});
+
+// Primary CTA: the check-in page, described as bookmarkable.
+assert.match(checkinMessage.body, /the Go30 check-in page/);
+assert.match(checkinMessage.body, /bookmark it/);
+assert.match(checkinMessage.body, /https:\/\/webapp\.example\/exec\?cmd=checkin/);
+// Tracker demoted below the check-in CTA.
+assert.match(checkinMessage.body, /Prefer the older sheet interface\?/);
+const checkinIdx = checkinMessage.body.indexOf('cmd=checkin');
+const trackerIdx = checkinMessage.body.indexOf('spreadsheets/d/mock');
+assert.ok(checkinIdx > -1 && trackerIdx > checkinIdx, 'check-in link should precede the tracker link');
+// No longer leads with the tracker.
+assert.doesNotMatch(checkinMessage.body, /Open the tracker here:/);
+
+global.PropertiesService = savedPropertiesService;
+
 const liveDelivery = prepareOutboundEmailDelivery_({
   policy: {},
   recipientList: 'alpha@example.com,beta@example.com',

@@ -34,15 +34,18 @@
             <? } ?>
           </ul>
 
-          <p style="margin:0 0 10px;">Open the tracker here:</p>
-          <p style="margin:0 0 20px;"><a href="<?= trackerUrl ?>" style="color:#0b5c86;font-weight:bold;">View current tracker</a></p>
-
           <? if (checkinUrl) { ?>
-            <p style="margin:0 0 10px;">Also give the new check-in page and dashboard a try:</p>
-            <p style="margin:0 0 20px;"><a href="<?= checkinUrl ?>" style="color:#0b5c86;font-weight:bold;">Open check-in &amp; dashboard</a></p>
+            <p style="margin:0 0 14px;">The quickest way to log your Daily Challenge is the Go30 check-in page. Enter your F3 name once, then bookmark it (or Add to Home Screen) &mdash; it will remember you, so you never have to type your name again.</p>
+            <p style="margin:0 0 14px;">
+              <a href="<?= checkinUrl ?>" style="display:inline-block;background:#2f5d50;color:#f8f4ea;text-decoration:none;font-weight:bold;padding:11px 20px;border-radius:8px;">Open check-in &amp; dashboard</a>
+            </p>
+            <p style="margin:0 0 20px;font-size:13px;color:#555;">Prefer the older sheet interface? You can still <a href="<?= trackerUrl ?>" style="color:#0b5c86;">open the Tracker sheet</a> directly.</p>
+          <? } else { ?>
+            <p style="margin:0 0 10px;">Open the tracker here:</p>
+            <p style="margin:0 0 20px;"><a href="<?= trackerUrl ?>" style="color:#0b5c86;font-weight:bold;">View current tracker</a></p>
           <? } ?>
 
-          <p style="margin:0 0 16px;">If you already checked in and your entry is not showing yet, just update it in the tracker.</p>
+          <p style="margin:0 0 16px;">If you already checked in and your entry is not showing yet, just update it on the check-in page or in the tracker.</p>
 
           <p style="margin:0 0 16px;font-size:13px;color:#555;">This reminder was sent only to teammates who explicitly opted in to nag emails.</p>
 

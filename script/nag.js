@@ -128,6 +128,13 @@ function renderReminderEmailHtmlFallback_(options) {
     return '<li><strong>' + escapeHtmlForEmail_(member.name) + '</strong>' + goal + '</li>';
   }).join('');
   var checkinUrl = (resolveWebAppBaseUrl_ && resolveWebAppBaseUrl_()) ? resolveWebAppBaseUrl_() + '?cmd=checkin' : '';
+  var trackerUrl = escapeHtmlForEmail_(options.trackerUrl);
+
+  var ctaBlock = checkinUrl
+    ? ('<p>The quickest way to log your Daily Challenge is the Go30 check-in page. Enter your F3 name once, then bookmark it (or Add to Home Screen) &mdash; it will remember you, so you never have to type your name again.</p>'
+        + '<p><a href="' + escapeHtmlForEmail_(checkinUrl) + '">Open check-in &amp; dashboard</a></p>'
+        + '<p style="font-size:13px;color:#555;">Prefer the older sheet interface? You can still <a href="' + trackerUrl + '">open the Tracker sheet</a> directly.</p>')
+    : ('<p><a href="' + trackerUrl + '">Open the tracker</a></p>');
 
   return [
     '<!DOCTYPE html>',
@@ -136,9 +143,8 @@ function renderReminderEmailHtmlFallback_(options) {
     '<p>Men of ' + escapeHtmlForEmail_(options.teamName) + ',</p>',
     '<p>This is a quick reminder that the following teammates have not yet checked in for ' + escapeHtmlForEmail_(options.targetDateString) + ':</p>',
     '<ul>' + missingItems + '</ul>',
-    '<p><a href="' + escapeHtmlForEmail_(options.trackerUrl) + '">Open the tracker</a></p>',
-    checkinUrl ? ('<p>Also give the new check-in page and dashboard a try: <a href="' + escapeHtmlForEmail_(checkinUrl) + '">Open check-in &amp; dashboard</a></p>') : '',
-    '<p>If you already checked in and your entry is not showing yet, just update it in the tracker.</p>',
+    ctaBlock,
+    '<p>If you already checked in and your entry is not showing yet, just update it on the check-in page or in the tracker.</p>',
     '<p>This reminder was sent only to teammates who explicitly opted in to nag emails.</p>',
     '<p>Stay after it,<br>F3 Go30</p>',
     '</body></html>'
@@ -179,18 +185,23 @@ function buildReminderEmailTemplate_(options) {
   });
 
   bodyLines.push('');
-  bodyLines.push('Open the tracker here:');
-  bodyLines.push(options.trackerUrl);
 
   var webAppBaseUrl = resolveWebAppBaseUrl_ ? resolveWebAppBaseUrl_() : '';
   if (webAppBaseUrl) {
-    bodyLines.push('');
-    bodyLines.push('Also give the new check-in page and dashboard a try:');
+    bodyLines.push('The quickest way to log your Daily Challenge is the Go30 check-in page. Enter your');
+    bodyLines.push('F3 name once, then bookmark it (or Add to Home Screen) - it will remember you, so');
+    bodyLines.push('you never have to type your name again:');
     bodyLines.push(webAppBaseUrl + '?cmd=checkin');
+    bodyLines.push('');
+    bodyLines.push('Prefer the older sheet interface? You can still open the Tracker sheet directly:');
+    bodyLines.push(options.trackerUrl);
+  } else {
+    bodyLines.push('Open the tracker here:');
+    bodyLines.push(options.trackerUrl);
   }
 
   bodyLines.push('');
-  bodyLines.push('If you already checked in and your entry is not showing yet, just update it in the tracker.');
+  bodyLines.push('If you already checked in and your entry is not showing yet, just update it on the check-in page or in the tracker.');
   bodyLines.push('');
   bodyLines.push('This reminder was sent only to teammates who explicitly opted in to nag emails.');
   bodyLines.push('');
