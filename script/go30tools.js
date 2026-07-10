@@ -939,6 +939,19 @@ function appendNamespaceRegistryRow_(registrySpreadsheet, fields) {
 	var row = buildNamespaceRegistryRow_(fields);
 	var headers = (sheet.getDataRange().getValues() || [])[0] || [];
 	var headerIndex = _buildHeaderIndex_(headers);
+	// Sheet exists but has no NameSpace header — either it's genuinely empty (first write to a
+	// manually-created tab) or its header row is malformed. Either way, silently appending
+	// against an empty headerIndex would write a blank row and contradict this function's
+	// "always registered or throws" contract, so seed/repair the header row first.
+	if (_pickHeaderIndex_(headerIndex, ['NameSpace', 'Namespace', 'ns']) === -1) {
+		if (sheet.getLastRow() > 1) {
+			throw new Error('appendNamespaceRegistryRow_: NamespaceDB header row is malformed (missing NameSpace column) and the sheet already has data — refusing to append.');
+		}
+		sheet.clear();
+		sheet.appendRow(NAMESPACE_DB_HEADERS_);
+		headers = NAMESPACE_DB_HEADERS_;
+		headerIndex = _buildHeaderIndex_(headers);
+	}
 	var values = new Array(headers.length).fill('');
 
 	function setColumn_(aliases, value) {

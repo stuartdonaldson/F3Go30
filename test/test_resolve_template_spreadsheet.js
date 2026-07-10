@@ -223,6 +223,40 @@ function fakeBoundSpreadsheet_(namespaceDbSheet) {
   assert.equal(result.nameSpace, 'boot-env');
 })();
 
+// Copilot review (PR #2): a sheet that exists but is empty (or has a blank/malformed header
+// row) must not silently accept a headerless append — seed/repair the header row first, or
+// throw when data already exists under a bad header, so the "always registered or throws"
+// contract in the docstring actually holds.
+function fakeEmptyButExistingSheet_() {
+  var data = [];
+  return {
+    getDataRange: function() { return { getValues: function() { return data.slice(); } }; },
+    getLastRow: function() { return data.length; },
+    clear: function() { data.length = 0; },
+    appendRow: function(row) { data.push(row); }
+  };
+}
+
+(function testAppendNamespaceRegistryRowSeedsHeaderWhenSheetExistsButEmpty() {
+  var sheet = fakeEmptyButExistingSheet_();
+  var registrySpreadsheet = { getSheetByName: function(name) { return name === NAMESPACE_DB_SHEET_NAME_ ? sheet : null; } };
+  var result = appendNamespaceRegistryRow_(registrySpreadsheet, { nameSpace: 'empty-sheet-env', templateId: 'tmpl-empty', kind: 'smoke' });
+  var written = sheet.getDataRange().getValues();
+  assert.deepEqual(written[0], NAMESPACE_DB_HEADERS_, 'header row should be seeded before append');
+  assert.deepEqual(written[1], ['empty-sheet-env', 'tmpl-empty', 'smoke', '', '', '', '']);
+  assert.equal(result.nameSpace, 'empty-sheet-env');
+})();
+
+(function testAppendNamespaceRegistryRowThrowsWhenHeaderMalformedButDataExists() {
+  var sheet = fakeEmptyButExistingSheet_();
+  sheet.appendRow(['NotAHeader', 'AlsoNotAHeader']);
+  sheet.appendRow(['some', 'stale-data']);
+  var registrySpreadsheet = { getSheetByName: function(name) { return name === NAMESPACE_DB_SHEET_NAME_ ? sheet : null; } };
+  assert.throws(function() {
+    appendNamespaceRegistryRow_(registrySpreadsheet, { nameSpace: 'wont-register', templateId: 'tmpl-x' });
+  }, /malformed/);
+})();
+
 function fakeMutableSheet_(headers, rows) {
   var data = [headers].concat(rows.map(function(r) { return r.slice(); }));
   return {

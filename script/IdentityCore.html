@@ -35,7 +35,7 @@
    * is the only way a namespace-scoped request stays scoped past the initial page load. Each
    * including page defines NS_ from its server-rendered urlNsJson, same lifecycle as CMD_. */
   function callApi(action, payload) {
-    var body = Object.assign({ action: action, ns: (typeof NS_ !== 'undefined' ? NS_ : '') }, payload);
+    var body = Object.assign({}, payload, { action: action, ns: (typeof NS_ !== 'undefined' ? NS_ : '') });
     return fetch(WEBAPP_URL + '?cmd=' + CMD_, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
