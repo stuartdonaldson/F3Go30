@@ -31,6 +31,19 @@ var getSmokeTrackerId_gt_ = (go30ToolsSmokeModeModule_ && go30ToolsSmokeModeModu
 	|| (typeof globalThis !== 'undefined' && globalThis.getSmokeTrackerId_);
 
 var TRACKER_DB_SHEET_NAME_ = 'TrackerDB';
+var NAMESPACE_DB_SHEET_NAME_ = 'NamespaceDB';
+// Canonical NamespaceDB header row (ADR-014 D6/D7). Single source of truth for the columns
+// buildNamespaceRegistryRow_ writes and _lookupNamespaceRegistryRow_ reads; also used to
+// seed the sheet when a registry deployment has none yet (appendNamespaceRegistryRow_).
+var NAMESPACE_DB_HEADERS_ = [
+	'NameSpace',
+	'TemplateId',
+	'Kind',
+	'NagEnabled',
+	'MinusOneEnabled',
+	'AutoGenerateEnabled',
+	'CleanupSessionsEnabled'
+];
 var ALL_GO30_ROOT_FOLDER_ID_ = '1bMf--vyEqu8_F1NskrMbJ0cusRrR-plr';
 var TRACKER_DB_HEADERS_ = [
 	'Date Modified',
@@ -580,8 +593,11 @@ function resolveTrackerDbRowForContextDate_(rows, contextDate) {
  * @returns {Object} The single matching TrackerDB row.
  * @throws {Error} When zero or more than one (non-smoke) row matches the context date.
  */
-function resolveTrackerForContextDate(contextDate) {
-	var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+function resolveTrackerForContextDate(contextDate, spreadsheet) {
+	// spreadsheet defaults to the bound one (trigger/admin callers), but request-driven callers
+	// resolving tenant data under a namespace pass the ns-resolved template so date-based
+	// dispatch reads THAT environment's TrackerDB, not the executing deployment's (ADR-014 D1).
+	if (!spreadsheet) spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 	var trackerState = _readTrackerDbRowsBySheetId_(spreadsheet);
 	var rows = Object.keys(trackerState.bySheetId).map(function(sheetId) {
 		return trackerState.bySheetId[sheetId];
@@ -826,6 +842,175 @@ function _readTrackerDbRowsBySheetId_(spreadsheet) {
 	}
 
 	return { bySheetId: out };
+}
+
+/**
+ * Resolves a request's target Template spreadsheet from an `ns` (namespace) request parameter,
+ * per ADR-014 D1/D3. `ns` arrives as e.parameter.ns on a GET (doGet's query string) or as an
+ * echoed field in the parsed POST body on a doPost action (ADR-014 D3 — the sandboxed client
+ * iframe carries no query string, so ns must round-trip through the page template and every
+ * callApi() body exactly like targetMonth/id already do); pass the parsed payload as the second
+ * arg for POST call sites. Looks the resolved ns up against the bound spreadsheet's NamespaceDB
+ * registry sheet (NameSpace -> TemplateId). Absent ns, a missing NamespaceDB sheet, or an ns not
+ * present in the registry all fall back to the bound spreadsheet unchanged — this fail-safe
+ * default is what stops an ANYONE_ANONYMOUS caller from ever redirecting execution to an
+ * arbitrary spreadsheet id; NamespaceDB is the only allowlist consulted.
+ */
+function resolveTemplateSpreadsheet_(e, payload) {
+	var boundSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+	var ns = (e && e.parameter && e.parameter.ns) || (payload && payload.ns) || '';
+	if (!ns) return boundSpreadsheet;
+
+	var templateId = _lookupNamespaceTemplateId_(boundSpreadsheet, ns);
+	if (!templateId) return boundSpreadsheet;
+
+	try {
+		return SpreadsheetApp.openById(templateId);
+	} catch (err) {
+		GasLogger.logError('resolveTemplateSpreadsheet_.openById.error', err, { ns: ns });
+		return boundSpreadsheet;
+	}
+}
+
+/**
+ * Looks up a namespace's full NamespaceDB registry row, per ADR-014 D2/D7. NamespaceDB is
+ * the sole allowlist for ns -> templateId resolution (see resolveTemplateSpreadsheet_); this
+ * also surfaces Kind and the per-trigger opt-in columns (D4 fan-out) for callers that need more
+ * than the templateId. Returns null when the sheet is absent or ns isn't a registered row —
+ * callers must treat null as "not allowlisted", never as permission to fall through to a
+ * request-supplied id.
+ */
+function _lookupNamespaceRegistryRow_(boundSpreadsheet, ns) {
+	var sheet = boundSpreadsheet.getSheetByName(NAMESPACE_DB_SHEET_NAME_);
+	if (!sheet) return null;
+
+	var values = sheet.getDataRange().getValues();
+	if (!values || values.length < 2) return null;
+
+	var headers = values[0] || [];
+	var headerIndex = _buildHeaderIndex_(headers);
+
+	for (var i = 1; i < values.length; i++) {
+		var row = values[i] || [];
+		var rowNamespace = _getCellByHeader_(row, headerIndex, ['NameSpace', 'Namespace', 'ns']);
+		if (rowNamespace !== ns) continue;
+		return {
+			namespace: rowNamespace,
+			templateId: _getCellByHeader_(row, headerIndex, ['TemplateId', 'Template Id', 'TemplateID']),
+			kind: _getCellByHeader_(row, headerIndex, ['Kind']),
+			nagEnabled: _isNamespaceFlagEnabled_(_getCellByHeader_(row, headerIndex, ['NagEnabled', 'Nag Enabled'])),
+			minusOneEnabled: _isNamespaceFlagEnabled_(_getCellByHeader_(row, headerIndex, ['MinusOneEnabled', 'MinusOne Enabled'])),
+			autoGenerateEnabled: _isNamespaceFlagEnabled_(_getCellByHeader_(row, headerIndex, ['AutoGenerateEnabled', 'AutoGenerate Enabled'])),
+			cleanupSessionsEnabled: _isNamespaceFlagEnabled_(_getCellByHeader_(row, headerIndex, ['CleanupSessionsEnabled', 'CleanupSessions Enabled']))
+		};
+	}
+	return null;
+}
+
+function _isNamespaceFlagEnabled_(val) {
+	var s = String(val == null ? '' : val).trim().toLowerCase();
+	return s === 'yes' || s === 'y' || s === 'true' || s === '1';
+}
+
+function _lookupNamespaceTemplateId_(boundSpreadsheet, ns) {
+	var row = _lookupNamespaceRegistryRow_(boundSpreadsheet, ns);
+	return row ? row.templateId : '';
+}
+
+/**
+ * Builds a NamespaceDB row's field values for a newly provisioned environment (ADR-014 D6).
+ * Pure — no Sheets calls — so it's unit-testable without live GAS services. Kind defaults to
+ * 'smoke' (the first consumer, per ADR-014); trigger fan-out opt-ins (D4) default to blank/off
+ * so a freshly provisioned namespace never joins time-trigger fan-out until an operator
+ * deliberately enables it.
+ * @param {{nameSpace: string, templateId: string, kind?: string, nagEnabled?: boolean,
+ *   minusOneEnabled?: boolean, autoGenerateEnabled?: boolean, cleanupSessionsEnabled?: boolean}} fields
+ * @returns {Object}
+ */
+function buildNamespaceRegistryRow_(fields) {
+	fields = fields || {};
+	return {
+		nameSpace: String(fields.nameSpace || ''),
+		templateId: String(fields.templateId || ''),
+		kind: String(fields.kind || 'smoke'),
+		nagEnabled: fields.nagEnabled ? 'Yes' : '',
+		minusOneEnabled: fields.minusOneEnabled ? 'Yes' : '',
+		autoGenerateEnabled: fields.autoGenerateEnabled ? 'Yes' : '',
+		cleanupSessionsEnabled: fields.cleanupSessionsEnabled ? 'Yes' : ''
+	};
+}
+
+/**
+ * Appends a new row to the destination (registry) spreadsheet's NamespaceDB sheet, per
+ * ADR-014 D6 — the write half of provisioning (resolveTemplateSpreadsheet_/
+ * _lookupNamespaceRegistryRow_ are the read half). Header-order independent: writes each
+ * field by matching the sheet's actual header row, so column order in NamespaceDB can differ
+ * from the field order here. If the destination spreadsheet has no NamespaceDB sheet yet it is
+ * created and seeded with NAMESPACE_DB_HEADERS_ before the append — first-registration
+ * bootstrap, so a fresh registry deployment needs no manual sheet setup. This is create-then-
+ * write, not silently-skip: the row is always registered or an error is thrown.
+ * @param {Spreadsheet} registrySpreadsheet The destination (active) deployment's bound Template.
+ * @param {Object} fields See buildNamespaceRegistryRow_.
+ * @returns {Object} The row that was appended (buildNamespaceRegistryRow_'s return value).
+ */
+function appendNamespaceRegistryRow_(registrySpreadsheet, fields) {
+	var sheet = registrySpreadsheet.getSheetByName(NAMESPACE_DB_SHEET_NAME_);
+	if (!sheet) {
+		sheet = registrySpreadsheet.insertSheet(NAMESPACE_DB_SHEET_NAME_);
+		sheet.appendRow(NAMESPACE_DB_HEADERS_);
+	}
+
+	var row = buildNamespaceRegistryRow_(fields);
+	var headers = (sheet.getDataRange().getValues() || [])[0] || [];
+	var headerIndex = _buildHeaderIndex_(headers);
+	var values = new Array(headers.length).fill('');
+
+	function setColumn_(aliases, value) {
+		var index = _pickHeaderIndex_(headerIndex, aliases);
+		if (index !== -1) values[index] = value;
+	}
+
+	setColumn_(['NameSpace', 'Namespace', 'ns'], row.nameSpace);
+	setColumn_(['TemplateId', 'Template Id', 'TemplateID'], row.templateId);
+	setColumn_(['Kind'], row.kind);
+	setColumn_(['NagEnabled', 'Nag Enabled'], row.nagEnabled);
+	setColumn_(['MinusOneEnabled', 'MinusOne Enabled'], row.minusOneEnabled);
+	setColumn_(['AutoGenerateEnabled', 'AutoGenerate Enabled'], row.autoGenerateEnabled);
+	setColumn_(['CleanupSessionsEnabled', 'CleanupSessions Enabled'], row.cleanupSessionsEnabled);
+
+	sheet.appendRow(values);
+	return row;
+}
+
+/**
+ * Deletes a NamespaceDB row by NameSpace — the teardown half of appendNamespaceRegistryRow_
+ * (ADR-014 D6 lifecycle, i5md.4). Removing this row is the primary safety cut for environment
+ * teardown: it makes the ns unresolvable via resolveTemplateSpreadsheet_ immediately,
+ * independent of whether any later Drive cleanup succeeds. Never throws on a missing
+ * sheet/row — teardown must be safely retriable after a partial failure.
+ * @param {Spreadsheet} registrySpreadsheet
+ * @param {string} ns
+ * @returns {boolean} Whether a row was found and removed.
+ */
+function removeNamespaceRegistryRow_(registrySpreadsheet, ns) {
+	var sheet = registrySpreadsheet.getSheetByName(NAMESPACE_DB_SHEET_NAME_);
+	if (!sheet) return false;
+
+	var values = sheet.getDataRange().getValues();
+	if (!values || values.length < 2) return false;
+
+	var headers = values[0] || [];
+	var headerIndex = _buildHeaderIndex_(headers);
+	var nsColumn = _pickHeaderIndex_(headerIndex, ['NameSpace', 'Namespace', 'ns']);
+	if (nsColumn === -1) return false;
+
+	for (var i = 1; i < values.length; i++) {
+		if (values[i][nsColumn] === ns) {
+			sheet.deleteRow(i + 1);
+			return true;
+		}
+	}
+	return false;
 }
 
 function _readPaxDbRowsBySheetId_(spreadsheet) {
@@ -1567,6 +1752,14 @@ if (typeof module !== 'undefined' && module.exports) {
 		deletePaxDbRowsBySheetId_: deletePaxDbRowsBySheetId_,
 		_readPaxDbRowsBySheetId_: _readPaxDbRowsBySheetId_,
 		_readTrackerDbRowsBySheetId_: _readTrackerDbRowsBySheetId_,
+		resolveTemplateSpreadsheet_: resolveTemplateSpreadsheet_,
+		_lookupNamespaceTemplateId_: _lookupNamespaceTemplateId_,
+		_lookupNamespaceRegistryRow_: _lookupNamespaceRegistryRow_,
+		buildNamespaceRegistryRow_: buildNamespaceRegistryRow_,
+		appendNamespaceRegistryRow_: appendNamespaceRegistryRow_,
+		removeNamespaceRegistryRow_: removeNamespaceRegistryRow_,
+		NAMESPACE_DB_SHEET_NAME_: NAMESPACE_DB_SHEET_NAME_,
+		NAMESPACE_DB_HEADERS_: NAMESPACE_DB_HEADERS_,
 		_computeTrackerMetrics_: _computeTrackerMetrics_,
 		_buildTrackerMetadata_: _buildTrackerMetadata_,
 		_loadPaxData: _loadPaxData,

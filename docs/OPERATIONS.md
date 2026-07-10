@@ -206,13 +206,18 @@ after a month boundary passes.
 
 ### CopyTemplate — standing up a new environment
 
-`node tools/copyTemplate.js <folderName> [--env sit|prod] [--tracker-count 3]` stands up the
-*files* for a brand-new, fully isolated environment (e.g. a different F3 region), without
+`node tools/copyTemplate.js <folderName> [--env sit|prod] [--tracker-count 3]
+[--source-template-id <id>] [--kind smoke|regional|demo]` stands up the *files* for a
+brand-new, fully isolated environment (e.g. a different F3 region) and registers it, without
 deploying or initializing anything:
 
-1. Copies the Template spreadsheet into a new sibling Drive folder named `<folderName>` — the
-   bound Apps Script project comes along automatically (Drive file copies of a container-bound
-   spreadsheet duplicate the bound script too).
+1. Copies **`--source-template-id`** (defaults to PROD's `templateSpreadsheetId` from
+   `local.settings.json`) into a new sibling Drive folder named `<folderName>` — the bound
+   Apps Script project comes along automatically (Drive file copies of a container-bound
+   spreadsheet duplicate the bound script too). Per ADR-014 D6, source and destination are
+   deliberately decoupled: `--env` picks the deployment that *executes* the request and owns
+   the destination `NamespaceDB` registry (typically SIT); `--source-template-id` picks what
+   gets copied *from* (typically PROD). Running `--env sit` never copies SIT itself.
 2. Forces the copied Template's Config sheet to safe defaults — **`Email Test Mode` = `Yes`**
    (fail-safe; the operator never has to remember to set this) and **`NameSpace` = `<folderName>`**
    (the copy gets its own identity instead of inheriting PROD's — `<folderName>` is one
@@ -226,12 +231,18 @@ deploying or initializing anything:
    copied trackers' new SheetIds — the raw copy would otherwise carry over the *entire* source
    TrackerDB/PaxDB history (both live inside the Template spreadsheet), pointing at the old
    trackers' original SheetIds instead of the copies.
+5. Registers the new environment as a row in the **destination** (`--env`) deployment's
+   `NamespaceDB` sheet — `NameSpace=<folderName>`, `TemplateId=<new copy's id>`,
+   `Kind=<--kind, default smoke>`. Trigger fan-out opt-in columns (`NagEnabled`,
+   `MinusOneEnabled`, `AutoGenerateEnabled`, `CleanupSessionsEnabled`) default to blank/off —
+   an operator enables them manually per D4. This is what makes the new environment addressable
+   via `ns=<folderName>` on webapp/admin requests (ADR-014 D1).
 
 Deliberately out of scope: triggers, HC Form links, TinyURL short links, Script Properties,
-and any deployment. Use `--env prod` for the real use case — PROD's TrackerDB holds true
-production history; SIT's is contaminated with SIT-only test rows layered on inherited prod
-history. Bringing the new environment live (initializing triggers, deploying its own web app,
-re-linking forms) is a separate, manual step — see `script/CopyTemplate.js`'s file header.
+and any deployment. Bringing the new environment live (initializing triggers, deploying its own
+web app, re-linking forms) is a separate, manual step — see `script/CopyTemplate.js`'s file
+header. Teardown (removing the `NamespaceDB` row and optionally trashing the folder) is
+F3Go30-i5md.4, not yet implemented — see ADR-014 D6.
 
 ### Script Properties
 

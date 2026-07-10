@@ -348,8 +348,14 @@ var CHECKIN_PAGE_FAVICON_URL_ = 'https://raw.githubusercontent.com/stuartdonalds
  *   (raw, not JSON — see CheckinApp.html) — always present, even when nothing has resolved yet,
  *   since it's what makes a subsequent typed-identify POST land on a fixed, already-correct
  *   address bar in one interaction (see CheckinSessions.js's file header).
+ * @param {Object} spreadsheet The already-resolved target Template spreadsheet (see
+ *   resolveTemplateSpreadsheet_, ADR-014 D1) — callers resolve this once from the request's ns
+ *   parameter and pass it through, rather than this function re-deriving it.
+ * @param {?string} ns The request's raw ns value (ADR-014 D3), templated into the page so
+ *   CheckinApp.html's client-side callApi() can echo it back on every subsequent POST — the
+ *   sandboxed iframe carries no query string, so this is the only way it reaches the client.
  */
-function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid) {
+function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spreadsheet, ns) {
   var template = HtmlService.createTemplateFromFile('CheckinApp');
   var webAppUrl = ScriptApp.getService().getUrl();
   template.webAppUrl = JSON.stringify(webAppUrl);
@@ -358,19 +364,20 @@ function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid) {
   template.appVersion = APP_VERSION;
   template.savedIdentityTokenJson = JSON.stringify(savedToken || null);
   template.typedIdentifyResultJson = JSON.stringify(typedIdentifyResult || null);
+  template.urlNsJson = JSON.stringify(ns || null);
   template.bonusTypesJson = JSON.stringify(bonusTypeClientRules_dw_());
   template.bonusTypeCodesJson = JSON.stringify(bonusTypeDisplayList_dw_());
   // Site Q contact info for the client's "something went wrong" error banner — same Config
   // sheet row (bound/template spreadsheet, not any month's own tracker) that CreateNewTracker.js
   // and Utilities.js's policy loader already read for admin/nag emails.
-  var siteQConfig = getConfigValue_(SpreadsheetApp.getActiveSpreadsheet(), 'Site Q', null) || {};
+  var siteQConfig = getConfigValue_(spreadsheet, 'Site Q', null) || {};
   template.siteQName = siteQConfig.primary || 'Site Q';
   template.siteQEmail = siteQConfig.secondary || '';
-  var nameSpaceConfig = getConfigValue_(SpreadsheetApp.getActiveSpreadsheet(), 'NameSpace', null) || {};
+  var nameSpaceConfig = getConfigValue_(spreadsheet, 'NameSpace', null) || {};
   var nameSpace = nameSpaceConfig.primary || 'F3 Go30';
   template.nameSpace = nameSpace;
   var titleF3Name = (typedIdentifyResult && typedIdentifyResult.f3Name) ||
-    (savedToken && (resolveCheckinToken_dw_(SpreadsheetApp.getActiveSpreadsheet(), savedToken) || {}).f3Name);
+    (savedToken && (resolveCheckinToken_dw_(spreadsheet, savedToken) || {}).f3Name);
   var pageTitle = titleF3Name ? (nameSpace + ': ' + titleF3Name) : nameSpace;
   // HtmlService serves this inside an IFRAME-sandboxed wrapper that does not honor a
   // <meta name="viewport"> tag written in the template's own <head> — it must be set via
@@ -389,7 +396,8 @@ function renderCheckinPage_(e) {
   // (rather than always minting a new one) is harmless: it just gets bound on the next typed
   // identify instead of being wasted.
   var formGuid = savedToken || Utilities.getUuid();
-  return buildCheckinPageOutput_(savedToken, null, formGuid);
+  var ns = (e && e.parameter && e.parameter.ns) || null;
+  return buildCheckinPageOutput_(savedToken, null, formGuid, resolveTemplateSpreadsheet_(e), ns);
 }
 
 /**
@@ -402,7 +410,7 @@ function renderCheckinPage_(e) {
  * match behavior never drifts between the JSON and form-POST entry points.
  */
 function renderCheckinPageForTypedIdentify_(e) {
-  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var spreadsheet = resolveTemplateSpreadsheet_(e);
   var f3Name = (e.parameter && e.parameter.f3Name) || '';
   var email = (e.parameter && e.parameter.email) || '';
   // The form's own action URL already carries this exact guid (see CheckinApp.html /
@@ -420,7 +428,8 @@ function renderCheckinPageForTypedIdentify_(e) {
   // once that second call resolves (confirmed live during the 2026-07 SIT verification of this
   // change). The guid still reaches the client via typedIdentifyResult.identityToken, which is
   // all saveLinkNote/saveLinkAnchor need — and the form's action already used it for the URL.
-  return buildCheckinPageOutput_(null, result, guid);
+  var ns = (e.parameter && e.parameter.ns) || null;
+  return buildCheckinPageOutput_(null, result, guid, spreadsheet, ns);
 }
 
 /** Dispatches a cmd=checkin doPost JSON body ({action, ...}) to the matching handler. */
@@ -432,7 +441,7 @@ function handleCheckinPost_(e) {
     return jsonOutput_({ ok: false, error: 'invalid_json' });
   }
 
-  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var spreadsheet = resolveTemplateSpreadsheet_(e, payload);
   try {
     if (payload.action === 'identify') return jsonOutput_(handleCheckinIdentify_(spreadsheet, payload));
     if (payload.action === 'checkin') return jsonOutput_(handleCheckinSubmit_(spreadsheet, payload));
@@ -657,14 +666,17 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
 }
 
 /**
- * @param {string=} targetMonth 'current' (default) | 'next' | 'smoke' — same selectTargetMonth_
- *   enum signup's targetMonth already uses (signupWebapp.js), so a smoke-test caller can
- *   explicitly address the smoke tracker here too rather than relying on it happening to be
- *   "current" by date (see resolveSignupMonths_'s docstring for why that can't be trusted).
+ * @param {string=} targetMonth 'current' (default) | 'next' | 'smoke' | 'explicit' — same
+ *   selectTargetMonth_ enum signup's targetMonth already uses (signupWebapp.js), so a
+ *   smoke/namespace-test caller can explicitly address the smoke tracker (or, via 'explicit' +
+ *   targetSheetId, an arbitrary namespace-registered month — F3Go30-i5md.6/4j4o.2) here too
+ *   rather than relying on it happening to be "current" by date (see resolveSignupMonths_'s
+ *   docstring for why that can't be trusted).
+ * @param {string=} targetSheetId Required when targetMonth === 'explicit'; see resolveSignupMonths_.
  */
-function resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, targetMonth) {
+function resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, targetMonth, targetSheetId) {
   var t0 = Date.now();
-  var months = getCurrentAndNextMonths_dw_(templateSpreadsheet);
+  var months = getCurrentAndNextMonths_dw_(templateSpreadsheet, targetSheetId);
   GasLogger.log('checkinWebapp.resolveMonths.timing', { durationMs: Date.now() - t0 });
   var monthInfo = selectTargetMonth_dw_(months, targetMonth);
   if (!monthInfo) return { matched: false, months: months };
@@ -678,9 +690,9 @@ function resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, targetMonth
  * lets the dashboard's date-navigation arrows step back into any earlier month that has a
  * TrackerDB entry.
  */
-function resolveDashboardMonth_(targetDate) {
+function resolveDashboardMonth_(targetDate, spreadsheet) {
   try {
-    var row = resolveTrackerForContextDate(targetDate);
+    var row = resolveTrackerForContextDate(targetDate, spreadsheet);
     return {
       sheetId: row.sheetId,
       trackerUrl: row.trackerUrl,
@@ -1031,7 +1043,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     GasLogger.log('checkinWebapp.identify.result', { matched: false, tokenInvalid: true, durationMs: Date.now() - t0 });
     return { ok: true, matched: false, tokenInvalid: true };
   }
-  var identity = resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, payload.targetMonth);
+  var identity = resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, payload.targetMonth, payload.targetSheetId);
   if (!identity.matched) {
     // PaxDB fallback (F3Go30-xj1q.1): only here, in the typed/token-decoded miss branch — never
     // in the tokenInvalid branch above, where f3Name/email come from an unverified client and a
@@ -1133,7 +1145,7 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
     return { ok: false, error: 'invalid_value' };
   }
 
-  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth);
+  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth, payload.targetSheetId);
   if (!identity.matched) return { ok: false, error: 'not_found' };
 
   var targetDate = new Date();
@@ -1179,7 +1191,11 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
 function resolveBonusSheet_(templateSpreadsheet, payload, dateIso) {
   var targetDate = dateIso ? parseIsoDateLocal_(dateIso) : new Date();
   if (isNaN(targetDate.getTime())) targetDate = new Date();
-  var monthInfo = resolveDashboardMonth_(targetDate);
+  // Resolve the month against the ns-scoped template (templateSpreadsheet), not the bound
+  // deployment — otherwise date-based dispatch reads the wrong TrackerDB and the PAX is
+  // never found in a namespace tracker (F3Go30-4j4o.1). monthInfo.sheetId then carries the
+  // correct namespace tracker id downstream, so identity/write steps need no ns awareness.
+  var monthInfo = resolveDashboardMonth_(targetDate, templateSpreadsheet);
   if (!monthInfo) return { error: 'not_found' };
   var identity = resolveCheckinIdentityLean_(monthInfo, payload.f3Name, payload.email, null);
   if (!identity.matched) return { error: 'not_found' };
@@ -1214,10 +1230,12 @@ function handleBonusAdd_(templateSpreadsheet, payload) {
  * happening *before* paying for the expensive per-month identity resolution twice.
  * @returns {{sheetId:string}|null}
  */
-function resolveBonusMonthOnly_(dateIso) {
+function resolveBonusMonthOnly_(dateIso, templateSpreadsheet) {
   var targetDate = dateIso ? parseIsoDateLocal_(dateIso) : new Date();
   if (isNaN(targetDate.getTime())) targetDate = new Date();
-  return resolveDashboardMonth_(targetDate);
+  // Same ns-scoping as resolveBonusSheet_: the cross-month detection must consult the
+  // namespace's TrackerDB or a cross-month edit under a namespace mis-detects (F3Go30-4j4o.2).
+  return resolveDashboardMonth_(targetDate, templateSpreadsheet);
 }
 
 /**
@@ -1241,11 +1259,11 @@ function resolveBonusMonthOnly_(dateIso) {
  * change the month, so this keeps a same-month edit down to the one resolution it always needed.
  */
 function handleBonusEdit_(templateSpreadsheet, payload) {
-  var newMonth = resolveBonusMonthOnly_(payload.whenIso);
+  var newMonth = resolveBonusMonthOnly_(payload.whenIso, templateSpreadsheet);
   if (!newMonth) return { ok: false, error: 'not_found' };
 
   var originalWhenIso = payload.originalWhenIso || payload.whenIso;
-  var originalMonth = resolveBonusMonthOnly_(originalWhenIso);
+  var originalMonth = resolveBonusMonthOnly_(originalWhenIso, templateSpreadsheet);
   if (!originalMonth) return { ok: false, error: 'not_found' };
 
   var originalSnapshot = payload.original || null;
@@ -1359,7 +1377,18 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   var t2 = Date.now();
   var identity = resolveCheckinIdentityFull_(monthInfo, payload.f3Name, payload.email, null);
   var resolveIdentityMs = Date.now() - t2;
-  if (!identity.matched) return { ok: false, error: 'not_found' };
+  if (!identity.matched) {
+    // Distinct from the no_tracker_for_date miss above: a tracker exists for this date, but the
+    // viewing PAX has no row in it (e.g. date-nav back into a month they weren't registered in —
+    // F3Go30-awhw). The success path logs checkinWebapp.dashboard at the end; without this the
+    // failure leaves zero Axiom trace. Warn with enough context (identity, resolved month) to
+    // diagnose. Graceful degradation of this case is tracked in F3Go30-csfe.
+    GasLogger.log('checkinWebapp.dashboard.identityMiss', {
+      f3Name: payload.f3Name, monthLabel: monthInfo.label,
+      monthKey: _dashboardIsoDate_(monthInfo.startDate).slice(0, 7),
+    });
+    return { ok: false, error: 'not_found' };
+  }
 
   var classified = classifyTrackerColumns_(identity.row2, identity.row3);
 
@@ -1523,5 +1552,8 @@ if (typeof module !== 'undefined' && module.exports) {
     invalidateFullRosterCache_: invalidateFullRosterCache_,
     handleCheckinIdentify_: handleCheckinIdentify_,
     checkNextMonthRegistration_: checkNextMonthRegistration_,
+    buildCheckinPageOutput_: buildCheckinPageOutput_,
+    renderCheckinPage_: renderCheckinPage_,
+    renderCheckinPageForTypedIdentify_: renderCheckinPageForTypedIdentify_,
   };
 }

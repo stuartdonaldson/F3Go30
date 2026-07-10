@@ -37,6 +37,25 @@ function testParseArgsBodyMerged() {
   assert.deepEqual(r.extraBody, { properties: { SMOKE_MODE: 'true' } });
 }
 
+function testParseArgsNsShorthand() {
+  const r = parseArgs_([
+    'node', 'callWebapp.js', 'identify',
+    '--cmd', 'checkin',
+    '--ns', 'smoke-2026-07-09',
+    '--body', '{"f3Name":"Splinter","email":"x@y.com"}',
+  ]);
+  assert.deepEqual(r.extraBody, { ns: 'smoke-2026-07-09', f3Name: 'Splinter', email: 'x@y.com' });
+}
+
+function testParseArgsNsShorthandBodyWins() {
+  const r = parseArgs_([
+    'node', 'callWebapp.js', 'identify',
+    '--ns', 'smoke-2026-07-09',
+    '--body', '{"ns":"explicit-ns"}',
+  ]);
+  assert.equal(r.extraBody.ns, 'explicit-ns', '--body ns overrides --ns shorthand');
+}
+
 // --- buildPayload_ ---
 
 function testBuildPayloadAdminInjectsSecret() {
@@ -64,6 +83,8 @@ function run() {
   testParseArgsDefaults();
   testParseArgsAllFlags();
   testParseArgsBodyMerged();
+  testParseArgsNsShorthand();
+  testParseArgsNsShorthandBodyWins();
   testBuildPayloadAdminInjectsSecret();
   testBuildPayloadAdminMergesExtraBody();
   testBuildPayloadNonAdminNoSecret();

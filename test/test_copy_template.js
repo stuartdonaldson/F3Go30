@@ -5,7 +5,9 @@ const {
   buildCopiedTrackerDbRow_,
   computeSafeConfigDefaults_,
   buildRenamedTrackerName_,
-  applySafeConfigDefaults_
+  applySafeConfigDefaults_,
+  copyTemplateToNewEnvironment_,
+  teardownNamespaceEnvironment_
 } = require('../script/CopyTemplate.js');
 
 // Filters out smoke and expired rows, keeps real ones.
@@ -134,5 +136,96 @@ const emptyConfigSheet = makeFakeConfigSheet_([
 const appliedFromEmpty = applySafeConfigDefaults_(emptyConfigSheet, 'SIT-2026-07-06');
 assert.equal(findConfigRow_(appliedFromEmpty, 'Email Test Mode')[1], 'Yes');
 assert.equal(findConfigRow_(appliedFromEmpty, 'NameSpace')[1], 'SIT-2026-07-06');
+
+// ADR-014 D6: sourceTemplateId must be explicit and decoupled from the destination/registry
+// spreadsheet — copyTemplateToNewEnvironment_ must never silently fall back to copying the
+// active (destination) spreadsheet as its source. Guard fires before any Drive/Sheets call,
+// so this is verifiable without mocking SpreadsheetApp/DriveApp.
+assert.throws(function() {
+  copyTemplateToNewEnvironment_('SIT-2026-07-06', '', 3, 'smoke', function() {});
+}, /sourceTemplateId/);
+
+// teardownNamespaceEnvironment_ (i5md.4, ADR-014 D6 lifecycle) — removes the NamespaceDB row
+// FIRST (primary safety cut, makes ns unresolvable immediately), then optionally trashes the
+// environment's whole Drive folder (Template copy + all copied trackers, since
+// copyTemplateToNewEnvironment_ places them all in one sibling folder).
+function fakeNamespaceDbSheet_(headers, rows) {
+  var data = [headers].concat(rows.map(function(r) { return r.slice(); }));
+  return {
+    getDataRange: function() { return { getValues: function() { return data.map(function(r) { return r.slice(); }); } }; },
+    deleteRow: function(rowNumber) { data.splice(rowNumber - 1, 1); },
+    _data: data
+  };
+}
+
+(function testTeardownThrowsWhenNsNotRegistered() {
+  var sheet = fakeNamespaceDbSheet_(['NameSpace', 'TemplateId'], [['other-ns', 'tmpl-1']]);
+  global.SpreadsheetApp = { getActiveSpreadsheet: function() { return { getSheetByName: function() { return sheet; } }; } };
+  assert.throws(function() {
+    teardownNamespaceEnvironment_('missing-ns', false, function() {});
+  }, /missing-ns/);
+  delete global.SpreadsheetApp;
+})();
+
+(function testTeardownRemovesRegistryRowWithoutTrashingFolderByDefault() {
+  var sheet = fakeNamespaceDbSheet_(['NameSpace', 'TemplateId'], [['sit-env', 'tmpl-1']]);
+  global.SpreadsheetApp = { getActiveSpreadsheet: function() { return { getSheetByName: function() { return sheet; } }; } };
+  var driveCalls = [];
+  global.DriveApp = { getFileById: function(id) { driveCalls.push(id); throw new Error('DriveApp.getFileById should not be called when trashFolder is false'); } };
+  var result = teardownNamespaceEnvironment_('sit-env', false, function() {});
+  assert.equal(result.registryRowRemoved, true);
+  assert.equal(result.folderTrashed, false);
+  assert.equal(result.folderId, null);
+  assert.deepEqual(sheet._data, [['NameSpace', 'TemplateId']]);
+  assert.deepEqual(driveCalls, []);
+  delete global.SpreadsheetApp;
+  delete global.DriveApp;
+})();
+
+(function testTeardownTrashesEnvironmentFolderWhenRequested() {
+  var sheet = fakeNamespaceDbSheet_(['NameSpace', 'TemplateId'], [['sit-env', 'tmpl-1']]);
+  global.SpreadsheetApp = { getActiveSpreadsheet: function() { return { getSheetByName: function() { return sheet; } }; } };
+  var trashCalls = 0;
+  var fakeFolder = { getId: function() { return 'folder-1'; }, setTrashed: function(v) { assert.equal(v, true); trashCalls++; } };
+  global.DriveApp = {
+    getFileById: function(id) {
+      assert.equal(id, 'tmpl-1');
+      var used = false;
+      return { getParents: function() { return { hasNext: function() { return !used; }, next: function() { used = true; return fakeFolder; } }; } };
+    }
+  };
+  var result = teardownNamespaceEnvironment_('sit-env', true, function() {});
+  assert.equal(result.folderTrashed, true);
+  assert.equal(result.folderId, 'folder-1');
+  assert.equal(trashCalls, 1);
+  assert.deepEqual(sheet._data, [['NameSpace', 'TemplateId']]);
+  delete global.SpreadsheetApp;
+  delete global.DriveApp;
+})();
+
+(function testTeardownRemovesRegistryRowBeforeAttemptingFolderTrash() {
+  // Order matters: the registry cut is the primary safety cut and must happen even if the
+  // subsequent Drive trash step fails.
+  var sheet = fakeNamespaceDbSheet_(['NameSpace', 'TemplateId'], [['sit-env', 'tmpl-1']]);
+  global.SpreadsheetApp = { getActiveSpreadsheet: function() { return { getSheetByName: function() { return sheet; } }; } };
+  global.DriveApp = { getFileById: function() { throw new Error('drive unavailable'); } };
+  assert.throws(function() {
+    teardownNamespaceEnvironment_('sit-env', true, function() {});
+  }, /drive unavailable/);
+  assert.deepEqual(sheet._data, [['NameSpace', 'TemplateId']]);
+  delete global.SpreadsheetApp;
+  delete global.DriveApp;
+})();
+
+(function testTeardownNoFolderParentIsSafeNoOp() {
+  var sheet = fakeNamespaceDbSheet_(['NameSpace', 'TemplateId'], [['sit-env', 'tmpl-1']]);
+  global.SpreadsheetApp = { getActiveSpreadsheet: function() { return { getSheetByName: function() { return sheet; } }; } };
+  global.DriveApp = { getFileById: function() { return { getParents: function() { return { hasNext: function() { return false; } }; } }; } };
+  var result = teardownNamespaceEnvironment_('sit-env', true, function() {});
+  assert.equal(result.folderTrashed, false);
+  assert.equal(result.folderId, null);
+  delete global.SpreadsheetApp;
+  delete global.DriveApp;
+})();
 
 console.log('test_copy_template.js OK');

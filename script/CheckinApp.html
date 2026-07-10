@@ -394,6 +394,7 @@
   var WEBAPP_URL = <?!= webAppUrl ?>;
   var APP_VERSION = <?!= JSON.stringify(appVersion) ?>;
   var CMD_ = 'checkin'; // read by IdentityCore's callApi() to post to ?cmd=checkin
+  var NS_ = <?!= urlNsJson ?> || ''; // ADR-014 D3 — echoed on every callApi() POST by IdentityCore
 </script>
 <?!= include_('IdentityCore') ?>
 <script>

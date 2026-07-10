@@ -128,7 +128,8 @@ Reads deployment ID from local.settings.json. For `--cmd admin` (the default), a
 injects the admin secret automatically. Default: `--cmd admin --env sit`.
 
 Common admin actions: `getSmokeStatus`, `setScriptProperties`, `cleanupTracker`,
-`runScanTrackers`, `getSheet`, `runAutoGenerate`, `createTrackerForMonth`
+`runScanTrackers`, `getSheet`, `runAutoGenerate`, `createTrackerForMonth`, `copyTemplate`,
+`teardownEnvironment`
 
 - `runAutoGenerate` creates the tracker for **real-today's month + 1** (it's meant to run a
   few days before month-end via its own time trigger). If it's ever run late — after a month
@@ -139,6 +140,11 @@ Common admin actions: `getSmokeStatus`, `setScriptProperties`, `cleanupTracker`,
   `node tools/callWebapp.js createTrackerForMonth --env <env> --body '{"startDateIso":"2026-07-01"}'`
 - To undo a wrongly-created tracker: `cleanupTracker --body '{"sheetId":"<id>","trashSpreadsheet":true}'`
   removes the TrackerDB row + PaxDB rows and trashes the spreadsheet + its linked HC Form.
+- `teardownEnvironment` tears down a whole namespace environment provisioned by `copyTemplate`
+  (ADR-014 D6): `node tools/callWebapp.js teardownEnvironment --body '{"nameSpace":"<ns>","trashFolder":true}'`
+  removes the `NamespaceDB` row first (the safety cut — makes the ns unresolvable immediately),
+  then trashes the environment's whole Drive folder (Template copy + every tracker copied
+  alongside it) when `trashFolder` is set.
 
 ### Smoke mode workflow (run on SIT first; repeat on PROD before go-live)
 See docs/OPERATIONS.md §Smoke Mode for the full numbered sequence. Quick reference:

@@ -1123,3 +1123,82 @@ Outcome [internal]: Decision — leave the nag email generic; add no client-side
 
 ### Key Learnings:
 Google Apps Script web apps render inside a cross-origin `*.googleusercontent.com` sandboxed iframe under a top-level `script.google.com` document, so app-written localStorage lives on a third-party origin the user never visits as first party — under WebKit ITP that storage is on a ~7-day eviction cycle no client-side gesture can reset. F3Go30-4j4o.2 is cross-month bonus-edit test coverage, NOT anything to do with the nag email (earlier mis-citation corrected).
+
+## 2026-07-09 16:51:39
+_session 77b6822f · v3 · 07-09_
+
+### Objective 1: Resolve the ns-parameter (namespace-scoped template) design and consolidate it
+Rationale: The user's design idea — "an optional ns=namespace parameter ... causes the app to load from the template sheet created by the copy where we copied to a new namespace defined by a folder ... the webapp parses that ns parameter and uses it to open the namespace-qualified template" — was validated against the code and epic F3Go30-4j4o's blockers. Six open design questions on F3Go30-i5md.1 were resolved: (D1) a single resolveTemplateSpreadsheet_(e) seam reading e.parameter.ns, absent-ns falling back to the bound spreadsheet; (D2) a NamespaceDB registry that is BOTH the ns->templateId lookup AND the anonymous-webapp allowlist; (D3) the GAS sandbox-iframe client round-trip (ns read server-side in doGet, injected, echoed in every callApi POST) — the real bulk of the work; (D4) time-triggers fan out over parent UNION NamespaceDB rows whose per-trigger column is Enabled, onFormSubmit deferred; (D5/D7) Config/email isolation and the Kind (smoke|regional|demo) column.
+Rejected: making CopyTemplate's Email Test Mode forcing Kind-aware was proposed and explicitly overridden — "the email test mode is universally on when copied ... after it was provisioned manually with any pre-existing TrackerDB and PaxDB setting updated, the email test mode would be manually turned on." Email Test Mode=Yes stays an unconditional copy-time fail-safe; going live is always a deliberate manual operator step, never Kind-driven.
+Outcome [developer-facing]: All six i5md.1 questions resolved and the critical path to unblock 4j4o fixed (i5md.1 -> i5md.2/.5 -> i5md.3 -> w6y3 -> i5md.6).
+Outcome [internal]: Consolidated into bd remember keys i5md-namespace-design-decisions and i5md-standalone-future-ceiling (the latter records that true multi-tenancy would break the bound-spreadsheet attachment for a standalone parameterized project, and that the deferred onFormSubmit work is the same thread — park it, let the migration subsume it). Corrected the email-policy entry after the override above.
+
+### Objective 2: Draft and validate ADR-014 (namespace-scoped template resolution)
+Rationale: i5md.1's deliverable is the ADR capturing the resolved design so downstream implementation tickets have a fixed reference. Matched the repo's ADR house format (ADR-010/013) and gave it subsections D1-D7 plus a Fulfils/Supersedes section, since ADR-010's deferred "Future Refinement" (on-demand test environment) is the literal seed of this decision.
+Outcome [developer-facing]: Wrote adr/014-namespace-scoped-template-resolution.md (Status: Accepted, Date: 2026-07-09). Ran adr-quality-check: all five checks pass — required fields present, single-decision rule satisfied (D1-D7 are dependent facets of one seam, matching ADR-010 precedent), status/consequences consistent, immutability N/A (new file), supersede chain references the existing ADR-010.
+Open: ADR-014 only PARTIALLY supersedes ADR-010 (its persistent Test/Dev-spreadsheet testing recommendation, not the dispatch decision) — recommended leaving ADR-010 unedited so its linkage lives only in 014's Supersedes section; user has not yet confirmed. i5md.1 left claimed/in_progress, not closed, pending user review of the ADR; doc-trigger-check for DESIGN.md/OPERATIONS.md (NamespaceDB + provisioning) deferred until implementation lands. ADR not yet committed.
+
+### Key Learnings:
+The ns->id lookup key cannot be the Config NameSpace value, the folder name, or the filename markers — those all live INSIDE the copy, so a PROD-side resolver can't trust them as the authoritative key; the NamespaceDB registry row (in the executing deployment's bound Template) is the only authoritative source and doubles as the ANYONE_ANONYMOUS allowlist. Separately, CopyTemplate.js:169 copies getActiveSpreadsheet(), so run from SIT it would copy SIT, not PROD — w6y3 needs an explicit source=PROD-template-id param decoupled from the destination registry.
+
+## 2026-07-09 (WI-1)
+_session 81cae8e3 · v3 · 07-09_
+
+### Objective 1: Finish i5md.2 — audit remaining getActiveSpreadsheet() sites in WebApp.js
+Rationale: ADR-014 D1 routes request-driven tenant reads through resolveTemplateSpreadsheet_(e, payload), but admin/infra reads that must stay on the executing deployment are explicitly exempted (D2/D4). The four remaining hardcoded sites (WebApp.js:297, 318, 329, 376) all live inside handleAdminPost_, a secret-gated admin surface, not the anonymous request path — so none needed ns routing.
+Outcome [developer-facing]: All four sites now carry one-line stays-bound rationale comments citing ADR-014 D2: invalidateAllCache's layout-cache read (own PropertiesService/CacheService store), listSheets (diagnostic on own Template, no sheetId override), and getSheet/getSheetFormulas (already implement the payload.sheetId ? openById : getActiveSpreadsheet() precedent the ADR itself cites). No behavior changed; no new unit test needed per the mechanical done-gate. i5md.2 closed via bd.
+
+## 2026-07-09 00:00:00
+_session 3d5443f9-39f5-4ec2-b374-b4c0d71e2122 · v3 · 07-09_
+
+### Objective 1: Implement WI-6 (bead i5md.4) — whole-environment teardown, per the plan in 4jmo.md
+Rationale: 4jmo.md sequenced the i5md epic into Sonnet-sized work items with explicit read-sets; WI-1 through WI-5 were already implemented, so this session executed the one remaining item, WI-6 — the teardown counterpart to CopyTemplate.js's provisioning. Note: 4jmo.md is a scratch planning file the user intends to remove later, not a permanent doc.
+Outcome [developer-facing]: Added `removeNamespaceRegistryRow_` (script/go30tools.js) — fail-safe deletion of a NamespaceDB row by NameSpace — and `teardownNamespaceEnvironment_` (script/CopyTemplate.js), which removes the registry row first (primary safety cut) then optionally trashes the environment's whole Drive folder (Template copy + copied trackers, since they share one sibling folder). Wired a new `teardownEnvironment` admin action in script/WebApp.js mirroring the existing `cleanupTracker` pattern.
+Outcome [developer-facing]: TDD red→green: new tests in test/test_resolve_template_spreadsheet.js and test/test_copy_template.js cover row removal, ns-not-registered throw, folder-trash on/off, and registry-cut-before-folder-trash ordering. Full `npm test` suite green.
+Outcome [user-facing]: Documented the new `teardownEnvironment` action in tools/callWebapp.js's usage header and in the project CLAUDE.md's admin-actions reference.
+Open: i5md.4 not yet closed in bd — unit-green only, no live SIT deploy/verify performed this session; user was asked whether to close now or live-verify first.
+
+### Key Learnings:
+copyTemplateToNewEnvironment_ places the Template copy and every copied tracker spreadsheet in one single sibling Drive folder, so trashing that one parent folder (found via the Template copy's `getParents()`) tears down the whole environment without needing to enumerate individual files.
+
+## 2026-07-09 20:33:58
+_session 5d64a558 · v3 · 07-09_
+
+### Objective 1: Determine what remains to close epic F3Go30-4j4o
+Rationale: "we have been through each WI-1 through WI-6 on 4jmo.md. what else is necessary to resolve and close 4j4o." WI-1..6 were all coded/unit-green, but the closure gates in the plan's §7 DoD are live-verification, triage, and a decision — not more code. Mapped each WI to its bead and found the real blockers: w6y3 + i5md.6 coded-but-not-live-verified, the three deferred bugs (jldr/4j4o.1/4j4o.2) gated on i5md.6, 31w5 un-triaged, SMOKE_MODE retirement undecided.
+Outcome [internal]: Established the closure path — one live SIT smoke run unblocks the whole verified chain; 31w5 triage + SMOKE_MODE decision + commit remain.
+
+### Objective 2: Fix the missing NamespaceDB registry bootstrap  [accreted]
+Transition: the first live `smokeTestNamespace.js` run failed at provisioning — "it gave an error that there was no namespaceDB." Diagnosed while the failure context was warm.
+Rationale: appendNamespaceRegistryRow_ threw by design when the SIT registry spreadsheet had no NamespaceDB sheet — WI-4 shipped the write code but nothing ever created the sheet, and there is no admin action to create it remotely. Developer chose auto-create over a manual per-environment prerequisite (which would also silently block PROD go-live). "Auto-create in code (Recommended)."
+Rejected: manual one-time bootstrap of the NamespaceDB sheet by hand in each environment — leaves an undocumented prerequisite with no remote way to perform it.
+Outcome [developer-facing]: appendNamespaceRegistryRow_ now create-then-writes (inserts + seeds the sheet from a new NAMESPACE_DB_HEADERS_ constant when missing); replaced the throws-when-missing unit test with a creates-then-appends test; full suite green; deployed to SIT.
+
+### Objective 3: Fix the bonus path so it can target a namespace tracker  [accreted]
+Transition: the re-run got past provisioning + jldr but failed at step 3 — "❌ bonusAdd failed: not_found." Traced immediately since it was the exact 4j4o.1 failure mode.
+Rationale: resolveBonusSheet_/resolveBonusMonthOnly_ resolved the target month via resolveTrackerForContextDate, which hardcoded SpreadsheetApp.getActiveSpreadsheet() — so the bonus path read the *bound* SIT TrackerDB and never found the PAX in the namespace's copied tracker. This is the "date-based dispatch can't reach the namespace tracker" wall the epic documents; the WI-5 claim that 4j4o.1 needed no code change was wrong.
+Outcome [developer-facing]: Threaded an optional ns-resolved spreadsheet through resolveTrackerForContextDate → resolveDashboardMonth_ → resolveBonusSheet_/resolveBonusMonthOnly_/handleBonusEdit_ (bound default preserved for triggers/admin). Re-ran the live SIT smoke test: jldr, 4j4o.1, 4j4o.2 all green (signup+checkin today, bonusAdd/List, cross-month relocation with no duplicate).
+Open: three OTHER request-driven resolveDashboardMonth_ callers (handleCheckinDashboard_ :1367, getPriorMonthTailValues_ :722, resolveCheckinDayTarget_ :932) still read the bound spreadsheet — same defect, not exercised by this test, proves i5md.2 was closed prematurely. Needs a follow-up bead before PROD go-live.
+
+### Objective 4: Recover bd write durability and close the verified chain  [accreted]
+Transition: with the live gate passed, closing the five verified beads — but the closes silently reverted, forcing a detour into bd/dolt persistence (documented in beads-server-issue.md).
+Rationale: dolt server on /mnt/c (WSL2) "commits nothing"; jsonl is the de-facto source of truth and writes only persist via export.auto, which is throttled and races when multiple mutations fire in one shell (last-writer-wins clobbers earlier closes). Did NOT flip dolt_mode to embedded (the bd-maintenance §7 advice) — beads-server-issue.md flags that as a data-loss hazard here.
+Outcome [internal]: Set export.interval: 0s to disable the throttle, then closed w6y3, i5md.6, jldr, 4j4o.1, 4j4o.2 one-per-invocation with a fresh-read verify after each. All five confirmed CLOSED.
+Open: 31w5 triage, SMOKE_MODE retirement decision, the residual-dashboard-gap bead, and the final `bd close 4j4o` remain; all WI-4/5 + this session's fixes are uncommitted; export.interval config change uncommitted; leftover smoke namespaces on SIT need teardown.
+
+### Key Learnings:
+On this repo, batching bd mutations in one shell loses all but the last (jsonl last-writer-wins under the /mnt/c dolt server that never commits). Reliable pattern: export.interval 0s + one mutation per invocation + a separate-command `bd show` verify before trusting any close.
+
+## 2026-07-09 21:04:25
+_session 5d64a558 · v3 · 07-09_
+
+### Objective 5: Close out 4j4o's remaining DoD items and close the epic
+Rationale: Continuation of the same session's closure work — developer had triaged 31w5 separately and stated the SMOKE_MODE retirement design directly: "SMOKE_MODE should be changed to doing a copy to a SMOKE namespace and run the smoke tests in that environment before tearing it down. If there is an active SMOKE namespace when running a smoke test we should automatically dispose of it." Also asked for the residual-dashboard-gap issue (flagged at end of the prior entry) to be explained in full before filing it.
+Outcome [internal]: Explained the residual-dashboard-gap in detail (three resolveDashboardMonth_ callers — handleCheckinDashboard_, getPriorMonthTailValues_, resolveCheckinDayTarget_ — still default to the bound spreadsheet; i5md.2's original audit missed this because it only scoped WebApp.js's hardcoded getActiveSpreadsheet() sites, not go30tools.js's resolveTrackerForContextDate one level deeper). Filed F3Go30-eyaa to track it, parented under i5md.
+Outcome [internal]: Filed F3Go30-4wv9 capturing the SMOKE_MODE retirement design verbatim (copy-to-SMOKE-namespace, teardown on success, auto-dispose-stale-on-start), parented under i5md and marked blocked-by i5md.4 (teardown automation) since the design needs that piece.
+Outcome [internal]: Closed F3Go30-4j4o with --force over the intentionally-open F3Go30-31w5 (developer's own STRATEGY note is its triage record; the bead is correctly left open per its own "idea collection, not a single task" scope). All other §7 DoD items satisfied: i5md.6/jldr/4j4o.1/4j4o.2 live-verified closed, SMOKE_MODE explicitly deferred with rationale (4wv9), residual gap tracked separately (eyaa) rather than blocking.
+Open: jldr had to be re-closed twice more during this segment alone — creating/linking the two new beads (bd create, bd dep add x2) kept clobbering its CLOSED state via the same jsonl export-race documented in beads-server-issue.md, even with export.interval:0s set. The one-mutation-per-invocation + separate-command verify pattern still worked but the race is clearly not fully solved by disabling the throttle alone — worth a follow-up if bd write reliability keeps costing session time on this repo.
+Open: full working tree (WI-4/5 code, NamespaceDB bootstrap fix, bonus-path ns-threading fix, export.interval config change) is still uncommitted — offered to commit, awaiting developer confirmation.
+
+### Key Learnings:
+export.interval: 0s reduces but does not eliminate the bd/dolt jsonl export race on this repo's /mnt/c-hosted dolt server — rapid bd create/dep-add/close sequences still clobbered an already-closed issue's state multiple times in one segment. The one-mutation-per-invocation-with-verify pattern remains necessary even with the throttle disabled.
