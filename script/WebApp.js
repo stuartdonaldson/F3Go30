@@ -77,8 +77,8 @@ function renderSignupPage_(e) {
   template.aoListJson = JSON.stringify(lists.aoList);
   template.goalListJson = JSON.stringify(lists.goalList);
   // Only current/next are ever meant for the client — getCurrentAndNextMonths_ also returns
-  // `smoke` (the smoke tracker's sheetId) whenever SMOKE_MODE is active, which must never be
-  // embedded in a page anonymous users can view source on.
+  // `explicit` (an out-of-band-selected test month's sheetId, when a caller supplied one),
+  // which must never be embedded in a page anonymous users can view source on.
   template.monthsJson = JSON.stringify({ current: months.current, next: months.next });
   template.appVersion = APP_VERSION;
   template.urlTargetMonthJson = JSON.stringify((e && e.parameter && e.parameter.targetMonth) || null);
@@ -280,17 +280,6 @@ function handleAdminPost_(e) {
       GasLogger.log('handleAdminPost_.deleteOrphanedTriggers', { removedCount: removed.length });
       return jsonOutput_({ ok: true, removedCount: removed.length, removed: removed });
     }
-    if (payload.action === 'getSmokeStatus') {
-      // Returns the current environment and smoke mode state — use to confirm which
-      // environment you're talking to and whether a smoke test is in progress.
-      var props = PropertiesService.getScriptProperties();
-      return jsonOutput_({
-        ok: true,
-        deployTarget: (typeof APP_DEPLOY_TARGET !== 'undefined' ? APP_DEPLOY_TARGET : 'unknown'),
-        smokeMode: props.getProperty('SMOKE_MODE') === 'true',
-        smokeTrackerId: props.getProperty('SMOKE_TRACKER_ID') || null
-      });
-    }
     if (payload.action === 'invalidateAllCache') {
       // Runs inside this deployed webapp's own script project — the only PropertiesService
       // store PaxCache entries actually live in (see PaxCache.js's wipeAllPaxCache_ docstring
@@ -352,13 +341,7 @@ function handleAdminPost_(e) {
       return jsonOutput_({ ok: true, csv: csv });
     }
     if (payload.action === 'runScanTrackers') {
-      // Scans sibling tracker spreadsheets and refreshes TrackerDB/PaxDB. Blocked during
-      // Smoke mode — scanning while smoke signups exist would write test data into PaxDB,
-      // contaminating goal-reuse lookups for real PAX.
-      var smokeActive = PropertiesService.getScriptProperties().getProperty('SMOKE_MODE') === 'true';
-      if (smokeActive) {
-        return jsonOutput_({ ok: false, error: 'smoke_mode_active', message: 'runScanTrackers is blocked while SMOKE_MODE is active — clean up the smoke test first.' });
-      }
+      // Scans sibling tracker spreadsheets and refreshes TrackerDB/PaxDB.
       var scanResult = scanTrackers();
       return jsonOutput_({ ok: true, result: scanResult });
     }

@@ -14,8 +14,6 @@
  * hand-writing ns into every --body JSON string. --body still wins if both set `ns`.
  *
  * Examples:
- *   node tools/callWebapp.js getSmokeStatus
- *   node tools/callWebapp.js setScriptProperties --body '{"properties":{"SMOKE_MODE":"true"}}'
  *   node tools/callWebapp.js cleanupTracker --body '{"sheetId":"<id>","trashSpreadsheet":true}'
  *   node tools/callWebapp.js teardownEnvironment --body '{"nameSpace":"<ns>","trashFolder":true}'
  *   node tools/callWebapp.js getSheet --body '{"sheetName":"Tracker"}'

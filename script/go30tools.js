@@ -24,12 +24,6 @@
 *   LastNagRunAt - timestamp of the latest nag email trigger run
 */
 
-var go30ToolsSmokeModeModule_ = (typeof module !== 'undefined' && module.exports)
-	? require('./SmokeMode.js')
-	: null;
-var getSmokeTrackerId_gt_ = (go30ToolsSmokeModeModule_ && go30ToolsSmokeModeModule_.getSmokeTrackerId_)
-	|| (typeof globalThis !== 'undefined' && globalThis.getSmokeTrackerId_);
-
 var TRACKER_DB_SHEET_NAME_ = 'TrackerDB';
 var NAMESPACE_DB_SHEET_NAME_ = 'NamespaceDB';
 // Canonical NamespaceDB header row (ADR-014 D6/D7). Single source of truth for the columns
@@ -93,8 +87,7 @@ var PAX_DB_HEADERS_ = [
 /**
  * Scans sibling tracker spreadsheets in the active spreadsheet folder and refreshes TrackerDB/PaxDB.
  * Source qualification (F3Go30-xj1q.2): every file found in the folder walk is checked
- * against _qualifySourceFiles_ before scanning — a name containing "(Smoke)"/"(Expired)",
- * or a SheetId matching the current SMOKE_TRACKER_ID script property (SmokeMode.js), is
+ * against _qualifySourceFiles_ before scanning — a name containing "(Smoke)"/"(Expired)" is
  * excluded by default so a stray smoke/expired tracker left in the folder never silently
  * pollutes TrackerDB/PaxDB. Headless callers (admin action, time trigger) get exclusion +
  * a GasLogger warning enumerating what was skipped, with no prompt. Interactive callers
@@ -115,8 +108,7 @@ function scanTrackers(opts) {
 			throw new Error('scanTrackers: active spreadsheet is not in a Drive folder.');
 		}
 		var filesById = _collectSheetFilesInFolder_(parentFolder);
-		var smokeTrackerId = getSmokeTrackerId_gt_ ? getSmokeTrackerId_gt_() : null;
-		var qualified = _qualifySourceFiles_(filesById, smokeTrackerId);
+		var qualified = _qualifySourceFiles_(filesById);
 		var finalFilesById = qualified.included;
 
 		if (qualified.excluded.length) {
@@ -135,14 +127,11 @@ function scanTrackers(opts) {
  * Pure source-qualification filter for the scanTrackers folder walk (F3Go30-xj1q.2). Excludes
  * any file whose name contains "(Smoke)" or "(Expired)" (same convention as CopyTemplate.js's
  * selectRecentRealTrackerRows_, which applies the equivalent filter to TrackerDB rows rather
- * than a folder walk), plus any file whose SheetId matches smokeTrackerId — the belt-and-braces
- * check for a smoke tracker that was renamed without the "(Smoke)" label. No Drive/Sheets calls,
- * so it's unit-testable without live GAS services.
+ * than a folder walk). No Drive/Sheets calls, so it's unit-testable without live GAS services.
  * @param {Object<string,{id:string,name:string,lastUpdated:Date}>} filesById From _collectSheetFilesInFolder_.
- * @param {string|null} smokeTrackerId Current SMOKE_TRACKER_ID script property value, or null.
  * @returns {{included: Object<string,Object>, excluded: Array<{id:string,name:string,reason:string}>}}
  */
-function _qualifySourceFiles_(filesById, smokeTrackerId) {
+function _qualifySourceFiles_(filesById) {
 	var included = {};
 	var excluded = [];
 
@@ -151,9 +140,7 @@ function _qualifySourceFiles_(filesById, smokeTrackerId) {
 		var name = fileMeta.name || '';
 		var reason = null;
 
-		if (smokeTrackerId && sheetId === smokeTrackerId) {
-			reason = 'smoke_tracker_id';
-		} else if (name.indexOf('(Smoke)') !== -1) {
+		if (name.indexOf('(Smoke)') !== -1) {
 			reason = 'name_smoke';
 		} else if (name.indexOf('(Expired)') !== -1) {
 			reason = 'name_expired';
@@ -582,16 +569,9 @@ function resolveTrackerDbRowForContextDate_(rows, contextDate) {
  * context date. Thin GAS-facing wrapper around resolveTrackerDbRowForContextDate_ —
  * dispatch functions (minus-one, nag, form-submit) should call this rather than
  * implementing their own TrackerDB matching.
- *
- * Always excludes the active smoke tracker (SmokeMode.js's getSmokeTrackerId_) before
- * matching — nag/minus-one/dashboard-nav are real-dispatch and date-navigation paths that
- * must never resolve to test data, and a smoke tracker sharing a real tracker's StartDate
- * (see docs/OPERATIONS.md §Smoke Mode) would otherwise make resolveTrackerDbRowForContextDate_
- * throw "ambiguous match" the moment both exist. The pure function itself stays exclusion-
- * agnostic — this wrapper is the only place that needs to know smoke exists.
  * @param {Date|string=} contextDate Defaults to now.
  * @returns {Object} The single matching TrackerDB row.
- * @throws {Error} When zero or more than one (non-smoke) row matches the context date.
+ * @throws {Error} When zero or more than one row matches the context date.
  */
 function resolveTrackerForContextDate(contextDate, spreadsheet) {
 	// spreadsheet defaults to the bound one (trigger/admin callers), but request-driven callers
@@ -602,10 +582,6 @@ function resolveTrackerForContextDate(contextDate, spreadsheet) {
 	var rows = Object.keys(trackerState.bySheetId).map(function(sheetId) {
 		return trackerState.bySheetId[sheetId];
 	});
-	var smokeTrackerId = getSmokeTrackerId_gt_ ? getSmokeTrackerId_gt_() : null;
-	if (smokeTrackerId) {
-		rows = rows.filter(function(row) { return row.sheetId !== smokeTrackerId; });
-	}
 	return resolveTrackerDbRowForContextDate_(rows, contextDate || new Date());
 }
 

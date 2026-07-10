@@ -132,21 +132,6 @@ assert.throws(
   /ambiguous match/
 );
 
-// A smoke tracker sharing a real tracker's StartDate (docs/OPERATIONS.md §Smoke Mode) is
-// exactly this ambiguity — resolveTrackerForContextDate (the GAS-facing wrapper) excludes
-// SmokeMode.js's getSmokeTrackerId_() before calling this pure function, specifically so
-// nag/minus-one/dashboard-nav never throw on it and never resolve to it. This function itself
-// stays exclusion-agnostic (no smoke-awareness here) — the pure "resolve a date range" rule
-// doesn't change; only which rows are offered to it does. Documented here as the pattern the
-// wrapper applies, since resolveTrackerForContextDate itself is GAS-only and not unit-tested.
-const AMBIGUOUS_WITH_SMOKE = AMBIGUOUS_ROWS;
-const smokeExcluded = AMBIGUOUS_WITH_SMOKE.filter(function(row) { return row.sheetId !== 'sheet-may-v2'; });
-assert.equal(
-  resolveTrackerDbRowForContextDate_(smokeExcluded, new Date(2026, 4, 15)).sheetId,
-  'sheet-may',
-  'excluding the smoke row resolves the real one instead of throwing ambiguous'
-);
-
 // --- upsertPaxDbRow_ / findMostRecentPaxRecordForName_ — incremental PaxDB writes/reads,
 // replacing the old Config 'Last Month Tracker' + cross-spreadsheet walk-back ---
 
@@ -336,39 +321,29 @@ function makeFakePaxDbSpreadsheet(sheet) {
   var filesById = {
     'sheet-real': { id: 'sheet-real', name: '2026-07 F3 Go30', lastUpdated: new Date('2026-07-05') },
     'sheet-smoke-name': { id: 'sheet-smoke-name', name: '2026-08 F3 Go30 (Smoke)', lastUpdated: new Date('2026-08-01') },
-    'sheet-expired-name': { id: 'sheet-expired-name', name: '2026-01 F3 Go30 (Expired)', lastUpdated: new Date('2026-01-01') },
-    'sheet-smoke-id': { id: 'sheet-smoke-id', name: '2026-09 F3 Go30', lastUpdated: new Date('2026-09-01') }
+    'sheet-expired-name': { id: 'sheet-expired-name', name: '2026-01 F3 Go30 (Expired)', lastUpdated: new Date('2026-01-01') }
   };
 
-  // No smoke tracker id set: only name-qualified exclusions apply.
-  var qualifiedNoId = _qualifySourceFiles_(filesById, null);
-  assert.deepEqual(Object.keys(qualifiedNoId.included).sort(), ['sheet-real', 'sheet-smoke-id']);
+  var qualified = _qualifySourceFiles_(filesById);
+  assert.deepEqual(Object.keys(qualified.included).sort(), ['sheet-real']);
   assert.deepEqual(
-    qualifiedNoId.excluded.map(function(a) { return [a.id, a.reason]; }).sort(),
+    qualified.excluded.map(function(a) { return [a.id, a.reason]; }).sort(),
     [['sheet-expired-name', 'name_expired'], ['sheet-smoke-name', 'name_smoke']]
-  );
-
-  // SMOKE_TRACKER_ID matches a file with no smoke-labeled name — still excluded (belt-and-braces).
-  var qualifiedWithId = _qualifySourceFiles_(filesById, 'sheet-smoke-id');
-  assert.deepEqual(Object.keys(qualifiedWithId.included).sort(), ['sheet-real']);
-  assert.deepEqual(
-    qualifiedWithId.excluded.map(function(a) { return [a.id, a.reason]; }).sort(),
-    [['sheet-expired-name', 'name_expired'], ['sheet-smoke-id', 'smoke_tracker_id'], ['sheet-smoke-name', 'name_smoke']]
   );
 
   // No exclusions -> included passes through unchanged, excluded is empty.
   var cleanFiles = { 'sheet-real': filesById['sheet-real'] };
-  var qualifiedClean = _qualifySourceFiles_(cleanFiles, null);
+  var qualifiedClean = _qualifySourceFiles_(cleanFiles);
   assert.deepEqual(qualifiedClean.included, cleanFiles);
   assert.deepEqual(qualifiedClean.excluded, []);
 
   // Headless logging: enumerates every skipped artifact via GasLogger.log (also reaches
   // Logger.log per GasLogger.js, so this is the "log a warning" AC requirement).
   gasLoggerCalls.length = 0;
-  _logExcludedSourceArtifacts_(qualifiedWithId.excluded, 'scanTrackers');
+  _logExcludedSourceArtifacts_(qualified.excluded, 'scanTrackers');
   assert.equal(gasLoggerCalls.length, 1);
   assert.equal(gasLoggerCalls[0].tag, 'scanTrackers.smokeArtifactsExcluded');
-  assert.equal(gasLoggerCalls[0].data.count, 3);
+  assert.equal(gasLoggerCalls[0].data.count, 2);
   assert.ok(/WARNING/.test(gasLoggerCalls[0].data.message), 'message flags this as a warning');
   assert.ok(
     gasLoggerCalls[0].data.artifacts.some(function(s) { return s.indexOf('2026-08 F3 Go30 (Smoke)') !== -1; }),
@@ -377,10 +352,6 @@ function makeFakePaxDbSpreadsheet(sheet) {
   assert.ok(
     gasLoggerCalls[0].data.artifacts.some(function(s) { return s.indexOf('2026-01 F3 Go30 (Expired)') !== -1; }),
     'excluded expired-by-name artifact is enumerated'
-  );
-  assert.ok(
-    gasLoggerCalls[0].data.artifacts.some(function(s) { return s.indexOf('smoke_tracker_id') !== -1; }),
-    'excluded smoke-by-id artifact is enumerated with its reason'
   );
 }
 

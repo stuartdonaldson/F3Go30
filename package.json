@@ -1,7 +1,7 @@
 {
   "name": "f3go30",
   "version": "2.3.15",
-  "build": 7,
+  "build": 8,
   "private": true,
   "scripts": {
     "push": "node tools/manage-deployments.js --deploy-template",
@@ -11,7 +11,7 @@
     "release:patch": "npm version patch && npm run push -- --skip-bump && git push --follow-tags",
     "release:minor": "npm version minor && npm run push -- --skip-bump && git push --follow-tags",
     "release:major": "npm version major && npm run push -- --skip-bump && git push --follow-tags",
-    "test": "node test/test_sheet_helpers.js && node test/test_signup_reuse.js && node test/test_signup_email.js && node test/test_add_response_on_submit.js && node test/test_response_settings_email.js && node test/test_nag.js && node test/test_utilities.js && node test/test_create_new_tracker.js && node test/test_gas_logger.js && node test/test_manage_deployments.js && node test/test_signup_webapp.js && node test/test_go30tools.js && node test/test_resolve_template_spreadsheet.js && node test/test_mark_minus_one.js && node test/test_nag_dispatch.js && node test/test_form_submit_dispatch.js && node test/test_callwebapp.js && node test/test_dashboard_webapp.js && node test/test_pax_cache.js && node test/test_checkin_sessions.js && node test/test_bonus_types.js && node test/test_bonus_webapp.js && node test/test_smoke_mode.js && node test/test_copy_template.js && node test/test_ns_client_roundtrip.js",
+    "test": "node test/test_sheet_helpers.js && node test/test_signup_reuse.js && node test/test_signup_email.js && node test/test_add_response_on_submit.js && node test/test_response_settings_email.js && node test/test_nag.js && node test/test_utilities.js && node test/test_create_new_tracker.js && node test/test_gas_logger.js && node test/test_manage_deployments.js && node test/test_signup_webapp.js && node test/test_go30tools.js && node test/test_resolve_template_spreadsheet.js && node test/test_mark_minus_one.js && node test/test_nag_dispatch.js && node test/test_form_submit_dispatch.js && node test/test_callwebapp.js && node test/test_dashboard_webapp.js && node test/test_pax_cache.js && node test/test_checkin_sessions.js && node test/test_bonus_types.js && node test/test_bonus_webapp.js && node test/test_copy_template.js && node test/test_ns_client_roundtrip.js",
     "test:gaslogger": "npx playwright test tests/playwright/gaslogger.spec.js",
     "test:identity-token": "npx playwright test tests/playwright/identity-token-flow.spec.js",
     "demo:screenshots": "npx playwright test tests/playwright/demo-screenshots.spec.js --headed",

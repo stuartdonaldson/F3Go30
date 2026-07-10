@@ -14,9 +14,9 @@ var fakeScriptCache_ = makeFakeScriptCache_();
 global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
 global.GasLogger = { log: function() {}, logError: function() {}, run: function(name, fn) { return fn(); } };
 
-// In-memory stand-in for PropertiesService.getScriptProperties() — only dependency pulled in
-// transitively via signupWebapp.js's getCurrentAndNextMonths_ -> SmokeMode.js's
-// getSmokeTrackerId_ (F3Go30-xj1q.1's handleCheckinIdentify_ PaxDB-fallback tests below).
+// In-memory stand-in for PropertiesService.getScriptProperties() — needed transitively by
+// PaxCache.js/CheckinSessions.js, both of which store state via PropertiesService
+// (F3Go30-xj1q.1's handleCheckinIdentify_ PaxDB-fallback tests below).
 var fakeScriptProperties_ = { getProperty: function() { return null; } };
 global.PropertiesService = { getScriptProperties: function() { return fakeScriptProperties_; } };
 

@@ -467,9 +467,6 @@ function maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNum
 
     var emailAddress = getResponseEmailValue_(formResponses, currentResponseColumns, currentResponseHeaders);
     var f3Name = formResponses[currentResponseColumns.F3_NAME];
-    var trackerUrl = (spreadsheet.getSheetByName('Tracker') ? spreadsheet.getUrl() + '#gid=' + spreadsheet.getSheetByName('Tracker').getSheetId() : spreadsheet.getUrl());
-    var form = spreadsheet.getFormUrl() ? FormApp.openByUrl(spreadsheet.getFormUrl()) : null;
-    var prefilledUrl = spreadsheet.getFormUrl() || '';
 
     // Resolve the Template (PaxDB lives there, not in this monthly tracker) via the 'Sheet
     // Template' Config row — exit gracefully if it can't be resolved.
@@ -483,7 +480,6 @@ function maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNum
     }
     if (!priorResult.ok) {
         Logger.log('maybeReuseLastMonthsGoals_: ' + priorResult.message);
-        sendGoalReuseEmail(spreadsheet, emailAddress, f3Name, trackerUrl, prefilledUrl, [], false);
         return formResponses;
     }
 
@@ -498,12 +494,6 @@ function maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNum
         Logger.log('maybeReuseLastMonthsGoals_: setValues failed — ' + (e && e.message));
     }
 
-    // Recompute prefilled URL from merged values.
-    if (form) {
-        prefilledUrl = buildPrefilledGoalUpdateUrl(form, formResponses, reusedValues, currentResponseColumns) || prefilledUrl;
-    }
-
-    sendGoalReuseEmail(spreadsheet, emailAddress, f3Name, trackerUrl, prefilledUrl, buildReuseSummaryLines(reusedValues), true);
     return formResponses;
 }
 
@@ -518,6 +508,7 @@ if (typeof module !== 'undefined' && module.exports) {
         extractReusableResponseValues,
         mergeReusedValuesIntoResponseArray,
         buildReuseSummaryLines,
+        buildPrefilledGoalUpdateUrl,
         sendRegistrationConfirmationEmail_,
         sanitizeTextForEmailLine_,
         sanitizeEmailAddressForSend_,

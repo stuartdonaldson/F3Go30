@@ -58,97 +58,53 @@ Use `npm run deploy:sit` for SIT; `npm run deploy:prod` / `npm run release:*` fo
 
 ### Smoke Mode
 
-Smoke mode lets you test the full go-live flow (tracker creation, signup, nag, minus-one) using
-labeled artifacts that are cleaned up afterward. Run on SIT first; repeat on PROD before go-live.
+Smoke mode lets you test the full go-live flow (tracker creation, signup, check-in, bonus,
+dashboard) against a disposable, namespace-provisioned copy of the Template — not the bound
+SIT/PROD spreadsheet — so a smoke run can never contaminate real TrackerDB/PaxDB data. Run on
+SIT first; repeat on PROD before go-live. This supersedes the legacy `SMOKE_MODE`/
+`SMOKE_TRACKER_ID` single-shared-tracker mechanism (ADR-014; F3Go30-4wv9/i5md.7).
 
 **Automated workflow (recommended):**
 
 ```bash
-# Full automation: tracker creation, then signup/check-in/bonus workflows, human review
-# pause, then teardown
-node tools/smokeTest.js [--env sit|prod]
+node tools/smokeTestNamespace.js [--env sit|prod]
 # Default: --env sit
-#
-# Exercises: 3 teams of 3 test PAX signing up, each PAX checking in for today, and one
-# bonus entry of each type (EHing FNG, Fellowship, Q Point, Inspire) — each write is
-# verified by reading it back through the same webapp path a real user hits (identify /
-# bonusList), not just checked for an ok:true response.
-#
-# Pauses after all of the above for human review — the automated checks can't judge the
-# Bonus Tracker's spilled-formula Multiplier/Uncapped Points/Complete columns, so the pause
-# prompt lists exactly what to eyeball before teardown.
-# Press Enter at the prompt to complete teardown; Ctrl+C to abort.
 ```
 
-If smoke mode is left active (due to error), clean up with:
+One command does the whole lifecycle:
+1. Disposes any stale `Kind='smoke'` `NamespaceDB` row left behind by a prior crashed/aborted
+   run, before provisioning a new one.
+2. Provisions a fresh namespace (`copyTemplateToNewEnvironment_`, `kind: 'smoke'`) — a Template
+   copy + 3 recent real trackers, in its own sibling Drive folder, registered in `NamespaceDB`.
+3. Live-verifies signup, check-in, dashboard render, bonus add/list, and cross-month bonus-edit
+   relocation against that namespace (via `ns=<namespace>` / `targetMonth: 'current'|'explicit'`
+   — see "Addressing a namespace tracker" below).
+4. On success, tears its own namespace down automatically (`teardownEnvironment`,
+   `trashFolder: true`) — no human pause needed.
+5. On any scenario failure, leaves the namespace in place and prints manual cleanup steps
+   (Drive folder to trash + `NamespaceDB` row to delete) instead of tearing it down, so there's
+   always something to inspect.
+
+If a run needs cleaning up outside the normal flow:
 ```bash
-node tools/smokeTest.js --teardown [--env sit|prod]
+node tools/callWebapp.js teardownEnvironment --env <env> --body '{"nameSpace":"<ns>","trashFolder":true}'
 ```
 
-**Manual workflow (if needed):**
+**Addressing a namespace tracker deterministically:** pass `ns: "<namespace>"` on any webapp
+request (or `--ns <namespace>` via `tools/callWebapp.js`) to resolve entry points against that
+namespace's own `TrackerDB`/`PaxDB` instead of the bound spreadsheet's (ADR-014 D1/D2). Within a
+namespace, address a specific copied month with `targetMonth: 'current'` (the namespace's own
+current month) or `targetMonth: 'explicit'` + `targetSheetId: "<sheetId>"` for any other month it
+copied — e.g. to put the same test PAX in two separate months at once for cross-month
+bonus-relocation coverage. An `ns` not present in `NamespaceDB` is rejected, never opened
+directly (anti-enumeration — F3Go30-i5md.5).
 
-Use `node tools/callWebapp.js` for each step. The tool handles auth, environment selection, and
-the GAS 302-redirect quirk automatically.
-
-```bash
-# 1. Activate smoke mode
-node tools/callWebapp.js setScriptProperties --env <env> --body '{"properties":{"SMOKE_MODE":"true"}}'
-
-# 2. Confirm environment and smoke state
-node tools/callWebapp.js getSmokeStatus --env <env>
-# → { deployTarget, smokeMode: true, smokeTrackerId: null }
-
-# 3. Create tracker via auto-generate (or use the menu in Sheets for copyAndInit)
-node tools/callWebapp.js runAutoGenerate --env <env>
-# copyAndInit_ appends " (Smoke)" to NameSpace and writes SMOKE_TRACKER_ID to Script Properties.
-
-# 4. Sign up a test PAX via the signup web app
-node tools/callWebapp.js identify --cmd signup --env <env> --body '{"f3Name":"SmokeTest","email":"smoke@example.com"}'
-
-# 5. Verify the Tracker sheet shows the test row (use SMOKE_TRACKER_ID from getSmokeStatus)
-node tools/callWebapp.js getSheet --env <env> --body '{"sheetId":"<SMOKE_TRACKER_ID>","sheetName":"Tracker"}'
-# → { ok: true, csv: "<tab-separated rows>" }
-
-# 6. *** HUMAN PAUSE *** — open the smoke spreadsheet and confirm it looks correct.
-#    Open: https://docs.google.com/spreadsheets/d/<SMOKE_TRACKER_ID>/edit
-
-# 7. Teardown — remove TrackerDB row, PaxDB rows, and trash the spreadsheet
-node tools/callWebapp.js cleanupTracker --env <env> --body '{"sheetId":"<SMOKE_TRACKER_ID>","trashSpreadsheet":true}'
-
-# 8. Clear smoke properties and confirm clean state
-node tools/callWebapp.js setScriptProperties --env <env> --body '{"properties":{"SMOKE_MODE":"","SMOKE_TRACKER_ID":""}}'
-node tools/callWebapp.js getSmokeStatus --env <env>
-# → { smokeMode: false, smokeTrackerId: null }
-```
-
-**Effect of SMOKE_MODE=true:**
-- `copyAndInit_` appends `" (Smoke)"` to `NameSpace` when naming the new tracker spreadsheet.
-- The new tracker's spreadsheet ID is saved to `SMOKE_TRACKER_ID` in Script Properties.
-- `runScanTrackers` admin action is blocked — prevents test data contaminating PaxDB.
-- Outbound emails redirect to Site Q address (same as Email Test Mode) with `[SMOKE]` subject prefix.
-
-**Source qualification (independent of SMOKE_MODE, F3Go30-xj1q.2):** even outside an active
-smoke run — e.g. teardown step 7/8 above was skipped or failed, or an old `" (Expired)"` tracker
-was never removed — `scanTrackers()` excludes any file in the folder named with `(Smoke)`/
-`(Expired)`, or whose SheetId matches `SMOKE_TRACKER_ID`, from every scan by default. It logs one
-`scanTrackers.smokeArtifactsExcluded` warning (visible via `tools/query_axiom.py` or Stackdriver)
-listing what it skipped; it never prompts or silently includes such files. If a leftover smoke
-tracker is found this way, clean it up with the normal `cleanupTracker` step above rather than
-leaving it for the next scan to keep excluding.
-
-**Addressing the smoke tracker deterministically:** the smoke tracker is created with the same
-`StartDate` a real tracker for that month would use, so it is *not* reliably `'current'` or
-`'next'` — in particular, the auto-generate path always dates it at next month's start, so
-`targetMonth: 'current'` on `cmd=signup`/`cmd=checkin` calls would resolve to whichever real
-tracker is actually current, not the smoke one. Pass `targetMonth: 'smoke'` on `identify` /
-`save` / `feedback` (signup) and `identify` / `checkin` / `bonusList` / `bonusAdd` / `bonusEdit`
-(checkin) to resolve straight to `SMOKE_TRACKER_ID` instead of date-matching — this is what
-`tools/smokeTest.js` uses. If `SMOKE_TRACKER_ID` isn't set, `targetMonth: 'smoke'` fails closed
-(`invalid_target_month` / `not_found`) rather than silently falling back to `'current'`.
-Nag/minus-one/dashboard-navigation dispatch (`resolveTrackerForContextDate`, go30tools.js)
-separately excludes the smoke tracker from its own date matching unconditionally, so it's never
-a candidate for real dispatch regardless of `targetMonth`. Both behaviors are centralized in
-`script/SmokeMode.js` — see its file header for why.
+**Source qualification (F3Go30-xj1q.2):** `scanTrackers()` excludes any file in the *bound*
+deployment's own folder named with `(Smoke)`/`(Expired)` from every scan by default — belt-and-
+braces protection against a manually mislabeled artifact, independent of namespace provisioning
+(a namespace environment lives in its own sibling folder and is never a candidate for the bound
+deployment's folder walk in the first place). It logs one `scanTrackers.smokeArtifactsExcluded`
+warning (visible via `tools/query_axiom.py` or Stackdriver) listing what it skipped.
 
 ### Verifying the check-in "known but unregistered" fallthrough (F3Go30-xj1q.1)
 
@@ -241,8 +197,8 @@ deploying or initializing anything:
 Deliberately out of scope: triggers, HC Form links, TinyURL short links, Script Properties,
 and any deployment. Bringing the new environment live (initializing triggers, deploying its own
 web app, re-linking forms) is a separate, manual step — see `script/CopyTemplate.js`'s file
-header. Teardown (removing the `NamespaceDB` row and optionally trashing the folder) is
-F3Go30-i5md.4, not yet implemented — see ADR-014 D6.
+header. Teardown (removing the `NamespaceDB` row and optionally trashing the folder) is the
+`teardownEnvironment` admin action / `teardownNamespaceEnvironment_` — see ADR-014 D6.
 
 ### Script Properties
 
@@ -252,8 +208,6 @@ Set in Apps Script Project Settings → Script Properties.
 |----------|----------|---------|-------------|
 | `TINYURL_ACCESS_TOKEN` | Yes (for URL shortening) | None | TinyURL API token |
 | `BITLY_ACCESS_TOKEN` | No | None | Bitly API token; only needed if switching from TinyURL |
-| `SMOKE_MODE` | No | `''` (inactive) | Set to `'true'` to enable Smoke mode on SIT |
-| `SMOKE_TRACKER_ID` | No | `''` | Written automatically by `copyAndInit_` when Smoke mode is active; cleared during teardown |
 | `ADMIN_SHARED_SECRET` | Yes (for admin POST) | None | Secret required in `adminSecret` field of admin POST payloads |
 
 ---
@@ -392,13 +346,11 @@ PAX is found except for the presence of data), `checkin` (`{f3Name,email,day,val
 current month), `dashboard` (`{f3Name,email}`, read-only), and the bonus-point actions `bonusList`
 (`{f3Name,email}`, read-only), `bonusAdd`/`bonusEdit` (write a PAX's Bonus Tracker entry).
 `checkin`/`bonusAdd`/`bonusEdit` write real Tracker data — never call them against a real PAX's
-name/email outside Smoke mode. The `SmokeTest` / `smoke@example.com` PAX left over from a prior
-sign-up smoke test (§Smoke Mode) is safe to reuse for `cmd=checkin` write testing without a full
-smoke tracker cycle, since it's already test-only data in a `Smoke Test` team group.
+name/email outside a namespace-provisioned smoke environment (§Smoke Mode above).
 
-**Always confirm the environment before writing:** call `{ "action": "getSmokeStatus" }` and
-verify `deployTarget` matches your intended environment. `identify` is read-only and safe against
-either environment.
+**Always confirm the environment before writing:** pass `--env sit|prod` explicitly and, when
+addressing a namespace, `ns`/`--ns` — there is no bound-deployment "which environment am I
+talking to" check beyond that. `identify` is read-only and safe against either environment.
 
 **curl gotcha:** when POSTing to the deployed `/exec` URL, do not pass an explicit `-X POST` —
 Google's web app endpoint responds with a 302 redirect to a GET-only

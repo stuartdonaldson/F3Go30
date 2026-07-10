@@ -189,14 +189,14 @@ The `npm run release:patch/minor/major` scripts will automate steps 1–3 and 5 
 ```
 1. Deploy to SIT:         npm run deploy:test
 2. UAT on SIT:            confirm core flows against testSpreadsheetId
-3. Smoke test on SIT:     setScriptProperties {SMOKE_MODE:'true'}
-                          copyAndInit → signup → nag/minus-one
-                          cleanupTracker (admin POST, trashSpreadsheet:true)
-                          setScriptProperties {SMOKE_MODE:'', SMOKE_TRACKER_ID:''}
+3. Smoke test on SIT:     node tools/smokeTestNamespace.js --env sit
+                          (provisions a disposable namespace, live-verifies signup/check-in/
+                          dashboard/bonus flows, tears itself down on success)
 4. Deploy to PROD:        npm run push   (or npm run release:patch/minor/major)
 5. runScanTrackers PROD:  admin POST { action:'runScanTrackers' }  — refreshes TrackerDB/PaxDB
-6. Smoke test on PROD:    repeat step 3 against templateSpreadsheetId
-7. Confirm clean:         getSmokeStatus → smokeMode:false, smokeTrackerId:null
+6. Smoke test on PROD:    node tools/smokeTestNamespace.js --env prod
+7. Confirm clean:         admin POST { action:'getSheet', sheetName:'NamespaceDB' } → no
+                          leftover rows
 ```
 
 ---
