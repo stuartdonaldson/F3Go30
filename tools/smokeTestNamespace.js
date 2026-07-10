@@ -24,10 +24,16 @@
  * the destination registry (ADR-014 D6) — but runs entirely against --env (default sit)'s
  * webapp deployment. Only touch --env prod on explicit instruction.
  *
- * Teardown for whole namespaced environments (F3Go30-i5md.4) isn't built yet — this script
- * prints the exact manual cleanup steps (Drive folder to trash + NamespaceDB row to delete)
- * and pauses for a human to perform + confirm them, same as smokeTest.js's existing human
- * review pause.
+ * F3Go30-4wv9 lifecycle automation (built on i5md.4's teardownEnvironment):
+ *   - Step 0 disposes any stale Kind='smoke' NamespaceDB row(s) left behind by a prior run that
+ *     crashed or was aborted before it could tear itself down, so failed runs never accumulate
+ *     orphaned namespaces that a human has to notice and clean up by hand.
+ *   - A successful run tears its own namespace down automatically at the end (trashing the
+ *     Drive folder + removing the NamespaceDB row) instead of pausing for a human.
+ *   - A FAILED run still leaves its namespace in place and falls back to printing the manual
+ *     cleanup steps (same as before F3Go30-4wv9) — so a human always has something to inspect
+ *     when a scenario doesn't behave as expected, rather than the automation silently deleting
+ *     the evidence.
  */
 
 'use strict';
@@ -114,6 +120,51 @@ function pickCurrentRow_(trackerRows, now) {
   return eligible[0] || null;
 }
 
+/**
+ * Reads the registry's own NamespaceDB (the executing deployment's bound Template — no
+ * sheetId override, same "stays bound" precedent as WebApp.js's getSheet/listSheets) and shapes
+ * each row to {nameSpace, kind}. Used by disposeStaleSmokeNamespaces_ (F3Go30-4wv9) to find
+ * leftover Kind='smoke' rows from a prior run that never got torn down.
+ */
+async function fetchNamespaceRows_({ env, settings }) {
+  const resp = await callAdmin('getSheet', { sheetName: 'NamespaceDB' }, { env, settings });
+  if (!resp?.ok) throw new Error(`Failed to read NamespaceDB: ${resp?.error || 'unknown error'}`);
+  const rows = parseTsv_(resp.csv);
+  if (!rows.length) return [];
+  const headers = rows[0].map((h) => String(h || '').trim().toLowerCase());
+  const nsIdx = headers.indexOf('namespace');
+  const kindIdx = headers.indexOf('kind');
+  return rows.slice(1)
+    .filter((r) => r[nsIdx])
+    .map((r) => ({ nameSpace: r[nsIdx], kind: kindIdx >= 0 ? r[kindIdx] : '' }));
+}
+
+/**
+ * Auto-dispose-stale-on-start (F3Go30-4wv9 item 2): tears down every Kind='smoke' namespace
+ * already registered before provisioning a new one, so a namespace abandoned by a prior
+ * failed/aborted run doesn't sit there forever waiting for a human to notice it. All matching
+ * rows are disposed, not just one — normal operation should never have more than one, but this
+ * must not leave a second one behind if it does. A single namespace's teardown failing is logged
+ * and skipped rather than aborting the whole run; the new namespace still gets provisioned.
+ */
+async function disposeStaleSmokeNamespaces_({ env, settings }) {
+  const namespaces = await fetchNamespaceRows_({ env, settings });
+  const stale = namespaces.filter((n) => String(n.kind || '').toLowerCase() === 'smoke');
+  if (!stale.length) {
+    console.log('   (no stale smoke namespaces found)');
+    return;
+  }
+  for (const { nameSpace } of stale) {
+    console.log(`   Disposing stale smoke namespace "${nameSpace}"...`);
+    const result = await callAdmin('teardownEnvironment', { nameSpace, trashFolder: true }, { env, settings });
+    if (!result?.ok) {
+      console.warn(`   ⚠️  Failed to dispose "${nameSpace}": ${result?.error || 'unknown error'} — leaving it in place, continuing.`);
+      continue;
+    }
+    console.log(`   ✓ Disposed "${nameSpace}" (folder trashed: ${!!result.folderTrashed})`);
+  }
+}
+
 async function humanConfirm_(message) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
@@ -145,6 +196,11 @@ async function main() {
     console.error('❌ templateSpreadsheetId (PROD Template id) is not set in local.settings.json.');
     process.exit(1);
   }
+
+  // Step 0: Auto-dispose-stale-on-start (F3Go30-4wv9 item 2) — clear out any smoke namespace
+  // a prior crashed/aborted run left behind before provisioning a new one.
+  console.log('0️⃣  Checking for stale smoke namespaces to dispose...');
+  await disposeStaleSmokeNamespaces_({ env, settings });
 
   const folderName = `i5md6-smoke-${isoDate_(new Date())}-${Date.now()}`;
 
@@ -212,6 +268,14 @@ async function main() {
     if (!checkin?.ok) throw new Error(`check-in failed: ${checkin?.error || 'unknown error'} (this is exactly the jldr day_column_not_found failure mode if it recurs)`);
     console.log("   ✓ Checked in for 'today' — jldr's day_column_not_found bug does not reproduce against the namespace's current-month tracker");
 
+    // F3Go30-eyaa — handleCheckinDashboard_ must resolve via the ns-resolved templateSpreadsheet,
+    // not fall through to the bound SIT tracker. A namespace-scoped dashboard render succeeding
+    // and reporting the namespace's own month label (not the bound deployment's current tracker)
+    // is exactly what the eyaa gap would have broken.
+    const dashboard = await httpPost(checkinUrl, { action: 'dashboard', ns, f3Name: pax.f3Name, email: pax.email });
+    if (!dashboard?.ok) throw new Error(`dashboard render failed: ${dashboard?.error || 'unknown error'} (this is exactly the eyaa bound-spreadsheet fallthrough if it recurs)`);
+    console.log(`   ✓ Dashboard rendered against namespace tracker (month: ${dashboard.monthLabel || 'n/a'}) — eyaa's resolveDashboardMonth_ callers resolve within the namespace`);
+
     // Step 3: 4j4o.1 — bonus actions against the same namespace-scoped tracker.
     console.log('');
     console.log('3️⃣  F3Go30-4j4o.1 — bonusAdd/bonusList against namespace tracker...');
@@ -272,6 +336,21 @@ async function main() {
     console.log('='.repeat(80));
     console.log('✅ Namespace smoke test complete — jldr / 4j4o.1' + (monthB ? ' / 4j4o.2' : '') + ' live-verified');
     console.log('='.repeat(80));
+
+    // Auto-teardown-on-success (F3Go30-4wv9 item 1) — a successful run cleans up after itself
+    // instead of pausing for a human. A failed run (catch below) still leaves the namespace in
+    // place and falls back to the manual steps, so there's always something to inspect when a
+    // scenario didn't behave as expected.
+    console.log('');
+    console.log(`5️⃣  Tearing down namespace "${ns}"...`);
+    const teardown = await callAdmin('teardownEnvironment', { nameSpace: ns, trashFolder: true }, { env, settings });
+    if (!teardown?.ok) {
+      console.warn(`   ⚠️  Auto-teardown failed: ${teardown?.error || 'unknown error'} — falling back to manual cleanup.`);
+      await humanConfirm_(printManualCleanup_(result.newFolderUrl, ns, env));
+    } else {
+      console.log(`   ✓ Torn down (folder trashed: ${!!teardown.folderTrashed})`);
+    }
+    return;
   } catch (err) {
     console.error('');
     console.error(`❌ ${err.message}`);
@@ -283,7 +362,7 @@ async function main() {
 
 function printManualCleanup_(folderUrl, ns, env) {
   return [
-    '📋 MANUAL TEARDOWN (F3Go30-i5md.4 automation not built yet):',
+    '📋 MANUAL TEARDOWN (fallback — automated teardown failed or an error occurred mid-run):',
     `  1. Trash the Drive folder (removes the copied Template + all copied trackers): ${folderUrl}`,
     `  2. Delete the NameSpace="${ns}" row from ${env.toUpperCase()}'s Template spreadsheet's NamespaceDB sheet.`,
     '     (Deleting the row alone makes the namespace unresolvable immediately, even before Drive trashing finishes.)',

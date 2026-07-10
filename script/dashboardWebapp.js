@@ -714,12 +714,12 @@ function resolveDashboardMonth_(targetDate, spreadsheet) {
  * current month, so repeat lookups within the cache's lifetime are a single-row read, not a
  * full scan.
  */
-function getPriorMonthTailValues_(monthInfo, f3Name, windowSize) {
+function getPriorMonthTailValues_(monthInfo, f3Name, windowSize, templateSpreadsheet) {
   var t0 = Date.now();
   try {
     var dayBeforeMonth = new Date(monthInfo.startDate);
     dayBeforeMonth.setDate(dayBeforeMonth.getDate() - 1);
-    var priorMonth = resolveDashboardMonth_(dayBeforeMonth);
+    var priorMonth = resolveDashboardMonth_(dayBeforeMonth, templateSpreadsheet);
     if (!priorMonth || priorMonth.sheetId === monthInfo.sheetId) return [];
 
     // Fast path: if the layout and this PAX's row are both already cached (the common case
@@ -915,7 +915,7 @@ function checkNextMonthRegistration_(months, f3Name) {
  * for targetDate (never throws).
  * @returns {?{trackerSheet:Sheet, sheetId:string, rowIndex:number, col:number, value:*}}
  */
-function resolveCheckinDayTarget_(identity, f3Name, targetDate) {
+function resolveCheckinDayTarget_(identity, f3Name, targetDate, templateSpreadsheet) {
   var classified = classifyTrackerColumns_(identity.row2, identity.row3);
   var col = findDateColumnIndex_(classified.dayCols, targetDate);
   if (col !== -1) {
@@ -929,7 +929,7 @@ function resolveCheckinDayTarget_(identity, f3Name, targetDate) {
   }
 
   try {
-    var otherMonth = resolveDashboardMonth_(targetDate);
+    var otherMonth = resolveDashboardMonth_(targetDate, templateSpreadsheet);
     if (!otherMonth || otherMonth.sheetId === identity.monthInfo.sheetId) return null;
 
     var otherSs = SpreadsheetApp.openById(otherMonth.sheetId);
@@ -1079,7 +1079,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
 
   // Yesterday may belong to a different month's tracker than today's (e.g. today is the 1st) —
   // resolveCheckinDayTarget_ falls back to that prior tracker rather than reporting unavailable.
-  var yesterdayTarget = resolveCheckinDayTarget_(identity, f3Name, yesterday);
+  var yesterdayTarget = resolveCheckinDayTarget_(identity, f3Name, yesterday, templateSpreadsheet);
   var yesterdayAvailable = !!yesterdayTarget;
   var yesterdayStatus = yesterdayAvailable ? dayValueStatus_(yesterdayTarget.value) : null;
 
@@ -1153,7 +1153,7 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
 
   // Yesterday's edit target may live in the previous month's tracker (e.g. today is the 1st) —
   // resolveCheckinDayTarget_ falls back to that prior tracker rather than failing the write.
-  var target = resolveCheckinDayTarget_(identity, payload.f3Name, targetDate);
+  var target = resolveCheckinDayTarget_(identity, payload.f3Name, targetDate, templateSpreadsheet);
   if (!target) return { ok: false, error: 'day_column_not_found' };
 
   var sheetRow = target.rowIndex + 4;
@@ -1370,7 +1370,7 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   if (isNaN(viewDate.getTime())) viewDate = new Date(realToday);
 
   var t1 = Date.now();
-  var monthInfo = resolveDashboardMonth_(viewDate);
+  var monthInfo = resolveDashboardMonth_(viewDate, templateSpreadsheet);
   var resolveMonthMs = Date.now() - t1;
   if (!monthInfo) return { ok: false, error: 'no_tracker_for_date' };
 
@@ -1455,7 +1455,8 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   // getPriorMonthTailValues_ trims to whatever each caller actually needs.
   var priorMonthTail = getPriorMonthTailValues_(
     monthInfo, payload.f3Name,
-    Math.max(ROLLING_AVERAGE_WINDOW_DAYS_, DASHBOARD_DISPLAY_WINDOW_DAYS_, MAX_STREAK_WINDOW_DAYS_)
+    Math.max(ROLLING_AVERAGE_WINDOW_DAYS_, DASHBOARD_DISPLAY_WINDOW_DAYS_, MAX_STREAK_WINDOW_DAYS_),
+    templateSpreadsheet
   );
   var userRollingAverage = buildRollingAverageWithLookback_(userDayValues, ROLLING_AVERAGE_WINDOW_DAYS_, priorMonthTail);
 

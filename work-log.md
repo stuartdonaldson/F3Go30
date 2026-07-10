@@ -1202,3 +1202,21 @@ Open: full working tree (WI-4/5 code, NamespaceDB bootstrap fix, bonus-path ns-t
 
 ### Key Learnings:
 export.interval: 0s reduces but does not eliminate the bd/dolt jsonl export race on this repo's /mnt/c-hosted dolt server — rapid bd create/dep-add/close sequences still clobbered an already-closed issue's state multiple times in one segment. The one-mutation-per-invocation-with-verify pattern remains necessary even with the throttle disabled.
+
+## 2026-07-10 04:52:00
+_session 00b75b18-7e04-4091-af2c-71c7f18d2e60 · v3 · 07-10_
+
+### Objective 1: Verify and close F3Go30-i5md.4 (on-demand environment teardown)
+Rationale: Asked to implement i5md.4; investigation found `teardownNamespaceEnvironment_` (script/CopyTemplate.js) and the `teardownEnvironment` webapp admin action (script/WebApp.js) were already implemented and test-covered (test/test_copy_template.js:148-224) as part of the i5md.1-3 commits — the bd issue just hadn't been closed out.
+Outcome [internal]: Ran full test suite to confirm existing coverage passes; closed F3Go30-i5md.4 with rationale documenting it was already delivered, no code changes needed.
+
+### Objective 2: Implement F3Go30-eyaa and F3Go30-4wv9
+Rationale: eyaa found that three callers of `resolveDashboardMonth_` (handleCheckinDashboard_, getPriorMonthTailValues_, resolveCheckinDayTarget_ in script/dashboardWebapp.js) still fell through to the bound spreadsheet instead of the ns-resolved template, so a namespace PAX's dashboard/rolling-average/cross-month checkin could silently read the wrong tracker. 4wv9 called for retiring SMOKE_MODE in favor of the namespace-provisioning mechanism, but explicitly scoped that as three items and permitted deferring item 3 (full retirement) as its own rationale/plan so F3Go30-4j4o could close without SMOKE_MODE actually being dismantled yet.
+Rejected: Doing 4wv9's item 3 (removing legacy SMOKE_MODE/SMOKE_TRACKER_ID special-casing across ~15 files) in the same pass — the ticket itself frames that as a follow-up once the new namespace lifecycle has proven itself in practice, not a blocker; filed as F3Go30-i5md.7 instead of doing a broad live-untested refactor.
+Outcome [developer-facing]: Threaded `templateSpreadsheet` through eyaa's three call sites in script/dashboardWebapp.js.
+Outcome [developer-facing]: Added `disposeStaleSmokeNamespaces_`/`fetchNamespaceRows_` and auto-teardown-on-success to tools/smokeTestNamespace.js (4wv9 items 1+2), with the existing manual-cleanup prompt kept as a failure-path fallback; added a dashboard-render verification step exercising the eyaa fix in the same script.
+Outcome [internal]: Live-verified the full pipeline against SIT (three consecutive runs) — one run hit a transient Sheets read-after-write propagation lag (resolved on retry, not a code bug, confirmed via temporary debug logging that was added and then removed before the final clean SIT deploy); the other two runs passed dispose-stale, provision, jldr/4j4o.1/4j4o.2/eyaa scenarios, and auto-teardown end to end.
+Outcome [internal]: Filed F3Go30-i5md.7 to track 4wv9's deferred item 3 (legacy SMOKE_MODE retirement) as a separate follow-up.
+
+### Key Learnings:
+Apps Script's `SpreadsheetApp.openById()` read shortly after a burst of writes from a Drive-copy-then-write sequence (copyTemplateToNewEnvironment_ followed immediately by a signup write) can occasionally return a stale snapshot for a few seconds even in a fresh execution with no relevant CacheService/PropertiesService cache in play — a genuine eventual-consistency window, not something invalidation logic can guard against.
