@@ -143,6 +143,11 @@ function pickCurrentRow_(trackerRows, now) {
  */
 async function fetchNamespaceRows_({ env, settings }) {
   const resp = await callAdmin('getSheet', { sheetName: 'NamespaceDB' }, { env, settings });
+  // First-ever run: NamespaceDB doesn't exist yet (it's seeded lazily by
+  // appendNamespaceRegistryRow_ on the first provisioning). Treat a missing sheet as "no stale
+  // namespaces" so Step 0 (disposeStaleSmokeNamespaces_) doesn't abort the run before it can
+  // provision anything.
+  if (resp?.error === 'sheet_not_found') return [];
   if (!resp?.ok) throw new Error(`Failed to read NamespaceDB: ${resp?.error || 'unknown error'}`);
   const rows = parseTsv_(resp.csv);
   if (!rows.length) return [];

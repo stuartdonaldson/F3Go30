@@ -452,6 +452,11 @@ function sendRegistrationConfirmationEmail_(spreadsheet, emailAddress, f3Name, t
  * - formResponses: array representing the submitted response row (same shape as sheet row)
  *
  * Returns the possibly-modified formResponses.
+ *
+ * Behavior note: this now ONLY merges the reused goals into the Responses row and writes them
+ * back in place — it does NOT email the participant a summary or a prefilled edit link.
+ * sendGoalReuseEmail is still defined below but is intentionally uncalled here; do not
+ * reintroduce an email side-effect on this path without a deliberate decision.
  */
 function maybeReuseLastMonthsGoals_(spreadsheet, responsesSheet, submittedRowNumber, formResponses) {
     var currentResponseColumns = resolveResponseColumns(responsesSheet);

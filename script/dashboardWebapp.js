@@ -666,12 +666,12 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
 }
 
 /**
- * @param {string=} targetMonth 'current' (default) | 'next' | 'smoke' | 'explicit' — same
+ * @param {string=} targetMonth 'current' (default) | 'next' | 'explicit' — same
  *   selectTargetMonth_ enum signup's targetMonth already uses (signupWebapp.js), so a
- *   smoke/namespace-test caller can explicitly address the smoke tracker (or, via 'explicit' +
- *   targetSheetId, an arbitrary namespace-registered month — F3Go30-i5md.6/4j4o.2) here too
- *   rather than relying on it happening to be "current" by date (see resolveSignupMonths_'s
- *   docstring for why that can't be trusted).
+ *   namespace-test caller can, via 'explicit' + targetSheetId, explicitly address an arbitrary
+ *   namespace-registered month (F3Go30-i5md.6/4j4o.2) here too rather than relying on it
+ *   happening to be "current" by date (see resolveSignupMonths_'s docstring for why that can't
+ *   be trusted). Legacy 'smoke' was retired with SMOKE_MODE (F3Go30-i5md.7).
  * @param {string=} targetSheetId Required when targetMonth === 'explicit'; see resolveSignupMonths_.
  */
 function resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, targetMonth, targetSheetId) {
