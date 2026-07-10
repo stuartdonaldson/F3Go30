@@ -149,8 +149,15 @@ Common admin actions: `setScriptProperties`, `cleanupTracker`,
 ### Smoke mode workflow (run on SIT first; repeat on PROD before go-live)
 See docs/OPERATIONS.md §Smoke Mode for the full description. Quick reference:
 ```bash
-node tools/smokeTestNamespace.js --env <env>
+node tools/smokeTestNamespace.js --env <env> --template <prod|sit>
 ```
+`--env` (default `sit`) picks which deployment registers/runs the namespace. `--template`
+(default `prod`) picks which spreadsheet is copied FROM to build it — `prod` copies PROD's real
+Template + recent trackers (`templateSpreadsheetId`), `sit` copies SIT's own Template
+(`testSpreadsheetId`) instead. These are independent (ADR-014 D6): the plain default run
+registers under SIT but still provisions from **PROD's real data** — pass `--template sit`
+explicitly to test against SIT's own Template instead.
+
 Disposes any stale smoke namespace, provisions a fresh one, live-verifies signup/check-in/
 dashboard/bonus flows against it, and tears itself down automatically on success (manual
 cleanup steps are printed only if a scenario fails).

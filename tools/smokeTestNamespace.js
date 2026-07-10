@@ -17,12 +17,16 @@
  *                    surface area, just another value of the existing targetMonth enum.
  *
  * Usage:
- *   node tools/smokeTestNamespace.js [--env sit]
+ *   node tools/smokeTestNamespace.js [--env sit] [--template prod]
  *   node tools/smokeTestNamespace.js --cleanup-only --folder-url <url> --ns <namespace>
  *
- * Provisioning always sources from PROD's Template (settings.templateSpreadsheetId) — SIT is
- * the destination registry (ADR-014 D6) — but runs entirely against --env (default sit)'s
- * webapp deployment. Only touch --env prod on explicit instruction.
+ * --env selects the scriptProject+hostSpreadsheet the namespace is registered against and the
+ * webapp deployment the run executes against (default sit — only touch --env prod on explicit
+ * instruction). --template selects which Template spreadsheet is copied FROM (default prod —
+ * settings.templateSpreadsheetId — so the namespace always carries PROD's real recent trackers,
+ * even when provisioned under --env sit; pass --template sit to copy from settings.testSpreadsheetId
+ * instead). These two are independent (ADR-014 D6): the registry/deployment and the source
+ * Template need not match.
  *
  * F3Go30-4wv9 lifecycle automation (built on i5md.4's teardownEnvironment):
  *   - Step 0 disposes any stale Kind='smoke' NamespaceDB row(s) left behind by a prior run that
@@ -41,15 +45,22 @@
 const readline = require('readline');
 const { post: httpPost, loadSettings, ENV_MAP } = require('./callWebapp.js');
 
+const TEMPLATE_SPREADSHEET_ID_KEY = {
+  prod: 'templateSpreadsheetId',
+  sit: 'testSpreadsheetId',
+};
+
 function parseArgs_(argv) {
   const args = argv.slice(2);
   let env = 'sit';
+  let template = 'prod';
   let cleanupOnly = false;
   let folderUrl = null;
   let ns = null;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--env' && args[i + 1]) { env = args[++i]; }
+    else if (args[i] === '--template' && args[i + 1]) { template = args[++i]; }
     else if (args[i] === '--cleanup-only') { cleanupOnly = true; }
     else if (args[i] === '--folder-url' && args[i + 1]) { folderUrl = args[++i]; }
     else if (args[i] === '--ns' && args[i + 1]) { ns = args[++i]; }
@@ -59,8 +70,12 @@ function parseArgs_(argv) {
     console.error(`❌ Unknown env "${env}". Use sit or prod.`);
     process.exit(1);
   }
+  if (!TEMPLATE_SPREADSHEET_ID_KEY[template]) {
+    console.error(`❌ Unknown template "${template}". Use sit or prod.`);
+    process.exit(1);
+  }
 
-  return { env, cleanupOnly, folderUrl, ns };
+  return { env, template, cleanupOnly, folderUrl, ns };
 }
 
 async function callAdmin(action, extraBody, { env, settings }) {
@@ -175,7 +190,7 @@ async function humanConfirm_(message) {
 }
 
 async function main() {
-  const { env, cleanupOnly, folderUrl, ns: cleanupNs } = parseArgs_(process.argv);
+  const { env, template, cleanupOnly, folderUrl, ns: cleanupNs } = parseArgs_(process.argv);
   const settings = loadSettings();
 
   if (cleanupOnly) {
@@ -188,12 +203,13 @@ async function main() {
     return;
   }
 
-  console.log(`🧪 Namespace smoke test (F3Go30-i5md.6) — ${env.toUpperCase()}`);
+  console.log(`🧪 Namespace smoke test (F3Go30-i5md.6) — env=${env.toUpperCase()} template=${template.toUpperCase()}`);
   console.log('');
 
-  const sourceTemplateId = settings.templateSpreadsheetId;
+  const templateIdKey = TEMPLATE_SPREADSHEET_ID_KEY[template];
+  const sourceTemplateId = settings[templateIdKey];
   if (!sourceTemplateId || String(sourceTemplateId).startsWith('<')) {
-    console.error('❌ templateSpreadsheetId (PROD Template id) is not set in local.settings.json.');
+    console.error(`❌ ${templateIdKey} (${template.toUpperCase()} Template id) is not set in local.settings.json.`);
     process.exit(1);
   }
 
@@ -205,7 +221,7 @@ async function main() {
   const folderName = `i5md6-smoke-${isoDate_(new Date())}-${Date.now()}`;
 
   // Step 1: Provision
-  console.log(`1️⃣  Provisioning namespace "${folderName}" from PROD Template ${sourceTemplateId}...`);
+  console.log(`1️⃣  Provisioning namespace "${folderName}" from ${template.toUpperCase()} Template ${sourceTemplateId}...`);
   const provision = await callAdmin('copyTemplate', {
     folderName,
     sourceTemplateId,

@@ -1220,3 +1220,33 @@ Outcome [internal]: Filed F3Go30-i5md.7 to track 4wv9's deferred item 3 (legacy 
 
 ### Key Learnings:
 Apps Script's `SpreadsheetApp.openById()` read shortly after a burst of writes from a Drive-copy-then-write sequence (copyTemplateToNewEnvironment_ followed immediately by a signup write) can occasionally return a stale snapshot for a few seconds even in a fresh execution with no relevant CacheService/PropertiesService cache in play — a genuine eventual-consistency window, not something invalidation logic can guard against.
+
+## 2026-07-09 22:23:28
+_session 89627ab3 · v3 · 07-09_
+
+### Objective 1: Verify, commit, and close F3Go30-4wv9 (namespace smoke lifecycle automation)
+Rationale: A prior session had already implemented 4wv9's auto-dispose-stale-on-start and auto-teardown-on-success logic in tools/smokeTestNamespace.js, plus the F3Go30-eyaa dashboard-path namespace fix, but left both uncommitted and the issues open. User redirected mid-session from a five-item punch-list to "work on and implement i5md and the issues blocking it," making 4wv9 the first concrete target since it was closest to done.
+Outcome [developer-facing]: Ran the full unit suite (green) and a live namespace smoke run against SIT (dispose-stale/provision/jldr/4j4o.1/4j4o.2/eyaa scenarios/auto-teardown all passed); committed the eyaa + 4wv9 changes.
+Outcome [internal]: Closed F3Go30-4wv9, documenting item 3 (full SMOKE_MODE retirement) as deliberately deferred to a new issue rather than bundled in, per 4wv9's own scope note.
+
+### Objective 2: Implement and close F3Go30-i5md.7 (retire legacy SMOKE_MODE/SMOKE_TRACKER_ID)
+Rationale: i5md.7's own text said to wait until the namespace path "proven itself over real use" before retiring SMOKE_MODE; asked the user whether to defer or proceed now given only one session's worth of verification existed. User chose to proceed: "Implement i5md.7 now."
+Rejected: Considered leaving `getSmokeStatus`'s deployTarget-reporting half-life around after removing its smoke fields, but the issue's brief was full retirement — deleted the whole action rather than a partial repurpose outside that scope.
+Outcome [developer-facing]: Removed every SMOKE_MODE/SMOKE_TRACKER_ID read/write across script/SmokeMode.js (deleted), CreateNewTracker.js, Utilities.js, WebApp.js, go30tools.js, and signupWebapp.js; deleted tools/smokeTest.js and test/test_smoke_mode.js; updated CLAUDE.md, docs/OPERATIONS.md, docs/DESIGN.md, docs/deployment-model.md to describe the namespace-based smoke workflow instead. Left the unrelated name-based `(Smoke)`/`(Expired)` folder exclusion and NamespaceDB's `Kind='smoke'` concept untouched after confirming via investigation they're structurally distinct from the retired mechanism.
+Outcome [developer-facing]: Discovered and fixed a real pre-existing bug this cleanup unmasked: `maybeReuseLastMonthsGoals_` (signupReuse.js) unconditionally called `sendGoalReuseEmail` on every path, contradicting its own tests' documented intent ("webapp signup path does not send a no-reuse notification; that email belonged to the form-submit path") — the calls were only ever masked by an unrelated `PropertiesService` mock gap in test_signup_reuse.js that the now-removed SMOKE_MODE read happened to trigger and a try/catch happened to swallow. Removed both dead calls; exported `buildPrefilledGoalUpdateUrl` and rewrote its two page-break regression tests to call it directly instead of transitively through the (now email-free) orchestration function.
+Outcome [internal]: Deployed to SIT (@145) and live-verified: `getSmokeStatus` now `unknown_action`, `runScanTrackers` works ungated, full namespace smoke lifecycle still passes end to end. Closed F3Go30-i5md.7, F3Go30-4j4o.2 (its cross-month coverage gap is exactly what smokeTestNamespace.js's step 4 now exercises), and the F3Go30-i5md epic (13/13 children complete) — unblocking F3Go30-4j4o (still open on the separate, out-of-scope F3Go30-31w5 triage decision).
+
+### Key Learnings:
+This repo's bd/dolt jsonl export race (previously logged 2026-07-10) reverted a `bd close` mid-session — the same close command re-run and verified with a fresh `bd show` a few seconds later stuck cleanly, confirming the one-mutation-per-invocation-with-verify pattern remains necessary even for read-after-close checks, not just write sequences.
+
+## 2026-07-10 (session end)
+_session f4b30420 · v3 · 07-10_
+
+### Objective 1: Decouple smoke-test namespace registry from Template source
+Rationale: `tools/smokeTestNamespace.js` hardcoded its copy source to PROD's `templateSpreadsheetId` regardless of `--env`, with that behavior only documented in a source comment. Developer wanted an explicit `--template <prod|sit>` flag so which spreadsheet is copied FROM is a first-class, visible choice independent of which environment (`--env`) registers and runs the namespace (ADR-014 D6: source and destination are deliberately decoupled).
+Outcome [developer-facing]: Added `--template` (default `prod`, preserves prior behavior) to `tools/smokeTestNamespace.js`, mapping `prod`→`templateSpreadsheetId` / `sit`→`testSpreadsheetId` via a new `TEMPLATE_SPREADSHEET_ID_KEY` table; validated with invalid-value rejection and a `node -c` syntax check.
+
+### Objective 2: Make the default's real behavior explicit in docs
+Transition: developer flagged that my initial explanation of smoke tests didn't make clear that the default run copies PROD's data even when registered under SIT — "that is not what you explained earlier so the documentation needs to be clear when it says it copies a template, which template it is copying."
+Rationale: `--env sit --template prod` (the default) registers the namespace under SIT's deployment but still provisions it from PROD's real recent trackers — non-obvious and worth spelling out so nobody reads a default SIT run as testing against SIT's own data.
+Outcome [developer-facing]: Updated `docs/OPERATIONS.md` §Smoke Mode and `CLAUDE.md`'s Smoke mode workflow quick-reference to state explicitly that `--env` and `--template` answer different questions, and that the default combination copies PROD's real data into a SIT-registered namespace.

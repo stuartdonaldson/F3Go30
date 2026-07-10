@@ -67,9 +67,22 @@ SIT first; repeat on PROD before go-live. This supersedes the legacy `SMOKE_MODE
 **Automated workflow (recommended):**
 
 ```bash
-node tools/smokeTestNamespace.js [--env sit|prod]
-# Default: --env sit
+node tools/smokeTestNamespace.js [--env sit|prod] [--template prod|sit]
+# Default: --env sit --template prod
 ```
+
+`--env` and `--template` are independent (ADR-014 D6) and answer two different questions:
+- `--env` — which scriptProject+hostSpreadsheet **registers and runs** the namespace (which
+  deployment's `NamespaceDB` the new namespace is added to, and which webapp URL the smoke run's
+  HTTP calls hit). Defaults to `sit` — only pass `--env prod` on explicit instruction.
+- `--template` — which spreadsheet is **copied from** to build the namespace's Template + recent
+  trackers: `prod` copies `templateSpreadsheetId` (the live PROD Template — the real, current F3
+  data), `sit` copies `testSpreadsheetId` (SIT's own Template — whatever test data currently
+  lives there). Defaults to `prod`, so a default run (`--env sit`, no `--template` flag)
+  registers its namespace under SIT but still provisions it from **PROD's real recent
+  trackers** — this is deliberate (see CopyTemplate step 1 below) and predates the `--template`
+  flag; it is not a SIT-only test against SIT's own data unless you pass `--template sit`
+  explicitly.
 
 One command does the whole lifecycle:
 1. Disposes any stale `Kind='smoke'` `NamespaceDB` row left behind by a prior crashed/aborted
