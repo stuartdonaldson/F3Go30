@@ -586,6 +586,40 @@ function resolveTrackerForContextDate(contextDate, spreadsheet) {
 }
 
 /**
+ * Resolves "what day is it" for the signup/checkin webapp entry points (month-boundary /
+ * date-navigation fallback), honoring an optional per-request contextDate override
+ * (F3Go30-31w5.1) so a developer can deterministically test fallback across a month
+ * boundary without waiting for a real rollover. Precedence: PROD guard first (always wins,
+ * even over an explicit override or a stored Config value) > explicit per-request override >
+ * the resolved spreadsheet's Config sheet "Context Date" > real now.
+ *
+ * The PROD guard is deliberate belt-and-suspenders: the webapp is deployed ANYONE_ANONYMOUS,
+ * so a contextDate override must never be honored on a live PROD deployment even if a client
+ * or a stale Config row carries one — this is what makes the override safe to leave wired up
+ * without a separate kill switch.
+ * @param {Object} spreadsheet The resolved (possibly ns-scoped) template/tracker spreadsheet.
+ * @param {string=} contextDateOverride Explicit per-request ISO date string, if the caller has
+ *   one (payload.contextDate on a POST, e.parameter.contextDate on a GET).
+ * @returns {Date}
+ */
+function resolveContextDate_(spreadsheet, contextDateOverride) {
+	if (typeof APP_DEPLOY_TARGET !== 'undefined' && APP_DEPLOY_TARGET === 'TEMPLATE') {
+		return new Date();
+	}
+
+	var explicit = _parseContextDateLocal_(contextDateOverride);
+	if (explicit) return explicit;
+
+	if (spreadsheet && typeof openConfigSheet === 'function') {
+		var configSheet = openConfigSheet(spreadsheet);
+		var configured = configSheet ? _parseContextDateLocal_(configSheet.getValue('Context Date')) : null;
+		if (configured) return configured;
+	}
+
+	return new Date();
+}
+
+/**
  * Writes TrackerDB rows, replacing existing body rows while preserving the sheet.
  * @param {Array<Object>} rows Tracker summary rows.
  */
@@ -1715,6 +1749,29 @@ function _parseDateish_(value) {
 	return isNaN(parsed.getTime()) ? null : parsed;
 }
 
+/**
+ * Parses a bare `YYYY-MM-DD` string as **local** midnight rather than `_parseDateish_`'s UTC
+ * midnight (`new Date('YYYY-MM-DD')` is spec'd as UTC) — needed for resolveContextDate_'s
+ * contextDate override/Config value, which represent a calendar day for month-boundary testing,
+ * not a sheet timestamp cell. In any timezone behind UTC (e.g. US Pacific), the UTC-midnight
+ * parse rolls back to the previous local day (and, on the 1st, the previous local month),
+ * silently defeating the whole point of pinning "today" to a specific date. Mirrors
+ * dashboardWebapp.js's parseIsoDateLocal_, which exists for the same reason. Falls back to
+ * _parseDateish_ for any other shape (defensive — Config sheet values are otherwise free text).
+ * @param {string=} value
+ * @returns {?Date}
+ */
+function _parseContextDateLocal_(value) {
+	var text = _normalizeCellText_(value);
+	if (!text) return null;
+	var match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+	if (match) {
+		var d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+		return isNaN(d.getTime()) ? null : d;
+	}
+	return _parseDateish_(value);
+}
+
 function _toSortableTime_(value) {
 	var parsed = _parseDateish_(value);
 	return parsed ? parsed.getTime() : 0;
@@ -1742,6 +1799,7 @@ if (typeof module !== 'undefined' && module.exports) {
 		_readPaxDbRowsBySheetId_: _readPaxDbRowsBySheetId_,
 		_readTrackerDbRowsBySheetId_: _readTrackerDbRowsBySheetId_,
 		resolveTemplateSpreadsheet_: resolveTemplateSpreadsheet_,
+		resolveContextDate_: resolveContextDate_,
 		_lookupNamespaceTemplateId_: _lookupNamespaceTemplateId_,
 		_lookupNamespaceRegistryRow_: _lookupNamespaceRegistryRow_,
 		buildNamespaceRegistryRow_: buildNamespaceRegistryRow_,

@@ -44,6 +44,7 @@ secondary value.
 | `Email Test Mode` | `Yes` or `No` | Optional backup toggle value | Shared outbound email wrapper — when enabled, app emails are sent only to the Site Q email and include the intended recipient list in the message body |
 | `NameSpace` | Region identifier (e.g. `F3Waxhaw`) | — | `copyAndInit()`, `autoGenerateNextMonthTracker()` — drives spreadsheet name (`YYYY-MM-NameSpace`) and URL aliases |
 | `LogFile` | Drive file URL (written automatically on first use) | — | `copyAndInit()` — appends structured JSON log entries for UC-5 developer verification |
+| `Context Date` | `YYYY-MM-DD` override (optional, blank = unset) | — | `resolveContextDate_()` (go30tools.js) — namespace-scoped fallback "today" for the webapp's month-boundary/date-navigation logic (F3Go30-31w5.1); set via the `setContextDate` admin action or the Template's "Set Test Context Date..." menu item. Ignored outright on PROD. |
 
 ### Environments
 
@@ -377,6 +378,27 @@ curl -s -L "https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec?cmd=signup" 
   --data-raw '{"action":"identify","f3Name":"Some Name","email":"some@example.com"}' \
   -H "Content-Type: text/plain"
 ```
+
+### Testing month-boundary fallback (contextDate override, F3Go30-31w5.1)
+
+Every webapp entry point resolves "today" via `resolveContextDate_()` (go30tools.js), which lets
+a developer pin that resolution to an explicit date instead of waiting for a real month rollover
+to test fallback logic (e.g. "yesterday" correctly falling back to the *previous* month's
+tracker on day 1 of a new month). Precedence: PROD always uses the real clock, full stop; then a
+per-request `contextDate` field wins; then a namespace's stored Config sheet "Context Date" row;
+then the real clock.
+
+- **Scripted/API calls:** pass `contextDate` (`YYYY-MM-DD`) in the JSON body, e.g.
+  `node tools/callWebapp.js identify --cmd checkin --env sit --body '{"f3Name":"...","email":"...","contextDate":"2026-08-01"}'`.
+- **Set a session default for a namespace:** `setContextDate` admin action —
+  `node tools/callWebapp.js setContextDate --env sit --body '{"ns":"<ns>","contextDate":"2026-08-01"}'`
+  (empty `contextDate` clears it). Refuses on PROD.
+- **Driving the browser UI manually:** append `?contextDate=YYYY-MM-DD` to the `cmd=checkin`/
+  `cmd=signup` URL — it's read server-side on page load and auto-echoed on every subsequent
+  request for that page session (same mechanism as the `ns` namespace parameter). The Template
+  spreadsheet's **F3 Go30 → Set Test Context Date...** menu item (owner-only) does this for you:
+  it prompts for a date, sets the namespace's Config default, and hands back ready-to-open
+  check-in/signup URLs with the param already filled in.
 
 ---
 

@@ -354,8 +354,11 @@ var CHECKIN_PAGE_FAVICON_URL_ = 'https://raw.githubusercontent.com/stuartdonalds
  * @param {?string} ns The request's raw ns value (ADR-014 D3), templated into the page so
  *   CheckinApp.html's client-side callApi() can echo it back on every subsequent POST — the
  *   sandboxed iframe carries no query string, so this is the only way it reaches the client.
+ * @param {?string} contextDate The request's raw contextDate value (F3Go30-31w5.1), templated
+ *   in for the same reason as ns — lets a developer pin a whole check-in session to one test
+ *   date for month-boundary fallback testing.
  */
-function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spreadsheet, ns) {
+function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spreadsheet, ns, contextDate) {
   var template = HtmlService.createTemplateFromFile('CheckinApp');
   var webAppUrl = ScriptApp.getService().getUrl();
   template.webAppUrl = JSON.stringify(webAppUrl);
@@ -365,6 +368,7 @@ function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spre
   template.savedIdentityTokenJson = JSON.stringify(savedToken || null);
   template.typedIdentifyResultJson = JSON.stringify(typedIdentifyResult || null);
   template.urlNsJson = JSON.stringify(ns || null);
+  template.urlContextDateJson = JSON.stringify(contextDate || null);
   template.bonusTypesJson = JSON.stringify(bonusTypeClientRules_dw_());
   template.bonusTypeCodesJson = JSON.stringify(bonusTypeDisplayList_dw_());
   // Site Q contact info for the client's "something went wrong" error banner — same Config
@@ -397,7 +401,8 @@ function renderCheckinPage_(e) {
   // identify instead of being wasted.
   var formGuid = savedToken || Utilities.getUuid();
   var ns = (e && e.parameter && e.parameter.ns) || null;
-  return buildCheckinPageOutput_(savedToken, null, formGuid, resolveTemplateSpreadsheet_(e), ns);
+  var contextDate = (e && e.parameter && e.parameter.contextDate) || null;
+  return buildCheckinPageOutput_(savedToken, null, formGuid, resolveTemplateSpreadsheet_(e), ns, contextDate);
 }
 
 /**
@@ -417,7 +422,8 @@ function renderCheckinPageForTypedIdentify_(e) {
   // renderCheckinPage_'s formGuid) — that's what makes the resulting address bar correct in
   // one interaction, with nothing left to redirect to afterward.
   var guid = (e.parameter && e.parameter.id) || Utilities.getUuid();
-  var result = handleCheckinIdentify_(spreadsheet, { f3Name: f3Name, email: email, guid: guid });
+  var contextDate = (e.parameter && e.parameter.contextDate) || null;
+  var result = handleCheckinIdentify_(spreadsheet, { f3Name: f3Name, email: email, guid: guid, contextDate: contextDate });
   // Echoed back only for the not-matched case, so the identify form can be re-populated with
   // what was just typed — a fresh page render doesn't otherwise know what the PAX entered.
   result.submittedF3Name = f3Name;
@@ -429,7 +435,7 @@ function renderCheckinPageForTypedIdentify_(e) {
   // change). The guid still reaches the client via typedIdentifyResult.identityToken, which is
   // all saveLinkNote/saveLinkAnchor need — and the form's action already used it for the URL.
   var ns = (e.parameter && e.parameter.ns) || null;
-  return buildCheckinPageOutput_(null, result, guid, spreadsheet, ns);
+  return buildCheckinPageOutput_(null, result, guid, spreadsheet, ns, contextDate);
 }
 
 /** Dispatches a cmd=checkin doPost JSON body ({action, ...}) to the matching handler. */
@@ -673,10 +679,13 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
  *   happening to be "current" by date (see resolveSignupMonths_'s docstring for why that can't
  *   be trusted). Legacy 'smoke' was retired with SMOKE_MODE (F3Go30-i5md.7).
  * @param {string=} targetSheetId Required when targetMonth === 'explicit'; see resolveSignupMonths_.
+ * @param {string=} contextDateOverride Per-request contextDate override (F3Go30-31w5.1) — must
+ *   be threaded through to getCurrentAndNextMonths_dw_ so "current month" for identify itself
+ *   honors the pinned test date, not just the day/yesterday arithmetic layered on top of it.
  */
-function resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, targetMonth, targetSheetId) {
+function resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, targetMonth, targetSheetId, contextDateOverride) {
   var t0 = Date.now();
-  var months = getCurrentAndNextMonths_dw_(templateSpreadsheet, targetSheetId);
+  var months = getCurrentAndNextMonths_dw_(templateSpreadsheet, targetSheetId, contextDateOverride);
   GasLogger.log('checkinWebapp.resolveMonths.timing', { durationMs: Date.now() - t0 });
   var monthInfo = selectTargetMonth_dw_(months, targetMonth);
   if (!monthInfo) return { matched: false, months: months };
@@ -1043,7 +1052,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     GasLogger.log('checkinWebapp.identify.result', { matched: false, tokenInvalid: true, durationMs: Date.now() - t0 });
     return { ok: true, matched: false, tokenInvalid: true };
   }
-  var identity = resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, payload.targetMonth, payload.targetSheetId);
+  var identity = resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, payload.targetMonth, payload.targetSheetId, payload.contextDate);
   if (!identity.matched) {
     // PaxDB fallback (F3Go30-xj1q.1): only here, in the typed/token-decoded miss branch — never
     // in the tokenInvalid branch above, where f3Name/email come from an unverified client and a
@@ -1068,7 +1077,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
 
   var classified = classifyTrackerColumns_(identity.row2, identity.row3);
   var trackerRow = identity.trackerRow;
-  var today = new Date();
+  var today = resolveContextDate_(templateSpreadsheet, payload.contextDate);
   var yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
 
@@ -1145,10 +1154,10 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
     return { ok: false, error: 'invalid_value' };
   }
 
-  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth, payload.targetSheetId);
+  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth, payload.targetSheetId, payload.contextDate);
   if (!identity.matched) return { ok: false, error: 'not_found' };
 
-  var targetDate = new Date();
+  var targetDate = resolveContextDate_(templateSpreadsheet, payload.contextDate);
   if (payload.day === 'yesterday') targetDate.setDate(targetDate.getDate() - 1);
 
   // Yesterday's edit target may live in the previous month's tracker (e.g. today is the 1st) —
@@ -1189,8 +1198,8 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
  *   date actually belongs to, regardless of which month the dashboard happens to be viewing.
  */
 function resolveBonusSheet_(templateSpreadsheet, payload, dateIso) {
-  var targetDate = dateIso ? parseIsoDateLocal_(dateIso) : new Date();
-  if (isNaN(targetDate.getTime())) targetDate = new Date();
+  var targetDate = dateIso ? parseIsoDateLocal_(dateIso) : resolveContextDate_(templateSpreadsheet, payload.contextDate);
+  if (isNaN(targetDate.getTime())) targetDate = resolveContextDate_(templateSpreadsheet, payload.contextDate);
   // Resolve the month against the ns-scoped template (templateSpreadsheet), not the bound
   // deployment — otherwise date-based dispatch reads the wrong TrackerDB and the PAX is
   // never found in a namespace tracker (F3Go30-4j4o.1). monthInfo.sheetId then carries the
@@ -1230,9 +1239,9 @@ function handleBonusAdd_(templateSpreadsheet, payload) {
  * happening *before* paying for the expensive per-month identity resolution twice.
  * @returns {{sheetId:string}|null}
  */
-function resolveBonusMonthOnly_(dateIso, templateSpreadsheet) {
-  var targetDate = dateIso ? parseIsoDateLocal_(dateIso) : new Date();
-  if (isNaN(targetDate.getTime())) targetDate = new Date();
+function resolveBonusMonthOnly_(dateIso, templateSpreadsheet, contextDateOverride) {
+  var targetDate = dateIso ? parseIsoDateLocal_(dateIso) : resolveContextDate_(templateSpreadsheet, contextDateOverride);
+  if (isNaN(targetDate.getTime())) targetDate = resolveContextDate_(templateSpreadsheet, contextDateOverride);
   // Same ns-scoping as resolveBonusSheet_: the cross-month detection must consult the
   // namespace's TrackerDB or a cross-month edit under a namespace mis-detects (F3Go30-4j4o.2).
   return resolveDashboardMonth_(targetDate, templateSpreadsheet);
@@ -1259,11 +1268,11 @@ function resolveBonusMonthOnly_(dateIso, templateSpreadsheet) {
  * change the month, so this keeps a same-month edit down to the one resolution it always needed.
  */
 function handleBonusEdit_(templateSpreadsheet, payload) {
-  var newMonth = resolveBonusMonthOnly_(payload.whenIso, templateSpreadsheet);
+  var newMonth = resolveBonusMonthOnly_(payload.whenIso, templateSpreadsheet, payload.contextDate);
   if (!newMonth) return { ok: false, error: 'not_found' };
 
   var originalWhenIso = payload.originalWhenIso || payload.whenIso;
-  var originalMonth = resolveBonusMonthOnly_(originalWhenIso, templateSpreadsheet);
+  var originalMonth = resolveBonusMonthOnly_(originalWhenIso, templateSpreadsheet, payload.contextDate);
   if (!originalMonth) return { ok: false, error: 'not_found' };
 
   var originalSnapshot = payload.original || null;
@@ -1365,7 +1374,7 @@ function parseIsoDateLocal_(iso) {
  */
 function handleCheckinDashboard_(templateSpreadsheet, payload) {
   var t0 = Date.now();
-  var realToday = new Date();
+  var realToday = resolveContextDate_(templateSpreadsheet, payload.contextDate);
   var viewDate = payload.dateISO ? parseIsoDateLocal_(payload.dateISO) : new Date(realToday);
   if (isNaN(viewDate.getTime())) viewDate = new Date(realToday);
 

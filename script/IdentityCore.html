@@ -31,11 +31,16 @@
   }
 
   /** Rejects on any failure (HTTP error, bad JSON, {ok:false}) so every caller has one .catch().
-   * Echoes ns (ADR-014 D3) on every call: the sandboxed iframe carries no query string, so this
-   * is the only way a namespace-scoped request stays scoped past the initial page load. Each
-   * including page defines NS_ from its server-rendered urlNsJson, same lifecycle as CMD_. */
+   * Echoes ns (ADR-014 D3) and contextDate (F3Go30-31w5.1) on every call: the sandboxed iframe
+   * carries no query string, so this is the only way a namespace-scoped/date-pinned request
+   * stays scoped past the initial page load. Each including page defines NS_/CONTEXT_DATE_ from
+   * its server-rendered urlNsJson/urlContextDateJson, same lifecycle as CMD_. */
   function callApi(action, payload) {
-    var body = Object.assign({}, payload, { action: action, ns: (typeof NS_ !== 'undefined' ? NS_ : '') });
+    var body = Object.assign({}, payload, {
+      action: action,
+      ns: (typeof NS_ !== 'undefined' ? NS_ : ''),
+      contextDate: (typeof CONTEXT_DATE_ !== 'undefined' ? CONTEXT_DATE_ : '')
+    });
     return fetch(WEBAPP_URL + '?cmd=' + CMD_, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },

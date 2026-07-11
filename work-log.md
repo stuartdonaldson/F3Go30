@@ -1250,3 +1250,35 @@ Outcome [developer-facing]: Added `--template` (default `prod`, preserves prior 
 Transition: developer flagged that my initial explanation of smoke tests didn't make clear that the default run copies PROD's data even when registered under SIT — "that is not what you explained earlier so the documentation needs to be clear when it says it copies a template, which template it is copying."
 Rationale: `--env sit --template prod` (the default) registers the namespace under SIT's deployment but still provisions it from PROD's real recent trackers — non-obvious and worth spelling out so nobody reads a default SIT run as testing against SIT's own data.
 Outcome [developer-facing]: Updated `docs/OPERATIONS.md` §Smoke Mode and `CLAUDE.md`'s Smoke mode workflow quick-reference to state explicitly that `--env` and `--template` answer different questions, and that the default combination copies PROD's real data into a SIT-registered namespace.
+## 2026-07-11 01:20:00
+_session 3d149096-4f8e-4519-ad3a-eaf71a31b98f · v3 · 07-10→07-11_
+
+### Objective 1: Brighten check-in dashboard score colors and widen the printed content area
+Rationale: The red/yellow/green (-1/0/1) status triad used for the day-ring, sparkline, average-score text, and legend read too muted; user asked to brighten them. Follow-up feedback added two more polish items in the same visual pass: distinguish future ("upcoming") ring days from today's not-yet-reported ("pending") day with a lighter shade, and widen the check-in/dashboard column since the printed area felt cramped.
+Outcome [user-facing]: `script/CheckinApp.html` — done/missed/absent triad bumped to more vivid hex values (`#2f5d50→#3f8b75`, `#b8860b→#f7b209`, `#a3401a→#de521c`), applied consistently to `scoreColor_`, `SEGMENT_COLORS_`, and the legend swatches (brand teal used elsewhere in headers/buttons left untouched, since only the score triad reused that hex); `upcoming` ring segments lightened to `#e7e2d8` (distinct from `pending`'s `#d8cfbf`); `.wrap` side padding reduced 18px→8px, widening the content column without touching the 720px max-width or mobile breakpoint.
+Outcome [internal]: User deployed to SIT and confirmed the changes read as an improvement before merge.
+
+### Objective 2: Ship PR #2 (namespace-scoped template provisioning, ADR-014)
+Rationale: All 8 Copilot review comments across two rounds (04:18 and 14:17) had already been fixed and replied to by commit db9627f; nothing was left outstanding, so the branch was ready to land. User asked to "swash [squash] merge" and log the session.
+Outcome [developer-facing]: Committed the dashboard polish (package.json/version.js build-metadata bumps included, `.vscode/settings.json` left out as an unrelated local editor preference), pushed, and squash-merged PR #2 into main via `gh pr merge 2 --squash --delete-branch` (merge commit `0ef9d77`).
+Outcome [internal]: `gh pr merge`'s local fast-forward step failed because local `main` held a stale unpublished commit (`1bacf17`, the original ADR-014 file) that diverged from origin's squashed history. Confirmed the commit's content was fully subsumed by the squash merge, then reset local `main` to `origin/main` after explicit user confirmation (destructive op).
+
+### Key Learnings:
+`gh pr merge --squash` can succeed on GitHub while still erroring locally ("Not possible to fast-forward") if the local base branch has any unpublished commit — always check `gh pr view --json state,mergedAt` to confirm the remote outcome before treating the CLI error as a merge failure.
+
+## 2026-07-11 10:49:52
+_session 63c83394 · v3 · 07-11_
+
+### Objective 1: Review the already-implemented contextDate feature (F3Go30-31w5.1/.2) before committing
+Rationale: bd showed both sub-issues closed with implementation notes matching the uncommitted working tree, so the session pivoted from "implement" to "verify what's already there before it gets committed." A full diff read-through was chosen over a quick skim since the user asked to "review the diff first."
+Outcome [developer-facing]: Found and fixed a real bug — onOpen.js's menu item called `setContextDateMenuAction` but the function was defined as `setContextDateMenuAction_` (trailing underscore), so the "Set Test Context Date..." menu entry would have thrown when clicked. Renamed to match the existing `invalidateCacheMenuAction` (no-underscore) convention; updated the corresponding test and module export. All 27 test suites still green.
+
+### Objective 2: Live-verify the check-in month-boundary ("yesterday" crosses into prior tracker) scenario on SIT  [accreted]
+Transition: user asked specifically to "test in SIT... someone checking in on the first of the month should have the checkin option for yesterday which would be the prior month" — this required going beyond static review into an actual deployed run.
+Rationale: Also resolved a scope question raised mid-session — whether contextDate threading into signup/bonus-add/edit paths was overreach beyond checkin+markMinusOne+nag. User confirmed keeping it: "signup and bonus initiating workflows also need to know the current Date, that's a good call."
+Rejected: N/A — user validated the existing broad scope rather than narrowing it.
+Outcome [developer-facing]: Live testing against SIT (contextDate=2026-08-01) surfaced two further real bugs: (1) `resolveContextDate_` parsed `YYYY-MM-DD` via `new Date(text)`, which is UTC-midnight per spec — in Pacific time this silently rolled the pinned date back a day, and on the 1st, back a whole month. Added `_parseContextDateLocal_` (go30tools.js), mirroring the existing `parseIsoDateLocal_` pattern, to parse as local midnight instead. (2) `resolveCheckinIdentity_` never received `payload.contextDate`, so check-in identify's own "what month is current" resolution silently ignored the override even though the day/yesterday arithmetic layered on top of it did honor it — threaded contextDate through both call sites (handleCheckinIdentify_, handleCheckinSubmit_).
+Outcome [user-facing]: Redeployed to SIT and re-verified live: pinning contextDate to Aug 1 now correctly resolves "current month" to August, and submitting a "yesterday" checkin correctly writes into the prior (July) tracker's July 31 column — confirmed via a real signup + checkin + raw sheet read, then cleaned back up (checkin value cleared; one harmless leftover August test-signup row for "Little John" left in place per user's choice, since no admin action supports single-row removal without deleting the whole live August tracker).
+
+### Key Learnings:
+`new Date('YYYY-MM-DD')` parses as UTC midnight per spec — in any timezone behind UTC this silently shifts the effective local calendar day backward, which is easy to miss because `.toISOString()`-based assertions (as in the existing unit tests) don't expose the bug at all; only a check against local-timezone fields (getMonth/getDate) or a live cross-month test surfaces it.

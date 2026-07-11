@@ -452,11 +452,14 @@ function selectTargetMonth_(months, targetMonth) {
  * (§6.3). `explicitSheetId` (F3Go30-i5md.6/4j4o.2) is optional — see resolveSignupMonths_.
  * @param {Object} templateSpreadsheet
  * @param {string=} explicitSheetId
+ * @param {string=} contextDateOverride Per-request contextDate override (F3Go30-31w5.1),
+ *   resolved via resolveContextDate_ before "current"/"next" are computed against it.
  */
-function getCurrentAndNextMonths_(templateSpreadsheet, explicitSheetId) {
+function getCurrentAndNextMonths_(templateSpreadsheet, explicitSheetId, contextDateOverride) {
   var linksSheet = templateSpreadsheet.getSheetByName('TrackerDB');
   var values = linksSheet ? linksSheet.getDataRange().getValues() : [];
-  return resolveSignupMonths_(parseLinksRows_(values), new Date(), explicitSheetId);
+  var today = resolveContextDate_(templateSpreadsheet, contextDateOverride);
+  return resolveSignupMonths_(parseLinksRows_(values), today, explicitSheetId);
 }
 
 function readResponsesSheetState_(spreadsheet) {
@@ -526,7 +529,7 @@ function findPaxDbMatch_(templateSpreadsheet, f3Name, email) {
  * Responses sheet for faster lookup and canonical data (PaxDB is updated by scanTrackers).
  */
 function handleSignupIdentify_(templateSpreadsheet, payload) {
-  var months = getCurrentAndNextMonths_(templateSpreadsheet);
+  var months = getCurrentAndNextMonths_(templateSpreadsheet, undefined, payload.contextDate);
   if (!months.current) return { ok: false, error: 'no_current_month' };
 
   GasLogger.log('signupWebapp.identify', { f3Name: payload.f3Name, email: payload.email });
@@ -571,7 +574,7 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
  * same formula-row-copy mechanics.
  */
 function handleSignupSave_(templateSpreadsheet, payload) {
-  var months = getCurrentAndNextMonths_(templateSpreadsheet, payload.targetSheetId);
+  var months = getCurrentAndNextMonths_(templateSpreadsheet, payload.targetSheetId, payload.contextDate);
   var targetMonth = selectTargetMonth_(months, payload.targetMonth);
   if (!targetMonth) return { ok: false, error: 'invalid_target_month' };
 
@@ -767,7 +770,7 @@ function handleSignupFeedback_(templateSpreadsheet, payload) {
     return { ok: true, skipped: true };
   }
 
-  var months = getCurrentAndNextMonths_(templateSpreadsheet);
+  var months = getCurrentAndNextMonths_(templateSpreadsheet, undefined, payload.contextDate);
   var targetMonth = selectTargetMonth_(months, payload.targetMonth);
   if (!targetMonth) return { ok: false, error: 'invalid_target_month' };
 

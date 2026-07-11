@@ -129,7 +129,16 @@ injects the admin secret automatically. Default: `--cmd admin --env sit`.
 
 Common admin actions: `setScriptProperties`, `cleanupTracker`,
 `runScanTrackers`, `getSheet`, `runAutoGenerate`, `createTrackerForMonth`, `copyTemplate`,
-`teardownEnvironment`
+`teardownEnvironment`, `setContextDate`
+
+- `setContextDate` (F3Go30-31w5.1) persists a `{ns, contextDate}` override into the ns-resolved
+  spreadsheet's Config sheet ("Context Date"), read as a fallback by every webapp entry point's
+  "what day is it" resolution (`resolveContextDate_`, go30tools.js) — lets a developer test
+  month-boundary fallback deterministically. A request's own `contextDate` field (or, for a
+  browser session, a `?contextDate=YYYY-MM-DD` query param on `cmd=checkin`/`cmd=signup`, echoed
+  automatically for the rest of that page's requests) always wins over the stored Config value.
+  Refuses outright on PROD (`APP_DEPLOY_TARGET === 'TEMPLATE'`) — PROD always uses the real date,
+  full stop, since the webapp is deployed `ANYONE_ANONYMOUS`.
 
 - `runAutoGenerate` creates the tracker for **real-today's month + 1** (it's meant to run a
   few days before month-end via its own time trigger). If it's ever run late — after a month

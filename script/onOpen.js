@@ -22,6 +22,7 @@ function onOpen_()
         .addItem('Initialize Monthly Trigger', 'initializeMonthlyTrigger')
         .addItem('Clear All Triggers', 'clearAllTriggers')
         .addItem('Invalidate Cache', 'invalidateCacheMenuAction')
+        .addItem('Set Test Context Date...', 'setContextDateMenuAction')
         .addSeparator();
   }
 
@@ -124,6 +125,114 @@ function invalidateCacheMenuAction() {
 }
 
 /**
+ * Validates a YYYY-MM-DD date string typed into the "Set Test Context Date" prompt. Pure — no
+ * GAS services — so it's unit-testable without live Sheets/UI. Deliberately stricter than a
+ * bare `new Date(text)`: that constructor also accepts shapes a human tester wouldn't expect
+ * (e.g. "3/15/26") and silently rolls over an invalid day-of-month (e.g. 2026-02-30 -> March 2)
+ * — same rollover check createTrackerForMonth_/handleAdminPost_'s createTrackerForMonth already
+ * do, applied here for the same reason.
+ * @param {string} text
+ * @returns {{valid:true, iso:string}|{valid:false}}
+ */
+function parseContextDateMenuInput_(text) {
+  var trimmed = String(text == null ? '' : text).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return { valid: false };
+  var parsed = new Date(trimmed + 'T00:00:00');
+  if (isNaN(parsed.getTime())) return { valid: false };
+  var inputMonth = parseInt(trimmed.split('-')[1], 10);
+  if (parsed.getMonth() + 1 !== inputMonth) return { valid: false };
+  return { valid: true, iso: trimmed };
+}
+
+/**
+ * Menu handler for "Set Test Context Date...". Human-driver UX for F3Go30-31w5.1's contextDate
+ * override (31w5's second floated idea, chosen over the bare-query-param-only option): lets a
+ * non-technical tester pin the check-in/signup webapp to a specific "today" without hand-
+ * building a query string. Same WEBAPP_URL/ADMIN_SHARED_SECRET pattern as
+ * invalidateCacheMenuAction above (only ever populated on the Template's own script copy —
+ * see that function's docstring for why a Tracker copy fails closed instead of silently
+ * no-opping) — this calls the deployed webapp's setContextDate admin action over HTTP so the
+ * Config sheet write always lands on the actual running instance.
+ *
+ * Blocks before any prompt on PROD (APP_DEPLOY_TARGET === 'TEMPLATE') — mirrors
+ * resolveContextDate_'s own PROD guard (go30tools.js) so there's no UI path to override PROD's
+ * date either, even though that guard would silently ignore the stored value anyway.
+ */
+function setContextDateMenuAction() {
+  return GasLogger.run('setContextDateMenuAction', function() {
+    var ui = SpreadsheetApp.getUi();
+
+    if (typeof APP_DEPLOY_TARGET !== 'undefined' && APP_DEPLOY_TARGET === 'TEMPLATE') {
+      ui.alert('Set Test Context Date',
+        'This is the PROD deployment (APP_DEPLOY_TARGET=TEMPLATE) — contextDate overrides are ' +
+        'never honored here, by design (the webapp is deployed to real anonymous traffic). Run ' +
+        'this from a SIT/test deployment instead.',
+        ui.ButtonSet.OK);
+      return;
+    }
+
+    var response = ui.prompt(
+      'Set Test Context Date',
+      'Enter the date (YYYY-MM-DD) the check-in/signup webapp should treat as "today" for this ' +
+      'namespace. Leave blank and press OK to clear the override.',
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (response.getSelectedButton() !== ui.Button.OK) return;
+
+    var rawInput = response.getResponseText();
+    var contextDateIso = '';
+    if (String(rawInput || '').trim()) {
+      var parsedInput = parseContextDateMenuInput_(rawInput);
+      if (!parsedInput.valid) {
+        ui.alert('Invalid date: "' + rawInput + '" — expected YYYY-MM-DD.');
+        return;
+      }
+      contextDateIso = parsedInput.iso;
+    }
+
+    var props = PropertiesService.getScriptProperties();
+    var webAppUrl = props.getProperty('WEBAPP_URL');
+    var adminSecret = props.getProperty('ADMIN_SHARED_SECRET');
+    if (!webAppUrl || !adminSecret) {
+      ui.alert('Could not set context date: WEBAPP_URL / ADMIN_SHARED_SECRET is not set on this ' +
+        "spreadsheet's script copy. Run this from the Template spreadsheet instead.");
+      return;
+    }
+
+    try {
+      var httpResponse = UrlFetchApp.fetch(webAppUrl + '?cmd=admin', {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ action: 'setContextDate', adminSecret: adminSecret, contextDate: contextDateIso }),
+        muteHttpExceptions: true,
+      });
+      var result = JSON.parse(httpResponse.getContentText());
+      if (!result.ok) {
+        ui.alert('Setting context date failed: ' + (result.error || 'unknown error'));
+        return;
+      }
+    } catch (e) {
+      ui.alert('Setting context date failed: ' + e.message);
+      return;
+    }
+
+    if (!contextDateIso) {
+      ui.alert('Context date override cleared. Every request now uses the real date again.');
+      return;
+    }
+
+    var checkinUrl = webAppUrl + '?cmd=checkin&contextDate=' + contextDateIso;
+    var signupUrl = webAppUrl + '?cmd=signup&contextDate=' + contextDateIso;
+    ui.alert('Set Test Context Date',
+      'Context date set to ' + contextDateIso + '.\n\n' +
+      'Ready-to-open URLs (copy one into your browser):\n\n' +
+      'Check-in: ' + checkinUrl + '\n\n' +
+      'Signup: ' + signupUrl,
+      ui.ButtonSet.OK);
+  });
+}
+
+/**
  * Script Properties are capped at 500KB total and 9KB per value (Apps Script quota) — PaxCache
  * (script/PaxCache.js) is the biggest consumer of that budget, so surfacing count/size here
  * gives an early warning before a roster grows large enough to hit the ceiling.
@@ -217,6 +326,13 @@ function initializeTemplateDispatchTriggers() {
       try { setupCheckinSessionCleanupTrigger_(); } catch (e) { GasLogger.log('initializeTemplateDispatchTriggers.setupCheckinSessionCleanupTriggerFailed', { error: e.message }); }
     }
   });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    parseContextDateMenuInput_: parseContextDateMenuInput_,
+    setContextDateMenuAction: setContextDateMenuAction
+  };
 }
 
 

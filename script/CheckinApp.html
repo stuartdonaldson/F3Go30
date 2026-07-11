@@ -138,6 +138,16 @@
     .legend { gap: 6px; }
     .legend-item { font-size: 11px; }
     .team-grid { grid-template-columns: repeat(auto-fill,minmax(96px,1fr)); }
+    /* The day-mini-bar's cells don't shrink, so on narrow phones its minimum content width
+       collides with the %-score column and overlaps it. Rather than compress the cells to
+       illegibility, wrap the bar onto its own line below name/status/% (order pulls it after
+       .bpct regardless of DOM position), indented past the name column so it still reads as
+       "to the right of the name" rather than a full-width line under it, and trim the row's
+       own padding to absorb most of the added line's height so overall row height barely grows. */
+    .board-row { padding: 3px 4px; }
+    .board-row-main { flex-wrap: wrap; row-gap: 1px; }
+    .day-mini-bar { order: 1; flex-basis: auto; width: calc(100% - 125px); margin-left: 125px; justify-content: flex-start; }
+    .day-mini-cell { height: 9px; }
   }
   .how-btn { width: 100%; padding: 14px 18px; border: none; background: transparent; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-family: inherit; font-size: 15px; font-weight: bold; color: #2f5d50; }
   .how-section-head { margin: 14px 0 6px; font-size: 13px; font-weight: bold; color: #2f5d50; letter-spacing: .04em; }
@@ -395,6 +405,7 @@
   var APP_VERSION = <?!= JSON.stringify(appVersion) ?>;
   var CMD_ = 'checkin'; // read by IdentityCore's callApi() to post to ?cmd=checkin
   var NS_ = <?!= urlNsJson ?> || ''; // ADR-014 D3 — echoed on every callApi() POST by IdentityCore
+  var CONTEXT_DATE_ = <?!= urlContextDateJson ?> || ''; // F3Go30-31w5.1 — echoed on every callApi() POST by IdentityCore
 </script>
 <?!= include_('IdentityCore') ?>
 <script>

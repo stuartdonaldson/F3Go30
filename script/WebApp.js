@@ -46,7 +46,7 @@ function include_(filename) {
 function renderHomePage_(e) {
   var spreadsheet = resolveTemplateSpreadsheet_(e);
   var webAppUrl = ScriptApp.getService().getUrl();
-  var months = getCurrentAndNextMonths_(spreadsheet);
+  var months = getCurrentAndNextMonths_(spreadsheet, undefined, e && e.parameter && e.parameter.contextDate);
 
   var template = HtmlService.createTemplateFromFile('HomeApp');
   template.signupUrl = webAppUrl + '?cmd=signup';
@@ -70,7 +70,8 @@ function renderHomePage_(e) {
 function renderSignupPage_(e) {
   var spreadsheet = resolveTemplateSpreadsheet_(e);
   var lists = readTeamLists_(spreadsheet);
-  var months = getCurrentAndNextMonths_(spreadsheet);
+  var urlContextDate = (e && e.parameter && e.parameter.contextDate) || null;
+  var months = getCurrentAndNextMonths_(spreadsheet, undefined, urlContextDate);
 
   var template = HtmlService.createTemplateFromFile('SignupApp');
   template.webAppUrl = JSON.stringify(ScriptApp.getService().getUrl());
@@ -102,6 +103,10 @@ function renderSignupPage_(e) {
   // POSTs (via IdentityCore.html's shared client) so a namespace-scoped request stays scoped
   // across the whole signup flow, not just the initial page load.
   template.urlNsJson = JSON.stringify((e && e.parameter && e.parameter.ns) || null);
+  // contextDate (F3Go30-31w5.1): same round-trip constraint as ns above — read here
+  // server-side and echoed by SignupApp.html's callApi() POSTs so a developer testing
+  // month-boundary fallback stays pinned to the same test date for the rest of the session.
+  template.urlContextDateJson = JSON.stringify(urlContextDate);
   return template.evaluate().setTitle('Go30 Hard Commit Signup').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -310,6 +315,24 @@ function handleAdminPost_(e) {
       GasLogger.log('handleAdminPost_.setWebappUrl', { webappUrl: url });
       return jsonOutput_({ ok: true, webappUrl: url });
     }
+    if (payload.action === 'setContextDate') {
+      // Persists a per-namespace contextDate override (F3Go30-31w5.1) into the ns-resolved
+      // spreadsheet's Config sheet, read by resolveContextDate_ (go30tools.js) as the fallback
+      // when a request doesn't carry its own payload.contextDate. Refused outright on PROD —
+      // resolveContextDate_'s own PROD guard would ignore it anyway, but failing loudly here
+      // avoids an operator believing a PROD Config write actually did something.
+      if (typeof APP_DEPLOY_TARGET !== 'undefined' && APP_DEPLOY_TARGET === 'TEMPLATE') {
+        return jsonOutput_({ ok: false, error: 'forbidden_in_prod' });
+      }
+      var contextDateSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+      var contextDateConfigSheet = openConfigSheet(contextDateSpreadsheet);
+      if (!contextDateConfigSheet) {
+        return jsonOutput_({ ok: false, error: 'config_sheet_not_found' });
+      }
+      contextDateConfigSheet.upsertValue('Context Date', payload.contextDate || '');
+      GasLogger.log('handleAdminPost_.setContextDate', { ns: payload.ns || null, contextDate: payload.contextDate || null });
+      return jsonOutput_({ ok: true, contextDate: payload.contextDate || null });
+    }
     if (payload.action === 'listSheets') {
       // Stays bound (ADR-014 D2): diagnostic listing for this executing deployment's own
       // Template, not a tenant-data read — no sheetId/ns override needed, unlike getSheet.
@@ -503,5 +526,7 @@ function doPost(e) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderSignupPage_: renderSignupPage_,
+    renderHomePage_: renderHomePage_,
+    handleAdminPost_: handleAdminPost_,
   };
 }

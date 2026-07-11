@@ -2,12 +2,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// ADR-014 D3 / F3Go30-i5md.3: the sandboxed client iframe carries no query string, so `ns`
-// must be (a) read server-side and injected into the page template, and (b) echoed back in
-// every callApi() POST body, exactly like targetMonth/id already are. This test covers both
-// halves: server-side template injection (executable, via mocked HtmlService) and the
-// client-side plumbing (static-shape check on the .html source, since that JS runs inside a
-// GAS-templated <script> tag with no module boundary to require() in Node).
+// F3Go30-31w5.1: contextDate round-trips exactly like `ns` (ADR-014 D3) — read server-side from
+// the request's query string / POST payload, injected into the page template, and echoed back
+// in every subsequent callApi() POST for that page session (test/test_ns_client_roundtrip.js is
+// the precedent this mirrors).
 
 function fakeTemplate_() {
   var captured = {};
@@ -38,6 +36,7 @@ global.HtmlService = {
 global.ScriptApp = { getService: function() { return { getUrl: function() { return 'https://example.com/exec'; } }; } };
 global.APP_VERSION = '9.9.9';
 global.getConfigValue_ = function() { return {}; };
+global.openConfigSheet = function() { return null; };
 function fakeSpreadsheet_() {
   return { id: 'bound-spreadsheet', getSheetByName: function() { return null; }, getId: function() { return 'bound-spreadsheet'; } };
 }
@@ -53,29 +52,29 @@ const { renderSignupPage_ } = require('../script/WebApp.js');
 const { buildCheckinPageOutput_, renderCheckinPage_, renderCheckinPageForTypedIdentify_ } =
   require('../script/dashboardWebapp.js');
 
-(function testRenderSignupPageInjectsNsFromRequestParameter() {
-  var output = renderSignupPage_({ parameter: { ns: 'sit-smoke' } });
-  assert.equal(output.__captured.urlNsJson, JSON.stringify('sit-smoke'));
+(function testRenderSignupPageInjectsContextDateFromRequestParameter() {
+  var output = renderSignupPage_({ parameter: { contextDate: '2026-01-15' } });
+  assert.equal(output.__captured.urlContextDateJson, JSON.stringify('2026-01-15'));
 })();
 
-(function testRenderSignupPageDefaultsNsToNullWhenAbsent() {
+(function testRenderSignupPageDefaultsContextDateToNullWhenAbsent() {
   var output = renderSignupPage_({ parameter: {} });
-  assert.equal(output.__captured.urlNsJson, JSON.stringify(null));
+  assert.equal(output.__captured.urlContextDateJson, JSON.stringify(null));
 })();
 
-(function testBuildCheckinPageOutputInjectsGivenNs() {
-  var output = buildCheckinPageOutput_(null, null, 'guid-1', { id: 'bound' }, 'sit-smoke');
-  assert.equal(output.__captured.urlNsJson, JSON.stringify('sit-smoke'));
+(function testBuildCheckinPageOutputInjectsGivenContextDate() {
+  var output = buildCheckinPageOutput_(null, null, 'guid-1', { id: 'bound' }, 'sit-smoke', '2026-01-15');
+  assert.equal(output.__captured.urlContextDateJson, JSON.stringify('2026-01-15'));
 })();
 
-(function testRenderCheckinPagePassesRequestNsThrough() {
-  var output = renderCheckinPage_({ parameter: { ns: 'sit-smoke' } });
-  assert.equal(output.__captured.urlNsJson, JSON.stringify('sit-smoke'));
+(function testRenderCheckinPagePassesRequestContextDateThrough() {
+  var output = renderCheckinPage_({ parameter: { contextDate: '2026-01-15' } });
+  assert.equal(output.__captured.urlContextDateJson, JSON.stringify('2026-01-15'));
 })();
 
-(function testRenderCheckinPageForTypedIdentifyPassesRequestNsThrough() {
-  var output = renderCheckinPageForTypedIdentify_({ parameter: { ns: 'sit-smoke', f3Name: 'X', email: 'x@example.com' } });
-  assert.equal(output.__captured.urlNsJson, JSON.stringify('sit-smoke'));
+(function testRenderCheckinPageForTypedIdentifyPassesRequestContextDateThrough() {
+  var output = renderCheckinPageForTypedIdentify_({ parameter: { contextDate: '2026-01-15', f3Name: 'X', email: 'x@example.com' } });
+  assert.equal(output.__captured.urlContextDateJson, JSON.stringify('2026-01-15'));
 })();
 
 // --- Client-side static-shape checks (no Node-executable module boundary for GAS <script> JS) ---
@@ -84,27 +83,27 @@ function readHtml_(name) {
   return fs.readFileSync(path.join(__dirname, '..', 'script', name), 'utf8');
 }
 
-(function testIdentityCoreCallApiEchoesNs() {
+(function testIdentityCoreCallApiEchoesContextDate() {
   var src = readHtml_('IdentityCore.html');
   var fnMatch = src.match(/function callApi\([\s\S]*?\n  \}/);
   assert.ok(fnMatch, 'callApi function body not found in IdentityCore.html');
-  assert.match(fnMatch[0], /NS_/, 'callApi body must reference NS_ so ns round-trips on every POST');
+  assert.match(fnMatch[0], /CONTEXT_DATE_/, 'callApi body must reference CONTEXT_DATE_ so contextDate round-trips on every POST');
 })();
 
-(function testCheckinAppDefinesNsBeforeIdentityCoreInclude() {
+(function testCheckinAppDefinesContextDateBeforeIdentityCoreInclude() {
   var src = readHtml_('CheckinApp.html');
-  var nsDeclIndex = src.search(/var NS_\s*=/);
+  var declIndex = src.search(/var CONTEXT_DATE_\s*=/);
   var includeIndex = src.indexOf("include_('IdentityCore')");
-  assert.notEqual(nsDeclIndex, -1, 'CheckinApp.html must declare NS_ from the server-rendered urlNsJson');
-  assert.ok(nsDeclIndex < includeIndex, 'NS_ must be declared before IdentityCore is included');
+  assert.notEqual(declIndex, -1, 'CheckinApp.html must declare CONTEXT_DATE_ from the server-rendered urlContextDateJson');
+  assert.ok(declIndex < includeIndex, 'CONTEXT_DATE_ must be declared before IdentityCore is included');
 })();
 
-(function testSignupAppDefinesNsBeforeIdentityCoreInclude() {
+(function testSignupAppDefinesContextDateBeforeIdentityCoreInclude() {
   var src = readHtml_('SignupApp.html');
-  var nsDeclIndex = src.search(/var NS_\s*=/);
+  var declIndex = src.search(/var CONTEXT_DATE_\s*=/);
   var includeIndex = src.indexOf("include_('IdentityCore')");
-  assert.notEqual(nsDeclIndex, -1, 'SignupApp.html must declare NS_ from the server-rendered urlNsJson');
-  assert.ok(nsDeclIndex < includeIndex, 'NS_ must be declared before IdentityCore is included');
+  assert.notEqual(declIndex, -1, 'SignupApp.html must declare CONTEXT_DATE_ from the server-rendered urlContextDateJson');
+  assert.ok(declIndex < includeIndex, 'CONTEXT_DATE_ must be declared before IdentityCore is included');
 })();
 
-console.log('test_ns_client_roundtrip.js: all assertions passed');
+console.log('test_context_date_client_roundtrip.js: all assertions passed');

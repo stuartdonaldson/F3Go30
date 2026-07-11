@@ -20,6 +20,11 @@ global.GasLogger = { log: function() {}, logError: function() {}, run: function(
 var fakeScriptProperties_ = { getProperty: function() { return null; } };
 global.PropertiesService = { getScriptProperties: function() { return fakeScriptProperties_; } };
 
+// resolveContextDate_ (go30tools.js, F3Go30-31w5.1) isn't required by this file — these tests
+// don't exercise contextDate override behavior (see test_context_date.js for that), so a plain
+// real-clock stub keeps existing "what day is it" call sites working unchanged.
+global.resolveContextDate_ = function() { return new Date(); };
+
 const {
   classifyTrackerColumns_,
   findDateColumnIndex_,
