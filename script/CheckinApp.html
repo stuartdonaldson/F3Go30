@@ -7,7 +7,7 @@
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; min-height: 100vh; background: #f4f1ea; font-family: Arial, Helvetica, sans-serif; color: #2b2b2b; }
-  .wrap { max-width: 720px; margin: 0 auto; padding: 0 18px 48px; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 8px 48px; }
   .header { background: #2f5d50; color: #f8f4ea; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
   .header-right { text-align: right; display: flex; align-items: center; gap: 12px; }
   .header-name { font-weight: bold; font-size: 20px; }
@@ -276,9 +276,9 @@
           <div class="stat-label">MONTH PROGRESS</div>
           <div id="dMonthRing"></div>
           <div class="legend" style="margin-top:8px;justify-content:center;">
-            <div class="legend-item"><div class="legend-swatch" style="background:#2f5d50;"></div>Hits</div>
-            <div class="legend-item"><div class="legend-swatch" style="background:#b8860b;"></div>Misses</div>
-            <div class="legend-item"><div class="legend-swatch" style="background:#a3401a;"></div>None</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#3f8b75;"></div>Hits</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#f7b209;"></div>Misses</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#de521c;"></div>None</div>
           </div>
         </div>
         <div class="stat-card">
@@ -742,10 +742,10 @@
 
   // ── Step: dashboard ─────────────────────────────────────────────────────
   function scoreColor_(pct) {
-    return pct >= 80 ? '#2f5d50' : pct >= 50 ? '#b8860b' : '#a3401a';
+    return pct >= 80 ? '#3f8b75' : pct >= 50 ? '#f7b209' : '#de521c';
   }
 
-  var SEGMENT_COLORS_ = { done: '#2f5d50', missed: '#b8860b', absent: '#a3401a', pending: '#d8cfbf', upcoming: '#d8cfbf' };
+  var SEGMENT_COLORS_ = { done: '#3f8b75', missed: '#f7b209', absent: '#de521c', pending: '#d8cfbf', upcoming: '#e7e2d8' };
   var SEGMENT_VALUES_ = { done: 1, missed: 0, absent: -1 };
   var DISPLAY_WINDOW_DAYS_ = 14;
   // Mirrors dashboardWebapp.js's ROLLING_AVERAGE_WINDOW_DAYS_ — needed client-side only to
