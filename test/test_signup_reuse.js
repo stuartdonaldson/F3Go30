@@ -54,6 +54,7 @@ const {
     extractReusableResponseValues,
     mergeReusedValuesIntoResponseArray,
     buildReuseSummaryLines,
+    buildPrefilledGoalUpdateUrl,
     sanitizeTextForEmailLine_,
     sanitizeEmailAddressForSend_,
     maybeReuseLastMonthsGoals_
@@ -700,25 +701,11 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
     global._mockManagedSheet = null;
 }
 
-// Test: Team field lookup does not confuse a Teams page break with the Team list item.
+// Test: buildPrefilledGoalUpdateUrl's Team field lookup does not confuse a Teams page break
+// with the Team list item. Called directly (not via maybeReuseLastMonthsGoals_, which no
+// longer computes a prefilled URL — see the "no email sent" tests above: that email/prefill
+// flow belongs to the form-submit path, not the webapp-signup path).
 {
-    mailsSent = [];
-    global._mockPrevSs = {};
-    global._mockManagedSheet = {
-        getAllRows: function() {
-            return [{
-                F3_NAME: 'TestPax',
-                TEAM_TYPE: 'AO',
-                TEAM: 'Crucible',
-                OTHER_TEAM: '',
-                WHO: 'Leader',
-                WHAT: 'Run hard',
-                HOW: 'Track daily',
-                PHONE: '555-9999'
-            }];
-        }
-    };
-
     function makePageBreakItem(title) {
         return {
             getType: function() { return 'PAGE_BREAK'; },
@@ -778,48 +765,16 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
         }
     };
 
-    global._mockForm = fakeForm;
-
-    maybeReuseLastMonthsGoals_(
-        {
-            getFormUrl: function() { return 'https://docs.google.com/forms/d/mock/viewform'; },
-            getId: function() { return 'current-sheet-id'; },
-            getSheetByName: function(name) { return name === 'PaxDB' ? makeMockPaxDbSheetFromManagedRows_() : null; },
-            getUrl: function() { return 'https://mock-ss.example.com'; }
-        },
-        makeMockResponsesSheet(HEADERS),
-        2,
-        reusableFormRow()
-    );
+    buildPrefilledGoalUpdateUrl(fakeForm, reusableFormRow(), { ...reusedValues, team: 'Crucible' }, responseColumns);
 
     assert.ok(capturedResponses.some(function(response) {
         return response && response.itemTitle === 'Team' && response.value === 'Crucible';
     }), 'Team list item receives the prefilled Crucible value even when a Teams page break exists');
-
-    global._mockForm = null;
-    global._mockPrevSs = null;
-    global._mockManagedSheet = null;
 }
 
-// Test: Team field lookup does not confuse Team type with the Team choice item.
+// Test: buildPrefilledGoalUpdateUrl's Team field lookup does not confuse Team type with the
+// Team choice item. Called directly — see the note on the page-break test above.
 {
-    mailsSent = [];
-    global._mockPrevSs = {};
-    global._mockManagedSheet = {
-        getAllRows: function() {
-            return [{
-                F3_NAME: 'TestPax',
-                TEAM_TYPE: 'AO',
-                TEAM: 'Crucible',
-                OTHER_TEAM: '',
-                WHO: 'Leader',
-                WHAT: 'Run hard',
-                HOW: 'Track daily',
-                PHONE: '555-9999'
-            }];
-        }
-    };
-
     function makeChoiceItem(title, choices, type) {
         return {
             getType: function() { return type; },
@@ -884,27 +839,11 @@ const nonReuseFormRow = () => ['ts', 'a@example.com', 'No', 'TestPax', '', '', '
         }
     };
 
-    global._mockForm = fakeForm;
-
-    maybeReuseLastMonthsGoals_(
-        {
-            getFormUrl: function() { return 'https://docs.google.com/forms/d/mock/viewform'; },
-            getId: function() { return 'current-sheet-id'; },
-            getSheetByName: function(name) { return name === 'PaxDB' ? makeMockPaxDbSheetFromManagedRows_() : null; },
-            getUrl: function() { return 'https://mock-ss.example.com'; }
-        },
-        makeMockResponsesSheet(HEADERS),
-        2,
-        reusableFormRow()
-    );
+    buildPrefilledGoalUpdateUrl(fakeForm, reusableFormRow(), { ...reusedValues, team: 'Crucible' }, responseColumns);
 
     assert.ok(capturedResponses.some(function(response) {
         return response && response.itemTitle === 'Team' && response.value === 'Crucible';
     }), 'Team item receives the Crucible prefill even when Team type appears first');
-
-    global._mockForm = null;
-    global._mockPrevSs = null;
-    global._mockManagedSheet = null;
 }
 
 console.log('test_signup_reuse.js: PASS');

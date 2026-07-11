@@ -54,3 +54,7 @@
 # - github.repo
 
 export.auto: true
+
+export.git-add: false
+
+export.interval: 0s

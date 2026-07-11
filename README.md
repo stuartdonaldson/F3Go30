@@ -1,12 +1,25 @@
 # F3Go30
 
-Google Apps Script automation for managing monthly Go30 fitness challenge trackers in Google Sheets.
+Google Apps Script automation for managing monthly Go30 habit-challenge trackers in Google Sheets, with phone-friendly web apps for PAX to sign up, check in daily, track progress, and log bonus points.
 
-About
+## Overview
 
-- Short: Automates copying and initializing a monthly Go30 tracker spreadsheet and its signup form, wiring triggers, URL shortening, and logging for non-technical operators.
-- Topics: apps-script, google-sheets, automation, fitness, go30, beads, gdpr-conscious
+Go30 is an F3 monthly habit challenge, built on the *Atomic Habits* premise that small actions repeated consistently reshape who you become: each PAX picks one small, specific Daily Challenge (e.g. 15 minutes of stretching, journaling, no phone while driving), commits to it, and scores it Hit or Miss each day for the month — with a team for accountability. F3Go30 runs the whole cycle:
 
+- **Monthly tracker automation** — copies and initializes each month's tracker spreadsheet and signup form, wires time-based triggers, shortens URLs, and logs to Axiom, all driven from a single Template so a non-technical Site-Q never touches the plumbing.
+- **PAX web apps** — sign-up (Hard Commit), one-tap daily check-in, a personal dashboard (streaks, month-progress ring, team board), and bonus-point logging (Fellowship, Q, Inspire, EHing an FNG). All served as Apps Script `doGet`/`doPost` endpoints reading and writing the region's own spreadsheet — no external hosting, API, or database. The app remembers each PAX via a bookmarkable "identify-once" link.
+
+Topics: apps-script, google-sheets, automation, fitness, go30, beads, gdpr-conscious
+
+## Status
+
+**Current — v2.3.15, deployed to PROD.** The full PAX-facing web app UI (sign-up, daily check-in, dashboard, bonus points) is live, with the "identify-once / remember me" flow hardened after a round of live bug-fixing. Two environments run in parallel: **PROD** (the live Template) and **SIT** (integration testing). See [docs/CHANGELOG.md](docs/CHANGELOG.md) for the user-facing feature history.
+
+**What's next, in order:**
+
+1. **Stability first.** Before new features, close out known defects and shore up test tooling — e.g. the dashboard hard-erroring when a PAX navigates to a month they weren't registered for (`F3Go30-awhw`), and re-architecting the SIT/smoke test harness so multi-month and bonus-edit flows have real coverage (`F3Go30-4j4o`). See `bd ready` for the current queue.
+2. **User-facing feature push.** Once stable, the next UI investment is **branding**, **awards for progress** (recognizing streaks and milestones), and **inspiration** woven into the check-in and dashboard experience.
+3. **Published documentation & explainer video.** Ship durable, publicly linkable docs (the newcomer [Intro](docs/Go30-Intro.md) and [FAQ](docs/Go30-FAQ.md) are drafted) and produce a PAX explainer video for registration and sign-in (`F3Go30-xc7`).
 
 ---
 

@@ -197,8 +197,7 @@ function copyAndInit() {
  * @param {Date}        options.startDate           First day of the new tracker month
  * @param {string}      options.newSpreadsheetName  Name for the new spreadsheet
  * @param {Folder}      options.folder              Drive folder for the new artifacts
- * @param {boolean}     options.smokeMode
- * @param {string}      options.nameSpace           e.g. "F3 Go30" or "F3 Go30 (Smoke)"
+ * @param {string}      options.nameSpace           e.g. "F3 Go30"
  * @param {Object}      options.siteQConfig         { primary: name, secondary: email }
  * @param {Sheet|null}  options.configSheet         Config sheet of sourceSpreadsheet
  * @param {Array[]|null} options.configData         Config sheet values
@@ -213,7 +212,6 @@ function createTrackerSpreadsheet_(options) {
   var startDate = options.startDate;
   var newSpreadsheetName = options.newSpreadsheetName;
   var folder = options.folder;
-  var smokeMode = options.smokeMode;
   var nameSpace = options.nameSpace;
   var siteQConfig = options.siteQConfig;
   var configSheet = options.configSheet;
@@ -262,10 +260,6 @@ function createTrackerSpreadsheet_(options) {
     var newFile = DriveApp.getFileById(sourceSpreadsheet.getId()).makeCopy(newSpreadsheetName, folder);
     newSpreadsheetId = newFile.getId();
     var newSpreadsheet = SpreadsheetApp.openById(newSpreadsheetId);
-
-    if (smokeMode) {
-      PropertiesService.getScriptProperties().setProperty('SMOKE_TRACKER_ID', newSpreadsheetId);
-    }
 
     // PAX interact via the Form only — VIEW permission is sufficient and prevents data corruption
     newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
@@ -446,8 +440,7 @@ function createTrackerForMonth_(currentSpreadsheet, startDate, logFn) {
     }
     logFn('Config: NameSpace was not set — wrote default "' + DEFAULT_NAMESPACE + '". Update the Config sheet NameSpace row to change the region identifier.');
   }
-  const smokeMode = PropertiesService.getScriptProperties().getProperty('SMOKE_MODE') === 'true';
-  const nameSpace = nameSpaceConfig.primary + (smokeMode ? ' (Smoke)' : '');
+  const nameSpace = nameSpaceConfig.primary;
   const paddedMonth = String(startDate.getMonth() + 1).padStart(2, '0');
   const newSpreadsheetName = startDate.getFullYear() + '-' + paddedMonth + '-' + nameSpace;
 
@@ -469,7 +462,6 @@ function createTrackerForMonth_(currentSpreadsheet, startDate, logFn) {
       startDate: startDate,
       newSpreadsheetName: newSpreadsheetName,
       folder: folder,
-      smokeMode: smokeMode,
       nameSpace: nameSpace,
       siteQConfig: siteQConfig,
       configSheet: configSheet,
@@ -952,11 +944,10 @@ function autoGenerateNextMonthTracker_() {
     });
     return;
   }
-  const smokeMode = PropertiesService.getScriptProperties().getProperty('SMOKE_MODE') === 'true';
-  const nameSpace = nameSpaceConfig.primary + (smokeMode ? ' (Smoke)' : '');
+  const nameSpace = nameSpaceConfig.primary;
   const newSpreadsheetName = nextMonthStart.getFullYear() + '-' + paddedMonth + '-' + nameSpace;
 
-  GasLogger.log('autoGenerateNextMonthTracker.creating', { spreadsheetName: newSpreadsheetName, smokeMode: smokeMode });
+  GasLogger.log('autoGenerateNextMonthTracker.creating', { spreadsheetName: newSpreadsheetName });
 
   let result;
   try {
@@ -972,7 +963,6 @@ function autoGenerateNextMonthTracker_() {
       startDate: nextMonthStart,
       newSpreadsheetName: newSpreadsheetName,
       folder: folder,
-      smokeMode: smokeMode,
       nameSpace: nameSpace,
       siteQConfig: siteQConfig,
       configSheet: configSheet,

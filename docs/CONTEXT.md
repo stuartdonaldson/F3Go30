@@ -10,7 +10,7 @@
 
 ### Purpose
 
-F3Go30 automates the monthly lifecycle of a Go30 fitness challenge tracker in Google Sheets:
+F3Go30 automates the monthly lifecycle of a Go30 habit-challenge tracker in Google Sheets:
 copying a template spreadsheet, linking a Google Form for sign-ups, initializing sheets, and —
 from the Template's centrally-dispatched triggers — handling form submissions and marking missed
 check-ins nightly for every active tracker. It allows a single Q (site leader) to stand up a new
@@ -342,7 +342,7 @@ Constraints:
 | HC | Hard Commit — a formal commitment by a PAX to participate; submitted via Google Form |
 | Q | Leader of an F3 workout or challenge session; in this context the site Q manages the Go30 tracker |
 | Site Q | The Q responsible for a specific F3 region's Go30 instance; typically the spreadsheet owner |
-| Go30 | A 30-day F3 fitness challenge tracked in Google Sheets |
+| Go30 | A monthly F3 habit-building challenge, rooted in *Atomic Habits*: each PAX picks one small, specific Daily Challenge and scores it Hit (1) / Miss (0) / No-report (−1) each day for the month, with a team for accountability. Tracked in Google Sheets. The "30" is the ~30 days of consistent daily repetition, not a per-day duration |
 | FNG | Friendly New Guy — a first-time F3 participant |
 | Tracker sheet | The primary worksheet in the Go30 spreadsheet; one row per PAX, one column per day |
 | Bonus Tracker | A secondary sheet where PAX log bonus-point activities (EH, Fellowship, Inspiration, Q) |

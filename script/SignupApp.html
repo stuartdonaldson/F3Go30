@@ -241,6 +241,7 @@
   var MONTHS = <?!= monthsJson ?>;
   var APP_VERSION = <?!= JSON.stringify(appVersion) ?>;
   var CMD_ = 'signup'; // read by IdentityCore's callApi() to post to ?cmd=signup
+  var NS_ = <?!= urlNsJson ?> || ''; // ADR-014 D3 — echoed on every callApi() POST by IdentityCore
 </script>
 <?!= include_('IdentityCore') ?>
 <script>

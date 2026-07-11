@@ -42,6 +42,12 @@ var ct_updateTrackerDB = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsM
 	(typeof globalThis !== 'undefined' && globalThis._updateTrackerDB);
 var ct_updatePaxDB = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_._updatePaxDB) ||
 	(typeof globalThis !== 'undefined' && globalThis._updatePaxDB);
+var ct_appendNamespaceRegistryRow_ = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_.appendNamespaceRegistryRow_) ||
+	(typeof globalThis !== 'undefined' && globalThis.appendNamespaceRegistryRow_);
+var ct_lookupNamespaceRegistryRow_ = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_._lookupNamespaceRegistryRow_) ||
+	(typeof globalThis !== 'undefined' && globalThis._lookupNamespaceRegistryRow_);
+var ct_removeNamespaceRegistryRow_ = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_.removeNamespaceRegistryRow_) ||
+	(typeof globalThis !== 'undefined' && globalThis.removeNamespaceRegistryRow_);
 
 /**
  * Filters TrackerDB rows down to real, non-smoke, non-expired monthly trackers and returns
@@ -150,24 +156,39 @@ function applySafeConfigDefaults_(configSheet, folderName) {
 }
 
 /**
- * Copies the Template (+ bound script) and the `trackerCount` most recent real monthly
- * trackers into a new sibling Drive folder named `folderName`, then rebuilds the copy's
- * TrackerDB/PaxDB from scratch using only those copied trackers.
- * @param {string} folderName
+ * Copies a source Template (+ bound script) and the `trackerCount` most recent real monthly
+ * trackers into a new sibling Drive folder named `folderName`, rebuilds the copy's
+ * TrackerDB/PaxDB from scratch using only those copied trackers, then registers the new
+ * environment as a `NamespaceDB` row in the *destination* (active/executing) deployment.
+ *
+ * Per ADR-014 D6, source and destination are deliberately decoupled: `sourceTemplateId` is an
+ * explicit spreadsheet id (typically PROD's Template) copied FROM, while the active spreadsheet
+ * (typically SIT) is the registry copied TO — it owns the `NamespaceDB` sheet that the new
+ * environment is registered into. Run from SIT, this copies PROD without ever copying SIT
+ * itself.
+ * @param {string} folderName Also becomes the new environment's NameSpace (registry key).
+ * @param {string} sourceTemplateId Spreadsheet id of the Template to copy FROM. Required —
+ *   never defaults to the active spreadsheet, or SIT would copy itself instead of PROD.
  * @param {number=} trackerCount Defaults to 3.
+ * @param {string=} kind NamespaceDB `Kind` column (`smoke` | `regional` | `demo`). Defaults to 'smoke'.
  * @param {function(string)=} logFn Progress callback.
- * @returns {{newFolderId, newFolderUrl, newTemplateId, newTemplateUrl, copiedTrackers: Array}}
+ * @returns {{newFolderId, newFolderUrl, newTemplateId, newTemplateUrl, copiedTrackers: Array, nameSpace: string, kind: string}}
  */
-function copyTemplateToNewEnvironment_(folderName, trackerCount, logFn) {
+function copyTemplateToNewEnvironment_(folderName, sourceTemplateId, trackerCount, kind, logFn) {
 	logFn = logFn || function() {};
 	trackerCount = trackerCount || 3;
+	kind = kind || 'smoke';
 
 	if (!folderName || !String(folderName).trim()) {
 		throw new Error('folderName is required');
 	}
+	if (!sourceTemplateId || !String(sourceTemplateId).trim()) {
+		throw new Error('sourceTemplateId is required');
+	}
 
-	var templateSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-	var templateFile = DriveApp.getFileById(templateSpreadsheet.getId());
+	var registrySpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+	var templateSpreadsheet = SpreadsheetApp.openById(sourceTemplateId);
+	var templateFile = DriveApp.getFileById(sourceTemplateId);
 	var parents = templateFile.getParents();
 	if (!parents.hasNext()) {
 		throw new Error('Cannot determine Drive folder for the Template spreadsheet — it must live in a folder, not My Drive root.');
@@ -236,12 +257,76 @@ function copyTemplateToNewEnvironment_(folderName, trackerCount, logFn) {
 	ct_updatePaxDB(paxRows, newTemplateSpreadsheet);
 	logFn('Seeded new TrackerDB (' + newTrackerDbRows.length + ' rows) and PaxDB (' + paxRows.length + ' rows).');
 
+	ct_appendNamespaceRegistryRow_(registrySpreadsheet, {
+		nameSpace: folderName,
+		templateId: newTemplateId,
+		kind: kind
+	});
+	logFn('Registered NamespaceDB row: NameSpace="' + folderName + '" -> TemplateId=' + newTemplateId + ' (Kind=' + kind + ').');
+
 	return {
 		newFolderId: newFolder.getId(),
 		newFolderUrl: newFolder.getUrl(),
 		newTemplateId: newTemplateId,
 		newTemplateUrl: newTemplateFile.getUrl(),
-		copiedTrackers: copiedTrackers
+		copiedTrackers: copiedTrackers,
+		nameSpace: folderName,
+		kind: kind
+	};
+}
+
+/**
+ * Tears down a namespace environment provisioned by copyTemplateToNewEnvironment_, per
+ * ADR-014 D6 lifecycle (i5md.4). Removes the NamespaceDB row FIRST — this is the primary
+ * safety cut, since it makes the ns unresolvable via resolveTemplateSpreadsheet_ immediately,
+ * regardless of whether the Drive trash step below succeeds. Namespace environments install no
+ * triggers of their own (see file header), so there is no trigger-leak mode to guard against
+ * here — unlike cleanupTrackerArtifact_, which must also clear a form-submit trigger.
+ * @param {string} ns NameSpace to tear down.
+ * @param {boolean=} trashFolder Also trash the environment's whole Drive folder (the Template
+ *   copy + every tracker spreadsheet copied alongside it, since copyTemplateToNewEnvironment_
+ *   places them all in one sibling folder). Default false.
+ * @param {function(string)=} logFn Progress callback.
+ * @returns {{nameSpace: string, templateId: string, registryRowRemoved: boolean,
+ *   folderId: (string|null), folderTrashed: boolean}}
+ */
+function teardownNamespaceEnvironment_(ns, trashFolder, logFn) {
+	logFn = logFn || function() {};
+	if (!ns || !String(ns).trim()) {
+		throw new Error('ns is required');
+	}
+
+	var registrySpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+	var registryRow = ct_lookupNamespaceRegistryRow_(registrySpreadsheet, ns);
+	if (!registryRow) {
+		throw new Error('NamespaceDB has no row for ns="' + ns + '" -- nothing to tear down.');
+	}
+
+	var registryRowRemoved = ct_removeNamespaceRegistryRow_(registrySpreadsheet, ns);
+	logFn('Removed NamespaceDB row for ns="' + ns + '" (unresolvable immediately).');
+
+	var folderId = null;
+	var folderTrashed = false;
+	if (trashFolder) {
+		var templateFile = DriveApp.getFileById(registryRow.templateId);
+		var parents = templateFile.getParents();
+		if (parents.hasNext()) {
+			var folder = parents.next();
+			folderId = folder.getId();
+			folder.setTrashed(true);
+			folderTrashed = true;
+			logFn('Trashed environment folder (' + folderId + ') -- Template copy + all copied trackers.');
+		} else {
+			logFn('Could not determine environment folder for TemplateId=' + registryRow.templateId + ' -- skipped folder trash.');
+		}
+	}
+
+	return {
+		nameSpace: ns,
+		templateId: registryRow.templateId,
+		registryRowRemoved: registryRowRemoved,
+		folderId: folderId,
+		folderTrashed: folderTrashed
 	};
 }
 
@@ -252,6 +337,7 @@ if (typeof module !== 'undefined' && module.exports) {
 		computeSafeConfigDefaults_: computeSafeConfigDefaults_,
 		buildRenamedTrackerName_: buildRenamedTrackerName_,
 		applySafeConfigDefaults_: applySafeConfigDefaults_,
-		copyTemplateToNewEnvironment_: copyTemplateToNewEnvironment_
+		copyTemplateToNewEnvironment_: copyTemplateToNewEnvironment_,
+		teardownNamespaceEnvironment_: teardownNamespaceEnvironment_
 	};
 }

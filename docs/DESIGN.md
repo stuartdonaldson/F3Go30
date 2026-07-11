@@ -92,7 +92,7 @@ Known code-level risks:
 | URL shortener returns non-200 | Error caught but fallback URL not surfaced with actionable message | Known gap |
 | `autoGenerateNextMonthTracker` installed on wrong spreadsheet | If installed on a monthly tracker instead of the template, copies from that tracker not the template | Install monthly trigger only on the template spreadsheet |
 | Ambiguous or missing `TrackerDB` row match for a context date | A `TrackerDB` row with a duplicate StartDate, or no row at all covering a given date, leaves dispatch with no defined target | `resolveTrackerDbRowForContextDate_` (go30tools.js) throws rather than silently picking a row or no-op'ing (F3Go30-vr80) — an operator error (bad/missing `TrackerDB` row) still surfaces as a logged failure, not a misdirected write |
-| A smoke or expired tracker spreadsheet left in the active spreadsheet's Drive folder | `scanTrackers()`'s folder walk scanned anything tracker-shaped with no filtering, so a stray smoke/expired file would land in `TrackerDB`/`PaxDB` as if real | `_qualifySourceFiles_` excludes by name (`(Smoke)`/`(Expired)`) and by `SMOKE_TRACKER_ID` match; headless runs log a warning and exclude, never silently include (F3Go30-xj1q.2) |
+| A smoke or expired tracker spreadsheet left in the active spreadsheet's Drive folder | `scanTrackers()`'s folder walk scanned anything tracker-shaped with no filtering, so a stray smoke/expired file would land in `TrackerDB`/`PaxDB` as if real | `_qualifySourceFiles_` excludes by name (`(Smoke)`/`(Expired)`); headless runs log a warning and exclude, never silently include (F3Go30-xj1q.2) |
 
 ---
 
@@ -190,8 +190,7 @@ that cannot guarantee a sidebar context must call `Logger.log()` directly.
 - **scanTrackers source qualification (F3Go30-xj1q.2) — DECIDED:** `scanTrackers()`
   (`go30tools.js`) walks the active spreadsheet's sibling Drive folder (same boundary for the
   Template, SIT, or any CopyTemplate-copied environment) and now runs every file found through
-  `_qualifySourceFiles_` before scanning: a name containing `(Smoke)`/`(Expired)`, or a SheetId
-  matching the current `SMOKE_TRACKER_ID` script property (`SmokeMode.js`), is excluded by
+  `_qualifySourceFiles_` before scanning: a name containing `(Smoke)`/`(Expired)` is excluded by
   default — mirroring the filter `CopyTemplate.js`'s `selectRecentRealTrackerRows_` already
   applies to `TrackerDB` rows, but applied to the raw folder walk instead. Headless callers
   (the `runScanTrackers` admin action, any future time trigger) get silent exclusion plus one

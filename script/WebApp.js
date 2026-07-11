@@ -43,8 +43,8 @@ function include_(filename) {
  * Renders the default (no-cmd) landing page: links to Sign Up, Dashboard/Check-in, and the
  * current month's tracker spreadsheet. Replaces the old bare {"status":"ok"} JSON response.
  */
-function renderHomePage_() {
-  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+function renderHomePage_(e) {
+  var spreadsheet = resolveTemplateSpreadsheet_(e);
   var webAppUrl = ScriptApp.getService().getUrl();
   var months = getCurrentAndNextMonths_(spreadsheet);
 
@@ -68,7 +68,7 @@ function renderHomePage_() {
  *   server-side, and templated in explicitly, exactly like CheckinApp.html's saved-link token.
  */
 function renderSignupPage_(e) {
-  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var spreadsheet = resolveTemplateSpreadsheet_(e);
   var lists = readTeamLists_(spreadsheet);
   var months = getCurrentAndNextMonths_(spreadsheet);
 
@@ -77,8 +77,8 @@ function renderSignupPage_(e) {
   template.aoListJson = JSON.stringify(lists.aoList);
   template.goalListJson = JSON.stringify(lists.goalList);
   // Only current/next are ever meant for the client — getCurrentAndNextMonths_ also returns
-  // `smoke` (the smoke tracker's sheetId) whenever SMOKE_MODE is active, which must never be
-  // embedded in a page anonymous users can view source on.
+  // `explicit` (an out-of-band-selected test month's sheetId, when a caller supplied one),
+  // which must never be embedded in a page anonymous users can view source on.
   template.monthsJson = JSON.stringify({ current: months.current, next: months.next });
   template.appVersion = APP_VERSION;
   template.urlTargetMonthJson = JSON.stringify((e && e.parameter && e.parameter.targetMonth) || null);
@@ -97,6 +97,11 @@ function renderSignupPage_(e) {
     }
   }
   template.urlIdentityJson = JSON.stringify(sessionIdentity);
+  // ns (ADR-014 D3): same "sandboxed iframe carries no query string" constraint as
+  // targetMonth/id above — read here server-side and echoed by SignupApp.html's callApi()
+  // POSTs (via IdentityCore.html's shared client) so a namespace-scoped request stays scoped
+  // across the whole signup flow, not just the initial page load.
+  template.urlNsJson = JSON.stringify((e && e.parameter && e.parameter.ns) || null);
   return template.evaluate().setTitle('Go30 Hard Commit Signup').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -109,7 +114,7 @@ function handleSignupPost_(e) {
     return jsonOutput_({ ok: false, error: 'invalid_json' });
   }
 
-  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var spreadsheet = resolveTemplateSpreadsheet_(e, payload);
   try {
     if (payload.action === 'identify') return jsonOutput_(handleSignupIdentify_(spreadsheet, payload));
     if (payload.action === 'save')     return jsonOutput_(handleSignupSave_(spreadsheet, payload));
@@ -194,7 +199,7 @@ function handleAdminPost_(e) {
       var createTrackerLog = [];
       try {
         var createTrackerResult = createTrackerForMonth_(
-          SpreadsheetApp.getActiveSpreadsheet(), newTrackerStartDate,
+          resolveTemplateSpreadsheet_(e, payload), newTrackerStartDate,
           function(msg) { createTrackerLog.push(msg); }
         );
         return jsonOutput_({
@@ -275,17 +280,6 @@ function handleAdminPost_(e) {
       GasLogger.log('handleAdminPost_.deleteOrphanedTriggers', { removedCount: removed.length });
       return jsonOutput_({ ok: true, removedCount: removed.length, removed: removed });
     }
-    if (payload.action === 'getSmokeStatus') {
-      // Returns the current environment and smoke mode state — use to confirm which
-      // environment you're talking to and whether a smoke test is in progress.
-      var props = PropertiesService.getScriptProperties();
-      return jsonOutput_({
-        ok: true,
-        deployTarget: (typeof APP_DEPLOY_TARGET !== 'undefined' ? APP_DEPLOY_TARGET : 'unknown'),
-        smokeMode: props.getProperty('SMOKE_MODE') === 'true',
-        smokeTrackerId: props.getProperty('SMOKE_TRACKER_ID') || null
-      });
-    }
     if (payload.action === 'invalidateAllCache') {
       // Runs inside this deployed webapp's own script project — the only PropertiesService
       // store PaxCache entries actually live in (see PaxCache.js's wipeAllPaxCache_ docstring
@@ -294,6 +288,8 @@ function handleAdminPost_(e) {
       var wipedCount = wipeAllPaxCache_();
       var layoutCleared = 0;
       try {
+        // Stays bound (ADR-014 D2/D4): PaxCache/layout cache keys live in this executing
+        // deployment's own PropertiesService/CacheService store, never in a namespace copy.
         var trackerState = _readTrackerDbRowsBySheetId_(SpreadsheetApp.getActiveSpreadsheet());
         var layoutKeys = Object.keys(trackerState.bySheetId).map(trackerLayoutCacheKey_);
         if (layoutKeys.length) {
@@ -315,6 +311,8 @@ function handleAdminPost_(e) {
       return jsonOutput_({ ok: true, webappUrl: url });
     }
     if (payload.action === 'listSheets') {
+      // Stays bound (ADR-014 D2): diagnostic listing for this executing deployment's own
+      // Template, not a tenant-data read — no sheetId/ns override needed, unlike getSheet.
       var allSheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
       return jsonOutput_({ ok: true, sheets: allSheets.map(function(s) {
         return { name: s.getName(), hidden: s.isSheetHidden(), index: s.getIndex() };
@@ -324,6 +322,8 @@ function handleAdminPost_(e) {
       if (!payload.sheetName) {
         return jsonOutput_({ ok: false, error: 'sheetName is required' });
       }
+      // Stays bound absent sheetId (ADR-014 D2): admin's own explicit-sheetId override is
+      // the targeting mechanism here, not ns — this is the precedent pattern the ADR cites.
       var getSheetSs = payload.sheetId
         ? SpreadsheetApp.openById(payload.sheetId)
         : SpreadsheetApp.getActiveSpreadsheet();
@@ -341,13 +341,7 @@ function handleAdminPost_(e) {
       return jsonOutput_({ ok: true, csv: csv });
     }
     if (payload.action === 'runScanTrackers') {
-      // Scans sibling tracker spreadsheets and refreshes TrackerDB/PaxDB. Blocked during
-      // Smoke mode — scanning while smoke signups exist would write test data into PaxDB,
-      // contaminating goal-reuse lookups for real PAX.
-      var smokeActive = PropertiesService.getScriptProperties().getProperty('SMOKE_MODE') === 'true';
-      if (smokeActive) {
-        return jsonOutput_({ ok: false, error: 'smoke_mode_active', message: 'runScanTrackers is blocked while SMOKE_MODE is active — clean up the smoke test first.' });
-      }
+      // Scans sibling tracker spreadsheets and refreshes TrackerDB/PaxDB.
       var scanResult = scanTrackers();
       return jsonOutput_({ ok: true, result: scanResult });
     }
@@ -371,6 +365,7 @@ function handleAdminPost_(e) {
       if (!payload.sheetName) {
         return jsonOutput_({ ok: false, error: 'sheetName is required' });
       }
+      // Stays bound absent sheetId (ADR-014 D2) — same precedent as getSheet above.
       var formulaSs = payload.sheetId
         ? SpreadsheetApp.openById(payload.sheetId)
         : SpreadsheetApp.getActiveSpreadsheet();
@@ -414,17 +409,22 @@ function handleAdminPost_(e) {
       return jsonOutput_({ ok: true, result: result });
     }
     if (payload.action === 'copyTemplate') {
-      // Stands up a new environment's files: copies the Template (+ bound script) and the
-      // N most recent real trackers into a new sibling Drive folder, then rebuilds that
-      // copy's TrackerDB/PaxDB from only the copied trackers. See CopyTemplate.js file header
-      // — deliberately does not touch triggers/forms/short links or deploy anything.
+      // Stands up a new environment's files: copies a source Template (+ bound script,
+      // typically PROD's) and the N most recent real trackers into a new sibling Drive
+      // folder, rebuilds that copy's TrackerDB/PaxDB from only the copied trackers, and
+      // registers it as a NamespaceDB row in the active (destination) deployment, typically
+      // SIT — see CopyTemplate.js file header and ADR-014 D6. Deliberately does not touch
+      // triggers/forms/short links or deploy anything.
       if (!payload.folderName) {
         return jsonOutput_({ ok: false, error: 'folderName is required' });
+      }
+      if (!payload.sourceTemplateId) {
+        return jsonOutput_({ ok: false, error: 'sourceTemplateId is required' });
       }
       var copyTemplateLog = [];
       try {
         var copyResult = copyTemplateToNewEnvironment_(
-          payload.folderName, payload.trackerCount || 3,
+          payload.folderName, payload.sourceTemplateId, payload.trackerCount || 3, payload.kind || 'smoke',
           function(msg) { copyTemplateLog.push(msg); }
         );
         GasLogger.log('handleAdminPost_.copyTemplate', {
@@ -436,6 +436,24 @@ function handleAdminPost_(e) {
       } catch (err) {
         GasLogger.log('handleAdminPost_.copyTemplate.error', { error: err.message });
         return jsonOutput_({ ok: false, error: 'server_error', detail: err.message, log: copyTemplateLog });
+      }
+    }
+    if (payload.action === 'teardownEnvironment') {
+      // Whole-environment counterpart to cleanupTracker (which only tears down one tracker):
+      // removes the NamespaceDB row for `nameSpace` (the primary safety cut — makes it
+      // unresolvable immediately) and, if trashFolder is set, trashes the environment's whole
+      // Drive folder (Template copy + every tracker copied alongside it by copyTemplate) — see
+      // teardownNamespaceEnvironment_ (CopyTemplate.js) and ADR-014 D6.
+      if (!payload.nameSpace) {
+        return jsonOutput_({ ok: false, error: 'nameSpace is required' });
+      }
+      try {
+        var teardownResult = teardownNamespaceEnvironment_(payload.nameSpace, !!payload.trashFolder, function() {});
+        GasLogger.log('handleAdminPost_.teardownEnvironment', Object.assign({ nameSpace: payload.nameSpace }, teardownResult));
+        return jsonOutput_(Object.assign({ ok: true }, teardownResult));
+      } catch (err) {
+        GasLogger.log('handleAdminPost_.teardownEnvironment.error', { error: err.message });
+        return jsonOutput_({ ok: false, error: 'server_error', detail: err.message });
       }
     }
     return jsonOutput_({ ok: false, error: 'unknown_action' });
@@ -454,7 +472,7 @@ function doGet(e) {
     if (e && e.parameter && e.parameter.cmd === 'checkin') {
       return renderCheckinPage_(e);
     }
-    return renderHomePage_();
+    return renderHomePage_(e);
   });
 }
 
@@ -480,4 +498,10 @@ function doPost(e) {
     }
     return jsonOutput_({ status: 'ok' });
   });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    renderSignupPage_: renderSignupPage_,
+  };
 }

@@ -248,41 +248,27 @@ const monthsNoNext = resolveSignupMonths_(onlyThroughJune, today);
 assert.equal(monthsNoNext.current.sheetId, 'sheet-june');
 assert.equal(monthsNoNext.next, null);
 
-// No smokeTrackerId passed -> smoke is null, current/next unaffected (default behavior)
-assert.equal(months.smoke, null);
+// --- selectTargetMonth_ — the shared 'current'|'next'|'explicit' selector signup and
+// checkin action handlers both use. ---
+assert.equal(selectTargetMonth_(months, undefined), months.current, 'default is current');
+assert.equal(selectTargetMonth_(months, 'current'), months.current);
+assert.equal(selectTargetMonth_(months, 'next'), months.next);
 
-// --- resolveSignupMonths_ smoke exclusion — a smoke tracker is created with the same
-// StartDate a real tracker for that month would use (docs/OPERATIONS.md §Smoke Mode), so it
-// must never win the "latest Date wins" tie-break for current/next, only be reachable via its
-// own `smoke` slot. ---
+// --- resolveSignupMonths_ explicit-sheetId targeting (F3Go30-i5md.6/4j4o.2) — lets a
+// namespace-scoped test caller address an arbitrary month (e.g. one of the ~3 real months a
+// provisioned test environment copied) that isn't 'current'/'next', so the same PAX can be
+// placed in two genuinely separate months at once for cross-month bonus-relocation coverage.
+// Excluded from the current/next tie-break, reachable only via its own `explicit` slot /
+// targetMonth: 'explicit'. ---
+const monthsWithExplicit = resolveSignupMonths_(parsedLinks, today, 'sheet-april');
+assert.equal(monthsWithExplicit.current.sheetId, 'sheet-june', 'explicit target does not disturb current');
+assert.equal(monthsWithExplicit.next.sheetId, 'sheet-july-v2', 'explicit target does not disturb next');
+assert.equal(monthsWithExplicit.explicit.sheetId, 'sheet-april', 'explicit target reachable via its own slot');
+assert.equal(selectTargetMonth_(monthsWithExplicit, 'explicit'), monthsWithExplicit.explicit);
 
-// Smoke shares July's StartDate with the real 'sheet-july-v2' row, and was written later
-// (Date 2026-06-25 > 2026-06-22) — without exclusion it would silently hijack 'next'.
-const LINKS_WITH_SMOKE = LINKS_VALUES.concat([
-  [new Date(2026, 5, 25), new Date(2026, 6, 1), '2026-07-F3-Go30a (Smoke)', null, null, null, null, 'sheet-smoke', 'form-smoke'],
-]);
-const parsedWithSmoke = parseLinksRows_(LINKS_WITH_SMOKE);
-const monthsWithSmoke = resolveSignupMonths_(parsedWithSmoke, today, 'sheet-smoke');
-assert.equal(monthsWithSmoke.current.sheetId, 'sheet-june', 'smoke exclusion does not disturb current');
-assert.equal(monthsWithSmoke.next.sheetId, 'sheet-july-v2', 'smoke never wins the next-month tie-break');
-assert.equal(monthsWithSmoke.smoke.sheetId, 'sheet-smoke', 'smoke is reachable via its own slot');
-
-// Without a smokeTrackerId, the same fixture reproduces the hijack this exclusion prevents —
-// documents the bug this fix closes, not just the fix itself.
-const monthsWithoutExclusion = resolveSignupMonths_(parsedWithSmoke, today);
-assert.equal(monthsWithoutExclusion.next.sheetId, 'sheet-smoke', 'no smokeTrackerId: smoke wins the tie-break (the bug)');
-
-// If SMOKE_MODE isn't active, resolveSignupMonths_ is never called with a smokeTrackerId at
-// all (getCurrentAndNextMonths_ passes null), and smoke stays completely absent — same as
-// today's behavior for every deployment that isn't mid-smoke-test.
-assert.equal(resolveSignupMonths_(parsedWithSmoke, today, null).smoke, null);
-
-// --- selectTargetMonth_ — the shared 'current'|'next'|'smoke' selector signup and checkin
-// action handlers both use. ---
-assert.equal(selectTargetMonth_(monthsWithSmoke, undefined), monthsWithSmoke.current, 'default is current');
-assert.equal(selectTargetMonth_(monthsWithSmoke, 'current'), monthsWithSmoke.current);
-assert.equal(selectTargetMonth_(monthsWithSmoke, 'next'), monthsWithSmoke.next);
-assert.equal(selectTargetMonth_(monthsWithSmoke, 'smoke'), monthsWithSmoke.smoke);
+// Unknown/absent explicitSheetId -> explicit is null, not an error
+assert.equal(resolveSignupMonths_(parsedLinks, today).explicit, null, 'no explicitSheetId: explicit absent');
+assert.equal(resolveSignupMonths_(parsedLinks, today, 'sheet-does-not-exist').explicit, null, 'unknown explicitSheetId: explicit absent');
 
 // --- handleSignupFeedback_ — blank rating + blank comment must not touch the sheet at all,
 // since writing them would overwrite feedback already on file. The guard runs before any

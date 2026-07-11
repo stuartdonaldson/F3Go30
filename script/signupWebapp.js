@@ -32,12 +32,6 @@ var deletePaxCacheRow_sw_ = (signupWebappPaxCacheModule_ && signupWebappPaxCache
 var patchPaxRosterIndex_sw_ = (signupWebappPaxCacheModule_ && signupWebappPaxCacheModule_.patchPaxRosterIndex_)
   || (typeof globalThis !== 'undefined' && globalThis.patchPaxRosterIndex_);
 
-var signupWebappSmokeModeModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./SmokeMode.js')
-  : null;
-var getSmokeTrackerId_sw_ = (signupWebappSmokeModeModule_ && signupWebappSmokeModeModule_.getSmokeTrackerId_)
-  || (typeof globalThis !== 'undefined' && globalThis.getSmokeTrackerId_);
-
 var signupWebappCheckinSessionsModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./CheckinSessions.js')
   : null;
@@ -368,40 +362,40 @@ function parseLinksRows_(values) {
 }
 
 /** Shapes a parsed Links row into the {sheetId, trackerUrl, label, startDate} target objects
- *  resolveSignupMonths_ returns for current/next/smoke. */
+ *  resolveSignupMonths_ returns for current/next/explicit. */
 function formatMonthTarget_(row) {
   return row ? { sheetId: row.sheetId, trackerUrl: row.trackerUrl, label: formatRegistrationMonth_(row.startDate), startDate: row.startDate } : null;
 }
 
 /**
- * Resolves "current month", "next month", and (if active) "smoke" tracker targets from parsed
- * Links rows (requirements doc §6.3). Current = the most recent StartDate not in the future,
- * relative to `today`. Next = the Links entry one calendar month after current's StartDate, if
- * any. When multiple rows share the same StartDate (a tracker was re-created), the row with the
- * latest `date` wins.
+ * Resolves "current month" and "next month" tracker targets from parsed Links rows
+ * (requirements doc §6.3). Current = the most recent StartDate not in the future, relative to
+ * `today`. Next = the Links entry one calendar month after current's StartDate, if any. When
+ * multiple rows share the same StartDate (a tracker was re-created), the row with the latest
+ * `date` wins.
  *
- * `smokeTrackerId` (optional — pass SmokeMode.js's getSmokeTrackerId_(), see
- * getCurrentAndNextMonths_ below) is excluded from the current/next candidate pool before that
- * tie-break runs: a smoke tracker is deliberately created with the same StartDate a real
- * tracker for that month would use (see docs/OPERATIONS.md §Smoke Mode), so without this
- * exclusion a smoke tracker created after the real one would silently win the "latest date
- * wins" tie-break and hijack 'current'/'next' for every request until it's torn down. The
- * excluded row is still returned separately as `smoke`, addressable only by an explicit
- * `targetMonth: 'smoke'` (selectTargetMonth_ below) — never as an implicit fallback.
+ * `explicitSheetId` (optional, F3Go30-i5md.6/4j4o.2) is excluded from the current/next
+ * candidate pool before that tie-break runs, and returned separately as `explicit`, addressable
+ * only via `targetMonth: 'explicit'` — never as an implicit fallback. This is the seam a
+ * namespace-scoped test environment uses to address an arbitrary month it copied (not just
+ * current/next), e.g. to put the same test PAX in two genuinely separate months at once for
+ * cross-month bonus-relocation coverage, resolved from a sheetId the caller already knows
+ * (e.g. from that namespace's own TrackerDB read via the admin getSheet action).
  * @param {Array<Object>} parsedLinksRows
  * @param {Date|string} today
- * @param {string=} smokeTrackerId
+ * @param {string=} explicitSheetId
  */
-function resolveSignupMonths_(parsedLinksRows, today, smokeTrackerId) {
+function resolveSignupMonths_(parsedLinksRows, today, explicitSheetId) {
   var now = today instanceof Date ? today : new Date(today);
   var nowKey = monthKey_(now);
 
-  var smokeRow = smokeTrackerId
-    ? (parsedLinksRows || []).find(function(row) { return row.sheetId === smokeTrackerId; })
+  var explicitRow = explicitSheetId
+    ? (parsedLinksRows || []).find(function(row) { return row.sheetId === explicitSheetId; })
     : null;
-  var candidateRows = smokeTrackerId
-    ? (parsedLinksRows || []).filter(function(row) { return row.sheetId !== smokeTrackerId; })
-    : (parsedLinksRows || []);
+  var candidateRows = (parsedLinksRows || []).filter(function(row) {
+    if (explicitSheetId && row.sheetId === explicitSheetId) return false;
+    return true;
+  });
 
   var byMonth = {};
   candidateRows.forEach(function(row) {
@@ -417,7 +411,9 @@ function resolveSignupMonths_(parsedLinksRows, today, smokeTrackerId) {
     .sort()
     .pop();
 
-  if (!currentKey) return { current: null, next: null, smoke: formatMonthTarget_(smokeRow) };
+  if (!currentKey) {
+    return { current: null, next: null, explicit: formatMonthTarget_(explicitRow) };
+  }
 
   var current = byMonth[currentKey];
   var nextKey = addOneMonthKey_(currentKey);
@@ -426,22 +422,22 @@ function resolveSignupMonths_(parsedLinksRows, today, smokeTrackerId) {
   return {
     current: formatMonthTarget_(current),
     next: formatMonthTarget_(nextRow),
-    smoke: formatMonthTarget_(smokeRow),
+    explicit: formatMonthTarget_(explicitRow),
   };
 }
 
 /**
  * Single seam for turning a request's `targetMonth` field into one of resolveSignupMonths_'s
  * (or getCurrentAndNextMonths_'s) resolved targets. Shared by signup and checkin action
- * handlers so 'current'/'next'/'smoke' mean the same thing everywhere a caller can select a
+ * handlers so 'current'/'next'/'explicit' mean the same thing everywhere a caller can select a
  * target month — add any future targetMonth value here rather than re-deriving the enum per
  * call site.
- * @param {{current:Object,next:Object,smoke:Object}} months
- * @param {string=} targetMonth 'current' (default) | 'next' | 'smoke'
+ * @param {{current:Object,next:Object,explicit:Object}} months
+ * @param {string=} targetMonth 'current' (default) | 'next' | 'explicit'
  */
 function selectTargetMonth_(months, targetMonth) {
   if (targetMonth === 'next') return months.next;
-  if (targetMonth === 'smoke') return months.smoke;
+  if (targetMonth === 'explicit') return months.explicit;
   return months.current;
 }
 
@@ -451,12 +447,16 @@ function selectTargetMonth_(months, targetMonth) {
 // sheet-mutating functions).
 // ─────────────────────────────────────────────────────────────────────────
 
-/** Reads the Template's TrackerDB sheet and resolves current/next/smoke month targets (§6.3). */
-function getCurrentAndNextMonths_(templateSpreadsheet) {
+/**
+ * Reads the Template's TrackerDB sheet and resolves current/next/explicit month targets
+ * (§6.3). `explicitSheetId` (F3Go30-i5md.6/4j4o.2) is optional — see resolveSignupMonths_.
+ * @param {Object} templateSpreadsheet
+ * @param {string=} explicitSheetId
+ */
+function getCurrentAndNextMonths_(templateSpreadsheet, explicitSheetId) {
   var linksSheet = templateSpreadsheet.getSheetByName('TrackerDB');
   var values = linksSheet ? linksSheet.getDataRange().getValues() : [];
-  var smokeTrackerId = getSmokeTrackerId_sw_ ? getSmokeTrackerId_sw_() : null;
-  return resolveSignupMonths_(parseLinksRows_(values), new Date(), smokeTrackerId);
+  return resolveSignupMonths_(parseLinksRows_(values), new Date(), explicitSheetId);
 }
 
 function readResponsesSheetState_(spreadsheet) {
@@ -571,7 +571,7 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
  * same formula-row-copy mechanics.
  */
 function handleSignupSave_(templateSpreadsheet, payload) {
-  var months = getCurrentAndNextMonths_(templateSpreadsheet);
+  var months = getCurrentAndNextMonths_(templateSpreadsheet, payload.targetSheetId);
   var targetMonth = selectTargetMonth_(months, payload.targetMonth);
   if (!targetMonth) return { ok: false, error: 'invalid_target_month' };
 

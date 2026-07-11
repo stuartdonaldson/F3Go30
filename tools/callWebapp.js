@@ -3,18 +3,23 @@
  * F3Go30 web app caller — handles any cmd endpoint (admin, signup, ...)
  *
  * Usage:
- *   node tools/callWebapp.js <action> [--cmd admin|signup|...] [--env sit|prod] [--body '{"key":"val"}']
+ *   node tools/callWebapp.js <action> [--cmd admin|signup|...] [--env sit|prod] [--body '{"key":"val"}'] [--ns <namespace>]
  *
  * --cmd defaults to "admin". For cmd=admin the admin secret is read from
  * local.settings.json and injected into the payload automatically.
  *
+ * --ns is a convenience shorthand for the request-follows-ns pattern (ADR-014 D1/D3): it's
+ * merged into the payload as `ns`, exactly as if `--body '{"ns":"<namespace>"}'` had been
+ * passed — lets a namespace-scoped test environment (F3Go30-i5md.6) be addressed without
+ * hand-writing ns into every --body JSON string. --body still wins if both set `ns`.
+ *
  * Examples:
- *   node tools/callWebapp.js getSmokeStatus
- *   node tools/callWebapp.js setScriptProperties --body '{"properties":{"SMOKE_MODE":"true"}}'
  *   node tools/callWebapp.js cleanupTracker --body '{"sheetId":"<id>","trashSpreadsheet":true}'
+ *   node tools/callWebapp.js teardownEnvironment --body '{"nameSpace":"<ns>","trashFolder":true}'
  *   node tools/callWebapp.js getSheet --body '{"sheetName":"Tracker"}'
  *   node tools/callWebapp.js runScanTrackers --env prod
  *   node tools/callWebapp.js identify --cmd signup --body '{"f3Name":"Test","email":"t@t.com"}'
+ *   node tools/callWebapp.js identify --cmd checkin --ns smoke-2026-07-09 --body '{"f3Name":"Test","email":"t@t.com","targetMonth":"current"}'
  */
 
 'use strict';
@@ -58,6 +63,11 @@ function parseArgs_(argv) {
       console.error('❌  --body must be valid JSON.');
       process.exit(1);
     }
+  }
+
+  const nsIdx = args.indexOf('--ns');
+  if (nsIdx !== -1) {
+    extraBody = { ns: args[nsIdx + 1], ...extraBody };
   }
 
   return { action, cmd, env, extraBody };

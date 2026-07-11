@@ -93,9 +93,9 @@ Two environments exist. **Default is SIT** unless PROD is stated explicitly.
 | **SIT** | `testScriptId` | `testSpreadsheetId` |
 | **PROD** | `templateScriptId` | `templateSpreadsheetId` |
 
-Any action that is environment-scoped — deploy, admin webapp POST, log/ query, smoke mode toggle, `runScanTrackers`, creating a tracker month, cleanup — must name the environment. If unspecified, assume SIT and proceed. If the user says "prod", "production", "template", or "go live", switch to PROD context and proceed.
+Any action that is environment-scoped — deploy, admin webapp POST, log/ query, namespace smoke test, `runScanTrackers`, creating a tracker month, cleanup — must name the environment. If unspecified, assume SIT and proceed. If the user says "prod", "production", "template", or "go live", switch to PROD context and proceed.
 
-Either environment can be in **Smoke mode** (testing go-live flows with labeled artifacts that are cleaned up afterward). Smoke mode is activated via `SMOKE_MODE` Script Property; artifacts are named by appending `" (Smoke)"` to NameSpace.
+Either environment can run a **namespace-provisioned smoke test** — a disposable copy of the Template + a few recent trackers, tested end-to-end and torn down automatically (see §Smoke mode workflow below). This superseded the legacy `SMOKE_MODE` Script Property mechanism (ADR-014; F3Go30-4wv9/i5md.7).
 
 Runtime GAS logs are sent to the Axiom service, use the tools/query_axiom.py 
 ## clasp - command line tool for google apps script credentials.
@@ -127,8 +127,9 @@ node tools/callWebapp.js <action> [--cmd admin|signup|...] [--env sit|prod] [--b
 Reads deployment ID from local.settings.json. For `--cmd admin` (the default), also reads and
 injects the admin secret automatically. Default: `--cmd admin --env sit`.
 
-Common admin actions: `getSmokeStatus`, `setScriptProperties`, `cleanupTracker`,
-`runScanTrackers`, `getSheet`, `runAutoGenerate`, `createTrackerForMonth`
+Common admin actions: `setScriptProperties`, `cleanupTracker`,
+`runScanTrackers`, `getSheet`, `runAutoGenerate`, `createTrackerForMonth`, `copyTemplate`,
+`teardownEnvironment`
 
 - `runAutoGenerate` creates the tracker for **real-today's month + 1** (it's meant to run a
   few days before month-end via its own time trigger). If it's ever run late — after a month
@@ -139,24 +140,25 @@ Common admin actions: `getSmokeStatus`, `setScriptProperties`, `cleanupTracker`,
   `node tools/callWebapp.js createTrackerForMonth --env <env> --body '{"startDateIso":"2026-07-01"}'`
 - To undo a wrongly-created tracker: `cleanupTracker --body '{"sheetId":"<id>","trashSpreadsheet":true}'`
   removes the TrackerDB row + PaxDB rows and trashes the spreadsheet + its linked HC Form.
+- `teardownEnvironment` tears down a whole namespace environment provisioned by `copyTemplate`
+  (ADR-014 D6): `node tools/callWebapp.js teardownEnvironment --body '{"nameSpace":"<ns>","trashFolder":true}'`
+  removes the `NamespaceDB` row first (the safety cut — makes the ns unresolvable immediately),
+  then trashes the environment's whole Drive folder (Template copy + every tracker copied
+  alongside it) when `trashFolder` is set.
 
 ### Smoke mode workflow (run on SIT first; repeat on PROD before go-live)
-See docs/OPERATIONS.md §Smoke Mode for the full numbered sequence. Quick reference:
+See docs/OPERATIONS.md §Smoke Mode for the full description. Quick reference:
 ```bash
-# 1. Activate
-node tools/callWebapp.js setScriptProperties --env <env> --body '{"properties":{"SMOKE_MODE":"true"}}'
-# 2. Confirm
-node tools/callWebapp.js getSmokeStatus --env <env>
-# 3. Run copyAndInit (monthly menu or auto-generate trigger)
-# 4. Sign up a test PAX via signup web app (targetMonth: "current" resolves to smoke tracker)
-node tools/callWebapp.js identify --cmd signup --env <env> --body '{"f3Name":"SmokeTest","email":"smoke@example.com"}'
-# 5. Verify Tracker sheet (get SMOKE_TRACKER_ID from getSmokeStatus output)
-node tools/callWebapp.js getSheet --env <env> --body '{"sheetId":"<SMOKE_TRACKER_ID>","sheetName":"Tracker"}'
-# 6. Human: confirm spreadsheet looks correct, then proceed to teardown
-# 7. Teardown
-node tools/callWebapp.js cleanupTracker --env <env> --body '{"sheetId":"<SMOKE_TRACKER_ID>","trashSpreadsheet":true}'
-node tools/callWebapp.js setScriptProperties --env <env> --body '{"properties":{"SMOKE_MODE":"","SMOKE_TRACKER_ID":""}}'
-# 8. Confirm clean
-node tools/callWebapp.js getSmokeStatus --env <env>
+node tools/smokeTestNamespace.js --env <env> --template <prod|sit>
 ```
+`--env` (default `sit`) picks which deployment registers/runs the namespace. `--template`
+(default `prod`) picks which spreadsheet is copied FROM to build it — `prod` copies PROD's real
+Template + recent trackers (`templateSpreadsheetId`), `sit` copies SIT's own Template
+(`testSpreadsheetId`) instead. These are independent (ADR-014 D6): the plain default run
+registers under SIT but still provisions from **PROD's real data** — pass `--template sit`
+explicitly to test against SIT's own Template instead.
+
+Disposes any stale smoke namespace, provisions a fresh one, live-verifies signup/check-in/
+dashboard/bonus flows against it, and tears itself down automatically on success (manual
+cleanup steps are printed only if a scenario fails).
 
