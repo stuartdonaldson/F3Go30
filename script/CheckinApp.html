@@ -477,6 +477,10 @@
     f3Name: (savedIdentity && savedIdentity.f3Name) || '',
     email: (savedIdentity && savedIdentity.email) || '',
     trackerUrl: '',
+    // Resolved-context handle from the last identify (F3Go30-qi26.1) — echoed back on checkin/
+    // dashboard POSTs so the server skips resolveMonths + the identity re-lookup. Only a hint;
+    // the server re-validates and falls back to full resolution when it's stale.
+    resolvedContext: null,
     monthCache: {}, // monthKey ("YYYY-MM") -> full-month dashboard payload, see loadDashboard_
     viewDate: null, // Date currently shown on the dashboard (date-nav arrows move this)
     dashboardLoading: false, // true while a loadDashboard_ fetch is in flight — blocks duplicate date-nav clicks
@@ -567,6 +571,7 @@
   function applyIdentifySuccess_(res) {
     state.f3Name = res.f3Name;
     state.email = res.email;
+    state.resolvedContext = res.resolvedContext || null;
     $('idSignupBtn').classList.add('hidden');
     saveIdentityToStorage_(res.f3Name, res.email);
     state.monthCache = {};
@@ -784,7 +789,7 @@
   function submitCheckin_(btn, day, value) {
     hideApiError_();
     setButtonLoading_(btn, true, 'Saving…');
-    callApi('checkin', { f3Name: state.f3Name, email: state.email, day: day, value: value })
+    callApi('checkin', { f3Name: state.f3Name, email: state.email, day: day, value: value, resolvedContext: state.resolvedContext })
       .then(function() {
         // Deliberately does NOT navigate to the dashboard — a PAX often wants to set both
         // today's and yesterday's answer in the same visit, and forcing a navigation after the
@@ -965,7 +970,7 @@
     hideApiError_();
     setButtonLoading_(btn, true, 'Saving…');
     var dateIso = state.selectedDateIso;
-    callApi('checkin', { f3Name: state.f3Name, email: state.email, day: dateIso, value: value })
+    callApi('checkin', { f3Name: state.f3Name, email: state.email, day: dateIso, value: value, resolvedContext: state.resolvedContext })
       .then(function() {
         var status = valueToMonthGridStatus_(value);
         updateMonthGridEntry_(dateIso, status);
@@ -1543,7 +1548,7 @@
     $('datePrevBtn').disabled = true;
     $('dateNextBtn').disabled = true;
     $('dateNavLabel').textContent = 'Loading…';
-    return callApi('dashboard', { f3Name: state.f3Name, email: state.email, dateISO: dateISO })
+    return callApi('dashboard', { f3Name: state.f3Name, email: state.email, dateISO: dateISO, resolvedContext: state.resolvedContext })
       .then(function(payload) {
         state.monthCache[payload.monthKey] = payload;
         renderDashboard_(payload, payload.viewDayIndex); // re-enables/relabels the nav buttons via renderDateNav_

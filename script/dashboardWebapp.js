@@ -887,6 +887,168 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   };
 }
 
+/**
+ * Builds the lightweight resolved-context handle handleCheckinIdentify_ returns in its result and
+ * the checkin/dashboard POSTs echo back (F3Go30-qi26.1). Carries just enough to let those
+ * follow-up calls skip resolveMonths + the identity re-lookup: the target tracker's sheetId (so
+ * the month needn't be re-derived from a date via a TrackerDB scan), the PAX's Tracker rowIndex +
+ * canonical F3 name (so their row is read directly instead of scanned for), and the
+ * monthKey/label/url/startDate needed to reconstruct a monthInfo without that scan. Everything
+ * here is only ever a HINT — every consumer re-validates that rowIndex still names this PAX before
+ * trusting it and falls back to full resolution when it doesn't (roster edit, month rollover).
+ */
+function buildResolvedContextHandle_(monthInfo, trackerRowIndex, canonicalF3Name) {
+  return {
+    sheetId: monthInfo.sheetId,
+    monthKey: _dashboardIsoDate_(monthInfo.startDate).slice(0, 7),
+    startDateIso: _dashboardIsoDate_(monthInfo.startDate),
+    trackerUrl: monthInfo.trackerUrl || null,
+    label: monthInfo.label,
+    rowIndex: trackerRowIndex,
+    f3Name: canonicalF3Name,
+  };
+}
+
+/**
+ * Reconstructs a monthInfo-shaped object from an echoed resolved-context handle without a
+ * TrackerDB scan (contrast resolveDashboardMonth_/getCurrentAndNextMonths_). Returns null when
+ * the handle lacks the fields needed to be trusted at all.
+ */
+function monthInfoFromHandle_(handle) {
+  if (!handle || !handle.sheetId || !handle.startDateIso) return null;
+  return {
+    sheetId: handle.sheetId,
+    trackerUrl: handle.trackerUrl || null,
+    label: handle.label || '',
+    startDate: parseIsoDateLocal_(handle.startDateIso),
+  };
+}
+
+/**
+ * Fast-path lean identity from an echoed handle (F3Go30-qi26.1), for handleCheckinSubmit_: opens
+ * the handle's own tracker and reads the single Tracker row it points at directly, skipping both
+ * resolveMonths (getCurrentAndNextMonths_) and the identity re-lookup (Responses match + Tracker
+ * roster scan) resolveCheckinIdentity_ would otherwise pay for. Returns a lean-identity-shaped
+ * object (same fields handleCheckinSubmit_/resolveCheckinDayTarget_ read) on success, or null when
+ * the handle no longer validates — a rowIndex whose row no longer carries the handle's canonical
+ * F3 name (roster edit shifted rows, or a wholly stale handle) — so the caller transparently
+ * falls back to full resolution. Note: goals/emailMismatch aren't computed here (the submit path
+ * uses neither).
+ */
+function resolveLeanIdentityFromHandle_(handle) {
+  var monthInfo = monthInfoFromHandle_(handle);
+  if (!monthInfo || typeof handle.rowIndex !== 'number' || handle.rowIndex < 0) return null;
+  var t0 = Date.now();
+  var targetSs;
+  try { targetSs = SpreadsheetApp.openById(monthInfo.sheetId); } catch (e) { return null; }
+
+  var trackerSheet = targetSs.getSheetByName('Tracker');
+  if (!trackerSheet || trackerSheet.getLastRow() < handle.rowIndex + 4) return null;
+
+  var trackerRow = trackerSheet.getRange(handle.rowIndex + 4, 1, 1, trackerSheet.getLastColumn()).getValues()[0];
+  // Staleness gate: the row the handle pointed at must still carry the same canonical PAX name.
+  if (paxCacheNormalizeName_dw_(trackerRow[TRACKER_NAME_COL_]) !== paxCacheNormalizeName_dw_(handle.f3Name)) {
+    GasLogger.log('checkinWebapp.resolveIdentity.timing', { matched: false, fromHandle: true, stale: true, totalMs: Date.now() - t0 });
+    return null;
+  }
+  var layout = getTrackerLayout_(trackerSheet, monthInfo.sheetId);
+  // Keep PaxCache's per-PAX row warm for any follow-up lean lookup that DOESN'T carry the handle.
+  setPaxCacheRow_dw_('tracker', monthInfo.sheetId, trackerRow[TRACKER_NAME_COL_], trackerRow);
+
+  GasLogger.log('checkinWebapp.resolveIdentity.timing', { matched: true, fromHandle: true, lean: true, totalMs: Date.now() - t0 });
+  return {
+    matched: true,
+    fromHandle: true,
+    months: null,
+    monthInfo: monthInfo,
+    targetSs: targetSs,
+    trackerSheet: trackerSheet,
+    row2: layout.row2,
+    row3: layout.row3,
+    trackerRow: trackerRow,
+    trackerRowIndex: handle.rowIndex,
+  };
+}
+
+/**
+ * Fast-path full identity from an echoed handle (F3Go30-qi26.1), for handleCheckinDashboard_:
+ * reads the tracker's full roster (still needed to build the board) but skips the Responses
+ * match + emailMismatch resolveCheckinIdentityFull_ pays for (the dashboard uses neither), taking
+ * the PAX's rowIndex straight from the handle after validating the canonical name still lives
+ * there. Returns null when the handle's rowIndex no longer names this PAX (roster edit) so the
+ * caller falls back to full resolution. Mirrors resolveCheckinIdentityFull_'s roster read + cache
+ * side effects (whole-sheet cache, PaxCache warm) — kept parallel deliberately rather than shared,
+ * so each keeps its own purpose-built Axiom timing.
+ */
+function resolveFullIdentityFromHandle_(handle) {
+  var monthInfo = monthInfoFromHandle_(handle);
+  if (!monthInfo || typeof handle.rowIndex !== 'number' || handle.rowIndex < 0) return null;
+  var t0 = Date.now();
+  var targetSs;
+  try { targetSs = SpreadsheetApp.openById(monthInfo.sheetId); } catch (e) { return null; }
+  var openMs = Date.now() - t0;
+  var tFresh = Date.now();
+  if (ensurePaxCacheFresh_dw_) ensurePaxCacheFresh_dw_(monthInfo.sheetId);
+  var freshCheckMs = Date.now() - tFresh;
+
+  var trackerSheet = targetSs.getSheetByName('Tracker');
+  if (!trackerSheet || trackerSheet.getLastRow() < 4) return null;
+
+  var t2 = Date.now();
+  var layout = getTrackerLayout_(trackerSheet, monthInfo.sheetId);
+  var trackerCacheKey = trackerValuesCacheKey_(monthInfo.sheetId);
+  var trackerValues = getCachedSheetValuesOnly_(trackerCacheKey);
+  if (!trackerValues) {
+    var lastRow = trackerSheet.getLastRow();
+    var lastCol = trackerSheet.getLastColumn();
+    trackerValues = trackerSheet.getRange(4, 1, lastRow - 3, lastCol).getValues();
+    setCachedSheetValues_(trackerCacheKey, trackerValues);
+  }
+  var trackerMs = Date.now() - t2;
+
+  var t3 = Date.now();
+  var rosterIndex = {};
+  var rowsByName = {};
+  trackerValues.forEach(function(row, idx) {
+    var name = row[TRACKER_NAME_COL_];
+    var norm = paxCacheNormalizeName_dw_(name);
+    if (!norm) return;
+    if (!Object.prototype.hasOwnProperty.call(rosterIndex, norm)) rosterIndex[norm] = idx;
+    rowsByName[name] = row;
+  });
+  setPaxCacheRowsBulk_dw_('tracker', monthInfo.sheetId, rowsByName, rosterIndex);
+  var cacheWriteMs = Date.now() - t3;
+
+  // Staleness gate: prefer the handle's own rowIndex, but only if that row still names this PAX.
+  // If a roster edit shifted rows, re-derive from the freshly-built index; if the PAX is gone
+  // entirely, bail so the caller falls back to full resolution (which reports the identity miss).
+  var rowIndex = handle.rowIndex;
+  if (paxCacheNormalizeName_dw_((trackerValues[rowIndex] || [])[TRACKER_NAME_COL_]) !== paxCacheNormalizeName_dw_(handle.f3Name)) {
+    rowIndex = rosterIndex[paxCacheNormalizeName_dw_(handle.f3Name)];
+    if (rowIndex === undefined) {
+      GasLogger.log('checkinWebapp.resolveIdentity.timing', { matched: false, fromHandle: true, lean: false, stale: true, totalMs: Date.now() - t0 });
+      return null;
+    }
+  }
+
+  GasLogger.log('checkinWebapp.resolveIdentity.timing', {
+    matched: true, fromHandle: true, lean: false,
+    openMs: openMs, freshCheckMs: freshCheckMs, trackerMs: trackerMs, cacheWriteMs: cacheWriteMs, totalMs: Date.now() - t0,
+  });
+  return {
+    matched: true,
+    fromHandle: true,
+    months: null,
+    monthInfo: monthInfo,
+    targetSs: targetSs,
+    trackerSheet: trackerSheet,
+    row2: layout.row2,
+    row3: layout.row3,
+    trackerValues: trackerValues,
+    rowIndex: rowIndex,
+  };
+}
+
 // How close to next month's start the nudge is allowed to appear — a PAX who hasn't signed up
 // yet three weeks out isn't neglecting anything, they just haven't gotten there; nagging them
 // that early reads as noise, not a reminder. Someone who wants to sign up further ahead always
@@ -1150,6 +1312,11 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     // resolveCheckinToken_dw_) — the "Welcome" vs "Welcome back" heading and the "go bookmark
     // this" nudge are both driven by this one field (CheckinApp.html).
     firstUse: firstUse,
+    // Resolved-context handle (F3Go30-qi26.1) — the client echoes this back on its follow-up
+    // checkin/dashboard POSTs so those handlers skip resolveMonths + the identity re-lookup and
+    // go straight to this PAX's known Tracker row. Only ever a hint: the server re-validates it
+    // (row still names this PAX) and falls back to full resolution when it doesn't.
+    resolvedContext: buildResolvedContextHandle_(identity.monthInfo, identity.trackerRowIndex, trackerRow[TRACKER_NAME_COL_]),
     // The same guid this request came in with (typed path: baked into the form's action URL
     // before submission; token path: the one just being re-verified) — never re-minted, unlike
     // the old signed token, so a bookmark stays valid under the same URL for as long as
@@ -1204,7 +1371,17 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
   var validated = validateCheckinSubmitDayValue_(payload);
   if (!validated.ok) return { ok: false, error: validated.error };
 
-  var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth, payload.targetSheetId, payload.contextDate);
+  // Fast path (F3Go30-qi26.1): an echoed resolved-context handle from a prior identify lets us
+  // skip resolveMonths + the identity re-lookup and go straight to the known Tracker row — but
+  // only when it still validates (resolveLeanIdentityFromHandle_'s name-at-rowIndex gate). A
+  // stale/absent handle falls through to full resolution transparently. Cross-month writes (e.g.
+  // yesterday on the 1st, or an explicit prior-month date from the calendar) still resolve
+  // correctly: resolveCheckinDayTarget_ re-resolves the actual target month itself regardless of
+  // which month this identity is anchored to.
+  var identity = payload.resolvedContext ? resolveLeanIdentityFromHandle_(payload.resolvedContext) : null;
+  if (!identity) {
+    identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth, payload.targetSheetId, payload.contextDate);
+  }
   if (!identity.matched) return { ok: false, error: 'not_found' };
 
   var today = resolveContextDate_(templateSpreadsheet, payload.contextDate);
@@ -1453,14 +1630,32 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   var viewDate = payload.dateISO ? parseIsoDateLocal_(payload.dateISO) : new Date(realToday);
   if (isNaN(viewDate.getTime())) viewDate = new Date(realToday);
 
-  var t1 = Date.now();
-  var monthInfo = resolveDashboardMonth_(viewDate, templateSpreadsheet);
-  var resolveMonthMs = Date.now() - t1;
-  if (!monthInfo) return { ok: false, error: 'no_tracker_for_date' };
+  // Fast path (F3Go30-qi26.1): an echoed resolved-context handle lets us skip resolveDashboard
+  // Month_'s TrackerDB scan (reconstruct monthInfo from the handle) + the Responses re-lookup
+  // (resolveFullIdentityFromHandle_ takes the PAX's rowIndex straight from the handle). Guarded to
+  // the handle's own month only — the requested day must fall in it (a plain YYYY-MM compare,
+  // since trackers are per calendar month). Date-nav into any other month, or a month rollover
+  // since identify (default view's today is now a new month), fails that compare and re-resolves
+  // from the date; a roster edit that stales the rowIndex makes resolveFullIdentityFromHandle_
+  // return null, also falling back. Neither is a user-visible error.
+  var handle = payload.resolvedContext;
+  var useHandle = !!(handle && handle.monthKey && String(payload.dateISO || '').slice(0, 7) === handle.monthKey);
 
-  var t2 = Date.now();
-  var identity = resolveCheckinIdentityFull_(monthInfo, payload.f3Name, payload.email, null);
-  var resolveIdentityMs = Date.now() - t2;
+  var tFast = Date.now();
+  var monthInfo = useHandle ? monthInfoFromHandle_(handle) : null;
+  var identity = monthInfo ? resolveFullIdentityFromHandle_(handle) : null;
+  var resolveMonthMs = 0;
+  var resolveIdentityMs = identity ? Date.now() - tFast : 0;
+  if (!identity) {
+    // Handle absent, out-of-month, or stale — authoritative date-based month resolution + full lookup.
+    var t1 = Date.now();
+    monthInfo = resolveDashboardMonth_(viewDate, templateSpreadsheet);
+    resolveMonthMs = Date.now() - t1;
+    if (!monthInfo) return { ok: false, error: 'no_tracker_for_date' };
+    var t2 = Date.now();
+    identity = resolveCheckinIdentityFull_(monthInfo, payload.f3Name, payload.email, null);
+    resolveIdentityMs = Date.now() - t2;
+  }
   if (!identity.matched) {
     // Distinct from the no_tracker_for_date miss above: a tracker exists for this date, but the
     // viewing PAX has no row in it (e.g. date-nav back into a month they weren't registered in —
@@ -1642,6 +1837,11 @@ if (typeof module !== 'undefined' && module.exports) {
     isStrictlyPastCalendarDate_: isStrictlyPastCalendarDate_,
     validateCheckinSubmitDayValue_: validateCheckinSubmitDayValue_,
     handleCheckinSubmit_: handleCheckinSubmit_,
+    handleCheckinDashboard_: handleCheckinDashboard_,
+    buildResolvedContextHandle_: buildResolvedContextHandle_,
+    monthInfoFromHandle_: monthInfoFromHandle_,
+    resolveLeanIdentityFromHandle_: resolveLeanIdentityFromHandle_,
+    resolveFullIdentityFromHandle_: resolveFullIdentityFromHandle_,
     buildCheckinPageOutput_: buildCheckinPageOutput_,
     renderCheckinPage_: renderCheckinPage_,
     renderCheckinPageForTypedIdentify_: renderCheckinPageForTypedIdentify_,
