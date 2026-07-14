@@ -251,6 +251,18 @@ function dayValueStatus_(cellValue) {
 }
 
 /**
+ * Builds the Advanced whole-month calendar's per-day payload (F3Go30-th22.1 Decision 2) — one
+ * entry per classified day column, ascending date order (= column order). A future day's status
+ * is computed exactly like any other day's (almost always 'pending' unless the PAX pre-marked it).
+ * @returns {Array<{dateIso:string, status:string}>}
+ */
+function buildMonthGridEntries_(dayCols, trackerRow) {
+  return (dayCols || []).map(function(d) {
+    return { dateIso: _dashboardIsoDate_(d.date), status: dayValueStatus_(trackerRow[d.col]) };
+  });
+}
+
+/**
  * Classifies every day 1..totalDays for ring/day-grid rendering — dayValueStatus_ for a
  * reported value, 'upcoming' for a day beyond what's been read yet (future days, or totalDays
  * longer than dayValues).
@@ -1127,6 +1139,10 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     todayStatus: todayStatus,
     yesterdayAvailable: yesterdayAvailable,
     yesterdayStatus: yesterdayStatus,
+    // Advanced whole-month calendar (F3Go30-th22): one entry per day of this identify's own
+    // tracker month, ascending date order — the client seeds the calendar/selection panel from
+    // this without a second server round trip.
+    monthGrid: buildMonthGridEntries_(classified.dayCols, trackerRow),
     nextMonthLabel: nextMonth ? nextMonth.monthLabel : null,
     nextMonthRegistered: nextMonth ? nextMonth.registered : null,
     // True exactly when this session has never been resolved before this request (a precise
@@ -1143,22 +1159,69 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
   };
 }
 
-function handleCheckinSubmit_(templateSpreadsheet, payload) {
+/**
+ * True when targetDate's calendar date is strictly before today's calendar date (time-of-day
+ * ignored on both sides) — the -1 "Failed" date gate (F3Go30-th22.1 Decision 1/3): a PAX can only
+ * honestly mark a day Failed once it's actually over, never today itself or a future day.
+ */
+function isStrictlyPastCalendarDate_(targetDate, today) {
+  var t = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+  var n = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return t.getTime() < n.getTime();
+}
+
+/**
+ * Validates + resolves handleCheckinSubmit_'s widened day/value write contract (F3Go30-th22.1
+ * Decision 1) — split out as a pure function so the domain rules are unit-testable without a
+ * spreadsheet fixture. `day` is 'today' | 'yesterday' | an explicit "YYYY-MM-DD" string; `value`
+ * is 0 | 1 | null | -1 (the four-state model: Miss/Hit/No-Check-in/Failed).
+ * @returns {{ok:true, explicitDate:?Date}|{ok:false, error:string}}
+ */
+function validateCheckinSubmitDayValue_(payload) {
+  var explicitDate = null;
   if (payload.day !== 'today' && payload.day !== 'yesterday') {
-    return { ok: false, error: 'invalid_day' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(payload.day || ''))) {
+      return { ok: false, error: 'invalid_day' };
+    }
+    explicitDate = parseIsoDateLocal_(payload.day);
+    // new Date(y, m, d) silently rolls overflowing components into the next month (e.g.
+    // "2026-13-40" parses to a valid-looking Feb 2027 date) — round-trip back through
+    // _dashboardIsoDate_ to reject anything the regex let through but isn't a real calendar date.
+    if (isNaN(explicitDate.getTime()) || _dashboardIsoDate_(explicitDate) !== payload.day) {
+      return { ok: false, error: 'invalid_day' };
+    }
   }
-  // null means "clear this day's entry back to unrecorded" (the third check-in state,
-  // distinct from 0/1) — the PAX's own explicit undo, not the same as the -1 "absent"
-  // value markMinusOne sets after the grace period expires.
-  if (payload.value !== 0 && payload.value !== 1 && payload.value !== null) {
+  // null means "clear this day's entry back to unrecorded" — the PAX's own explicit undo, not
+  // the same as the -1 "absent"/Failed value (markMinusOne's automatic mark, or now also a
+  // PAX-set honor-system value).
+  if (payload.value !== 0 && payload.value !== 1 && payload.value !== null && payload.value !== -1) {
     return { ok: false, error: 'invalid_value' };
   }
+  return { ok: true, explicitDate: explicitDate };
+}
+
+function handleCheckinSubmit_(templateSpreadsheet, payload) {
+  var validated = validateCheckinSubmitDayValue_(payload);
+  if (!validated.ok) return { ok: false, error: validated.error };
 
   var identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth, payload.targetSheetId, payload.contextDate);
   if (!identity.matched) return { ok: false, error: 'not_found' };
 
-  var targetDate = resolveContextDate_(templateSpreadsheet, payload.contextDate);
-  if (payload.day === 'yesterday') targetDate.setDate(targetDate.getDate() - 1);
+  var today = resolveContextDate_(templateSpreadsheet, payload.contextDate);
+  var targetDate;
+  if (validated.explicitDate) {
+    targetDate = validated.explicitDate;
+  } else {
+    targetDate = new Date(today);
+    if (payload.day === 'yesterday') targetDate.setDate(targetDate.getDate() - 1);
+  }
+
+  // Defense-in-depth mirroring the selection panel's #selFailBtn disable rule: a manipulated/
+  // replayed request can't pre-mark a future (or today's own) day Failed even though the client
+  // UI never offers that combination. 1/0/null are accepted for any date, past or future.
+  if (payload.value === -1 && !isStrictlyPastCalendarDate_(targetDate, today)) {
+    return { ok: false, error: 'invalid_value' };
+  }
 
   // Yesterday's edit target may live in the previous month's tracker (e.g. today is the 1st) —
   // resolveCheckinDayTarget_ falls back to that prior tracker rather than failing the write.
@@ -1557,6 +1620,7 @@ if (typeof module !== 'undefined' && module.exports) {
     needsYesterdayCheckin_: needsYesterdayCheckin_,
     dayValueStatus_: dayValueStatus_,
     groupByTeam_: groupByTeam_,
+    firstActiveDayIndex_: firstActiveDayIndex_,
     buildDashboardPaxRow_: buildDashboardPaxRow_,
     buildDaySegments_: buildDaySegments_,
     buildRollingAverage_: buildRollingAverage_,
@@ -1574,6 +1638,10 @@ if (typeof module !== 'undefined' && module.exports) {
     invalidateFullRosterCache_: invalidateFullRosterCache_,
     handleCheckinIdentify_: handleCheckinIdentify_,
     checkNextMonthRegistration_: checkNextMonthRegistration_,
+    buildMonthGridEntries_: buildMonthGridEntries_,
+    isStrictlyPastCalendarDate_: isStrictlyPastCalendarDate_,
+    validateCheckinSubmitDayValue_: validateCheckinSubmitDayValue_,
+    handleCheckinSubmit_: handleCheckinSubmit_,
     buildCheckinPageOutput_: buildCheckinPageOutput_,
     renderCheckinPage_: renderCheckinPage_,
     renderCheckinPageForTypedIdentify_: renderCheckinPageForTypedIdentify_,

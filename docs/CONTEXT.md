@@ -83,6 +83,11 @@ month's tracker in minutes without manual sheet or trigger configuration in the 
   re-typing, no hunting through a spreadsheet for "which row is mine." A PAX known from a past
   month's sign-up but not yet registered for the current one is carried automatically into a
   prefilled sign-up instead of hitting a dead end
+- From the check-in page, a PAX can open an Advanced whole-month calendar (an alternative to the
+  default TODAY/YESTERDAY view) to set or correct Hit/Miss/No-Check-in/Failed for any day in the
+  current tracker month, not just today/yesterday — e.g. pre-marking a day they already know
+  they'll miss (planned travel), or fixing a past day recorded wrong. Failed can only be set for
+  a day that's strictly in the past; Hit/Miss/No-Check-in have no date restriction
 
 ---
 
@@ -308,6 +313,11 @@ A3: Target Tracker cell is a formula (unexpected sheet layout) → write is refu
     is not recorded and the client shows the error banner
 A4: Automatic redirect (to the tokened check-in URL, or to sign-up per A1) is blocked by the
     browser → a manual link/button is shown instead, carrying the same target URL
+A5: PAX taps "Show month calendar" instead of using TODAY/YESTERDAY → a full-month calendar
+    replaces the TODAY/YESTERDAY blocks; tapping any day opens a single selection panel offering
+    Hit/Miss/No-Check-in/Failed for that day. Hit/Miss/No-Check-in can be set for any day, past or
+    future (e.g. pre-marking a planned-absence day); Failed can only be set once that day is
+    strictly in the past — both client and server enforce the same rule
 
 Postconditions:
 - Today's (and, if applicable, yesterday's) Tracker cell holds the PAX's reported 1/0 value

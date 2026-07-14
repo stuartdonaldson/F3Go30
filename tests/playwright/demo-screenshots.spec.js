@@ -184,6 +184,13 @@ test.describe('Go30 demo screenshots (SIT)', () => {
       await shot(page, '07-checkin-recorded.png');
     }
 
+    // F3Go30-th22: Advanced whole-month check-in calendar + unified selection panel.
+    await app.locator('#advancedToggleBtn').click();
+    await expect(app.locator('#advancedGrid')).toBeVisible();
+    await shot(page, '07b-checkin-advanced-calendar.png');
+    await app.locator('#advancedToggleBtn').click(); // close it back — leaves the page in its default state
+    await expect(app.locator('#advancedGrid')).toBeHidden();
+
     await app.locator('#dashboardBtn').click();
     await expect(app.locator('#step-dashboard')).toBeVisible({ timeout: 15000 });
     await page.waitForTimeout(500); // let charts/rings finish drawing

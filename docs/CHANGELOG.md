@@ -47,6 +47,10 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   F3 name/email already built in, so it skips the sign-in form) as the main call to action,
   followed by an "update my registration" link and a de-emphasised Tracker-sheet link. Opening
   the registration link drops you straight onto your goals, pre-filled with your current details.
+- New "Show month calendar" view on check-in: tap any day of the current month to set or fix its
+  Hit / Miss / No-Check-in / Failed status, instead of only being able to edit today and
+  yesterday. You can pre-mark a day you already know you'll miss (e.g. planned travel), or correct
+  a past day that was recorded wrong. "Failed" can only be set on a day that's already over.
 
 ---
 

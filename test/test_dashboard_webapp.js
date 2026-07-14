@@ -52,6 +52,9 @@ const {
   invalidateFullRosterCache_,
   handleCheckinIdentify_,
   checkNextMonthRegistration_,
+  buildMonthGridEntries_,
+  isStrictlyPastCalendarDate_,
+  validateCheckinSubmitDayValue_,
 } = require('../script/dashboardWebapp.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
@@ -565,5 +568,76 @@ console.log('test_dashboard_webapp.js: PaxDB-fallback assertions passed');
 })();
 
 console.log('test_dashboard_webapp.js: nudge-window assertions passed');
+
+// ── buildMonthGridEntries_ (F3Go30-th22.2, Decision 2) ────────────────────
+(function testBuildMonthGridEntriesMapsDayColsToStatuses() {
+  var dayCols = [
+    { col: 8, date: new Date(2026, 5, 1) },
+    { col: 9, date: new Date(2026, 5, 2) },
+    { col: 10, date: new Date(2026, 5, 3) },
+  ];
+  var trackerRow = [];
+  trackerRow[8] = 1; trackerRow[9] = 0; trackerRow[10] = '';
+  var grid = buildMonthGridEntries_(dayCols, trackerRow);
+  assert.deepEqual(grid, [
+    { dateIso: '2026-06-01', status: 'done' },
+    { dateIso: '2026-06-02', status: 'missed' },
+    { dateIso: '2026-06-03', status: 'pending' },
+  ]);
+})();
+
+(function testBuildMonthGridEntriesHandlesFutureAndAbsentDays() {
+  var dayCols = [{ col: 8, date: new Date(2026, 5, 30) }];
+  var trackerRow = []; trackerRow[8] = -1;
+  assert.deepEqual(buildMonthGridEntries_(dayCols, trackerRow), [{ dateIso: '2026-06-30', status: 'absent' }]);
+  assert.deepEqual(buildMonthGridEntries_([], []), []);
+})();
+
+// ── isStrictlyPastCalendarDate_ (F3Go30-th22.2, Decision 1 -1 date gate) ──
+(function testIsStrictlyPastCalendarDate() {
+  var today = new Date(2026, 6, 15, 9, 30); // time-of-day must not matter
+  assert.equal(isStrictlyPastCalendarDate_(new Date(2026, 6, 14, 23, 59), today), true);
+  assert.equal(isStrictlyPastCalendarDate_(new Date(2026, 6, 15, 0, 0), today), false); // today itself
+  assert.equal(isStrictlyPastCalendarDate_(new Date(2026, 6, 16), today), false); // future
+})();
+
+// ── validateCheckinSubmitDayValue_ (F3Go30-th22.2, Decision 1 write contract) ──
+(function testValidateCheckinSubmitDayValueAcceptsTodayYesterdayLiterals() {
+  var r1 = validateCheckinSubmitDayValue_({ day: 'today', value: 1 });
+  assert.equal(r1.ok, true);
+  assert.equal(r1.explicitDate, null);
+  var r2 = validateCheckinSubmitDayValue_({ day: 'yesterday', value: 0 });
+  assert.equal(r2.ok, true);
+  assert.equal(r2.explicitDate, null);
+})();
+
+(function testValidateCheckinSubmitDayValueAcceptsExplicitIsoDate() {
+  var r = validateCheckinSubmitDayValue_({ day: '2026-06-15', value: -1 });
+  assert.equal(r.ok, true);
+  assert.ok(r.explicitDate instanceof Date);
+  assert.equal(r.explicitDate.getFullYear(), 2026);
+  assert.equal(r.explicitDate.getMonth(), 5);
+  assert.equal(r.explicitDate.getDate(), 15);
+})();
+
+(function testValidateCheckinSubmitDayValueRejectsMalformedDay() {
+  assert.deepEqual(validateCheckinSubmitDayValue_({ day: 'tomorrow', value: 1 }), { ok: false, error: 'invalid_day' });
+  assert.deepEqual(validateCheckinSubmitDayValue_({ day: '2026-13-40', value: 1 }), { ok: false, error: 'invalid_day' });
+  assert.deepEqual(validateCheckinSubmitDayValue_({ day: '', value: 1 }), { ok: false, error: 'invalid_day' });
+})();
+
+(function testValidateCheckinSubmitDayValueAcceptsAllFourValues() {
+  [0, 1, null, -1].forEach(function(v) {
+    assert.equal(validateCheckinSubmitDayValue_({ day: 'today', value: v }).ok, true);
+  });
+})();
+
+(function testValidateCheckinSubmitDayValueRejectsOtherValues() {
+  assert.deepEqual(validateCheckinSubmitDayValue_({ day: 'today', value: 2 }), { ok: false, error: 'invalid_value' });
+  assert.deepEqual(validateCheckinSubmitDayValue_({ day: 'today', value: 'yes' }), { ok: false, error: 'invalid_value' });
+  assert.deepEqual(validateCheckinSubmitDayValue_({ day: 'today', value: undefined }), { ok: false, error: 'invalid_value' });
+})();
+
+console.log('test_dashboard_webapp.js: month-grid / write-contract assertions passed');
 
 console.log('test_dashboard_webapp.js: all assertions passed');

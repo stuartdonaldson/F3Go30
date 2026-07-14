@@ -37,7 +37,33 @@
   .checkin-btn.current.yes { background: #eef3f0; border-color: #2f5d50; }
   .checkin-btn.current.no { background: #fdeceb; border-color: #a3401a; }
   .checkin-btn.current.none { background: #f5f2ea; border-color: #b0a898; }
+  .checkin-btn.fail { color: #b8390f; }
+  .checkin-btn.fail:hover { border-color: #b8390f; background: #fbe4db; }
+  .checkin-btn.current.fail { background: #fbe4db; border-color: #b8390f; }
   .checkin-btn:disabled { opacity: .45; cursor: not-allowed; }
+  .checkin-selected-date { font-size: 17px; font-weight: bold; color: #2f5d50; margin-bottom: 2px; }
+  .checkin-row .checkin-btn.fail { flex: 1; }
+
+  /* F3Go30-th22: Advanced whole-month check-in calendar. Cell colors reuse SEGMENT_COLORS_
+     verbatim (the same palette already used for the month-progress ring/day-mini-bar). */
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 10px; container-type: inline-size; }
+  .cal-dow { text-align: center; font-size: 11px; font-weight: bold; color: #8a8272; padding-bottom: 2px; }
+  .cal-cell { position: relative; aspect-ratio: 1; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: clamp(16px, 6.5cqw, 28px); font-weight: bold; cursor: pointer; border: 2px solid transparent; font-family: inherit; padding: 0; }
+  .cal-cell.pad { visibility: hidden; cursor: default; }
+  .cal-cell.st-done { background: #3f8b75; color: #f8f4ea; }
+  .cal-cell.st-missed { background: #f7b209; color: #2b2b2b; }
+  .cal-cell.st-pending { background: #d8cfbf; color: #6b6255; }
+  .cal-cell.st-absent { background: #de521c; color: #f8f4ea; }
+  .cal-cell.today { border-color: #0b5c86; }
+  .cal-cell.selected { box-shadow: 0 0 0 2px #0b5c86; }
+  .cal-cell .day-num { position: relative; z-index: 1; }
+  .cal-cell .x-mark { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+  .cal-cell .x-mark::before, .cal-cell .x-mark::after {
+    content: ''; position: absolute; top: 50%; left: 8%; width: 84%; height: 3px;
+    background: rgba(43,43,43,.35); border-radius: 2px;
+  }
+  .cal-cell .x-mark::before { transform: translateY(-50%) rotate(45deg); }
+  .cal-cell .x-mark::after { transform: translateY(-50%) rotate(-45deg); }
   .checkin-status { font-size: 15px; color: #888; margin: -2px 0 8px; }
   .checkin-section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 18px 0 8px; }
   .goals-reminder { background: #eef3f0; border: 1px solid #cfe0d8; border-radius: 8px; padding: 10px 12px; margin-bottom: 4px; }
@@ -148,6 +174,9 @@
     .board-row-main { flex-wrap: wrap; row-gap: 1px; }
     .day-mini-bar { order: 1; flex-basis: auto; width: calc(100% - 125px); margin-left: 125px; justify-content: flex-start; }
     .day-mini-cell { height: 9px; }
+    .cal-grid { gap: 3px; }
+    .cal-cell .x-mark::before, .cal-cell .x-mark::after { height: 2px; }
+    .cal-cell { border-radius: 6px; }
   }
   .how-btn { width: 100%; padding: 14px 18px; border: none; background: transparent; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-family: inherit; font-size: 15px; font-weight: bold; color: #2f5d50; }
   .how-section-head { margin: 14px 0 6px; font-size: 13px; font-weight: bold; color: #2f5d50; letter-spacing: .04em; }
@@ -249,12 +278,14 @@
 
       <div id="goalsReminder" class="hidden"></div>
 
-      <div class="checkin-section-label">TODAY</div>
-      <div class="checkin-status" id="todayStatusNote"></div>
-      <div class="checkin-row">
-        <button class="checkin-btn yes" id="todayYesBtn">&#10003; I Hit it!</button>
-        <button class="checkin-btn no" id="todayNoBtn">&#10007; Missed it</button>
-        <button class="checkin-btn none" id="todayNoneBtn">No Check-in</button>
+      <div id="checkinTodayBlock">
+        <div class="checkin-section-label">TODAY</div>
+        <div class="checkin-status" id="todayStatusNote"></div>
+        <div class="checkin-row">
+          <button class="checkin-btn yes" id="todayYesBtn">&#10003; I Hit it!</button>
+          <button class="checkin-btn no" id="todayNoBtn">&#10007; Missed it</button>
+          <button class="checkin-btn none" id="todayNoneBtn">No Check-in</button>
+        </div>
       </div>
 
       <div id="yesterdayBlock" class="hidden">
@@ -267,12 +298,28 @@
         </div>
       </div>
 
+      <!-- F3Go30-th22: Advanced whole-month check-in — calendar + single unified selection
+           panel. Mutually exclusive with TODAY/YESTERDAY above (advancedToggleBtn toggles both). -->
+      <div id="advancedGrid" class="hidden">
+        <div class="checkin-section-label">STATUS FOR</div>
+        <div class="checkin-selected-date" id="checkinSelectedDate"></div>
+        <div class="checkin-status" id="checkinStatusNote"></div>
+        <div class="checkin-row">
+          <button class="checkin-btn yes" id="selYesBtn">&#10003; Hit it</button>
+          <button class="checkin-btn no" id="selNoBtn">&#10007; Missed it</button>
+          <button class="checkin-btn none" id="selNoneBtn">No check-in</button>
+          <button class="checkin-btn fail" id="selFailBtn">&#10008; Failed</button>
+        </div>
+        <div class="cal-grid" id="calGrid"></div>
+      </div>
+
       <div id="nextMonthNote" class="warning-text hidden">
         <span id="nextMonthNoteText"></span>
         <button class="secondary" id="nextMonthSignupBtn" style="margin-top:8px;padding:8px;">Sign up for next month &rarr;</button>
       </div>
 
       <button class="primary" id="dashboardBtn" style="margin-top:14px;">Continue to Dashboard &rarr;</button>
+      <button class="secondary" id="advancedToggleBtn" style="margin-top:6px;">Show month calendar &#9662;</button>
     </div>
 
     <div id="step-dashboard" class="hidden">
@@ -437,6 +484,16 @@
     bonusEditingOriginalWhenIso: null, // dateISO of the sheet the entry being edited was loaded from
     bonusEditingOriginalSnapshot: null, // pre-edit {type,whenIso,message,link} — server relocates the row by matching this
     bonusListContextIso: undefined, // dateISO last passed to bonusList — identifies which month sheet state.bonusEntries came from
+    // F3Go30-th22: Advanced whole-month check-in calendar.
+    monthGrid: [], // [{dateIso, status}] for the identified month, from identify()'s response
+    todayIso: '', // this browser's local "today" (isoDate_(new Date())) — seeded on identify
+    yesterdayIso: '', // this browser's local "yesterday"
+    todayStatus: null, // mirrors the TODAY block's own status, kept in sync by submitCheckin_
+    yesterdayStatus: null, // mirrors the YESTERDAY block's own status
+    yesterdayAvailable: false,
+    advancedOpen: false, // true while the calendar/selection-panel view is showing
+    selectedDateIso: null, // date currently shown in the selection panel
+    lastEditedDayIso: null, // seeds the selection panel when the calendar is first opened
   };
 
   function $(id) { return document.getElementById(id); }
@@ -522,6 +579,24 @@
     renderCheckinStatus_('today', res.todayStatus);
     $('yesterdayBlock').classList.toggle('hidden', !res.yesterdayAvailable);
     if (res.yesterdayAvailable) renderCheckinStatus_('yesterday', res.yesterdayStatus);
+
+    // F3Go30-th22: Advanced whole-month check-in calendar — seed from this identify response and
+    // reset to the default (calendar closed, TODAY/YESTERDAY visible) on every fresh identify.
+    state.monthGrid = res.monthGrid || [];
+    state.todayStatus = res.todayStatus;
+    state.yesterdayStatus = res.yesterdayStatus;
+    state.yesterdayAvailable = !!res.yesterdayAvailable;
+    state.selectedDateIso = null;
+    state.lastEditedDayIso = null;
+    var todayD = new Date();
+    state.todayIso = isoDate_(todayD);
+    var yesterdayD = new Date(todayD);
+    yesterdayD.setDate(yesterdayD.getDate() - 1);
+    state.yesterdayIso = isoDate_(yesterdayD);
+    state.advancedOpen = false;
+    $('checkinTodayBlock').classList.remove('hidden');
+    $('advancedGrid').classList.add('hidden');
+    $('advancedToggleBtn').textContent = 'Show month calendar ▾';
     // Name matched but the email doesn't match our record — non-blocking, still proceed
     // (see F3Go30-rvde: name is the only real gate right now).
     $('emailMismatchNote').textContent = "Note: this email doesn't match what we have on file for " + res.f3Name + ', but we found your check-in.';
@@ -705,7 +780,18 @@
         // today's and yesterday's answer in the same visit, and forcing a navigation after the
         // first click would race them off the checkin step before the second click lands. The
         // dashboard is reached only via the explicit "Skip to Dashboard" button.
-        renderCheckinStatus_(day, valueToCheckinStatus_(value));
+        var status = valueToCheckinStatus_(value);
+        renderCheckinStatus_(day, status);
+        // Keep the Advanced calendar's own copy of this same day in sync, so opening it right
+        // after doesn't show a stale value (F3Go30-th22).
+        var dateIso = day === 'today' ? state.todayIso : state.yesterdayIso;
+        state.lastEditedDayIso = dateIso;
+        if (day === 'today') state.todayStatus = status; else state.yesterdayStatus = status;
+        updateMonthGridEntry_(dateIso, status);
+        if (state.advancedOpen) {
+          updateCalCellStatus_(dateIso, status);
+          if (state.selectedDateIso === dateIso) renderSelectionPanel_(dateIso);
+        }
       })
       .catch(function(err) {
         showApiError_('checkin', err);
@@ -721,6 +807,205 @@
   $('yesterdayYesBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', 1); });
   $('yesterdayNoBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', 0); });
   $('yesterdayNoneBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', null); });
+
+  // ── Step: checkin — Advanced whole-month calendar (F3Go30-th22) ───────────
+  var CAL_DOW_LABELS_ = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  var CAL_STATUS_LABELS_ = { done: 'Hit it', missed: 'Missed it', pending: 'No check-in', absent: 'Failed' };
+  var CAL_SELECTION_STATUS_TEXT_ = {
+    done: '✓ Hit it',
+    missed: '✗ Missed it',
+    pending: 'No check-in yet',
+    absent: 'Marked Failed',
+  };
+
+  /** Maps a submitted check-in value to the monthGrid/calendar status vocabulary — like
+   * valueToCheckinStatus_ above, but also covers -1 ('absent'/Failed), which only the selection
+   * panel's 4th button ever sends (the TODAY/YESTERDAY tri-state never does). */
+  function valueToMonthGridStatus_(value) {
+    return value === 1 ? 'done' : value === 0 ? 'missed' : value === -1 ? 'absent' : 'pending';
+  }
+
+  function monthGridEntryFor_(dateIso) {
+    return (state.monthGrid || []).filter(function(e) { return e.dateIso === dateIso; })[0] || null;
+  }
+
+  function updateMonthGridEntry_(dateIso, status) {
+    var entry = monthGridEntryFor_(dateIso);
+    if (entry) entry.status = status;
+  }
+
+  /** Builds one calendar cell as a real <button> (Decision 5: keyboard-reachable, never
+   * aria-disabled — every day, past/today/future, is a live selection target). */
+  function buildCalCell_(entry) {
+    var d = parseIsoDate_(entry.dateIso);
+    var cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'cal-cell st-' + entry.status + (entry.dateIso === state.todayIso ? ' today' : '') +
+      (entry.dateIso === state.selectedDateIso ? ' selected' : '');
+    cell.dataset.date = entry.dateIso;
+    var numEl = document.createElement('span');
+    numEl.className = 'day-num';
+    numEl.textContent = String(d.getDate());
+    cell.appendChild(numEl);
+    if (entry.status === 'absent') {
+      var xEl = document.createElement('span');
+      xEl.className = 'x-mark';
+      xEl.setAttribute('aria-hidden', 'true');
+      cell.appendChild(xEl);
+    }
+    var weekdayLong = d.toLocaleDateString(undefined, { weekday: 'long' });
+    var monthShort = d.toLocaleDateString(undefined, { month: 'short' });
+    cell.setAttribute('aria-label', weekdayLong + ' ' + monthShort + ' ' + d.getDate() + ': ' + (CAL_STATUS_LABELS_[entry.status] || ''));
+    return cell;
+  }
+
+  /** Renders the full calendar from state.monthGrid — leading blank pad cells align day 1 under
+   * its true weekday column (Decision 3). Only called on first open and on identify; a click on a
+   * cell updates just that cell + the previously-selected one (see the delegated listener below). */
+  function renderCalendar_() {
+    var grid = $('calGrid');
+    grid.innerHTML = '';
+    var entries = state.monthGrid || [];
+    if (!entries.length) return;
+    var frag = document.createDocumentFragment();
+    CAL_DOW_LABELS_.forEach(function(label) {
+      var el = document.createElement('div');
+      el.className = 'cal-dow';
+      el.textContent = label;
+      frag.appendChild(el);
+    });
+    var offset = parseIsoDate_(entries[0].dateIso).getDay();
+    for (var i = 0; i < offset; i++) {
+      var pad = document.createElement('div');
+      pad.className = 'cal-cell pad';
+      frag.appendChild(pad);
+    }
+    entries.forEach(function(entry) { frag.appendChild(buildCalCell_(entry)); });
+    grid.appendChild(frag);
+  }
+
+  /** Updates one cell's status class/✕-mark/aria-label in place — no full calendar re-render. */
+  function updateCalCellStatus_(dateIso, status) {
+    var cell = $('calGrid').querySelector('.cal-cell[data-date="' + dateIso + '"]');
+    if (!cell) return;
+    cell.className = 'cal-cell st-' + status + (dateIso === state.todayIso ? ' today' : '') +
+      (dateIso === state.selectedDateIso ? ' selected' : '');
+    var d = parseIsoDate_(dateIso);
+    var weekdayLong = d.toLocaleDateString(undefined, { weekday: 'long' });
+    var monthShort = d.toLocaleDateString(undefined, { month: 'short' });
+    cell.setAttribute('aria-label', weekdayLong + ' ' + monthShort + ' ' + d.getDate() + ': ' + (CAL_STATUS_LABELS_[status] || ''));
+    var xMark = cell.querySelector('.x-mark');
+    if (status === 'absent' && !xMark) {
+      var xEl = document.createElement('span');
+      xEl.className = 'x-mark';
+      xEl.setAttribute('aria-hidden', 'true');
+      cell.appendChild(xEl);
+    } else if (status !== 'absent' && xMark) {
+      xMark.remove();
+    }
+  }
+
+  /** Moves the .selected class from the old cell to the new one — no full calendar re-render. */
+  function updateCalendarSelection_(oldIso, newIso) {
+    var grid = $('calGrid');
+    if (oldIso) {
+      var oldCell = grid.querySelector('.cal-cell[data-date="' + oldIso + '"]');
+      if (oldCell) oldCell.classList.remove('selected');
+    }
+    var newCell = grid.querySelector('.cal-cell[data-date="' + newIso + '"]');
+    if (newCell) newCell.classList.add('selected');
+  }
+
+  /** Renders the single unified selection panel for dateIso — falls back to todayStatus/
+   * yesterdayStatus for the two days that may not yet have their own monthGrid entry (e.g. a
+   * fresh cross-month edge case), matching the design's fallback rule. */
+  function renderSelectionPanel_(dateIso) {
+    state.selectedDateIso = dateIso;
+    // #selYesBtn/#selNoBtn/#selNoneBtn are shared across whichever day is selected, not per-day
+    // — they're never legitimately disabled except mid-save (unlike #selFailBtn, whose disabled
+    // state is also date-gated and already gets forced below regardless of loading state).
+    // Without this, switching to a different day while an earlier day's write is still in
+    // flight left these stuck showing "Saving…" until that unrelated request finally resolved,
+    // even though the newly-selected day is perfectly free to edit right away — writes to
+    // different days are independent and were never meant to be serialized.
+    [$('selYesBtn'), $('selNoBtn'), $('selNoneBtn')].forEach(function(btn) {
+      if (btn.disabled) setButtonLoading_(btn, false);
+    });
+    var entry = monthGridEntryFor_(dateIso);
+    var status = entry ? entry.status
+      : dateIso === state.todayIso ? state.todayStatus
+      : dateIso === state.yesterdayIso ? state.yesterdayStatus
+      : 'pending';
+    var d = parseIsoDate_(dateIso);
+    var prefix = dateIso === state.todayIso ? 'Today · ' : dateIso === state.yesterdayIso ? 'Yesterday · ' : '';
+    $('checkinSelectedDate').textContent = prefix + formatNavDate_(d);
+    $('checkinStatusNote').textContent = CAL_SELECTION_STATUS_TEXT_[status] || CAL_SELECTION_STATUS_TEXT_.pending;
+    $('selYesBtn').classList.toggle('current', status === 'done');
+    $('selNoBtn').classList.toggle('current', status === 'missed');
+    $('selNoneBtn').classList.toggle('current', status === 'pending');
+    $('selFailBtn').classList.toggle('current', status === 'absent');
+    // Only "Failed" is time-gated — nobody can honestly know today whether they failed a day
+    // that hasn't happened yet (F3Go30-th22.1 design). Hit/Miss/No-check-in are never disabled.
+    var isPast = dateIso < state.todayIso;
+    $('selFailBtn').disabled = !isPast;
+    $('selFailBtn').title = isPast ? '' : 'Failed can only be set for a past day';
+  }
+
+  function submitSelectionCheckin_(btn, value) {
+    hideApiError_();
+    setButtonLoading_(btn, true, 'Saving…');
+    var dateIso = state.selectedDateIso;
+    callApi('checkin', { f3Name: state.f3Name, email: state.email, day: dateIso, value: value })
+      .then(function() {
+        var status = valueToMonthGridStatus_(value);
+        updateMonthGridEntry_(dateIso, status);
+        updateCalCellStatus_(dateIso, status);
+        renderSelectionPanel_(dateIso);
+        state.lastEditedDayIso = dateIso;
+        // Keep the TODAY/YESTERDAY blocks' own status in sync too, in case the same day is
+        // edited from both views without a full page reload.
+        if (dateIso === state.todayIso) { state.todayStatus = status; renderCheckinStatus_('today', status); }
+        else if (dateIso === state.yesterdayIso) { state.yesterdayStatus = status; renderCheckinStatus_('yesterday', status); }
+      })
+      .catch(function(err) { showApiError_('checkin', err); })
+      .finally(function() { setButtonLoading_(btn, false); });
+  }
+
+  $('selYesBtn').addEventListener('click', function() { submitSelectionCheckin_(this, 1); });
+  $('selNoBtn').addEventListener('click', function() { submitSelectionCheckin_(this, 0); });
+  $('selNoneBtn').addEventListener('click', function() { submitSelectionCheckin_(this, null); });
+  $('selFailBtn').addEventListener('click', function() { submitSelectionCheckin_(this, -1); });
+
+  // One delegated listener — clicking any non-pad cell selects it without a full calendar
+  // re-render and without any callApi call (test surface #5).
+  $('calGrid').addEventListener('click', function(e) {
+    var cell = e.target.closest('.cal-cell');
+    if (!cell || cell.classList.contains('pad')) return;
+    var oldIso = state.selectedDateIso;
+    var newIso = cell.dataset.date;
+    if (newIso === oldIso) return;
+    renderSelectionPanel_(newIso);
+    updateCalendarSelection_(oldIso, newIso);
+    cell.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+
+  $('advancedToggleBtn').addEventListener('click', function() {
+    state.advancedOpen = !state.advancedOpen;
+    $('checkinTodayBlock').classList.toggle('hidden', state.advancedOpen);
+    $('yesterdayBlock').classList.toggle('hidden', state.advancedOpen || !state.yesterdayAvailable);
+    $('advancedGrid').classList.toggle('hidden', !state.advancedOpen);
+    this.textContent = state.advancedOpen ? 'Hide month calendar ▴' : 'Show month calendar ▾';
+    if (state.advancedOpen) {
+      // First open renders from state.monthGrid already in memory (identify's response) — no
+      // extra callApi call. state.selectedDateIso must be set BEFORE renderCalendar_() runs,
+      // since buildCalCell_ decides each cell's .selected class from state.selectedDateIso at
+      // build time — rendering the calendar first left no cell selected until the next click.
+      state.selectedDateIso = state.selectedDateIso || state.lastEditedDayIso || state.todayIso;
+      renderCalendar_();
+      renderSelectionPanel_(state.selectedDateIso);
+    }
+  });
+
   $('dashboardBtn').addEventListener('click', function() {
     var btn = this;
     setButtonLoading_(btn, true, 'Loading…');

@@ -181,6 +181,34 @@ that cannot guarantee a sidebar context must call `Logger.log()` directly.
   redirect-blocked fallback. Sign-up itself needed zero changes: its existing
   `autoStart`+localStorage prefill path (`SignupApp.html`) already covers this hand-off.
 
+- **Advanced whole-month check-in calendar (F3Go30-th22) — DECIDED:** The check-in page's
+  `#advancedToggleBtn` reveals a full-month calendar (`#advancedGrid`, `CheckinApp.html`) as an
+  alternative to the TODAY/YESTERDAY blocks — mutually exclusive views, never both shown at once.
+  Four settable states now exist per day, not three: Hit (1), Miss (0), No-Check-in (blank), and
+  Failed (−1) — `-1` was previously Q-only (`markMinusOne`'s automatic grace-period mark) and is
+  now also a legitimate PAX-set honor-system value (e.g. reverting a system-applied −1 after a
+  technical issue, or pre-marking a day they already know they'll miss). Only "Failed" is
+  date-gated: a day can only be marked Failed once it's strictly in the past
+  (`isStrictlyPastCalendarDate_`, `dashboardWebapp.js`) — nobody can honestly know today whether
+  they failed tomorrow's workout. Hit/Miss/No-Check-in remain settable for any day, past or
+  future, with no date restriction (the whole point of letting a PAX pre-mark a planned absence).
+  **Write contract:** `handleCheckinSubmit_`'s `payload.day` now also accepts an explicit
+  `"YYYY-MM-DD"` string alongside the existing `'today'`/`'yesterday'` literals (validated by the
+  new pure `validateCheckinSubmitDayValue_`, unit-tested independently of any spreadsheet
+  fixture); `payload.value` now also accepts `-1`, gated server-side (defense-in-depth, mirroring
+  the client's `#selFailBtn` disable rule) by `isStrictlyPastCalendarDate_` — a replayed/
+  manipulated request can't pre-mark a future or today's-own day Failed even though the client UI
+  never offers that combination. No new error codes: the existing five (`invalid_day`,
+  `invalid_value`, `not_found`, `day_column_not_found`, `cell_is_formula`) cover the widened
+  contract unchanged. **Month source:** `handleCheckinIdentify_` now also returns `monthGrid`
+  (`buildMonthGridEntries_`) — one `{dateIso, status}` entry per day column of the PAX's current
+  identify month, built from data already in scope (no extra spreadsheet read) — which the client
+  renders as the calendar and uses to seed the single unified selection panel (`#checkinSelectedDate`
+  + 4 buttons) without any further round trip. Calendar cells reuse the existing `SEGMENT_COLORS_`
+  palette verbatim (the same one already driving the month-progress ring/day-mini-bar) so the new
+  view reads as the same status language, not an invented one. Full design record: bd issue
+  F3Go30-th22.1.
+
 - **Dashboard team grouping (F3Go30-ln1x) — DECIDED:** "My Team" and the PAX board group by
   whatever string currently lives in the Tracker's column B (Goal/Team), not a separately
   maintained team roster — there is no fixed team list in the data model. A group is exactly the
