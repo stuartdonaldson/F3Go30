@@ -35,6 +35,7 @@ const {
   needsYesterdayCheckin_,
   dayValueStatus_,
   groupByTeam_,
+  firstActiveDayIndex_,
   buildDashboardPaxRow_,
   buildDaySegments_,
   buildRollingAverage_,
@@ -181,6 +182,115 @@ const {
   // gets the all-zero shape.
   var row = buildDashboardPaxRow_('Little John', 'Crucible', 8, 8, 2, [1, 1], 30, 2);
   assert.deepEqual(row.bonusByType, { fe: 0, q: 0, ins: 0, eh: 0 });
+})();
+
+// ── firstActiveDayIndex_ (F3Go30-nhge.1) ────────────────────────────────────
+(function testFirstActiveDayIndexFindsFirstOneOrZero() {
+  assert.equal(firstActiveDayIndex_([-1, -1, 1, 0, 1]), 2);
+  assert.equal(firstActiveDayIndex_([-1, 0, -1]), 1);
+  assert.equal(firstActiveDayIndex_(['', '', 1]), 2);
+})();
+
+(function testFirstActiveDayIndexReturnsMinusOneWhenNoneFound() {
+  assert.equal(firstActiveDayIndex_([-1, -1, -1]), -1);
+  assert.equal(firstActiveDayIndex_([]), -1);
+  assert.equal(firstActiveDayIndex_(['', '']), -1);
+})();
+
+// ── buildDashboardPaxRow_ scorePct: per-PAX denominator (F3Go30-nhge.1) ─────
+(function testBuildDashboardPaxRowScorePctAnchoredAtMidMonthJoin() {
+  // PAX joined on day 3 (idx 2): days 0-1 are '' (not yet enrolled), day 2 is the first real
+  // check-in. Denominator is currentDay(4) - firstActiveIdx(2) = 2, not currentDay(4).
+  var row = buildDashboardPaxRow_('Mid Joiner', 'Crucible', 2, 2, 2, ['', '', 1, 1], 30, 4);
+  assert.equal(row.scorePct, 100); // score 2 / denom 2 == 100%, not 2/4 == 50%
+})();
+
+(function testBuildDashboardPaxRowScorePctUnchangedForDayOneJoiner() {
+  // PAX active since day 0 — firstActiveIdx is 0, so denom === currentDay, same as before.
+  var row = buildDashboardPaxRow_('Day One', 'Crucible', 3, 3, 3, [1, 1, 1, 0], 30, 4);
+  assert.equal(row.scorePct, Math.round((3 / 4) * 100));
+})();
+
+(function testBuildDashboardPaxRowScorePctFallsBackWhenNoActiveDay() {
+  // No 1/0 found at all (denom -1 -> denom 0 case) keeps the existing score>=0?100:0 fallback.
+  var row = buildDashboardPaxRow_('Never Checked In', 'Crucible', 0, 0, 0, ['', '', '', ''], 30, 4);
+  assert.equal(row.scorePct, 100);
+})();
+
+// ── buildDashboardPaxRow_ scorePct: anchor-through-today denominator (F3Go30-nhge.2) ───────
+// Exercises the 8 cases from the parent bug's (F3Go30-nhge) AC, using a 30-day month (indices
+// 0..29, idx 29 = today). Cases 2 and 5 assert what the shipped nhge.1 implementation actually
+// does, which diverges from the parent bug's literal AC text (no blank-today denom adjustment;
+// firstActiveDayIndex_ ignores leading -1 entirely rather than anchoring on it). Per nhge.2
+// resolution, nhge.1's simpler shipped behavior was kept rather than reopened/rewritten to
+// match the older design — these tests lock in the real behavior, not the aspirational one.
+(function testScorePctCanonicalJoinerPerfectIncludingToday() {
+  // Case 1: joined day 10 (idx 9), perfect every day through today (idx 29).
+  var dayValues = new Array(9).fill('').concat(new Array(21).fill(1));
+  var row = buildDashboardPaxRow_('Joiner', 'Crucible', 21, 21, 21, dayValues, 30, 30);
+  assert.equal(row.scorePct, 100);
+})();
+
+(function testScorePctJoinerPerfectThroughYesterdayBlankToday() {
+  // Case 2 (deviates from parent AC's literal "100%"): joined day 10, perfect through
+  // yesterday, hasn't checked in yet today (idx 29 blank). The shipped denom has no blank-
+  // today adjustment, so today's still-blank cell stays in the denominator -> <100%.
+  var dayValues = new Array(9).fill('').concat(new Array(20).fill(1)).concat(['']);
+  var row = buildDashboardPaxRow_('Joiner', 'Crucible', 20, 20, 20, dayValues, 30, 30);
+  assert.equal(row.scorePct, Math.round((20 / 21) * 100)); // 95, not 100
+})();
+
+(function testScorePctActivePaxBlankYesterdayCheckedInToday() {
+  // Case 3: active since day 1, blank yesterday (idx 28, not yet marked missed), checked in
+  // today (idx 29). Blank yesterday stays in the denominator without adding to the numerator.
+  var dayValues = new Array(28).fill(1).concat(['', 1]);
+  var row = buildDashboardPaxRow_('Active', 'Crucible', 29, 29, 1, dayValues, 30, 30);
+  assert.equal(row.scorePct, Math.round((29 / 30) * 100));
+  assert.ok(row.scorePct < 100);
+})();
+
+(function testScorePctJoinedTodayCheckedInToday() {
+  // Case 4: joined today (idx 29 is the only non-blank cell) -> denom 1, pre-join yesterday
+  // (and every earlier day) excluded entirely.
+  var dayValues = new Array(29).fill('').concat([1]);
+  var row = buildDashboardPaxRow_('Brand New', 'Crucible', 1, 1, 1, dayValues, 30, 30);
+  assert.equal(row.scorePct, 100);
+})();
+
+(function testScorePctEnrolledSlackerLeadingAbsences() {
+  // Case 5 (deviates from parent AC's literal "<100%, penalized"): enrolled since day 1 with
+  // 3 leading -1 (no-show) days, then perfect. firstActiveDayIndex_ ignores -1 entirely and
+  // anchors at the first 1/0 (idx 3), so the leading -1's fall OUTSIDE the window and are NOT
+  // penalized under the shipped behavior.
+  var dayValues = [-1, -1, -1].concat(new Array(27).fill(1));
+  var row = buildDashboardPaxRow_('Slacker', 'Crucible', 27, 27, 27, dayValues, 30, 30);
+  assert.equal(row.scorePct, 100);
+})();
+
+(function testScorePctNoRecordedDaysFallback() {
+  // Case 6: no recorded days at all -> firstActiveIdx -1 -> denom 0 -> existing fallback.
+  var dayValues = new Array(30).fill('');
+  var row = buildDashboardPaxRow_('Ghost', 'Crucible', 0, 0, 0, dayValues, 30, 30);
+  assert.equal(row.scorePct, 100);
+})();
+
+(function testScorePctFullMonthPaxUnchangedFromOldFormula() {
+  // Case 7: no leading blanks, active since day 1, mix of hits/misses -> denom === currentDay,
+  // matching the pre-nhge score/currentDay formula exactly (no regression for this case).
+  var dayValues = new Array(25).fill(1).concat(new Array(5).fill(0));
+  var row = buildDashboardPaxRow_('Veteran', 'Crucible', 25, 25, 0, dayValues, 30, 30);
+  assert.equal(row.scorePct, Math.round((25 / 30) * 100));
+})();
+
+(function testScorePctChangeDoesNotAffectOtherFields() {
+  // Case 8: streak/maxStreak30/rollingAverage/daySegments are computed independently of the
+  // scorePct/anchor logic -- guard that the anchor computation only changes scorePct.
+  var dayValues = new Array(9).fill('').concat(new Array(21).fill(1));
+  var row = buildDashboardPaxRow_('Joiner', 'Crucible', 21, 21, 21, dayValues, 30, 30);
+  assert.equal(row.streak, 21);
+  assert.equal(row.maxStreak30, 21);
+  assert.deepEqual(row.daySegments, new Array(9).fill('pending').concat(new Array(21).fill('done')));
+  assert.equal(row.rollingAverage.length, dayValues.length);
 })();
 
 // ── buildDaySegments_ ──────────────────────────────────────────────────────

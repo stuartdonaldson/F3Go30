@@ -1327,7 +1327,19 @@ var MAX_STREAK_WINDOW_DAYS_ = 30;
 // boundary the same way the average itself already does.
 var DASHBOARD_DISPLAY_WINDOW_DAYS_ = 14;
 
+// F3Go30-nhge.1: first index where a PAX has a genuine check-in day (present, 1, or missed, 0)
+// — used to anchor the score %% denominator so a mid-month joiner isn't penalized for days
+// before they were enrolled. Only matches 1/0; a leading -1 (explicit absence) does not anchor.
+function firstActiveDayIndex_(dayValues) {
+  for (var i = 0; i < dayValues.length; i++) {
+    if (dayValues[i] === 1 || dayValues[i] === 0) return i;
+  }
+  return -1;
+}
+
 function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, totalDays, currentDay, bonusByType) {
+  var firstActiveIdx = firstActiveDayIndex_(dayValues);
+  var denom = firstActiveIdx === -1 ? 0 : (currentDay - firstActiveIdx);
   return {
     name: name,
     team: team,
@@ -1335,7 +1347,7 @@ function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, t
     rawScore: rawScore,
     streak: streak,
     maxStreak30: computeMaxStreak_(dayValues, MAX_STREAK_WINDOW_DAYS_),
-    scorePct: currentDay ? Math.round((score / currentDay) * 100) : (score >= 0 ? 100 : 0),
+    scorePct: denom ? Math.round((score / denom) * 100) : (score >= 0 ? 100 : 0),
     dayValues: dayValues,
     daySegments: buildDaySegments_(dayValues, totalDays),
     rollingAverage: buildRollingAverage_(dayValues, ROLLING_AVERAGE_WINDOW_DAYS_),
