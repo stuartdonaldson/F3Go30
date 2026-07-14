@@ -51,6 +51,8 @@ var paxCacheNormalizeName_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWeba
   || (typeof globalThis !== 'undefined' && globalThis.paxCacheNormalizeName_);
 var ensurePaxCacheFresh_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.ensurePaxCacheFresh_)
   || (typeof globalThis !== 'undefined' && globalThis.ensurePaxCacheFresh_);
+var markPaxCacheFreshNow_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.markPaxCacheFreshNow_)
+  || (typeof globalThis !== 'undefined' && globalThis.markPaxCacheFreshNow_);
 
 var dashboardWebappBonusModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./bonusWebapp.js')
@@ -811,9 +813,24 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var t0 = Date.now();
   var targetSs = SpreadsheetApp.openById(monthInfo.sheetId);
   var openMs = Date.now() - t0;
+
+  // Same Drive-probe deferral as resolveFullIdentityFromHandle_ (F3Go30-qi26.4), applied to this
+  // fallback path's two full-range reads (Responses + Tracker). The freshCheck must precede any
+  // cache read (it wipes stale entries), so both roster caches are peeked up front: run the ~½s
+  // probe only when there's something cached to validate, and stamp asOf from the read moment
+  // (markPaxCacheFreshNow_) whenever we instead read live — a live read is definitionally current.
+  var responsesCacheKey = responsesValuesCacheKey_(monthInfo.sheetId);
+  var trackerCacheKey = trackerValuesCacheKey_(monthInfo.sheetId);
   var tFresh = Date.now();
-  if (ensurePaxCacheFresh_dw_) ensurePaxCacheFresh_dw_(monthInfo.sheetId);
+  var dataRows = getCachedSheetValuesOnly_(responsesCacheKey);
+  var trackerValues = getCachedSheetValuesOnly_(trackerCacheKey);
+  if ((dataRows || trackerValues) && ensurePaxCacheFresh_dw_) {
+    ensurePaxCacheFresh_dw_(monthInfo.sheetId);       // may wipe either cache if the sheet was edited since
+    dataRows = getCachedSheetValuesOnly_(responsesCacheKey);
+    trackerValues = getCachedSheetValuesOnly_(trackerCacheKey);
+  }
   var freshCheckMs = Date.now() - tFresh;
+  var freshRead = false;
 
   var responsesSheet = targetSs.getSheetByName('Responses');
   if (!responsesSheet) return { matched: false, months: months };
@@ -821,13 +838,12 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var t1 = Date.now();
   var headers = responsesSheet.getRange(1, 1, 1, responsesSheet.getLastColumn()).getValues()[0];
   var columns = resolveResponseColumns_dw_(headers);
-  var responsesCacheKey = responsesValuesCacheKey_(monthInfo.sheetId);
-  var dataRows = getCachedSheetValuesOnly_(responsesCacheKey);
   if (!dataRows) {
     dataRows = responsesSheet.getLastRow() > 1
       ? responsesSheet.getRange(2, 1, responsesSheet.getLastRow() - 1, responsesSheet.getLastColumn()).getValues()
       : [];
     setCachedSheetValues_(responsesCacheKey, dataRows);
+    freshRead = true;
   }
   var match = findSignupMatchByF3NameOnly_dw_(dataRows, f3Name, columns);
   var responsesMs = Date.now() - t1;
@@ -848,15 +864,17 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
 
   var t2 = Date.now();
   var layout = getTrackerLayout_(trackerSheet, monthInfo.sheetId);
-  var trackerCacheKey = trackerValuesCacheKey_(monthInfo.sheetId);
-  var trackerValues = getCachedSheetValuesOnly_(trackerCacheKey);
   if (!trackerValues) {
     var lastRow = trackerSheet.getLastRow();
     var lastCol = trackerSheet.getLastColumn();
     trackerValues = trackerSheet.getRange(4, 1, lastRow - 3, lastCol).getValues();
     setCachedSheetValues_(trackerCacheKey, trackerValues);
+    freshRead = true;
   }
   var trackerMs = Date.now() - t2;
+  // If either read went live (cold cache), the probe above was skipped — stamp asOf from the read
+  // moment so the rows bulk-written below stay trusted without a Drive round trip (F3Go30-qi26.4).
+  if (freshRead && markPaxCacheFreshNow_dw_) markPaxCacheFreshNow_dw_(monthInfo.sheetId);
 
   var t3 = Date.now();
   var rosterIndex = {};
@@ -996,22 +1014,35 @@ function resolveFullIdentityFromHandle_(handle) {
   var targetSs;
   try { targetSs = SpreadsheetApp.openById(monthInfo.sheetId); } catch (e) { return null; }
   var openMs = Date.now() - t0;
-  var tFresh = Date.now();
-  if (ensurePaxCacheFresh_dw_) ensurePaxCacheFresh_dw_(monthInfo.sheetId);
-  var freshCheckMs = Date.now() - tFresh;
 
   var trackerSheet = targetSs.getSheetByName('Tracker');
   if (!trackerSheet || trackerSheet.getLastRow() < 4) return null;
 
   var t2 = Date.now();
   var layout = getTrackerLayout_(trackerSheet, monthInfo.sheetId);
+  // Whole-roster read — required for the dashboard's team/board view: every PAX's Tracker row
+  // backs allPaxRows/paxBoard/myTeamMembers (see handleCheckinDashboard_), so this read stays on
+  // the critical path by necessity. What we DON'T pay for unconditionally anymore (F3Go30-qi26.4)
+  // is the ~½s Drive-modtime freshCheck: only run it when there's a CACHED roster to validate. A
+  // cold cache means the live read below is authoritative — a fresh read is by definition current,
+  // so probing Drive first is pure latency with nothing to invalidate. On a fresh read we stamp the
+  // asOf marker from the read moment (markPaxCacheFreshNow_) so the rows bulk-written below stay
+  // trusted by later same-request lean lookups without that round trip. Mirrors
+  // resolveLeanIdentityFromHandle_, which already trusts its single-row live read with no probe.
   var trackerCacheKey = trackerValuesCacheKey_(monthInfo.sheetId);
+  var tFresh = Date.now();
   var trackerValues = getCachedSheetValuesOnly_(trackerCacheKey);
+  if (trackerValues && ensurePaxCacheFresh_dw_) {
+    ensurePaxCacheFresh_dw_(monthInfo.sheetId);       // may wipe the roster cache if the sheet was edited since
+    trackerValues = getCachedSheetValuesOnly_(trackerCacheKey);
+  }
+  var freshCheckMs = Date.now() - tFresh;
   if (!trackerValues) {
     var lastRow = trackerSheet.getLastRow();
     var lastCol = trackerSheet.getLastColumn();
     trackerValues = trackerSheet.getRange(4, 1, lastRow - 3, lastCol).getValues();
     setCachedSheetValues_(trackerCacheKey, trackerValues);
+    if (markPaxCacheFreshNow_dw_) markPaxCacheFreshNow_dw_(monthInfo.sheetId);
   }
   var trackerMs = Date.now() - t2;
 

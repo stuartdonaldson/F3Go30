@@ -859,6 +859,41 @@ function makeHandleFixture_() {
   delete global.SpreadsheetApp;
 })();
 
+// resolveFullIdentityFromHandle_ — the whole-roster read stays (the board needs every PAX's row),
+// but the ~½s Drive-modtime freshCheck is SKIPPED when the roster cache is cold (a live read is
+// definitionally current) and paid only to validate a WARM cache (F3Go30-qi26.4).
+(function testFullFromHandleSkipsFreshCheckOnColdCacheProbesOnWarmCache() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  var driveCalls = 0;
+  global.DriveApp = { getFileById: function() { driveCalls++; return { getLastUpdated: function() { return new Date(1000); } }; } };
+  PaxCache.resetPaxCacheFreshnessMemo_();
+
+  var fx = makeHandleFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 1, 'Slaw');
+
+  // Cold roster cache: no Drive probe, yet the full roster is still resolved for the board.
+  var cold = resolveFullIdentityFromHandle_(handle);
+  assert.ok(cold);
+  assert.equal(cold.trackerValues.length, 2);
+  assert.equal(cold.rowIndex, 1);
+  assert.equal(driveCalls, 0);
+
+  // The cold read warmed the CacheService roster cache; a fresh execution against it pays exactly
+  // one probe to validate (modtime 1000 is older than the stamped asOf, so nothing is wiped).
+  PaxCache.resetPaxCacheFreshnessMemo_();
+  var warm = resolveFullIdentityFromHandle_(handle);
+  assert.ok(warm);
+  assert.equal(warm.trackerValues.length, 2);
+  assert.equal(driveCalls, 1);
+
+  delete global.DriveApp;
+  delete global.SpreadsheetApp;
+  PaxCache.resetPaxCacheFreshnessMemo_();
+})();
+
 // handleCheckinDashboard_ wiring: a valid handle whose month matches the requested date resolves
 // the dashboard WITHOUT ever consulting the TrackerDB (resolveDashboardMonth_). A hostile
 // templateSpreadsheet whose getSheetByName throws proves it: resolveDashboardMonth_ would swallow
