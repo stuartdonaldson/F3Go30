@@ -214,6 +214,38 @@ web app, re-linking forms) is a separate, manual step — see `script/CopyTempla
 header. Teardown (removing the `NamespaceDB` row and optionally trashing the folder) is the
 `teardownEnvironment` admin action / `teardownNamespaceEnvironment_` — see ADR-014 D6.
 
+### Performance Testing — Check-in Round-Trip Harness (F3Go30-qi26.5)
+
+`tools/measureCheckinPerformance.js` provides a repeatable performance measurement harness for the
+returning-user check-in flow (page load → auto-identify → check-in → dashboard). Use this to
+capture before/after timings for optimization work.
+
+```bash
+node tools/measureCheckinPerformance.js <F3Name> [--env sit|prod] [--rounds N]
+```
+
+**Usage:**
+- `node tools/measureCheckinPerformance.js TestPax` — single run against SIT
+- `node tools/measureCheckinPerformance.js TestPax --env prod --rounds 3` — 3 runs against PROD
+
+**Output:**
+1. Per-round-trip timing table, broken down by GAS (`script.google.com`) and
+   `googleusercontent.com` hosts, showing HTTP status, TTFB (time-to-first-byte), and total
+   time for each request.
+2. Axiom correlation window (start + end timestamps) for filtering GAS logs with
+   `tools/query_axiom.py` — e.g.
+
+   ```bash
+   python tools/query_axiom.py --since 30m --where "_time >= '...' and _time <= '...'"
+   ```
+
+   to correlate the measurement run's network performance with server-side GAS execution logs.
+
+**Notes:**
+- Each round mints a unique identity token, so successive rounds measure independent sessions.
+- Headless Chromium is used (no display required).
+- Defaults to SIT environment; always test there first before running against PROD.
+
 ### Script Properties
 
 Set in Apps Script Project Settings → Script Properties.

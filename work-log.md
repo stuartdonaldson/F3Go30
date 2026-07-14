@@ -1379,3 +1379,14 @@ Rejected: splitting the dashboard payload (user tile first, board deferred/lazy)
 Outcome [developer-facing]: Added markPaxCacheFreshNow_(sheetId) to PaxCache.js — stamps the asOf marker from the read moment (Date.now(), >= the sheet's real last-updated at read time) and sets the per-execution memo, no Drive round trip. Refactored resolveFullIdentityFromHandle_ and its parallel fallback resolveCheckinIdentityFull_ to peek the roster cache(s) up front, run ensurePaxCacheFresh_ only when there's something cached to validate, and stamp asOf-now when reading live instead. Documented the whole-roster read as required-for-board in-code.
 Outcome [developer-facing]: New unit tests — test_pax_cache.js proves markPaxCacheFreshNow_ stamps asOf with zero DriveApp calls, short-circuits a same-execution ensurePaxCacheFresh_, and survives an unchanged-sheet re-check in a fresh execution; test_dashboard_webapp.js proves resolveFullIdentityFromHandle_ makes 0 Drive calls on a cold roster cache (still returning the full 2-PAX roster) and exactly 1 probe on a warm cache. Full suite (npm test) green.
 Open: The AC's "dashboard totalMs in Axiom materially reduced" and "harness re-run confirms" require a live SIT deploy + the Playwright/Axiom perf harness (separate bead F3Go30-qi26.5, not yet built) — neither possible in this unattended, no-deploy session. Live confirmation is deferred to a human/harness run; the code-level freshCheck elimination is complete and unit-verified. Design-doc/ADR updates are out of scope here (owned by F3Go30-qi26.6).
+
+## 2026-07-14 21:50:00
+_session 730af92f-e9c0-419f-9d7f-f4ece1201b59 · v3 · 07-14_
+
+### Objective 1: Build repeatable Playwright+Axiom check-in performance harness (F3Go30-qi26.5)
+Rationale: Optimization work needs a repeatable measurement tool to capture before/after performance numbers. The harness measures the full returning-user check-in flow (page load → auto-identify → check-in → dashboard) with per-request TTFB and total timings, enabling correlation with GAS logs via Axiom.
+
+Outcome [developer-facing]: Created `tools/measureCheckinPerformance.js` — a Node.js CLI tool that mints identity tokens, drives the check-in flow with Playwright, captures per-host network timings (GAS + googleusercontent), and prints an Axiom correlation window for log filtering. Supports `--env sit|prod` and `--rounds N` for repeated runs. Reuses the existing `callWebapp.js` pattern for deployment ID loading and token minting.
+
+Outcome [internal]: Added brief section to `docs/OPERATIONS.md` under "Performance Testing — Check-in Round-Trip Harness" documenting usage, output format, and the Axiom correlation workflow.
+
