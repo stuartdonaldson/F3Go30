@@ -1330,3 +1330,19 @@ Rejected: Rewriting `firstActiveDayIndex_`/the denom calc to match the parent bu
 Outcome [developer-facing]: Added 8 new test cases to test/test_dashboard_webapp.js covering the anchor-through-today denominator (canonical joiner, blank-today, blank-yesterday, joined-today, enrolled-slacker, no-data fallback, full-month regression, streak/rollingAverage/daySegments guard); cases 2 and 5 assert the actual shipped behavior with comments flagging the deviation from the parent bug's literal AC text.
 Outcome [internal]: Logged a `bd remember` note (`F3Go30-nhge-ac-deviation`) documenting the AC-vs-shipped-behavior gap and left parent bead F3Go30-nhge open (its AC as written isn't fully satisfied by the code); closed F3Go30-nhge.2. Full local suite (`npm test`) passes.
 Outcome [internal]: Ran the SIT namespace smoke suite (`node tools/smokeTestNamespace.js --env sit --template prod`) as end-to-end verification — signup/check-in/dashboard, bonus add/list, and cross-month bonus-edit relocation all live-verified against a disposed namespace; torn down cleanly on success.
+
+## 2026-07-14 07:27:50
+_session 5f134524 · v3 · 07-14_
+
+### Objective 1: Add an "Edit signup" affordance to the check-in page's goal info
+Rationale: From the check-in page's goals reminder a PAX had no way back into their signup to change WHO/WHAT/HOW; requested a link that "allows editing your signup info. this should be the same as the signup page, and after submitting you should be back on the checkin page." Reused the existing prefilled-signup deep link (`?cmd=signup&targetMonth=current&autoStart=1`) rather than building a new goal editor in check-in; the return trip needed no new code because a current-month save already returns `identityToken` and `performSave_` redirects into check-in.
+Outcome [user-facing]: "Edit" link now renders in the check-in goals reminder (under a "Your goals" title), opens the prefilled signup, and returns the PAX to check-in on save. Verified live on SIT.
+
+### Objective 2: Design review — reuse over proliferation, and justify the separate signup page  [accreted]
+Transition: developer redirected mid-task — "review the design ... we already have a mechanism of dealing with signup if the user is not signed up ... prioritize reuse and simplification rather than proliferation of similar code," and "consider whether we even need a separate signup page ... don't remove it, just evaluate."
+Rationale: The signup deep-link string was hand-built in four places (two identify fallthroughs, the next-month button, and the new Edit link). Both the not-signed-up nudge and the Edit link already converge on the same current-month `identityToken` return path, so they should share one URL builder. The separate signup page is justified — it owns anonymous first-time entry, next-month registration, onboarding/feedback, and email deep-links, and writes a different data contract (Responses/PaxDB/Tracker) than check-in.
+Outcome [developer-facing]: Extracted `signupDeepLinkUrl_(targetMonth)` in CheckinApp.html; all four entry points route through it. Removed three duplicate URL strings.
+Outcome [internal]: Recorded the rationale for keeping SignupApp.html separate; no code removed.
+
+### Key Learnings:
+GAS webapp pages render inside a doubly-nested sandbox iframe with no query string of its own — deep-link params (targetMonth/autoStart/ns/id) must be read server-side in the doGet handler and templated in, never read client-side; Playwright locators must go through `frameLocator('iframe').frameLocator('iframe')`.

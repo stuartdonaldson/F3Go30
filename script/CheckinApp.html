@@ -67,6 +67,8 @@
   .checkin-status { font-size: 15px; color: #888; margin: -2px 0 8px; }
   .checkin-section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 18px 0 8px; }
   .goals-reminder { background: #eef3f0; border: 1px solid #cfe0d8; border-radius: 8px; padding: 10px 12px; margin-bottom: 4px; }
+  .goals-reminder-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .goals-reminder-title { font-size: 12px; font-weight: bold; letter-spacing: .04em; text-transform: uppercase; color: #2f5d50; }
   .goals-reminder-row { font-size: 15px; line-height: 1.4; margin: 3px 0; }
   .goals-reminder-row strong { color: #2f5d50; }
   .error-text { font-size: 16px; color: #a3401a; margin-bottom: 8px; }
@@ -662,7 +664,7 @@
       // never returns that PaxDB data directly (see handleCheckinIdentify_), so there's nothing
       // more to hand off here than the name.
       saveIdentityToStorage_(TYPED_IDENTIFY_RESULT.f3Name, TYPED_IDENTIFY_RESULT.email);
-      var signupUrl = WEBAPP_URL + '?cmd=signup&targetMonth=current&autoStart=1';
+      var signupUrl = signupDeepLinkUrl_('current');
       $('signupRedirectAnchor').href = signupUrl;
       $('step-identify').classList.add('hidden');
       $('step-tokenLoading').classList.remove('hidden');
@@ -700,7 +702,7 @@
           // a stale/no-longer-current bookmark for a PAX who's known to PaxDB but hasn't signed
           // up for THIS month carries them into a prefilled signup instead of a blank form.
           saveIdentityToStorage_(res.f3Name, res.email);
-          var signupCurrentMonthUrl = WEBAPP_URL + '?cmd=signup&targetMonth=current&autoStart=1';
+          var signupCurrentMonthUrl = signupDeepLinkUrl_('current');
           attemptTopRedirect_(signupCurrentMonthUrl, function() {
             $('step-identify').classList.remove('hidden');
             $('idSignupBtn').classList.remove('hidden');
@@ -747,9 +749,17 @@
       el.innerHTML = '';
       return;
     }
-    el.innerHTML = '<div class="goals-reminder">' + rows.map(function(r) {
-      return '<div class="goals-reminder-row"><strong>' + r.label + ':</strong> ' + escapeHtml_(r.value) + '</div>';
-    }).join('') + '</div>';
+    // "Edit" reuses the same signup deep-link as the not-signed-up nudges (signupDeepLinkUrl_):
+    // opens signup prefilled with this PAX's current registration and returns here on save.
+    var editUrl = signupDeepLinkUrl_('current');
+    el.innerHTML = '<div class="goals-reminder">' +
+      '<div class="goals-reminder-head">' +
+        '<span class="goals-reminder-title">Your goals</span>' +
+        '<a href="' + editUrl + '" target="_top" class="bonus-edit-btn">Edit</a>' +
+      '</div>' +
+      rows.map(function(r) {
+        return '<div class="goals-reminder-row"><strong>' + r.label + ':</strong> ' + escapeHtml_(r.value) + '</div>';
+      }).join('') + '</div>';
     el.classList.remove('hidden');
   }
 
@@ -1020,6 +1030,17 @@
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showStep('checkin'); }
   });
 
+  /** The one place the signup deep-link is built. Every entry point that hands a PAX from
+   * this check-in page into signup — the known-but-unregistered fallthroughs (typed + token
+   * identify), the "Sign up for next month" button, and the goals-reminder "Edit" link — routes
+   * through here so the URL shape stays in one spot. autoStart tells SignupApp.html to skip
+   * intro/identify (identity is already in the shared-key localStorage) and open the goal step
+   * prefilled; a current-month save then redirects back into check-in via the identityToken
+   * handoff (performSave_, SignupApp.html), so every one of these round-trips lands back here. */
+  function signupDeepLinkUrl_(targetMonth) {
+    return WEBAPP_URL + '?cmd=signup&targetMonth=' + targetMonth + '&autoStart=1';
+  }
+
   /** Opens the signup app deep-linked past the intro/identify steps straight to goal
    * verification — identity is already in localStorage (saveIdentityToStorage_) under the
    * same key SignupApp.html reads, and targetMonth/autoStart tell it which month + to skip
@@ -1030,7 +1051,7 @@
    * SignupApp.html's post-save handoff), which only works as one continuous flow in a single
    * tab, not two independent tabs with no way to hand off between them. */
   function openSignup_(targetMonth) {
-    window.top.location.href = WEBAPP_URL + '?cmd=signup&targetMonth=' + targetMonth + '&autoStart=1';
+    window.top.location.href = signupDeepLinkUrl_(targetMonth);
   }
 
   $('idSignupBtn').addEventListener('click', function() { openSignup_('current'); });
