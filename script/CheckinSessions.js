@@ -54,6 +54,38 @@ var CHECKIN_SESSION_COL_LAST_USED_ = 4;
 var CHECKIN_SESSION_ABANDONED_DAYS_ = 14;
 var CHECKIN_SESSION_STALE_DAYS_ = 60;
 
+// CacheService's max — write-through target for a bookmarked guid's f3Name, kept warm on every
+// identify (createOrTouchCheckinSession_) so a later doGet on that same bookmark can produce a
+// personalized page <title> without opening the CheckinSessions sheet at all (F3Go30-qi26.3).
+// A cache miss (expiry, or a bookmark that was minted before this rollout) just falls back to
+// the generic namespace title — see dashboardWebapp.js's buildCheckinPageOutput_.
+var CHECKIN_SESSION_TITLE_CACHE_TTL_SECONDS_ = 21600;
+
+function checkinSessionTitleCacheKey_(guid) {
+  return 'checkinSessionTitle_' + guid;
+}
+
+/** Best-effort — a failed write just means the next doGet falls back to the generic title. */
+function cacheCheckinSessionTitle_(guid, f3Name) {
+  try {
+    CacheService.getScriptCache().put(checkinSessionTitleCacheKey_(guid), String(f3Name || ''), CHECKIN_SESSION_TITLE_CACHE_TTL_SECONDS_);
+  } catch (e) { /* best-effort */ }
+}
+
+/**
+ * Cache-only lookup for a bookmarked guid's f3Name — never opens a spreadsheet. Returns null on
+ * a miss (never cached, or expired), which callers must treat as "no personalized title
+ * available" rather than an error.
+ */
+function getCachedCheckinSessionTitle_(guid) {
+  if (!guid) return null;
+  try {
+    return CacheService.getScriptCache().get(checkinSessionTitleCacheKey_(guid)) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function _openOrCreateCheckinSessionsSheet_(spreadsheet) {
   var sheet = spreadsheet.getSheetByName(CHECKIN_SESSIONS_SHEET_NAME_);
   if (!sheet) {
@@ -224,6 +256,7 @@ function createOrTouchCheckinSession_(spreadsheet, guid, f3Name, email, createdA
   var existing = resolveCheckinSession_(spreadsheet, guid);
   if (existing) {
     touchCheckinSession_(spreadsheet, existing.row);
+    cacheCheckinSessionTitle_(guid, f3Name);
     return;
   }
   var sheet = _openOrCreateCheckinSessionsSheet_(spreadsheet);
@@ -240,6 +273,7 @@ function createOrTouchCheckinSession_(spreadsheet, guid, f3Name, email, createdA
     var raced = resolveCheckinSession_(spreadsheet, guid);
     if (raced) {
       touchCheckinSession_(spreadsheet, raced.row);
+      cacheCheckinSessionTitle_(guid, f3Name);
       return;
     }
     var now = new Date().toISOString();
@@ -249,6 +283,7 @@ function createOrTouchCheckinSession_(spreadsheet, guid, f3Name, email, createdA
     var index = _getCheckinSessionRosterIndex_();
     index[guid] = newRow;
     _setCheckinSessionRosterIndex_(index);
+    cacheCheckinSessionTitle_(guid, f3Name);
   } finally {
     lock.releaseLock();
   }
@@ -339,5 +374,7 @@ if (typeof module !== 'undefined' && module.exports) {
     cleanupStaleCheckinSessions_: cleanupStaleCheckinSessions_,
     findCheckinSessionByIdentity_: findCheckinSessionByIdentity_,
     resolveOrCreateCheckinSessionGuid_: resolveOrCreateCheckinSessionGuid_,
+    cacheCheckinSessionTitle_: cacheCheckinSessionTitle_,
+    getCachedCheckinSessionTitle_: getCachedCheckinSessionTitle_,
   };
 }

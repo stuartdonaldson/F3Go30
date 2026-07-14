@@ -84,6 +84,8 @@ var resolveCheckinSession_dw_ = (dashboardWebappCheckinSessionsModule_ && dashbo
   || (typeof globalThis !== 'undefined' && globalThis.resolveCheckinSession_);
 var createOrTouchCheckinSession_dw_ = (dashboardWebappCheckinSessionsModule_ && dashboardWebappCheckinSessionsModule_.createOrTouchCheckinSession_)
   || (typeof globalThis !== 'undefined' && globalThis.createOrTouchCheckinSession_);
+var getCachedCheckinSessionTitle_dw_ = (dashboardWebappCheckinSessionsModule_ && dashboardWebappCheckinSessionsModule_.getCachedCheckinSessionTitle_)
+  || (typeof globalThis !== 'undefined' && globalThis.getCachedCheckinSessionTitle_);
 
 var dashboardWebappBonusTypesModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./BonusTypes.js')
@@ -339,8 +341,12 @@ var CHECKIN_PAGE_FAVICON_URL_ = 'https://raw.githubusercontent.com/stuartdonalds
  *   it's read here, server-side, and templated in explicitly (savedIdentityTokenJson below).
  *   The page <title> has the same constraint — client-side document.title changes inside that
  *   sandboxed iframe don't reach the top-level (bookmarkable) document, so a personal-link
- *   token's f3Name is decoded here, server-side (cheap signature check only, no spreadsheet
- *   open), purely to make the title/bookmark name recognizable per-PAX.
+ *   token's f3Name is looked up here, server-side, purely to make the title/bookmark name
+ *   recognizable per-PAX. That lookup is a CacheService-only read (CheckinSessions.js's
+ *   getCachedCheckinSessionTitle_) — it never opens the CheckinSessions sheet on this
+ *   first-paint path (F3Go30-qi26.3, doGet server think was 3.6s with the sheet open in the
+ *   critical path). A cache miss (expired, or a legacy pre-rollout token) just serves the
+ *   generic namespace title instead of failing or falling back to a sheet open.
  */
 /**
  * Shared CheckinApp.html template builder for both entry points that can serve this page:
@@ -392,8 +398,11 @@ function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spre
   var nameSpaceConfig = getConfigValue_(spreadsheet, 'NameSpace', null) || {};
   var nameSpace = nameSpaceConfig.primary || 'F3 Go30';
   template.nameSpace = nameSpace;
+  // savedToken's title comes from cache only (see this function's docstring) — never
+  // resolveCheckinToken_dw_ here, since that opens the CheckinSessions sheet and would put the
+  // spreadsheet open right back on this first-paint path.
   var titleF3Name = (typedIdentifyResult && typedIdentifyResult.f3Name) ||
-    (savedToken && (resolveCheckinToken_dw_(spreadsheet, savedToken) || {}).f3Name);
+    (savedToken && getCachedCheckinSessionTitle_dw_(savedToken));
   var pageTitle = titleF3Name ? (nameSpace + ': ' + titleF3Name) : nameSpace;
   // HtmlService serves this inside an IFRAME-sandboxed wrapper that does not honor a
   // <meta name="viewport"> tag written in the template's own <head> — it must be set via
