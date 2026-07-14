@@ -51,6 +51,8 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   Hit / Miss / No-Check-in / Failed status, instead of only being able to edit today and
   yesterday. You can pre-mark a day you already know you'll miss (e.g. planned travel), or correct
   a past day that was recorded wrong. "Failed" can only be set on a day that's already over.
+- Check-in is noticeably faster for a returning PAX: "Continue to Dashboard" now opens instantly
+  instead of waiting on a fresh load, and the bookmarked check-in page itself opens quicker.
 
 ---
 

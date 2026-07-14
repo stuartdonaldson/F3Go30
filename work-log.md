@@ -1390,3 +1390,12 @@ Outcome [developer-facing]: Created `tools/measureCheckinPerformance.js` — a N
 
 Outcome [internal]: Added brief section to `docs/OPERATIONS.md` under "Performance Testing — Check-in Round-Trip Harness" documenting usage, output format, and the Axiom correlation workflow.
 
+
+## 2026-07-14 15:05:00
+_session a12f2bbd-a37f-4f0b-9c43-396ecb31930d · v3 · 07-14_
+
+### Objective 1: Document the check-in/dashboard round-trip reduction (F3Go30-qi26.6)
+Rationale: qi26.1-.5 landed the implementation (shared resolved-context handle, dashboard prefetch, doGet title-cache deferral, dashboard freshCheck deferral, and the Playwright+Axiom perf harness) across prior sessions; qi26.6 closes the epic's documentation gap so the architecture and its tradeoffs are recorded before the epic is considered done. Docs-only session per the bead's scope — no code changed.
+Outcome [developer-facing]: Added adr/015-checkin-dashboard-round-trip-reduction.md recording the round-trip-reduction decision (five coordinated sub-changes under one architectural decision, matching ADR-014's D1-D7 style), its tradeoffs (parallel fast/slow-path implementations, client-held handle correctness burden), and a cross-reference to the qi26.5 measurement harness; ran adr-quality-check's checklist against it inline (all fields present, single overarching decision, status/content consistent, no broken supersede chain). Updated docs/DESIGN.md's Decisions(short) section with a summary of the same four implementation changes and their in-code rationale.
+Outcome [user-facing]: Added a docs/CHANGELOG.md Unreleased bullet noting the PAX-visible speedup (instant "Continue to Dashboard", faster bookmarked check-in page load).
+Open: qi26.4's AC item confirming dashboard totalMs is materially reduced against a live deployment (via the qi26.5 harness) is still outstanding — flagged as a human follow-up in both the bead notes and ADR-015's Consequences, since it requires a live SIT/PROD run this unattended session could not perform.

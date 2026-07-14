@@ -255,6 +255,55 @@ that cannot guarantee a sidebar context must call `Logger.log()` directly.
   TrackerDB/PaxDB rebuild (`buildCopiedTrackerDbRow_`/`ct_updateTrackerDB`/`ct_updatePaxDB`)
   onto qualified `scanTrackers` as the single populate path.
 
+- **Check-in → dashboard round-trip reduction (F3Go30-qi26, ADR-015) — DECIDED:** Reduces the
+  serialized Apps Script round trips and redundant identity/month re-resolution the returning-PAX
+  check-in flow was paying for (baseline ~7.4s dashboard `totalMs`, measured via the harness
+  below). Builds on ADR-013's rejected onEdit/queue directions by working entirely within each
+  request's own live, synchronous execution — no new trigger or background-worker infrastructure.
+  Four independent changes, each guarded to fall back to full resolution transparently:
+  - **Resolved-context handle (qi26.1):** `handleCheckinIdentify_` (`dashboardWebapp.js`) returns
+    a lean `resolvedContext` handle (`buildResolvedContextHandle_`) alongside its normal payload —
+    the target tracker's `sheetId`, the PAX's Tracker `rowIndex` + canonical F3 name, and the
+    `monthKey`/`label`/`startDate` needed to reconstruct a `monthInfo` without a `TrackerDB` scan.
+    `CheckinApp.html` echoes it back on the follow-up `checkin`/`dashboard` POSTs. Every consumer
+    treats it as a hint only: `resolveLeanIdentityFromHandle_` (submit path) and
+    `resolveFullIdentityFromHandle_` (dashboard path) re-validate that the row at `rowIndex` still
+    carries the handle's canonical name before trusting it, and return `null` — triggering
+    transparent fallback to `resolveCheckinIdentity_`/`resolveCheckinIdentityFull_` — on a roster
+    edit, month rollover, or stale/absent handle. This removes one `resolveMonths` `TrackerDB`
+    scan and one Responses-sheet identity re-lookup per checkin/dashboard call.
+  - **Dashboard prefetch (qi26.2):** `CheckinApp.html` fires `prefetchDashboard_()` (a `silent`
+    `loadDashboard_` call using the just-returned handle) immediately after identify resolves,
+    while the PAX is still reading the check-in step. The `dashboardBtn` click handler renders
+    from `state.monthCache` (or rides the in-flight prefetch promise) instead of blocking on a
+    fresh round trip, so "Continue to Dashboard" is effectively instant on the common path.
+  - **doGet title deferral (qi26.3):** the check-in page's first-paint `doGet` no longer opens the
+    `CheckinSessions` sheet to resolve a bookmarked link's personalized `<title>`.
+    `createOrTouchCheckinSession_` write-through-caches the guid→F3 Name pair
+    (`cacheCheckinSessionTitle_`, `CacheService`, 6h TTL); `buildCheckinPageOutput_` reads it via
+    the cache-only `getCachedCheckinSessionTitle_`. A cache miss (expiry, or a pre-rollout
+    session) falls back to the generic namespace title rather than opening the sheet.
+  - **Dashboard freshCheck deferral (qi26.4):** `resolveFullIdentityFromHandle_` and
+    `resolveCheckinIdentityFull_` (`dashboardWebapp.js`) no longer pay `ensurePaxCacheFresh_`'s
+    ~½s `DriveApp.getLastUpdated()` probe unconditionally. The probe only runs when a roster
+    cache entry already exists to validate; when a read goes live (cold cache) instead, the row
+    values just read are definitionally current, so `markPaxCacheFreshNow_` (`PaxCache.js`) stamps
+    the freshness marker from the read moment with no Drive round trip. The whole-roster Tracker
+    read itself stays on the critical path unconditionally and is documented in-code as such — the
+    team board needs every PAX row; only the freshness *probe* is now conditional, not the read.
+  - **Measurement (qi26.5):** `tools/measureCheckinPerformance.js`, a repeatable
+    Playwright-driven harness, captures per-round-trip network timing (TTFB, total, by host) for
+    the full page-load → identify → checkin → dashboard flow, plus the Axiom correlation window
+    for cross-referencing server-side `GasLogger` timings via `tools/query_axiom.py` — see
+    docs/OPERATIONS.md §Performance Testing.
+
+  Trade-off: the resolved-context handle is duplicated client-side state that must be kept in
+  sync with server-side row identity, and every fast path carries a second, parallel
+  implementation (`resolveLeanIdentityFromHandle_`/`resolveFullIdentityFromHandle_`) alongside the
+  original full-resolution function rather than a shared code path — deliberate, since each
+  fast/slow pair has different inputs available and different Axiom timing needs (see
+  `resolveFullIdentityFromHandle_`'s header comment). See ADR-015 for the full rationale.
+
 ---
 
 ## Data Model
