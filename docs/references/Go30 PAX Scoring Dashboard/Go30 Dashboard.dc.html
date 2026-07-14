@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f1ea; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #d8cfbf; border-radius: 2px; }
+  </style>
+</helmet>
+
+<div style="min-height:100vh; background:#f4f1ea; font-family:Arial,Helvetica,sans-serif; color:#2b2b2b;">
+
+  <!-- ── HEADER ── -->
+  <div style="background:#2f5d50; color:#f8f4ea; padding:14px 32px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; box-shadow:0 2px 8px rgba(0,0,0,.15);">
+    <div style="display:flex; align-items:center; gap:14px;">
+      <div style="width:36px; height:36px; background:rgba(255,255,255,.15); border-radius:7px; display:flex; align-items:center; justify-content:center; flex-shrink:0; border:1px solid rgba(255,255,255,.2);">
+        <span style="font:700 16px 'Bebas Neue',Arial,sans-serif; letter-spacing:.05em;">F3</span>
+      </div>
+      <div>
+        <div style="font-size:10px; font-weight:bold; letter-spacing:.24em; opacity:.55; margin-bottom:1px;">F3 PUGET SOUND</div>
+        <div style="font:700 20px 'Bebas Neue',Arial,sans-serif; letter-spacing:.07em; line-height:1.1;">GO30 · JUNE 2026</div>
+      </div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font:700 14px 'IBM Plex Sans',Arial,sans-serif; letter-spacing:.04em;">{{ userName }}</div>
+      <div style="font-size:9px; opacity:.5; letter-spacing:.06em; font-family:'IBM Plex Mono',monospace; margin-top:1px;">{{ ao }} · DAY {{ currentDay }} OF {{ totalDays }}</div>
+    </div>
+  </div>
+
+  <!-- ── MAIN CONTENT ── -->
+  <div style="max-width:1120px; margin:0 auto; padding:24px 24px 72px;">
+
+    <!-- ROW 1: Streak · Month Circle · 7-Day MA Chart -->
+    <div style="display:grid; grid-template-columns:192px 248px 1fr; gap:14px; margin-bottom:14px; align-items:stretch;">
+
+      <!-- Streak Card -->
+      <div style="background:#fffdf8; border:1px solid #d8cfbf; border-radius:12px; padding:22px 16px; text-align:center; display:flex; flex-direction:column; align-items:center;">
+        <div style="font-size:10px; font-weight:bold; letter-spacing:.22em; color:#2f5d50; margin-bottom:6px;">CURRENT STREAK</div>
+        <div style="font:400 96px 'Bebas Neue',Arial,sans-serif; color:{{ streakColor }}; line-height:.85; letter-spacing:.02em;">{{ streak }}</div>
+        <div style="font-size:9px; font-weight:bold; letter-spacing:.16em; color:#b0a898; margin-top:6px;">CONSECUTIVE DAYS</div>
+        <div style="width:100%; height:1px; background:#d8cfbf; margin:16px 0 14px;"></div>
+        <div style="font-size:10px; font-weight:bold; letter-spacing:.2em; color:#2f5d50; align-self:flex-start; margin-bottom:8px;">MONTH PROGRESS</div>
+        <div style="width:100%; background:#ede9df; border-radius:3px; height:7px; overflow:hidden;">
+          <div style="height:7px; background:#2f5d50; border-radius:3px; width:{{ progressWidth }};"></div>
+        </div>
+        <div style="display:flex; justify-content:space-between; width:100%; margin-top:5px;">
+          <span style="font-size:8px; color:#d8cfbf; font-family:'IBM Plex Mono',monospace;">D1</span>
+          <span style="font-size:8px; color:#2f5d50; font-weight:bold; font-family:'IBM Plex Mono',monospace;">{{ pct }}% DONE</span>
+          <span style="font-size:8px; color:#d8cfbf; font-family:'IBM Plex Mono',monospace;">D{{ totalDays }}</span>
+        </div>
+        <div style="margin-top:14px; background:#eef3f0; border-radius:8px; padding:8px 12px; width:100%; text-align:center;">
+          <div style="font-size:9px; color:#2f5d50; font-family:'IBM Plex Mono',monospace; font-weight:bold; letter-spacing:.1em;">{{ daysLeft }} DAYS LEFT</div>
+        </div>
+      </div>
+
+      <!-- Month Circle -->
+      <div style="background:#fffdf8; border:1px solid #d8cfbf; border-radius:12px; padding:16px; display:flex; flex-direction:column; align-items:center; gap:8px;">
+        <div style="font-size:10px; font-weight:bold; letter-spacing:.22em; color:#2f5d50;">JUNE 2026</div>
+        {{ monthCircle }}
+        <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:center;">
+          <div style="display:flex; align-items:center; gap:4px;">
+            <div style="width:8px; height:8px; border-radius:2px; background:#2f5d50;"></div>
+            <span style="font-size:8px; color:#888;">Completed</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <div style="width:8px; height:8px; border-radius:2px; background:#b8860b;"></div>
+            <span style="font-size:8px; color:#888;">Missed Goal</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <div style="width:8px; height:8px; border-radius:2px; background:#a3401a;"></div>
+            <span style="font-size:8px; color:#888;">No Check-in</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <div style="width:8px; height:8px; border-radius:2px; background:#d8cfbf;"></div>
+            <span style="font-size:8px; color:#888;">Upcoming</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 7-Day Moving Average Chart -->
+      <div style="background:#fffdf8; border:1px solid #d8cfbf; border-radius:12px; padding:18px 20px; display:flex; flex-direction:column;">
+        <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
+          <span style="font-size:10px; font-weight:bold; letter-spacing:.22em; color:#2f5d50;">7-DAY MOVING AVERAGE</span>
+          <span style="font-size:8px; color:#888; font-family:'IBM Plex Mono',monospace; letter-spacing:.06em;">DAYS 1–{{ currentDay }}</span>
+        </div>
+        <div style="flex:1; min-height:0; display:flex; align-items:stretch;">
+          {{ movAvgChart }}
+        </div>
+        <div style="display:flex; gap:16px; margin-top:10px; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:5px;">
+            <div style="width:18px; height:3px; background:#2f5d50; border-radius:2px;"></div>
+            <span style="font-size:8px; color:#888;">rolling avg</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:5px;">
+            <div style="width:10px; height:10px; background:#eef3f0; border:1px solid #d8cfbf; border-radius:2px;"></div>
+            <span style="font-size:8px; color:#888;">last 7 days</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:5px;">
+            <div style="width:8px; height:8px; background:#2f5d50; border-radius:2px; opacity:.3;"></div>
+            <span style="font-size:8px; color:#888;">completed</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:5px;">
+            <div style="width:8px; height:8px; background:#b8860b; border-radius:2px; opacity:.3;"></div>
+            <span style="font-size:8px; color:#888;">missed</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:5px;">
+            <div style="width:8px; height:8px; background:#a3401a; border-radius:2px; opacity:.3;"></div>
+            <span style="font-size:8px; color:#888;">absent</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ROW 2: Total Score + Weekly Bonuses -->
+    <div style="background:#fffdf8; border:1px solid #d8cfbf; border-radius:12px; padding:20px 24px; margin-bottom:14px; display:flex; align-items:stretch; gap:0; flex-wrap:wrap;">
+      <!-- Score block -->
+      <div style="flex-shrink:0; padding-right:28px;">
+        <div style="font-size:10px; font-weight:bold; letter-spacing:.22em; color:#2f5d50; margin-bottom:4px;">TOTAL SCORE</div>
+        <div style="font:400 80px 'Bebas Neue',Arial,sans-serif; color:{{ totalScoreColor }}; line-height:.9; letter-spacing:.02em;">{{ totalScoreStr }}</div>
+        <div style="font-size:9px; color:#b0a898; margin-top:6px; font-family:'IBM Plex Mono',monospace; letter-spacing:.04em;">{{ done }} done &nbsp;·&nbsp; {{ missed }} missed goal &nbsp;·&nbsp; {{ absent }} absent</div>
+      </div>
+      <!-- Divider -->
+      <div style="width:1px; background:#d8cfbf; flex-shrink:0; align-self:stretch; margin-right:28px;"></div>
+      <!-- Weekly Bonuses -->
+      <div style="flex:1; min-width:220px; display:flex; flex-direction:column; justify-content:center;">
+        <div style="font-size:10px; font-weight:bold; letter-spacing:.22em; color:#2f5d50; margin-bottom:12px;">WEEKLY BONUSES</div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <sc-for list="{{ weeks }}" as="w" hint-placeholder-count="4">
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span style="font-size:14px; line-height:1; color:{{ w.statusClr }}; width:16px; text-align:center; flex-shrink:0;">{{ w.status }}</span>
+              <span style="font-size:9px; font-weight:bold; color:#999; min-width:32px; letter-spacing:.07em; font-family:'IBM Plex Mono',monospace; flex-shrink:0;">{{ w.label }}</span>
+              <div style="display:flex; gap:5px; flex-wrap:wrap; align-items:center;">{{ w.pills }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROW 3: My Team tiles -->
+    <div style="margin-bottom:14px;">
+      <div style="font-size:10px; font-weight:bold; letter-spacing:.22em; color:#2f5d50; margin-bottom:12px;">MY TEAM · {{ myTeam }}</div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(152px,1fr)); gap:12px;">
+        <sc-for list="{{ team }}" as="m" hint-placeholder-count="6">
+          <div style="background:{{ m.cardBg }}; border:1.5px solid {{ m.cardBorder }}; border-radius:12px; padding:16px 12px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:3px;">
+            {{ m.ring }}
+            <div style="font:700 12px 'IBM Plex Sans',Arial,sans-serif; color:#2b2b2b; letter-spacing:.06em; margin-top:6px;">{{ m.name }}</div>
+            <div style="margin:4px 0;">{{ m.spark }}</div>
+            <div style="font:400 24px 'Bebas Neue',Arial,sans-serif; color:{{ m.scoreColor }}; line-height:1; letter-spacing:.02em;">{{ m.score }}</div>
+            <div style="font-size:8px; color:#b0a898; letter-spacing:.07em; font-family:'IBM Plex Mono',monospace;">{{ m.streak }}d streak</div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- ROW 4: PAX Board grouped by team -->
+    <div>
+      <div style="font-size:10px; font-weight:bold; letter-spacing:.22em; color:#2f5d50; margin-bottom:12px;">PAX BOARD</div>
+      <sc-for list="{{ teamGroups }}" as="tg" hint-placeholder-count="3">
+        <div style="background:#fffdf8; border:1px solid #d8cfbf; border-radius:12px; overflow:hidden; margin-bottom:12px;">
+          <div style="background:#2f5d50; color:#f8f4ea; padding:10px 18px; display:flex; align-items:center; justify-content:space-between;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <span style="font:700 13px 'Bebas Neue',Arial,sans-serif; letter-spacing:.24em;">TEAM {{ tg.name }}</span>
+              <span style="font-size:8px; opacity:.55; font-family:'IBM Plex Mono',monospace; letter-spacing:.06em;">{{ tg.count }} PAX</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-size:8px; opacity:.55; font-family:'IBM Plex Mono',monospace;">{{ tg.avgPct }}% AVG</span>
+            </div>
+          </div>
+          <div style="padding:10px 14px; display:grid; grid-template-columns:1fr 1fr; gap:1px 14px;">
+            <sc-for list="{{ tg.members }}" as="p" hint-placeholder-count="10">
+              <div style="display:flex; align-items:center; gap:6px; padding:4px 5px; border-radius:4px; background:{{ p.rowBg }};">
+                <span style="font-size:9px; font-weight:bold; width:46px; color:#2b2b2b; letter-spacing:.04em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex-shrink:0; font-family:'IBM Plex Mono',monospace;">{{ p.name }}</span>
+                {{ p.miniBar }}
+                <span style="font-size:9px; font-weight:bold; color:{{ p.scoreColor }}; width:26px; text-align:right; flex-shrink:0; font-family:'IBM Plex Mono',monospace; letter-spacing:.03em;">{{ p.pctStr }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const e = React.createElement;
+
+    // ── Design System Tokens ──────────────────────────────────────────
+    const DS = {
+      green:   '#2f5d50',
+      greenLt: '#eef3f0',
+      gold:    '#b8860b',
+      rust:    '#a3401a',
+      steel:   '#0b5c86',
+      cream:   '#fffdf8',
+      tan:     '#f4f1ea',
+      border:  '#d8cfbf',
+      text:    '#2b2b2b',
+      muted:   '#888',
+      dim:     '#b0a898',
+    };
+
+    // ── Core Data ─────────────────────────────────────────────────────
+    const USER = 'DREDD', AO = 'THE FORGE', MY_TEAM = 'ALPHA';
+    const D = 18, T = 30;
+    const RAW = [1,1,1,0,-1,1,1,1,1,1,1,1,1,1,1,1,1,1];
+
+    // ── Metrics ───────────────────────────────────────────────────────
+    let streak = 0;
+    for (let i = D - 1; i >= 0; i--) { if (RAW[i] === 1) streak++; else break; }
+    const totalScore = RAW.reduce((a,b) => a+b, 0);
+    const done   = RAW.filter(v => v === 1).length;
+    const missed = RAW.filter(v => v === 0).length;
+    const absent = RAW.filter(v => v === -1).length;
+    const pct    = Math.round(done / D * 100);
+    const daysLeft = T - D;
+
+    // score% = totalScore / D × 100 (can be negative or >100 with bonuses)
+    const scorePctVal = v => Math.round(v.reduce((a,b)=>a+b,0) / D * 100);
+    const scorePctColor = p => p >= 80 ? DS.green : p >= 50 ? DS.gold : DS.rust;
+    const userScorePct  = scorePctVal(RAW);
+    const streakColor    = streak >= 10 ? DS.green : streak >= 5 ? DS.gold : DS.rust;
+    const totalScoreStr  = totalScore >= 0 ? '+' + totalScore : String(totalScore);
+    const totalScoreColor = userScorePct >= 80 ? DS.green : userScorePct >= 50 ? DS.gold : DS.rust;
+    const progressWidth  = pct + '%';
+
+    // ── SVG helpers ───────────────────────────────────────────────────
+    const toRad = d => d * Math.PI / 180;
+
+    // ── Month Circle (donut, 30 segments) ────────────────────────────
+    const mkMonthCircle = () => {
+      const SZ=212, CX=106, CY=106, RO=96, RI=70, SEG=360/T, GAP=2;
+      const segClr = i => {
+        if (i >= D) return DS.border;
+        return RAW[i] === 1 ? DS.green : RAW[i] === 0 ? DS.gold : DS.rust;
+      };
+      const arc = (cx,cy,ro,ri,s0,s1) => {
+        const a0=toRad(s0-90), a1=toRad(s1-90);
+        const C=Math.cos, S=Math.sin;
+        const x1=cx+ro*C(a0),y1=cy+ro*S(a0), x2=cx+ro*C(a1),y2=cy+ro*S(a1);
+        const x3=cx+ri*C(a1),y3=cy+ri*S(a1), x4=cx+ri*C(a0),y4=cy+ri*S(a0);
+        const lg=(s1-s0)>180?1:0;
+        return `M${x1.toFixed(2)} ${y1.toFixed(2)} A${ro} ${ro} 0 ${lg} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} L${x3.toFixed(2)} ${y3.toFixed(2)} A${ri} ${ri} 0 ${lg} 0 ${x4.toFixed(2)} ${y4.toFixed(2)}Z`;
+      };
+      return e('svg',{width:SZ,height:SZ,viewBox:`0 0 ${SZ} ${SZ}`,style:{display:'block'}},
+        ...Array.from({length:T},(_,i)=>e('path',{key:i,d:arc(CX,CY,RO,RI,i*SEG+GAP/2,(i+1)*SEG-GAP/2),fill:segClr(i)})),
+        e('text',{x:CX,y:CY+4,textAnchor:'middle',fontSize:46,
+          fontFamily:"'Bebas Neue',Arial,sans-serif",fill:scorePctColor(userScorePct),style:{userSelect:'none'}},userScorePct+'%'),
+        e('text',{x:CX,y:CY+20,textAnchor:'middle',fontSize:11,
+          fontFamily:"'IBM Plex Mono',Arial,sans-serif",fill:DS.muted,fontWeight:'600',letterSpacing:'0.05em',
+          style:{userSelect:'none'}},totalScoreStr+' pts')
+      );
+    };
+
+    // ── 7-Day Moving Average Chart ────────────────────────────────────
+    const mkAvgChart = () => {
+      const W=440, H=100, PADT=10, PADB=20, PADL=22, PADR=4;
+      const PW=W-PADL-PADR, PH=H-PADT-PADB;
+      const avgs = RAW.map((_,i)=>{
+        const w=RAW.slice(Math.max(0,i-6),i+1);
+        return w.reduce((a,b)=>a+b,0)/w.length;
+      });
+      const mapY = v => PADT + PH*(1-(v+1)/2);
+      const mapX = i => PADL + (i/(D-1))*PW;
+      const bW = Math.max(3, PW/D-3);
+      const zY = mapY(0);
+      const l7x = mapX(Math.max(0,D-7));
+      return e('svg',{viewBox:`0 0 ${W} ${H}`,style:{width:'100%',height:'auto',display:'block',overflow:'visible'}},
+        // last-7 highlight
+        e('rect',{x:l7x,y:PADT,width:PADL+PW-l7x,height:PH,fill:DS.greenLt,opacity:.7}),
+        // guide lines
+        e('line',{x1:PADL,y1:mapY(1), x2:W-PADR,y2:mapY(1), stroke:DS.greenLt,strokeWidth:1}),
+        e('line',{x1:PADL,y1:zY,      x2:W-PADR,y2:zY,      stroke:DS.border, strokeWidth:1,strokeDasharray:'4,4'}),
+        e('line',{x1:PADL,y1:mapY(-1),x2:W-PADR,y2:mapY(-1),stroke:'#f2e2d9',strokeWidth:1}),
+        // Y labels
+        e('text',{x:0,y:mapY(1)+4, fontSize:8,fontFamily:'Arial',fill:DS.muted},'+1'),
+        e('text',{x:0,y:zY-2,      fontSize:8,fontFamily:'Arial',fill:DS.muted},'0'),
+        e('text',{x:0,y:mapY(-1)+4,fontSize:8,fontFamily:'Arial',fill:DS.muted},'-1'),
+        // bars
+        ...RAW.map((v,i)=>{
+          const clr=v===1?DS.green:v===0?DS.gold:DS.rust;
+          const x=mapX(i)-bW/2, top=Math.min(zY,mapY(v)), ht=Math.abs(zY-mapY(v));
+          return e('rect',{key:i,x,y:top,width:bW,height:Math.max(ht,2),fill:clr,opacity:.35});
+        }),
+        // avg line
+        e('polyline',{
+          points:avgs.map((v,i)=>`${mapX(i).toFixed(1)},${mapY(v).toFixed(1)}`).join(' '),
+          fill:'none',stroke:DS.green,strokeWidth:2.5,strokeLinejoin:'round',strokeLinecap:'round'
+        }),
+        // dots — highlight last 7
+        ...avgs.map((v,i)=>e('circle',{key:i,cx:mapX(i),cy:mapY(v),r:i>=D-7?3.5:2,
+          fill:i>=D-7?DS.green:'#ccc',stroke:i>=D-7?'#fff':'none',strokeWidth:1})),
+        // X labels
+        e('text',{x:mapX(0),  y:H,textAnchor:'middle',fontSize:8,fontFamily:'Arial',fill:DS.dim},'D1'),
+        e('text',{x:mapX(6),  y:H,textAnchor:'middle',fontSize:8,fontFamily:'Arial',fill:DS.dim},'D7'),
+        e('text',{x:mapX(13), y:H,textAnchor:'middle',fontSize:8,fontFamily:'Arial',fill:DS.dim},'D14'),
+        e('text',{x:mapX(D-1),y:H,textAnchor:'middle',fontSize:8,fontFamily:'Arial',fill:DS.dim},`D${D}`)
+      );
+    };
+
+    // ── Weekly bonus pills ────────────────────────────────────────────
+    const pill = (lbl,bg,bd,clr) => e('span',{key:lbl,style:{
+      padding:'3px 9px',background:bg,border:`1px solid ${bd}`,borderRadius:4,
+      fontSize:9,fontFamily:"'IBM Plex Mono',Arial,sans-serif",
+      fontWeight:'bold',color:clr,letterSpacing:'0.07em',display:'inline-block',lineHeight:'1.5'
+    }},lbl);
+    const mkPills = items => items.length
+      ? e('div',{style:{display:'flex',gap:5,flexWrap:'wrap'}}, ...items)
+      : e('span',{style:{fontSize:9,color:DS.border,letterSpacing:'0.06em',fontFamily:"'IBM Plex Mono',monospace"}},'UPCOMING');
+
+    const weeks = [
+      { label:'WK 1', status:'✓', statusClr:DS.green,
+        pills: mkPills([pill('Q','#fdf3dc',DS.gold,'#6b4e0a'),pill('INS','#f0ecfa','#7c3aed','#4c1d95')]) },
+      { label:'WK 2', status:'✓', statusClr:DS.green,
+        pills: mkPills([pill('FE','#ddeef8',DS.steel,'#073a57'),pill('INS','#f0ecfa','#7c3aed','#4c1d95')]) },
+      { label:'WK 3', status:'◉', statusClr:DS.gold,
+        pills: mkPills([pill('EH','#fde8d5',DS.rust,'#5c1e07')]) },
+      { label:'WK 4', status:'○', statusClr:DS.border, pills:mkPills([]) },
+    ];
+
+    // ── Team tile ring — same segmented style as month circle ─────────
+    const mkRing = (scores, isUser) => {
+      const SZ=84, CX=42, CY=42, RO=37, RI=25, SEG=360/T, GAP=2;
+      const segClr = i => {
+        if(i>=scores.length) return DS.border;
+        return scores[i]===1?DS.green:scores[i]===0?DS.gold:DS.rust;
+      };
+      const ringArc = (cx,cy,ro,ri,s0,s1)=>{
+        const a0=toRad(s0-90),a1=toRad(s1-90),C=Math.cos,S=Math.sin;
+        const x1=cx+ro*C(a0),y1=cy+ro*S(a0),x2=cx+ro*C(a1),y2=cy+ro*S(a1);
+        const x3=cx+ri*C(a1),y3=cy+ri*S(a1),x4=cx+ri*C(a0),y4=cy+ri*S(a0);
+        return `M${x1.toFixed(2)} ${y1.toFixed(2)} A${ro} ${ro} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)} L${x3.toFixed(2)} ${y3.toFixed(2)} A${ri} ${ri} 0 0 0 ${x4.toFixed(2)} ${y4.toFixed(2)}Z`;
+      };
+      const mSc=scores.reduce((a,b)=>a+b,0);
+      const mPct=Math.round(mSc/scores.length*100);
+      const fill=scorePctColor(mPct);
+      return e('svg',{width:SZ,height:SZ,viewBox:`0 0 ${SZ} ${SZ}`,style:{display:'block'}},
+        ...Array.from({length:T},(_,i)=>e('path',{key:i,d:ringArc(CX,CY,RO,RI,i*SEG+GAP/2,(i+1)*SEG-GAP/2),fill:segClr(i)})),
+        e('text',{x:CX,y:CY+5,textAnchor:'middle',fontSize:17,
+          fontFamily:"'Bebas Neue',Arial,sans-serif",fill:fill,style:{userSelect:'none'}},mPct+'%')
+      );
+    };
+
+    // 7-day sparkline for team tiles
+    const mkSpark = (s, clr) => {
+      const last7=s.slice(-7), W=80, H=22;
+      const pts=last7.map((v,i)=>`${((i/(last7.length-1))*W).toFixed(1)},${(v===1?2:v===0?H/2:H-2).toFixed(1)}`).join(' ');
+      return e('svg',{width:W,height:H,viewBox:`0 0 ${W} ${H}`,style:{display:'block'}},
+        e('polyline',{points:pts,fill:'none',stroke:clr,strokeWidth:1.5,strokeLinejoin:'round',strokeLinecap:'round'})
+      );
+    };
+
+    // ── Team data ─────────────────────────────────────────────────────
+    const TEAM_DATA = [
+      {n:'DREDD', s:[1,1,1,0,-1,1,1,1,1,1,1,1,1,1,1,1,1,1],isUser:true},
+      {n:'BLAZE', s:[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1], isUser:false},
+      {n:'ARCHIE',s:[1,1,1,1,0,1,1,0,1,1,1,0,1,1,1,0,1,1], isUser:false},
+      {n:'COWBOY',s:[1,0,-1,1,1,-1,0,1,1,0,1,1,-1,1,0,1,1,0],isUser:false},
+      {n:'PHELPS',s:[1,1,1,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1], isUser:false},
+      {n:'HAWK',  s:[0,1,-1,1,0,1,1,-1,0,1,1,1,1,0,1,1,0,1],isUser:false},
+    ];
+    const team = TEAM_DATA.map(m=>{
+      const mSc=m.s.reduce((a,b)=>a+b,0);
+      const mPct=Math.round(mSc/m.s.length*100);
+      let mst=0; for(let i=m.s.length-1;i>=0;i--){if(m.s[i]===1)mst++;else break;}
+      const fill=scorePctColor(mPct);
+      return {
+        name:m.n, streak:mst,
+        score:mSc>=0?'+'+mSc:String(mSc), scoreColor:fill,
+        ring:mkRing(m.s,m.isUser), spark:mkSpark(m.s,fill),
+        cardBg:m.isUser?DS.greenLt:DS.cream,
+        cardBorder:m.isUser?DS.green:DS.border,
+      };
+    }).sort((a,b)=>b.score-a.score);
+
+    // ── PAX Board ─────────────────────────────────────────────────────
+    let rng=54321;
+    const rand=()=>{rng=(rng*1664525+1013904223)|0;return(rng>>>0)/0xffffffff;};
+    const knownScores={
+      DREDD:[1,1,1,0,-1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      BLAZE:[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      ARCHIE:[1,1,1,1,0,1,1,0,1,1,1,0,1,1,1,0,1,1],
+      COWBOY:[1,0,-1,1,1,-1,0,1,1,0,1,1,-1,1,0,1,1,0],
+      PHELPS:[1,1,1,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1],
+      HAWK:[0,1,-1,1,0,1,1,-1,0,1,1,1,1,0,1,1,0,1],
+    };
+
+    const mkMiniBar = (scores, mp) => e('div',{style:{display:'flex',gap:1.5,flex:1,alignItems:'center'}},
+      ...scores.map((v,i)=>e('div',{key:i,style:{width:4,height:11,borderRadius:1,flexShrink:0,
+        background:v===1?DS.green:v===0?DS.gold:DS.rust}})),
+      ...Array.from({length:T-scores.length},(_,i)=>e('div',{key:'f'+i,style:{width:4,height:11,borderRadius:1,flexShrink:0,
+        background:DS.border,opacity:.45}}))
+    );
+
+    const buildGroup = (names, gName) => {
+      const members = names.map(n=>{
+        const sc=knownScores[n]||Array.from({length:D},()=>{const r=rand();return r<0.08?-1:r<0.20?0:1;});
+        const mp=Math.round(sc.filter(v=>v===1).length/D*100);
+        const ms=sc.reduce((a,b)=>a+b,0);
+        return {
+          name:n, pct:mp, pctStr:mp+'%',
+          score:ms>=0?'+'+ms:String(ms),
+          scoreColor:statusColor(mp),
+          miniBar:mkMiniBar(sc,mp),
+          rowBg:n===USER?DS.greenLt:'transparent',
+        };
+      }).sort((a,b)=>b.pct-a.pct);
+      const avgPct = Math.round(members.reduce((a,m)=>a+m.pct,0)/members.length);
+      return {name:gName, count:members.length, members, avgPct};
+    };
+
+    const teamGroups=[
+      buildGroup(['DREDD','BLAZE','ARCHIE','COWBOY','PHELPS','HAWK','ZEUS','APOLLO','ARES','HERMES'],'ALPHA'),
+      buildGroup(['ATLAS','ORION','TITAN','SNAKE','WOLF','BEAR','EAGLE','FALCON','RAVEN','COBRA'],'BRAVO'),
+      buildGroup(['VIPER','TANK','IRON','STEEL','FORGE','DRILL','BLADE','STORM','THUNDER','FURY','GHOST'],'CHARLIE'),
+    ];
+
+    return {
+      userName:USER, ao:AO, myTeam:MY_TEAM,
+      currentDay:D, totalDays:T,
+      streak, streakColor,
+      totalScoreStr, totalScoreColor,
+      done, missed, absent, daysLeft, pct, progressWidth,
+      monthCircle:mkMonthCircle(),
+      movAvgChart:mkAvgChart(),
+      weeks, team, teamGroups,
+    };
+  }
+}
+</script>
+</body>
+</html>

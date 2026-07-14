@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  input::placeholder, textarea::placeholder { color: #a99; opacity: .7; }
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #f4f1ea; font-family: Arial, Helvetica, sans-serif; color: #2b2b2b; display: flex; flex-direction: column; align-items: center; padding: 0 0 48px;">
+
+  <!-- Scenario toggle (dev/demo only) -->
+  <div style="position: fixed; top: 10px; right: 10px; z-index: 50; background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 8px; padding: 10px 12px; font-size: 11px; box-shadow: 0 2px 8px rgba(0,0,0,.08); max-width: 200px;">
+    <div style="font-weight: bold; color: #2f5d50; margin-bottom: 6px; letter-spacing: .04em;">DEMO SCENARIO</div>
+    <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; cursor: pointer;">
+      <input type="checkbox" checked="{{ s.match }}" onChange="{{ h.toggleMatch }}"> Returning PAX (match)
+    </label>
+    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+      <input type="checkbox" checked="{{ s.nextMonth }}" onChange="{{ h.toggleNext }}"> Next month available
+    </label>
+  </div>
+
+  <!-- Header -->
+  <div style="width: 100%; background: #2f5d50; color: #f8f4ea; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 0 rgba(0,0,0,.1);">
+    <div style="display: flex; align-items: baseline; gap: 8px;">
+      <span style="font-size: 12px; letter-spacing: .28em; opacity: .75; font-weight: bold;">F3</span>
+      <span style="font-size: 19px; font-weight: bold; letter-spacing: .01em;">Go30 Hard Commit</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <sc-for list="{{ dots }}" as="dot" hint-placeholder-count="4">
+        <div style="width: 7px; height: 7px; border-radius: 50%; background: {{ dot.color }};"></div>
+      </sc-for>
+      <span style="font-size: 12px; opacity: .75; margin-left: 4px;">{{ stepLabel }}</span>
+    </div>
+  </div>
+
+  <div style="width: 100%; max-width: 480px; padding: 12px 18px 0;">
+
+    <!-- STEP 1 — Intro -->
+    <sc-if value="{{ isIntro }}" hint-placeholder-val="{{ true }}">
+      <div style="background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 24px 22px; box-shadow: 0 2px 10px rgba(47,93,80,.07);">
+        <h1 style="margin: 0 0 6px; font-size: 21px; color: #2f5d50; line-height: 1.2;">Accelerate Your Life</h1>
+        <p style="margin: 0 0 18px; line-height: 1.55; font-size: 14px; color: #555;">A monthly habit system for F3 Puget Sound PAX. Pick one small daily challenge, track it, and let accountability do the rest. Small and consistent beats big and sporadic every time.</p>
+        <button onClick="{{ h.next }}" style="width: 100%; padding: 14px; border: none; border-radius: 9px; background: #2f5d50; color: #f8f4ea; font-size: 16px; font-weight: bold; cursor: pointer; font-family: inherit; margin-bottom: 10px;">Sign Up / Update My Commit</button>
+        <p style="margin: 0; font-size: 12px; color: #888; text-align: center; line-height: 1.4;">Already signed up? We'll load your info when you enter your F3 name and email.</p>
+      </div>
+
+      <!-- How it Works toggle -->
+      <div style="background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; margin-top: 10px; box-shadow: 0 2px 10px rgba(47,93,80,.05); overflow: hidden;">
+        <button onClick="{{ h.toggleHow }}" style="width: 100%; padding: 14px 18px; border: none; background: transparent; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-family: inherit; font-size: 15px; font-weight: bold; color: #2f5d50;">
+          <span>How it Works</span>
+          <span style="font-size: 18px; color: #2f5d50;">{{ howChevron }}</span>
+        </button>
+        <sc-if value="{{ howOpen }}" hint-placeholder-val="">
+          <div style="padding: 0 18px 20px; font-size: 14px; line-height: 1.6; color: #333; border-top: 1px solid #e8e0d0;">
+
+            <p style="margin: 14px 0 6px; font-size: 13px; font-weight: bold; color: #2f5d50; letter-spacing: .04em;">THE CORE MISSION</p>
+            <p style="margin: 0 0 14px;">Execute a Daily Challenge that aligns with your Ultimate Goals, supported by the accountability of your fellow HIMs.</p>
+
+            <p style="margin: 0 0 6px; font-size: 13px; font-weight: bold; color: #2f5d50; letter-spacing: .04em;">THREE LAYERS OF CHANGE</p>
+            <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px;">
+              <div style="display: flex; gap: 10px; align-items: flex-start;">
+                <div style="min-width: 28px; height: 28px; border-radius: 50%; background: #2f5d50; color: #f8f4ea; font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center;">W</div>
+                <div><strong>Identity (Who)</strong> — Change your beliefs about who you are.</div>
+              </div>
+              <div style="display: flex; gap: 10px; align-items: flex-start;">
+                <div style="min-width: 28px; height: 28px; border-radius: 50%; background: #2f5d50; color: #f8f4ea; font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center;">H</div>
+                <div><strong>Processes (How)</strong> — Change your daily habits and systems.</div>
+              </div>
+              <div style="display: flex; gap: 10px; align-items: flex-start;">
+                <div style="min-width: 28px; height: 28px; border-radius: 50%; background: #2f5d50; color: #f8f4ea; font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center;">W</div>
+                <div><strong>Outcomes (What)</strong> — Change your specific results.</div>
+              </div>
+            </div>
+
+            <p style="margin: 0 0 6px; font-size: 13px; font-weight: bold; color: #2f5d50; letter-spacing: .04em;">YOUR DAILY MISSION</p>
+            <ol style="margin: 0 0 14px; padding-left: 18px; display: flex; flex-direction: column; gap: 6px;">
+              <li><strong>Choose your challenge</strong> — small, specific, actionable (e.g. 15 min stretching, daily journaling).</li>
+              <li><strong>Record your score</strong> in the Go30 Google Sheet in #go30 Slack. Enter <strong>1</strong> for success, <strong>0</strong> for a miss.</li>
+              <li><strong>Beat the deadline</strong> — report by 10:00 AM the next day or receive a −1.</li>
+            </ol>
+
+            <p style="margin: 0 0 6px; font-size: 13px; font-weight: bold; color: #2f5d50; letter-spacing: .04em;">STRENGTH IN NUMBERS</p>
+            <p style="margin: 0;">You can go it alone — but you won't go as far. Work with 3–5 fellow HIMs who share your drive: hold each other to the standard, call out the misses, celebrate the wins. Men who pursue hard things together become men who achieve them.</p>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <!-- STEP 2 — Identify -->
+    <sc-if value="{{ isIdentify }}" hint-placeholder-val="{{ true }}">
+      <div style="background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 26px; box-shadow: 0 2px 10px rgba(47,93,80,.07);">
+        <h2 style="margin: 0 0 6px; font-size: 20px; color: #2f5d50;">Identify yourself</h2>
+        <p style="margin: 0 0 20px; line-height: 1.55; font-size: 14px; color: #555;">Enter your F3 name and email so we can find any existing signup.</p>
+
+        <label style="display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px;">F3 Name</label>
+        <input value="{{ f.f3name }}" onChange="{{ h.onF3name }}" placeholder="e.g. Splinter" style="width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px; font-size: 15px; font-family: inherit; margin-bottom: 16px; background: #fff;">
+
+        <label style="display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px;">Email</label>
+        <input type="email" value="{{ f.email }}" onChange="{{ h.onEmail }}" placeholder="you@example.com" style="width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px; font-size: 15px; font-family: inherit; margin-bottom: 6px; background: #fff;">
+
+        <sc-if value="{{ idError }}" hint-placeholder-val="">
+          <div style="font-size: 13px; color: #a3401a; margin-bottom: 8px;">{{ idError }}</div>
+        </sc-if>
+
+        <button onClick="{{ h.identify }}" style="width: 100%; margin-top: 12px; padding: 14px; border: none; border-radius: 9px; background: #2f5d50; color: #f8f4ea; font-size: 16px; font-weight: bold; cursor: pointer; font-family: inherit;">Continue</button>
+        <button onClick="{{ h.back }}" style="width: 100%; margin-top: 10px; padding: 10px; border: none; border-radius: 9px; background: transparent; color: #0b5c86; font-size: 14px; cursor: pointer; font-family: inherit;">Back</button>
+      </div>
+    </sc-if>
+
+    <!-- STEP 3 — Signup Info -->
+    <sc-if value="{{ isInfo }}" hint-placeholder-val="{{ true }}">
+      <div style="background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 26px; box-shadow: 0 2px 10px rgba(47,93,80,.07);">
+        <h2 style="margin: 0 0 6px; font-size: 20px; color: #2f5d50;">{{ infoHeading }}</h2>
+        <sc-if value="{{ wasMatched }}" hint-placeholder-val="">
+          <div style="background: #fdf7e3; border-left: 3px solid #b8860b; padding: 10px 12px; border-radius: 4px; font-size: 13px; line-height: 1.5; margin-bottom: 18px; color: #6b5410;">We found your previous signup — review and update below.</div>
+        </sc-if>
+        <sc-if value="{{ blankWelcome }}" hint-placeholder-val="">
+          <p style="margin: 0 0 18px; font-size: 14px; color: #555;">Let's get your info.</p>
+        </sc-if>
+
+        <!-- read-only identity -->
+        <div style="display: flex; gap: 12px; margin-bottom: 18px;">
+          <div style="flex: 1;">
+            <div style="font-size: 12px; font-weight: bold; color: #2f5d50; margin-bottom: 3px;">F3 Name</div>
+            <div style="padding: 9px 11px; background: #f0ece2; border: 1px solid #e0d8c8; border-radius: 7px; font-size: 14px; color: #555;">{{ f.f3name }}</div>
+          </div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 12px; font-weight: bold; color: #2f5d50; margin-bottom: 3px;">Email</div>
+            <div style="padding: 9px 11px; background: #f0ece2; border: 1px solid #e0d8c8; border-radius: 7px; font-size: 14px; color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ f.email }}</div>
+          </div>
+        </div>
+
+        <label style="display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 6px;">Team type</label>
+        <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+          <label style="flex: 1; display: flex; align-items: center; gap: 7px; padding: 10px 12px; border: 1px solid {{ ttAoBorder }}; border-radius: 8px; cursor: pointer; font-size: 14px; background: {{ ttAoBg }};">
+            <input type="radio" name="tt" checked="{{ ttAo }}" onChange="{{ h.ttAo }}"> AO-based
+          </label>
+          <label style="flex: 1; display: flex; align-items: center; gap: 7px; padding: 10px 12px; border: 1px solid {{ ttGoalBorder }}; border-radius: 8px; cursor: pointer; font-size: 14px; background: {{ ttGoalBg }};">
+            <input type="radio" name="tt" checked="{{ ttGoal }}" onChange="{{ h.ttGoal }}"> Goal-based
+          </label>
+          <label style="flex: 1; display: flex; align-items: center; gap: 7px; padding: 10px 12px; border: 1px solid {{ ttOtherBorder }}; border-radius: 8px; cursor: pointer; font-size: 14px; background: {{ ttOtherBg }};">
+            <input type="radio" name="tt" checked="{{ ttOther }}" onChange="{{ h.ttOther }}"> Other
+          </label>
+        </div>
+
+        <sc-if value="{{ ttAo }}" hint-placeholder-val="">
+          <label style="display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px;">AO Team</label>
+          <select value="{{ f.team }}" onChange="{{ h.onTeam }}" style="width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px; font-size: 15px; font-family: inherit; margin-bottom: 16px; background: #fff;">
+            <sc-for list="{{ aoOptions }}" as="t" hint-placeholder-count="4">
+              <option value="{{ t }}">{{ t }}</option>
+            </sc-for>
+          </select>
+        </sc-if>
+
+        <sc-if value="{{ ttGoal }}" hint-placeholder-val="">
+          <label style="display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px;">Goal-based Team</label>
+          <select value="{{ f.team }}" onChange="{{ h.onTeam }}" style="width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px; font-size: 15px; font-family: inherit; margin-bottom: 16px; background: #fff;">
+            <sc-for list="{{ goalOptions }}" as="t" hint-placeholder-count="4">
+              <option value="{{ t }}">{{ t }}</option>
+            </sc-for>
+          </select>
+        </sc-if>
+
+        <sc-if value="{{ ttOther }}" hint-placeholder-val="">
+          <label style="display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px;">Team name</label>
+          <input value="{{ f.team }}" onChange="{{ h.onTeam }}" placeholder="Type your team name" style="width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px; font-size: 15px; font-family: inherit; margin-bottom: 16px; background: #fff;">
+        </sc-if>
+
+        <label style="display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px;">WHO do you ultimately want to become?</label>
+        <textarea value="{{ f.who }}" onChange="{{ h.onWho }}" rows="2" style="width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px; font-size: 15px; font-family: inherit; margin-bottom: 16px; background: #fff; resize: vertical;"></textarea>
+
+        <label style="display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px;">WHAT is your Go30 Challenge?</label>
+        <textarea value="{{ f.what }}" onChange="{{ h.onWhat }}" rows="2" style="width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px; font-size: 15px; font-family: inherit; margin-bottom: 16px; background: #fff; resize: vertical;"></textarea>
+
+        <label style="display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px;">HOW are you going to be successful this month?</label>
+        <textarea value="{{ f.how }}" onChange="{{ h.onHow }}" rows="2" style="width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px; font-size: 15px; font-family: inherit; margin-bottom: 16px; background: #fff; resize: vertical;"></textarea>
+
+        <label style="display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px;">Cell Phone Number</label>
+        <input type="tel" value="{{ f.phone }}" onChange="{{ h.onPhone }}" placeholder="(555) 555-5555" style="width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px; font-size: 15px; font-family: inherit; margin-bottom: 16px; background: #fff;">
+
+        <label style="display: flex; align-items: flex-start; gap: 9px; font-size: 14px; line-height: 1.45; cursor: pointer; margin-bottom: 22px; color: #444;">
+          <input type="checkbox" checked="{{ f.nag }}" onChange="{{ h.onNag }}" style="margin-top: 2px;">
+          Send me reminder ("nag") emails during the month.
+        </label>
+
+        <button onClick="{{ h.next }}" style="width: 100%; padding: 14px; border: none; border-radius: 9px; background: #2f5d50; color: #f8f4ea; font-size: 16px; font-weight: bold; cursor: pointer; font-family: inherit;">Continue</button>
+        <button onClick="{{ h.back }}" style="width: 100%; margin-top: 10px; padding: 10px; border: none; border-radius: 9px; background: transparent; color: #0b5c86; font-size: 14px; cursor: pointer; font-family: inherit;">Back</button>
+      </div>
+    </sc-if>
+
+    <!-- STEP 4 — Choose month & save -->
+    <sc-if value="{{ isChoose }}" hint-placeholder-val="{{ true }}">
+      <div style="background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 26px; box-shadow: 0 2px 10px rgba(47,93,80,.07);">
+        <h2 style="margin: 0 0 6px; font-size: 20px; color: #2f5d50;">Which month?</h2>
+        <p style="margin: 0 0 20px; line-height: 1.55; font-size: 14px; color: #555;">Choose which Go30 tracker to save your Hard Commit into.</p>
+
+        <sc-for list="{{ monthChoices }}" as="m" hint-placeholder-count="2">
+          <label style="display: flex; align-items: center; gap: 11px; padding: 15px 16px; border: 2px solid {{ m.border }}; border-radius: 10px; cursor: pointer; font-size: 16px; margin-bottom: 12px; background: {{ m.bg }};">
+            <input type="radio" name="month" checked="{{ m.selected }}" onChange="{{ m.onSelect }}">
+            <span style="font-weight: bold; color: #2f5d50;">Save for {{ m.label }}</span>
+          </label>
+        </sc-for>
+
+        <button onClick="{{ h.save }}" style="width: 100%; margin-top: 10px; padding: 14px; border: none; border-radius: 9px; background: #b8860b; color: #fff; font-size: 16px; font-weight: bold; cursor: pointer; font-family: inherit;">Save Signup</button>
+        <button onClick="{{ h.back }}" style="width: 100%; margin-top: 10px; padding: 10px; border: none; border-radius: 9px; background: transparent; color: #0b5c86; font-size: 14px; cursor: pointer; font-family: inherit;">Back</button>
+      </div>
+    </sc-if>
+
+    <!-- STEP 5 — Confirmation -->
+    <sc-if value="{{ isDone }}" hint-placeholder-val="{{ true }}">
+      <div style="background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 34px 26px; box-shadow: 0 2px 10px rgba(47,93,80,.07); text-align: center;">
+        <div style="width: 56px; height: 56px; border-radius: 50%; background: #2f5d50; color: #f8f4ea; font-size: 30px; line-height: 56px; margin: 0 auto 16px;">✓</div>
+        <h2 style="margin: 0 0 10px; font-size: 22px; color: #2f5d50;">You're committed!</h2>
+        <p style="margin: 0 0 6px; line-height: 1.6; font-size: 15px;">Your Hard Commit is saved for <strong>{{ savedMonth }}</strong>.</p>
+        <p style="margin: 0 0 24px; line-height: 1.6; font-size: 14px; color: #555;">A confirmation email is on its way to {{ f.email }}.</p>
+        <a href="#" style="display: inline-block; color: #0b5c86; font-weight: bold; font-size: 15px; text-decoration: none; border-bottom: 1px solid #0b5c86; padding-bottom: 1px;">Open the {{ savedMonth }} tracker →</a>
+        <div style="margin-top: 26px;">
+          <button onClick="{{ h.restart }}" style="padding: 11px 22px; border: 1px solid #d8cfbf; border-radius: 9px; background: transparent; color: #2f5d50; font-size: 14px; font-weight: bold; cursor: pointer; font-family: inherit;">Start over</button>
+        </div>
+      </div>
+
+      <!-- Feedback -->
+      <div style="background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 22px 26px; box-shadow: 0 2px 10px rgba(47,93,80,.07); margin-top: 16px;">
+        <sc-if value="{{ fbSent }}" hint-placeholder-val="">
+          <div style="text-align: center; padding: 8px 0; color: #2f5d50; font-weight: bold; font-size: 15px;">Thanks for the feedback!</div>
+        </sc-if>
+        <sc-if value="{{ fbNotSent }}" hint-placeholder-val="{{ true }}">
+          <h3 style="margin: 0 0 4px; font-size: 16px; color: #2f5d50;">Quick feedback</h3>
+          <p style="margin: 0 0 16px; font-size: 13px; color: #777;">Optional — takes 10 seconds.</p>
+
+          <label style="display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 8px;">How is Go30 working for you?</label>
+          <div style="display: flex; gap: 6px; justify-content: center; margin-bottom: 18px;">
+            <sc-for list="{{ stars }}" as="star" hint-placeholder-count="5">
+              <button onClick="{{ star.onClick }}" style="font-size: 28px; background: none; border: none; cursor: pointer; padding: 2px 4px; line-height: 1;">{{ star.glyph }}</button>
+            </sc-for>
+          </div>
+
+          <label style="display: block; font-size: 13px; font-weight: bold; color: #2f5d50; margin-bottom: 5px;">Is there anything we can improve?</label>
+          <textarea value="{{ fbText }}" onChange="{{ h.onFbText }}" rows="3" placeholder="About the signup process, the program, anything… (optional)" style="width: 100%; padding: 10px 12px; border: 1px solid #d8cfbf; border-radius: 8px; font-size: 14px; font-family: inherit; resize: vertical; background: #fff; margin-bottom: 12px;"></textarea>
+          <button onClick="{{ h.submitFb }}" style="width: 100%; padding: 11px; border: none; border-radius: 9px; background: #2f5d50; color: #f8f4ea; font-size: 15px; font-weight: bold; cursor: pointer; font-family: inherit;">Send Feedback</button>
+        </sc-if>
+      </div>
+    </sc-if>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    step: 0,
+    howOpen: false,
+    scMatch: true,
+    scNext: true,
+    wasMatched: false,
+    idError: "",
+    target: "current",
+    fbRating: 0,
+    fbText: "",
+    fbSent: false,
+    form: {
+      f3name: "", email: "",
+      teamType: "", team: "",
+      who: "", what: "", how: "", phone: "", nag: false,
+    },
+  };
+
+  CUR_MONTH = "June 2026";
+  NEXT_MONTH = "July 2026";
+
+  AO_TEAMS = ["", "The Forge", "Iron Horse", "Daybreak", "Trailblazers", "Dark Side", "Wolverine", "The Boneyard"];
+  GOAL_TEAMS = ["", "Weight Loss", "Nutrition", "Running", "Strength", "Mental Health", "Sleep", "Alcohol-Free"];
+
+  // Classify a saved team name into teamType + team fields
+  classifyTeam(savedTeam) {
+    if (!savedTeam) return { teamType: "", team: "" };
+    if (this.AO_TEAMS.includes(savedTeam)) return { teamType: "ao", team: savedTeam };
+    if (this.GOAL_TEAMS.includes(savedTeam)) return { teamType: "goal", team: savedTeam };
+    return { teamType: "other", team: savedTeam };
+  }
+
+  MOCK_SAVED_TEAM = "The Forge"; // change to e.g. "Running" or "My Custom Team" to test other paths
+
+  MOCK = {
+    who: "A man my sons are proud to call Dad.",
+    what: "200 burpees a day + lead 2 Qs this month.",
+    how: "Lay clothes out the night before; post in Slack daily.",
+    phone: "(704) 555-0142", nag: true,
+  };
+
+  setF(key, val) {
+    this.setState(s => ({ form: { ...s.form, [key]: val } }));
+  }
+
+  identify = () => {
+    const { f3name, email } = this.state.form;
+    if (!f3name.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
+      this.setState({ idError: "Enter your F3 name and a valid email." });
+      return;
+    }
+    const matched = this.state.scMatch;
+    const classified = this.classifyTeam(this.MOCK_SAVED_TEAM);
+    this.setState(s => ({
+      idError: "",
+      wasMatched: matched,
+      step: 2,
+      form: matched ? { ...s.form, ...this.MOCK, ...classified } : {
+        ...s.form, teamType: "", team: "",
+        who: "", what: "", how: "", phone: "", nag: false,
+      },
+    }));
+  };
+
+  renderVals() {
+    const st = this.state;
+    const f = st.form;
+    const months = [{ key: "current", label: this.CUR_MONTH }];
+    if (st.scNext) months.push({ key: "next", label: this.NEXT_MONTH });
+    const target = months.some(m => m.key === st.target) ? st.target : "current";
+
+    const dotColors = [0,1,2,3].map(i =>
+      st.step === 4 ? "#2f5d50" : (i <= st.step ? "#2f5d50" : "#d8cfbf"));
+
+    const ttBorder = on => on ? "#2f5d50" : "#d8cfbf";
+    const ttBg = on => on ? "#eef3f0" : "#fff";
+
+    return {
+      stepLabel: ["Welcome","Step 1 of 3 · Identify","Step 2 of 3 · Your info","Step 3 of 3 · Choose month","Confirmed"][st.step],
+      howOpen: st.howOpen,
+      howChevron: st.howOpen ? "▲" : "▼",
+      isIntro: st.step === 0, isIdentify: st.step === 1, isInfo: st.step === 2,
+      isChoose: st.step === 3, isDone: st.step === 4,
+      dots: dotColors.map(c => ({ color: c })),
+      s: { match: st.scMatch, nextMonth: st.scNext },
+      f: {
+        f3name: f.f3name, email: f.email, team: f.team, otherTeam: f.otherTeam,
+        who: f.who, what: f.what, how: f.how, phone: f.phone, nag: f.nag,
+      },
+      idError: st.idError,
+      wasMatched: st.wasMatched,
+      blankWelcome: !st.wasMatched,
+      infoHeading: st.wasMatched ? "Review your signup" : "Welcome! Let's get your info",
+      aoOptions: this.AO_TEAMS,
+      goalOptions: this.GOAL_TEAMS,
+      ttAo: f.teamType === "ao", ttGoal: f.teamType === "goal", ttOther: f.teamType === "other",
+      ttAoBorder: ttBorder(f.teamType === "ao"), ttGoalBorder: ttBorder(f.teamType === "goal"),
+      ttOtherBorder: ttBorder(f.teamType === "other"),
+      ttAoBg: ttBg(f.teamType === "ao"), ttGoalBg: ttBg(f.teamType === "goal"),
+      ttOtherBg: ttBg(f.teamType === "other"),
+      monthChoices: months.map(m => ({
+        label: m.label,
+        selected: target === m.key,
+        border: target === m.key ? "#b8860b" : "#d8cfbf",
+        bg: target === m.key ? "#fdf7e3" : "#fff",
+        onSelect: () => this.setState({ target: m.key }),
+      })),
+      savedMonth: target === "next" ? this.NEXT_MONTH : this.CUR_MONTH,
+      fbSent: st.fbSent,
+      fbNotSent: !st.fbSent,
+      fbText: st.fbText,
+      stars: [1,2,3,4,5].map(n => ({
+        glyph: n <= st.fbRating ? "★" : "☆",
+        onClick: () => this.setState({ fbRating: n }),
+      })),
+      h: {
+        next: () => this.setState(s => ({ step: s.step + 1 })),
+        back: () => this.setState(s => ({ step: Math.max(0, s.step - 1) })),
+        identify: this.identify,
+        save: () => this.setState({ step: 4 }),
+        restart: () => this.setState({ step: 0, wasMatched: false, idError: "", target: "current", fbRating: 0, fbText: "", fbSent: false }),
+        toggleMatch: e => this.setState({ scMatch: e.target.checked }),
+        toggleNext: e => this.setState({ scNext: e.target.checked }),
+        onF3name: e => this.setF("f3name", e.target.value),
+        onEmail: e => this.setF("email", e.target.value),
+        onTeam: e => this.setF("team", e.target.value),
+        onWho: e => this.setF("who", e.target.value),
+        onWhat: e => this.setF("what", e.target.value),
+        onHow: e => this.setF("how", e.target.value),
+        onPhone: e => this.setF("phone", e.target.value),
+        onNag: e => this.setF("nag", e.target.checked),
+        toggleHow: () => this.setState(s => ({ howOpen: !s.howOpen })),
+        onFbText: e => this.setState({ fbText: e.target.value }),
+        submitFb: () => this.setState({ fbSent: true }),
+        ttAo: () => this.setState(s => ({ form: { ...s.form, teamType: "ao", team: "" } })),
+        ttGoal: () => this.setState(s => ({ form: { ...s.form, teamType: "goal", team: "" } })),
+        ttOther: () => this.setState(s => ({ form: { ...s.form, teamType: "other", team: "" } })),
+      },
+    };
+  }
+}
+</script>
+</body>
+</html>
