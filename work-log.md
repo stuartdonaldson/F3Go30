@@ -1360,3 +1360,12 @@ Open: the echoed handle carries a client-supplied sheetId; the server re-validat
 
 ### Key Learnings:
 A background process in this repo (the beads runner / a clasp-adjacent tool) transiently renames script/*.js to *.txt during its own operations — git status briefly showed script/WebApp.js deleted with an untracked WebApp.js.txt, then self-restored. Not a change to worry about if caught mid-flight.
+
+## 2026-07-14 00:00:00
+_session eb0e72cb · v3 · 07-14_
+
+### Objective 1: Prefetch dashboard payload after identify so Continue-to-Dashboard is instant (F3Go30-qi26.2)
+Rationale: The Continue-to-Dashboard click always incurred a fresh ~9.65s dashboard round trip while the user waited on a Loading state, even though identify already resolves the identity/context needed to fetch it. Firing loadDashboard_() in the background as soon as auto-identify resolves lets that fetch overlap with the time the user spends reading the check-in screen, removing a serialized round trip from the perceived path.
+Outcome [user-facing]: script/CheckinApp.html — applyIdentifySuccess_ now calls a new prefetchDashboard_() right after showStep('checkin'), which fires loadDashboard_(undefined, {silent:true}) in the background and tracks it in state.dashboardPrefetchPromise. loadDashboard_ gained a silent option that skips DOM/loading-state mutation and error-banner display (background failures are swallowed; the click path falls back). The dashboardBtn click handler now renders directly from state.monthCache with no fetch when the prefetch has already landed, rides the in-flight prefetch promise and renders from cache once it resolves if it's still in flight, or falls back to a normal loadDashboard_() fetch if the prefetch failed or never started.
+Outcome [developer-facing]: No test coverage added — CheckinApp.html is client-side HTML/JS with no harness in this repo's `npm test` suite (backend-only); full suite (27 test files) still passes. Manual/live verification of perceived latency improvement (harness re-run per AC) was not performed this session.
+Open: AC's "harness re-run shows the dashboard step no longer adds a full server round trip to perceived tap-to-dashboard time" was not independently re-measured — no perf harness was run against a live deployment in this session.

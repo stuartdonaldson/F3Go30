@@ -484,6 +484,10 @@
     monthCache: {}, // monthKey ("YYYY-MM") -> full-month dashboard payload, see loadDashboard_
     viewDate: null, // Date currently shown on the dashboard (date-nav arrows move this)
     dashboardLoading: false, // true while a loadDashboard_ fetch is in flight — blocks duplicate date-nav clicks
+    // F3Go30-qi26.2: the background prefetch fired right after identify resolves — non-null
+    // while that fetch is in flight, reset to null on settle (success or failure). The
+    // dashboardBtn click handler awaits this instead of firing its own fetch when present.
+    dashboardPrefetchPromise: null,
     bonusReturnStep: 'checkin', // which step bonusBackBtn returns to — set by showStep
     bonusEntries: [], // this PAX's own Bonus Tracker rows, from the last bonusList fetch
     bonusEditingRowIndex: null, // null while adding; a locate hint (not authoritative) while editing
@@ -614,6 +618,11 @@
     $('nextMonthNote').classList.toggle('hidden', res.nextMonthRegistered !== false);
     $('bookmarkHereNote').classList.toggle('hidden', !res.firstUse);
     showStep('checkin');
+    // F3Go30-qi26.2: kick off the dashboard fetch now, while the PAX is still reading this
+    // step, so Continue-to-Dashboard can render from state.monthCache instead of blocking on
+    // a fresh ~9.65s round trip. loadDashboard_'s own cache reset (state.monthCache = {} above)
+    // already ran this identify, so there's nothing stale to collide with.
+    prefetchDashboard_();
   }
 
   // Validates, then lets the real <form target="_top"> POST proceed as a genuine top-level
@@ -1023,8 +1032,29 @@
 
   $('dashboardBtn').addEventListener('click', function() {
     var btn = this;
+    // F3Go30-qi26.2: render straight from the prefetch's cache when it's already landed — no
+    // extra round trip. dayDates check guards the (very unlikely) case the client's local
+    // calendar date rolled over between prefetch and click.
+    var todayIso = isoDate_(new Date());
+    var cached = state.monthCache[monthKeyOf_(new Date())];
+    if (cached && !state.dashboardPrefetchPromise && cached.dayDates.indexOf(todayIso) !== -1) {
+      renderDashboard_(cached, cached.dayDates.indexOf(todayIso));
+      return;
+    }
     setButtonLoading_(btn, true, 'Loading…');
-    loadDashboard_().finally(function() { setButtonLoading_(btn, false); });
+    // Prefetch still in flight: ride it instead of firing a duplicate fetch. Render from cache
+    // once it lands; if it failed silently, fall back to a normal (non-silent) fetch here.
+    var pending = state.dashboardPrefetchPromise
+      ? state.dashboardPrefetchPromise.then(function() {
+          var c = state.monthCache[monthKeyOf_(new Date())];
+          if (c && c.dayDates.indexOf(todayIso) !== -1) {
+            renderDashboard_(c, c.dayDates.indexOf(todayIso));
+            return;
+          }
+          return loadDashboard_();
+        })
+      : loadDashboard_();
+    pending.finally(function() { setButtonLoading_(btn, false); });
   });
   // The whole Month Progress tile is the edit affordance — always returns to the real, live
   // today/yesterday check-in step, deliberately ignoring whatever day the date-nav arrows have
@@ -1539,21 +1569,30 @@
    * every time — no cache) — without visible feedback, that read either just looked broken, or
    * invited repeated clicks that each fired their own duplicate fetch. dashboardLoading blocks
    * that; the nav buttons visibly disable and the label reads "Loading…" for the duration. */
-  function loadDashboard_(dateISO) {
-    hideApiError_();
+  // opts.silent (F3Go30-qi26.2): used by prefetchDashboard_ to fetch/cache in the background
+  // without touching the (currently hidden, still on the checkin step) dashboard nav DOM, and
+  // without popping the error banner over the checkin step on failure — the click handler falls
+  // back to a normal, non-silent fetch itself when the prefetch didn't land.
+  function loadDashboard_(dateISO, opts) {
+    var silent = !!(opts && opts.silent);
+    if (!silent) hideApiError_();
     // Default to the browser's local calendar date (not the Apps Script server's timezone) so
     // the dashboard opens on "today" as the PAX's device sees it.
     dateISO = dateISO || isoDate_(new Date());
     state.dashboardLoading = true;
-    $('datePrevBtn').disabled = true;
-    $('dateNextBtn').disabled = true;
-    $('dateNavLabel').textContent = 'Loading…';
+    if (!silent) {
+      $('datePrevBtn').disabled = true;
+      $('dateNextBtn').disabled = true;
+      $('dateNavLabel').textContent = 'Loading…';
+    }
     return callApi('dashboard', { f3Name: state.f3Name, email: state.email, dateISO: dateISO, resolvedContext: state.resolvedContext })
       .then(function(payload) {
         state.monthCache[payload.monthKey] = payload;
-        renderDashboard_(payload, payload.viewDayIndex); // re-enables/relabels the nav buttons via renderDateNav_
+        if (!silent) renderDashboard_(payload, payload.viewDayIndex); // re-enables/relabels the nav buttons via renderDateNav_
+        return payload;
       })
       .catch(function(err) {
+        if (silent) throw err; // background prefetch failure — caller falls back to a normal fetch
         var friendly = (err && err.message === 'no_tracker_for_date')
           ? new Error('No tracker exists for that date yet.')
           : err;
@@ -1565,6 +1604,16 @@
       .finally(function() {
         state.dashboardLoading = false;
       });
+  }
+
+  /** Fires loadDashboard_ in the background right after identify resolves (F3Go30-qi26.2), so
+   * today's dashboard payload is usually already in state.monthCache by the time the PAX taps
+   * Continue to Dashboard. Failures are swallowed here — the click handler notices the promise
+   * settled without populating the cache and falls back to its own normal fetch. */
+  function prefetchDashboard_() {
+    state.dashboardPrefetchPromise = loadDashboard_(undefined, { silent: true })
+      .catch(function() { /* swallowed — see dashboardBtn click handler's fallback */ })
+      .finally(function() { state.dashboardPrefetchPromise = null; });
   }
 
   function navigateDashboard_(deltaDays) {
