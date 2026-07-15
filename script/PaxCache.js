@@ -240,10 +240,16 @@ function ensurePaxCacheFresh_(sheetId) {
       // prefix-delete (unlike PropertiesService.getKeys() above), so the exact key strings are
       // duplicated here rather than referencing those functions directly, to avoid a circular
       // dependency between PaxCache.js and dashboardWebapp.js. Keep in sync if either changes.
+      // Also clears bonusWebapp.js's per-sheet bonus entry/pill-shape caches
+      // (bonusEntriesCacheKey_/bonusRowsCacheKey_) so a manual Bonus Tracker edit is picked up
+      // without waiting for BONUS_ENTRIES_CACHE_TTL_SECONDS_ or a webapp-driven bonus write
+      // (F3Go30-nzi0). Same exact-key-string duplication convention as above.
       try {
         var cache = CacheService.getScriptCache();
         cache.remove('go30dash:trackerValues:' + sheetId);
         cache.remove('go30dash:responsesValues:' + sheetId);
+        cache.remove('go30dash:bonusEntries:' + sheetId);
+        cache.remove('go30dash:bonusRows:' + sheetId);
       } catch (e2) { /* best-effort — write-through invalidation at the point of write is the primary path */ }
     }
     props.setProperty(key, String(liveModTime));

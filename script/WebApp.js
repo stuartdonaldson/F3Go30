@@ -333,6 +333,20 @@ function handleAdminPost_(e) {
       GasLogger.log('handleAdminPost_.setContextDate', { ns: payload.ns || null, contextDate: payload.contextDate || null });
       return jsonOutput_({ ok: true, contextDate: payload.contextDate || null });
     }
+    if (payload.action === 'resetCheckinSession') {
+      // Test-support only (F3Go30 identity-token-flow.spec.js): removes every CheckinSessions
+      // row bound to {f3Name, email} so a Playwright spec asserting exact "first use"
+      // (createdAt === lastUsedAt) semantics can start a fixture PAX from a clean slate on
+      // every run instead of perpetually reusing a session an earlier run already touched.
+      // See deleteCheckinSessionsByIdentity_ (CheckinSessions.js).
+      if (!payload.f3Name || !payload.email) {
+        return jsonOutput_({ ok: false, error: 'f3Name and email are required' });
+      }
+      var resetSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+      var removedCount = deleteCheckinSessionsByIdentity_(resetSpreadsheet, payload.f3Name, payload.email);
+      GasLogger.log('handleAdminPost_.resetCheckinSession', { f3Name: payload.f3Name, removed: removedCount });
+      return jsonOutput_({ ok: true, removed: removedCount });
+    }
     if (payload.action === 'listSheets') {
       // Stays bound (ADR-014 D2): diagnostic listing for this executing deployment's own
       // Template, not a tenant-data read — no sheetId/ns override needed, unlike getSheet.

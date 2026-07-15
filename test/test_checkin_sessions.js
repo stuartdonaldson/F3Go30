@@ -113,6 +113,7 @@ const {
   createOrTouchCheckinSession_,
   cleanupStaleCheckinSessions_,
   findCheckinSessionByIdentity_,
+  deleteCheckinSessionsByIdentity_,
   resolveOrCreateCheckinSessionGuid_,
   getCachedCheckinSessionTitle_,
 } = require('../script/CheckinSessions.js');
@@ -239,6 +240,36 @@ const {
   assert.equal(findCheckinSessionByIdentity_(ss, 'Anchor', 'wrong@example.com'), null, 'email must also match');
   assert.equal(findCheckinSessionByIdentity_(ss, 'Nobody', 'ivan@example.com'), null, 'f3Name must also match');
   assert.equal(findCheckinSessionByIdentity_(makeFakeSpreadsheet_(makeFakeSessionsSheet_([])), 'Anchor', 'anchor@example.com'), null);
+}
+
+// deleteCheckinSessionsByIdentity_ removes every row bound to {f3Name, email} (case-insensitive),
+// leaves other identities' rows and row order untouched, rebuilds the roster index from what's
+// left, and no-ops on a miss, missing sheet, or incomplete identity.
+{
+  fakeProps = makeFakeProperties_();
+  var sheet = makeFakeSessionsSheet_([
+    ['guid-old', 'Anchor', 'anchor@example.com', '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z'],
+    ['guid-new', 'Anchor', 'anchor@example.com', '2026-06-01T00:00:00.000Z', '2026-06-10T00:00:00.000Z'],
+    ['guid-ivan', 'Crazy Ivan', 'ivan@example.com', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z'],
+  ]);
+  var ss = makeFakeSpreadsheet_(sheet);
+
+  var removed = deleteCheckinSessionsByIdentity_(ss, '  anchor ', 'ANCHOR@example.com');
+  assert.equal(removed, 2, 'removes both of Anchor\'s rows');
+  // Same clear-then-rewrite shape as cleanupStaleCheckinSessions_: the sheet keeps its old row
+  // count with trailing rows blanked out, rather than physically shrinking.
+  assert.equal(sheet._rows[0][0], 'guid-ivan', 'the non-matching row survives, moved to the top');
+  assert.equal(sheet._rows[1][0], '', 'the rest is blanked, not left with stale data');
+
+  var index = JSON.parse(fakeProps.getProperty('CHECKIN_SESSION_ROSTER_INDEX'));
+  assert.deepEqual(index, { 'guid-ivan': 2 }, 'roster index rebuilt from surviving rows only');
+
+  assert.equal(deleteCheckinSessionsByIdentity_(ss, 'Nobody', 'nobody@example.com'), 0, 'no-op on a miss');
+  assert.equal(deleteCheckinSessionsByIdentity_(ss, '', 'x@example.com'), 0, 'no-op on incomplete identity');
+  assert.equal(
+    deleteCheckinSessionsByIdentity_(makeFakeSpreadsheet_(makeFakeSessionsSheet_([])), 'Anchor', 'anchor@example.com'),
+    0, 'no-op when the sheet has no rows'
+  );
 }
 
 // resolveOrCreateCheckinSessionGuid_ returns an existing identity's guid (and touches it), and

@@ -1399,3 +1399,41 @@ Rationale: qi26.1-.5 landed the implementation (shared resolved-context handle, 
 Outcome [developer-facing]: Added adr/015-checkin-dashboard-round-trip-reduction.md recording the round-trip-reduction decision (five coordinated sub-changes under one architectural decision, matching ADR-014's D1-D7 style), its tradeoffs (parallel fast/slow-path implementations, client-held handle correctness burden), and a cross-reference to the qi26.5 measurement harness; ran adr-quality-check's checklist against it inline (all fields present, single overarching decision, status/content consistent, no broken supersede chain). Updated docs/DESIGN.md's Decisions(short) section with a summary of the same four implementation changes and their in-code rationale.
 Outcome [user-facing]: Added a docs/CHANGELOG.md Unreleased bullet noting the PAX-visible speedup (instant "Continue to Dashboard", faster bookmarked check-in page load).
 Open: qi26.4's AC item confirming dashboard totalMs is materially reduced against a live deployment (via the qi26.5 harness) is still outstanding — flagged as a human follow-up in both the bead notes and ADR-015's Consequences, since it requires a live SIT/PROD run this unattended session could not perform.
+
+## 2026-07-14 17:31:03
+_session 08f5daed-0006-454d-bc92-295e921fdc99 · v3 · 07-14_
+
+### Objective 1: Fix and resolve F3Go30-nzi0 (bonus cache not wired to Drive-modtime staleness gate)
+Rationale: `ensurePaxCacheFresh_`'s Drive-modtime gate existed specifically to catch manual sheet edits the webapp didn't make, but the bonus-entries CacheService keys (`go30dash:bonusEntries:`/`go30dash:bonusRows:`) were added later in bonusWebapp.js and never wired into that invalidation block — so a manual Bonus Tracker edit could serve a stale phantom bonus total for up to the 6h TTL.
+Outcome [developer-facing]: `script/PaxCache.js`'s `ensurePaxCacheFresh_` now also removes the two bonus CacheService keys alongside the existing roster keys on modtime advance. Added two regression tests to `test/test_pax_cache.js` mirroring the existing roster-cache tests. Full suite (28 files) passed.
+
+### Objective 2: Fix and resolve F3Go30-0gx6 (dashboard renders pre-check-in prefetched payload)
+Rationale: `prefetchDashboard_()` (from F3Go30-qi26.2) caches the dashboard payload at identify time, before any check-in; the check-in submit success handlers updated local UI state but never invalidated that cache, so Continue-to-Dashboard's cache-hit fast path rendered the pre-check-in snapshot until a reload.
+Outcome [developer-facing]: Added `invalidateMonthCacheFor_(dateIso)` to `script/CheckinApp.html`, called from both `submitCheckin_` and `submitSelectionCheckin_` success handlers, deleting just the affected month's `state.monthCache` entry so Continue-to-Dashboard re-fetches live data instead of the stale prefetch. Added a static-shape regression test (`test/test_checkin_monthcache_invalidation.js`, following this project's existing no-jsdom precedent) and wired it into `npm test`. Full suite (29 files) passed.
+
+## 2026-07-14 20:29:20
+_session 929dd4c5 · v3 · 07-14_
+
+### Objective 1: Review and close qi26 epic + qi26.4/qi26.6 (check-in round-trip reduction)
+Rationale: An unattended bd-run-beads session (20260714-213422Z) had implemented and committed qi26.4/.5/.6 but left qi26.4 IN_PROGRESS and qi26.6 OPEN; the task was to "identify what needs to be done to close them off." Verified the work was genuinely complete before closing: qi26.4 code shipped in 96b31cb (freshCheck deferral, markPaxCacheFreshNow_, unit tests) with a live SIT verification in its notes (dashboard 4212ms cold / ~2.4s warm vs ~7.4s baseline); qi26.6 docs shipped in 81ce9a1 (ADR-015 Accepted, DESIGN.md runtime section, CHANGELOG bullet, harness+Axiom cross-refs); full npm test suite green (exit 0). The beads had simply never been transitioned out of their working states — closing was the only missing step.
+Outcome [internal]: Closed F3Go30-qi26.4, F3Go30-qi26.6, and the F3Go30-qi26 epic (6/6 children) with verification-backed close reasons; all three persisted to issues.jsonl.
+Open: Uncommitted working-tree changes (PaxCache.js, CheckinApp.html, test_pax_cache.js, test_checkin_monthcache_invalidation.js, package.json, measureCheckinPerformance.js) belong to separate beads (F3Go30-nzi0 bonus-cache invalidation, F3Go30-0gx6 prefetch-staleness) plus the qi26.4 live-verification harness tweak — not part of qi26, still uncommitted. Dolt remote is not configured (bd emitted a `bd dolt remote add origin ... && bd dolt push` repair hint) — a bd-maintenance §2 follow-up.
+
+### Key Learnings:
+`.beads/metadata.json` had `dolt_mode: server` (with a stale `dolt sql-server` on PID 5878), which per bd-maintenance §7 makes every bd command re-import an empty DB from issues.jsonl and silently drops some writes back to the jsonl — qi26.4/.6 closes persisted but the epic close repeatedly did not. Symptom is the `auto-importing N bytes ... into empty database` banner on every bd invocation. Fix is `dolt_mode: embedded`; once flipped (externally, by the developer), the epic close persisted on the first try.
+
+## 2026-07-15 16:45:00
+_session 3668c52d · v3 · 07-15_
+
+### Objective 1: Verify test coverage and SIT deploy before shipping the check-in monthCache/bonus-cache branch
+Rationale: before treating the check-in monthCache-invalidation and bonus-cache-clearing work (feat/checkin-edit-signup-link) as done, confirm both unit coverage and a live SIT deploy actually exercise it — "lets review test coverage, and do a deploy to sit and run the test suite including playwright tests."
+Outcome [developer-facing]: confirmed test_checkin_monthcache_invalidation.js and the new test_pax_cache.js bonus-cache-clearing cases give solid static-shape coverage for the diffed CheckinApp.html/PaxCache.js changes; full 29-file unit suite passes.
+Outcome [internal]: deployed to SIT (v2.3.15.22, deployment @161); ran checkin-advanced-grid.spec.js and identity-token-flow.spec.js live against it — 23/24 Playwright tests passed, one deterministic failure surfaced in identity-token-flow.spec.js.
+
+### Objective 2: Fix the identity-token-flow "first use" test failure  [accreted]
+Transition: user said "fix it now" once the root cause was diagnosed, rather than deferring it as a filed issue.
+Rationale: the failure wasn't flaky (confirmed by an isolated rerun) — `resolveOrCreateCheckinSessionGuid_` (CheckinSessions.js) reuses an existing session for a known identity and immediately touches `lastUsedAt` at mint time, so the spec's reused fixture PAX (`TokenFlowTest`) could only ever pass the exact `createdAt === lastUsedAt` firstUse check on its very first-ever run against a given SIT environment — every subsequent run was structurally guaranteed to fail. Confirmed via the fix: resetting the fixture's sessions removed 33 stale rows accumulated from prior runs.
+Rejected: switching the test to a freshly-generated PAX per run — rejected as it would grow Tracker/PaxDB roster rows unboundedly across CI runs, unlike the project's other idempotent SIT fixtures.
+Outcome [developer-facing]: added `deleteCheckinSessionsByIdentity_` (script/CheckinSessions.js) + a test-support-only `resetCheckinSession` admin action (script/WebApp.js), with unit coverage in test/test_checkin_sessions.js; tests/playwright/identity-token-flow.spec.js now calls the reset action before asserting first-use, so the fixture starts clean every run instead of accumulating touched sessions.
+Outcome [internal]: redeployed to SIT (@162); verified the new admin action live (cleared the 33 accumulated stale rows for `TokenFlowTest`).
+Open: a second consecutive Playwright run to confirm the fix holds repeatably was queued but not observed before the session was paused ("lets stop here") — worth confirming next session.

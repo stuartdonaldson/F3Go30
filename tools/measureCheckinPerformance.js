@@ -7,7 +7,7 @@
  * Prints a measurement window for Axiom correlation via tools/query_axiom.py.
  *
  * Usage:
- *   node tools/measureCheckinPerformance.js <F3Name> [--env sit|prod] [--rounds N]
+ *   node tools/measureCheckinPerformance.js <F3Name> [--email <addr>] [--env sit|prod] [--rounds N]
  *
  * Examples:
  *   node tools/measureCheckinPerformance.js TestPax
@@ -31,7 +31,7 @@ function parseArgs_(argv) {
   const args = argv.slice(2);
   const f3Name = args.find(a => !a.startsWith('--'));
   if (!f3Name) {
-    console.error('Usage: measureCheckinPerformance.js <F3Name> [--env sit|prod] [--rounds N]');
+    console.error('Usage: measureCheckinPerformance.js <F3Name> [--email <addr>] [--env sit|prod] [--rounds N]');
     process.exit(1);
   }
 
@@ -49,10 +49,22 @@ function parseArgs_(argv) {
     process.exit(1);
   }
 
-  return { f3Name, env, rounds };
+  // A registered PAX's identify requires the matching email (emailMismatch
+  // otherwise mints no token); pass it to measure the real returning-user
+  // flow. Falls back to a throwaway address for a first-use/no-match probe.
+  const emailIdx = args.indexOf('--email');
+  const email = emailIdx !== -1 ? args[emailIdx + 1] : `perf-test-${Date.now()}@f3.local`;
+
+  return { f3Name, env, rounds, email };
 }
 
-async function mintToken(f3Name, email, env) {
+// Plant a check-in GUID session for this PAX and return its guid. The old
+// signed-token model (mintIdentityToken_dw_) is gone: bookmark links are now
+// GUID sessions (see dashboardWebapp.js:76, CheckinSessions.js). The client
+// generates the guid and sends it in the identify POST; the server records it
+// (createOrTouchCheckinSession_dw_) and echoes it back as identityToken. So we
+// generate the guid, POST identify with it, and use it as the saved-link id.
+async function mintToken(f3Name, email, env, guid) {
   const { deploymentIdKey } = ENV_MAP[env];
   const settings = loadSettings();
   const deploymentId = settings[deploymentIdKey];
@@ -66,14 +78,18 @@ async function mintToken(f3Name, email, env) {
     action: 'identify',
     f3Name,
     email,
+    guid,
     targetMonth: 'current',
   });
 
-  if (!result || !result.token) {
-    throw new Error(`Failed to mint token: ${JSON.stringify(result)}`);
+  if (!result || !result.matched) {
+    throw new Error(`identify did not match ${f3Name}: ${JSON.stringify(result)}`);
   }
-
-  return result.token;
+  if (result.emailMismatch) {
+    throw new Error(`email mismatch for ${f3Name}; pass the registered --email`);
+  }
+  // identityToken is the guid the server bound the session to (== guid we sent).
+  return result.identityToken || guid;
 }
 
 async function getCheckinUrl(token, env) {
@@ -94,7 +110,8 @@ function capturePerformance_(page) {
 
   page.on('response', response => {
     const url = response.url();
-    const timing = response.timing();
+    // Playwright exposes network timing on the Request, not the Response.
+    const timing = response.request().timing();
 
     // Extract host for grouping
     const host = new URL(url).hostname;
@@ -105,9 +122,14 @@ function capturePerformance_(page) {
         requests[host] = [];
       }
 
-      // Calculate TTFB and total
-      const ttfb = timing ? (timing.responseStart - timing.requestStart) : 0;
-      const total = timing ? (timing.responseEnd - timing.requestStart) : 0;
+      // TTFB and total, in ms from requestStart. Playwright leaves a field at
+      // -1 when it wasn't recorded (common for responseEnd on redirects / bodies
+      // the harness never reads), which would otherwise print as a misleading
+      // negative — surface -1 so the formatter can show it as n/a.
+      const ttfb = timing && timing.responseStart >= 0
+        ? timing.responseStart - timing.requestStart : -1;
+      const total = timing && timing.responseEnd >= 0
+        ? timing.responseEnd - timing.requestStart : -1;
 
       requests[host].push({
         url: new URL(url).pathname + new URL(url).search,
@@ -121,10 +143,10 @@ function capturePerformance_(page) {
   return requests;
 }
 
-async function runRound(f3Name, email, env, roundNum) {
+async function runRound(f3Name, email, env, roundNum, guid) {
   console.error(`\n→ Round ${roundNum}...`);
 
-  const token = await mintToken(f3Name, email, env);
+  const token = await mintToken(f3Name, email, env, guid);
   const checkinUrl = await getCheckinUrl(token, env);
 
   const browser = await chromium.launch({ headless: true });
@@ -185,9 +207,10 @@ function formatRequestTable(requests) {
   for (const [host, reqs] of Object.entries(requests)) {
     lines.push(`\n  ${host}:`);
     for (const req of reqs) {
+      const fmt = (v) => (v < 0 ? ' n/a' : `${String(v).padStart(4)}ms`);
       lines.push(
         `    ${req.status} ${req.url.substring(0, 60).padEnd(60)}  ` +
-        `TTFB: ${String(req.ttfb).padStart(4)}ms  Total: ${String(req.total).padStart(4)}ms`
+        `TTFB: ${fmt(req.ttfb)}  Total: ${fmt(req.total)}`
       );
     }
   }
@@ -195,20 +218,22 @@ function formatRequestTable(requests) {
 }
 
 async function main() {
-  const { f3Name, env, rounds } = parseArgs_(process.argv);
+  const { f3Name, env, rounds, email } = parseArgs_(process.argv);
 
-  // Use deterministic test email
-  const email = `perf-test-${Date.now()}@f3.local`;
+  // One guid reused across rounds = the same returning bookmark. Round 1 plants
+  // the session (firstUse); later rounds exercise the warm returning-user path.
+  const guid = require('crypto').randomUUID();
 
   console.error(`\nF3 Name: ${f3Name}`);
   console.error(`Environment: ${env.toUpperCase()}`);
   console.error(`Rounds: ${rounds}`);
+  console.error(`Session guid: ${guid}`);
   console.error(`\nStarting performance measurement...`);
 
   const results = [];
   for (let i = 1; i <= rounds; i++) {
     try {
-      const result = await runRound(f3Name, email, env, i);
+      const result = await runRound(f3Name, email, env, i, guid);
       results.push(result);
     } catch (err) {
       console.error(`❌  Round ${i} failed: ${err.message}`);

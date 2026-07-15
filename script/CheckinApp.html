@@ -812,6 +812,7 @@
         state.lastEditedDayIso = dateIso;
         if (day === 'today') state.todayStatus = status; else state.yesterdayStatus = status;
         updateMonthGridEntry_(dateIso, status);
+        invalidateMonthCacheFor_(dateIso);
         if (state.advancedOpen) {
           updateCalCellStatus_(dateIso, status);
           if (state.selectedDateIso === dateIso) renderSelectionPanel_(dateIso);
@@ -856,6 +857,16 @@
   function updateMonthGridEntry_(dateIso, status) {
     var entry = monthGridEntryFor_(dateIso);
     if (entry) entry.status = status;
+  }
+
+  /** F3Go30-0gx6: a successful check-in write must invalidate the prefetched dashboard payload
+   * (state.monthCache, populated at identify time by prefetchDashboard_ — BEFORE any check-in
+   * this session) for the affected month, so Continue-to-Dashboard's cache-hit fast path
+   * (dashboardBtn click handler) re-fetches live data instead of rendering the pre-check-in
+   * snapshot. Drops just the touched month's entry rather than the whole map, since date-nav
+   * across other already-visited months is still safe to serve from cache. */
+  function invalidateMonthCacheFor_(dateIso) {
+    delete state.monthCache[monthKeyOf_(parseIsoDate_(dateIso))];
   }
 
   /** Builds one calendar cell as a real <button> (Decision 5: keyboard-reachable, never
@@ -983,6 +994,7 @@
       .then(function() {
         var status = valueToMonthGridStatus_(value);
         updateMonthGridEntry_(dateIso, status);
+        invalidateMonthCacheFor_(dateIso);
         updateCalCellStatus_(dateIso, status);
         renderSelectionPanel_(dateIso);
         state.lastEditedDayIso = dateIso;

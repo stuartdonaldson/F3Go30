@@ -202,6 +202,50 @@ function findCheckinSessionByIdentity_(spreadsheet, f3Name, email) {
 }
 
 /**
+ * Removes every session row bound to {f3Name, email} (case-insensitive, same matching as
+ * findCheckinSessionByIdentity_), rebuilding the roster index from what's left. Test-support
+ * utility only — exposed via the resetCheckinSession admin action (WebApp.js) so an automated
+ * spec that needs to assert exact createdAt-vs-lastUsedAt "first use" semantics (see
+ * dashboardWebapp.js's handleCheckinIdentify_) can start a fixture PAX from a clean slate on
+ * every run, instead of perpetually reusing whatever session an earlier run already touched.
+ * Never called from any PAX-facing flow. Returns the number of rows removed.
+ */
+function deleteCheckinSessionsByIdentity_(spreadsheet, f3Name, email) {
+  var wantName = normalizeCheckinIdentityField_(f3Name);
+  var wantEmail = normalizeCheckinIdentityField_(email);
+  if (!wantName || !wantEmail) return 0;
+  var sheet = spreadsheet.getSheetByName(CHECKIN_SESSIONS_SHEET_NAME_);
+  if (!sheet) return 0;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+
+  var values = sheet.getRange(2, 1, lastRow - 1, CHECKIN_SESSIONS_HEADERS_.length).getValues();
+  var keepRows = [];
+  var removed = 0;
+  values.forEach(function(row) {
+    var matches = normalizeCheckinIdentityField_(row[CHECKIN_SESSION_COL_F3NAME_]) === wantName &&
+      normalizeCheckinIdentityField_(row[CHECKIN_SESSION_COL_EMAIL_]) === wantEmail;
+    if (matches) {
+      removed++;
+    } else {
+      keepRows.push(row);
+    }
+  });
+  if (!removed) return 0;
+
+  sheet.getRange(2, 1, lastRow - 1, CHECKIN_SESSIONS_HEADERS_.length).clearContent();
+  if (keepRows.length) {
+    sheet.getRange(2, 1, keepRows.length, CHECKIN_SESSIONS_HEADERS_.length).setValues(keepRows);
+  }
+  var newIndex = {};
+  keepRows.forEach(function(row, i) { newIndex[row[CHECKIN_SESSION_COL_ID_]] = i + 2; });
+  _setCheckinSessionRosterIndex_(newIndex);
+
+  GasLogger.log('deleteCheckinSessionsByIdentity_', { f3Name: f3Name, removed: removed });
+  return removed;
+}
+
+/**
  * Returns a bookmarkable session guid for {f3Name, email} — the existing one if this PAX already
  * has a session (bumping its Last Used At so handing it back out as an emailed bookmark keeps it
  * from being pruned), otherwise mints a fresh session and returns its guid. The confirmation
@@ -373,6 +417,7 @@ if (typeof module !== 'undefined' && module.exports) {
     createOrTouchCheckinSession_: createOrTouchCheckinSession_,
     cleanupStaleCheckinSessions_: cleanupStaleCheckinSessions_,
     findCheckinSessionByIdentity_: findCheckinSessionByIdentity_,
+    deleteCheckinSessionsByIdentity_: deleteCheckinSessionsByIdentity_,
     resolveOrCreateCheckinSessionGuid_: resolveOrCreateCheckinSessionGuid_,
     cacheCheckinSessionTitle_: cacheCheckinSessionTitle_,
     getCachedCheckinSessionTitle_: getCachedCheckinSessionTitle_,

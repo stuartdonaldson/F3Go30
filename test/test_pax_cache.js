@@ -266,6 +266,42 @@ function resetProps_() {
   assert.equal(fakeCache_.get('go30dash:trackerValues:sheet1'), 'fresh-tracker');
 })();
 
+// F3Go30-nzi0: a manual Bonus Tracker edit must clear the un-gated bonus caches
+// (go30dash:bonusEntries:/go30dash:bonusRows:) too, not just the roster caches — otherwise the
+// dashboard keeps serving pre-edit bonus totals for up to BONUS_ENTRIES_CACHE_TTL_SECONDS_.
+(function testFreshnessGateClearsBonusCacheKeysOnModTimeAdvance() {
+  resetProps_();
+  fakeCache_ = makeFakeCache_();
+  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
+
+  fakeDriveModTimes['sheet1'] = 1000;
+  ensurePaxCacheFresh_('sheet1'); // records asOf = 1000 for this (fresh) execution
+  fakeCache_.put('go30dash:bonusEntries:sheet1', 'stale-bonus-entries');
+  fakeCache_.put('go30dash:bonusRows:sheet1', 'stale-bonus-rows');
+
+  resetPaxCacheFreshnessMemo_();
+  fakeDriveModTimes['sheet1'] = 2000;
+  ensurePaxCacheFresh_('sheet1');
+
+  assert.equal(fakeCache_.get('go30dash:bonusEntries:sheet1'), null);
+  assert.equal(fakeCache_.get('go30dash:bonusRows:sheet1'), null);
+})();
+
+(function testFreshnessGateLeavesBonusCacheKeysAloneWhenModTimeUnchanged() {
+  resetProps_();
+  fakeCache_ = makeFakeCache_();
+  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
+
+  fakeDriveModTimes['sheet1'] = 1000;
+  ensurePaxCacheFresh_('sheet1');
+  fakeCache_.put('go30dash:bonusEntries:sheet1', 'fresh-bonus-entries');
+
+  resetPaxCacheFreshnessMemo_();
+  ensurePaxCacheFresh_('sheet1'); // same modtime — no change detected
+
+  assert.equal(fakeCache_.get('go30dash:bonusEntries:sheet1'), 'fresh-bonus-entries');
+})();
+
 (function testFreshnessGateIsMemoizedPerExecution() {
   resetProps_();
   var calls = 0;
