@@ -55,6 +55,12 @@ const {
   buildMonthGridEntries_,
   isStrictlyPastCalendarDate_,
   validateCheckinSubmitDayValue_,
+  handleCheckinSubmit_,
+  handleCheckinDashboard_,
+  buildResolvedContextHandle_,
+  monthInfoFromHandle_,
+  resolveLeanIdentityFromHandle_,
+  resolveFullIdentityFromHandle_,
 } = require('../script/dashboardWebapp.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
@@ -639,5 +645,291 @@ console.log('test_dashboard_webapp.js: nudge-window assertions passed');
 })();
 
 console.log('test_dashboard_webapp.js: month-grid / write-contract assertions passed');
+
+// ── Resolved-context handle: identify → checkin/dashboard fast path (F3Go30-qi26.1) ──────────
+// identify returns a lightweight handle (target sheetId, PAX rowIndex, monthKey, canonical F3
+// name); checkin/dashboard echo it back and, when it still validates, skip resolveMonths + the
+// identity re-lookup and go straight to the known row. A stale handle (row no longer names this
+// PAX, missing sheet) transparently falls back to full resolution.
+
+// A fuller in-memory PropertiesService than the getProperty-only stub above — PaxCache's
+// setPaxCacheRow_/setPaxCacheRowsBulk_ (called on the handle fast path to keep per-PAX rows warm)
+// wrap their writes in try/catch, but back them with a real store so a warmed row round-trips.
+function installFakePropertiesStore_() {
+  var store = {};
+  global.PropertiesService = {
+    getScriptProperties: function() {
+      return {
+        getProperty: function(k) { return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; },
+        setProperty: function(k, v) { store[k] = String(v); },
+        deleteProperty: function(k) { delete store[k]; },
+        getProperties: function() { return Object.assign({}, store); },
+        getKeys: function() { return Object.keys(store); },
+        setProperties: function(batch) { Object.keys(batch).forEach(function(k) { store[k] = String(batch[k]); }); },
+      };
+    },
+  };
+  return store;
+}
+
+// Minimal Tracker sheet: row2 (bonus period numbers), row3 (F3 Name + date/'Bonus' headers), and
+// data rows from row 4. setValue/clearContent record what was written so a submit can be asserted.
+function makeFakeTrackerSheet_(row2, row3, paxRows) {
+  var width = [row2, row3].concat(paxRows).reduce(function(m, r) { return Math.max(m, r.length); }, 0);
+  var writes = [];
+  var sheet = {
+    getLastRow: function() { return 3 + paxRows.length; },
+    getLastColumn: function() { return width; },
+    getRange: function(row, col, numRows) {
+      return {
+        getValues: function() {
+          if (row === 2) return [row2.slice()];
+          if (row === 3) return [row3.slice()];
+          var out = [];
+          for (var i = 0; i < (numRows || 1); i++) out.push((paxRows[row - 4 + i] || []).slice());
+          return out;
+        },
+        getFormula: function() { return ''; },
+        setValue: function(v) { writes.push({ row: row, col: col, value: v }); },
+        clearContent: function() { writes.push({ row: row, col: col, value: null }); },
+      };
+    },
+    _writes: writes,
+  };
+  return sheet;
+}
+
+function installFakeSpreadsheetById_(bySheetId) {
+  global.SpreadsheetApp = {
+    openById: function(id) {
+      if (!Object.prototype.hasOwnProperty.call(bySheetId, id)) throw new Error('no such spreadsheet: ' + id);
+      return bySheetId[id];
+    },
+  };
+}
+
+// Shared fixture: a July 2026 tracker with two day columns (Jul 1, Jul 2) and two PAX.
+function makeHandleFixture_() {
+  var row2 = ['', '', '', '', '', '', '', '', '', ''];
+  var row3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score',
+    new Date(2026, 6, 1), new Date(2026, 6, 2)];
+  var paxRows = [
+    ['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, ''],   // rowIndex 0
+    ['Slaw', 'Impala', '', '', '', '', 3, 0.3, 0, 1],         // rowIndex 1
+  ];
+  var trackerSheet = makeFakeTrackerSheet_(row2, row3, paxRows);
+  installFakeSpreadsheetById_({ 'sheet-jul': { getSheetByName: function(n) { return n === 'Tracker' ? trackerSheet : null; } } });
+  var monthInfo = { sheetId: 'sheet-jul', trackerUrl: 'https://example/jul', label: 'July 2026', startDate: new Date(2026, 6, 1) };
+  return { trackerSheet: trackerSheet, monthInfo: monthInfo };
+}
+
+// buildResolvedContextHandle_ / monthInfoFromHandle_ round-trip
+(function testHandleRoundTrip() {
+  var monthInfo = { sheetId: 'sheet-jul', trackerUrl: 'https://x/jul', label: 'July 2026', startDate: new Date(2026, 6, 1) };
+  var handle = buildResolvedContextHandle_(monthInfo, 1, 'Anchor');
+  assert.equal(handle.sheetId, 'sheet-jul');
+  assert.equal(handle.monthKey, '2026-07');
+  assert.equal(handle.startDateIso, '2026-07-01');
+  assert.equal(handle.rowIndex, 1);
+  assert.equal(handle.f3Name, 'Anchor');
+  var back = monthInfoFromHandle_(handle);
+  assert.equal(back.sheetId, 'sheet-jul');
+  assert.equal(back.label, 'July 2026');
+  assert.equal(back.startDate.getFullYear(), 2026);
+  assert.equal(back.startDate.getMonth(), 6);
+  assert.equal(back.startDate.getDate(), 1);
+  // A handle missing the fields needed to be trusted yields null (never a half-built monthInfo).
+  assert.equal(monthInfoFromHandle_(null), null);
+  assert.equal(monthInfoFromHandle_({ sheetId: 'x' }), null);
+})();
+
+// resolveLeanIdentityFromHandle_ — valid handle resolves without any month/Responses lookup
+(function testLeanFromHandleValid() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  var fx = makeHandleFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
+
+  var identity = resolveLeanIdentityFromHandle_(handle);
+  assert.ok(identity, 'valid handle should resolve');
+  assert.equal(identity.matched, true);
+  assert.equal(identity.fromHandle, true);
+  assert.equal(identity.trackerRowIndex, 0);
+  assert.equal(identity.trackerRow[0], 'Anchor');
+  assert.equal(identity.monthInfo.sheetId, 'sheet-jul');
+  delete global.SpreadsheetApp;
+})();
+
+// resolveLeanIdentityFromHandle_ — stale rowIndex (row no longer names this PAX) → null (fallback)
+(function testLeanFromHandleStaleNameMismatch() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  makeHandleFixture_();
+  // rowIndex 1 is 'Slaw', but the handle claims 'Anchor' lives there — a roster edit shifted rows.
+  var handle = buildResolvedContextHandle_({ sheetId: 'sheet-jul', label: 'July 2026', startDate: new Date(2026, 6, 1) }, 1, 'Anchor');
+  assert.equal(resolveLeanIdentityFromHandle_(handle), null);
+  delete global.SpreadsheetApp;
+})();
+
+// resolveLeanIdentityFromHandle_ — unopenable sheet / out-of-range row / malformed handle → null
+(function testLeanFromHandleInvalidInputs() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  makeHandleFixture_();
+  assert.equal(resolveLeanIdentityFromHandle_({ sheetId: 'sheet-gone', startDateIso: '2026-07-01', rowIndex: 0, f3Name: 'Anchor' }), null);
+  assert.equal(resolveLeanIdentityFromHandle_({ sheetId: 'sheet-jul', startDateIso: '2026-07-01', rowIndex: 99, f3Name: 'Anchor' }), null);
+  assert.equal(resolveLeanIdentityFromHandle_({ sheetId: 'sheet-jul', startDateIso: '2026-07-01', f3Name: 'Anchor' }), null); // no rowIndex
+  delete global.SpreadsheetApp;
+})();
+
+// handleCheckinSubmit_ with a valid handle writes to the known row WITHOUT resolveMonths — proven
+// by giving it a templateSpreadsheet whose getSheetByName always throws: any fall-through to
+// resolveCheckinIdentity_ (getCurrentAndNextMonths_) would blow up on it, so a clean write means
+// the fast path was taken.
+(function testSubmitUsesHandleAndSkipsFullResolution() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); }; // "today" = Jul 2
+  var fx = makeHandleFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
+  var hostileTemplate = { getSheetByName: function() { throw new Error('full resolution must not run'); } };
+
+  var res = handleCheckinSubmit_(hostileTemplate, { f3Name: 'Anchor', email: 'a@x.com', day: '2026-07-02', value: 1, resolvedContext: handle });
+  assert.equal(res.ok, true);
+  // Jul 2 is col index 9 (0-based) -> sheet col 10; Anchor is rowIndex 0 -> sheet row 4.
+  assert.deepEqual(fx.trackerSheet._writes, [{ row: 4, col: 10, value: 1 }]);
+  delete global.SpreadsheetApp;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// handleCheckinSubmit_ with a STALE handle falls back to full resolution transparently — here the
+// fallback itself has no TrackerDB (getSheetByName returns null), so it just reports not_found
+// rather than erroring: the stale handle produced no user-visible crash.
+(function testSubmitStaleHandleFallsBackNoCrash() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); };
+  makeHandleFixture_();
+  // rowIndex 1 is 'Slaw', handle claims 'Anchor' -> stale -> lean-from-handle returns null.
+  var staleHandle = buildResolvedContextHandle_({ sheetId: 'sheet-jul', label: 'July 2026', startDate: new Date(2026, 6, 1) }, 1, 'Anchor');
+  var noTrackerDbTemplate = { getSheetByName: function() { return null; } };
+  var res = handleCheckinSubmit_(noTrackerDbTemplate, { f3Name: 'Anchor', email: 'a@x.com', day: '2026-07-02', value: 1, resolvedContext: staleHandle });
+  assert.equal(res.ok, false);
+  assert.equal(res.error, 'not_found');
+  delete global.SpreadsheetApp;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// resolveFullIdentityFromHandle_ — valid handle returns the full roster + the handle's rowIndex
+(function testFullFromHandleValid() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  var fx = makeHandleFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 1, 'Slaw');
+  var identity = resolveFullIdentityFromHandle_(handle);
+  assert.ok(identity);
+  assert.equal(identity.matched, true);
+  assert.equal(identity.rowIndex, 1);
+  assert.equal(identity.trackerValues.length, 2);
+  assert.equal(identity.trackerValues[identity.rowIndex][0], 'Slaw');
+  delete global.SpreadsheetApp;
+})();
+
+// resolveFullIdentityFromHandle_ — a shifted rowIndex still resolves by re-deriving from the
+// freshly-built roster index (self-heals within the correct month); a wholly-absent PAX → null.
+(function testFullFromHandleStaleRowSelfHealsThenNull() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  makeHandleFixture_();
+  // Handle says Anchor is at rowIndex 1, but Anchor is really at 0 — re-derive from the roster.
+  var shifted = buildResolvedContextHandle_({ sheetId: 'sheet-jul', label: 'July 2026', startDate: new Date(2026, 6, 1) }, 1, 'Anchor');
+  var healed = resolveFullIdentityFromHandle_(shifted);
+  assert.ok(healed);
+  assert.equal(healed.rowIndex, 0);
+
+  var gone = buildResolvedContextHandle_({ sheetId: 'sheet-jul', label: 'July 2026', startDate: new Date(2026, 6, 1) }, 0, 'GhostPax');
+  assert.equal(resolveFullIdentityFromHandle_(gone), null);
+  delete global.SpreadsheetApp;
+})();
+
+// resolveFullIdentityFromHandle_ — the whole-roster read stays (the board needs every PAX's row),
+// but the ~½s Drive-modtime freshCheck is SKIPPED when the roster cache is cold (a live read is
+// definitionally current) and paid only to validate a WARM cache (F3Go30-qi26.4).
+(function testFullFromHandleSkipsFreshCheckOnColdCacheProbesOnWarmCache() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  var driveCalls = 0;
+  global.DriveApp = { getFileById: function() { driveCalls++; return { getLastUpdated: function() { return new Date(1000); } }; } };
+  PaxCache.resetPaxCacheFreshnessMemo_();
+
+  var fx = makeHandleFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 1, 'Slaw');
+
+  // Cold roster cache: no Drive probe, yet the full roster is still resolved for the board.
+  var cold = resolveFullIdentityFromHandle_(handle);
+  assert.ok(cold);
+  assert.equal(cold.trackerValues.length, 2);
+  assert.equal(cold.rowIndex, 1);
+  assert.equal(driveCalls, 0);
+
+  // The cold read warmed the CacheService roster cache; a fresh execution against it pays exactly
+  // one probe to validate (modtime 1000 is older than the stamped asOf, so nothing is wiped).
+  PaxCache.resetPaxCacheFreshnessMemo_();
+  var warm = resolveFullIdentityFromHandle_(handle);
+  assert.ok(warm);
+  assert.equal(warm.trackerValues.length, 2);
+  assert.equal(driveCalls, 1);
+
+  delete global.DriveApp;
+  delete global.SpreadsheetApp;
+  PaxCache.resetPaxCacheFreshnessMemo_();
+})();
+
+// handleCheckinDashboard_ wiring: a valid handle whose month matches the requested date resolves
+// the dashboard WITHOUT ever consulting the TrackerDB (resolveDashboardMonth_). A hostile
+// templateSpreadsheet whose getSheetByName throws proves it: resolveDashboardMonth_ would swallow
+// that into a no_tracker_for_date miss, so a clean ok:true means the fast path was taken. A
+// handle for a DIFFERENT month than the requested date must NOT be used — it falls back to
+// resolveDashboardMonth_, which on the hostile template misses.
+(function testDashboardUsesHandleForOwnMonthAndFallsBackOffMonth() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); }; // "today" = Jul 2
+  var fx = makeHandleFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor'); // monthKey '2026-07'
+  var hostileTemplate = { getSheetByName: function() { throw new Error('TrackerDB must not be consulted'); } };
+
+  // Requested date (Jul 2) is in the handle's month -> fast path, TrackerDB never touched.
+  var ownMonth = handleCheckinDashboard_(hostileTemplate, { f3Name: 'Anchor', email: 'a@x.com', dateISO: '2026-07-02', resolvedContext: handle });
+  assert.equal(ownMonth.ok, true);
+  assert.equal(ownMonth.f3Name, 'Anchor');
+  assert.equal(ownMonth.monthKey, '2026-07');
+
+  // Requested date (Aug 3) is NOT in the handle's month -> must fall back to resolveDashboardMonth_,
+  // which on the hostile template resolves nothing -> no_tracker_for_date (never wrongly reuses
+  // the handle's July sheet for an August view).
+  var offMonth = handleCheckinDashboard_(hostileTemplate, { f3Name: 'Anchor', email: 'a@x.com', dateISO: '2026-08-03', resolvedContext: handle });
+  assert.equal(offMonth.ok, false);
+  assert.equal(offMonth.error, 'no_tracker_for_date');
+  delete global.SpreadsheetApp;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// Reset the module-level PropertiesService/CacheService stubs the earlier tests relied on, in case
+// any later-added assertion in this file expects the original getProperty-only stub.
+global.PropertiesService = { getScriptProperties: function() { return { getProperty: function() { return null; } }; } };
+delete global.SpreadsheetApp;
+
+console.log('test_dashboard_webapp.js: resolved-context handle assertions passed');
 
 console.log('test_dashboard_webapp.js: all assertions passed');

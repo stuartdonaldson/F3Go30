@@ -240,14 +240,45 @@ function ensurePaxCacheFresh_(sheetId) {
       // prefix-delete (unlike PropertiesService.getKeys() above), so the exact key strings are
       // duplicated here rather than referencing those functions directly, to avoid a circular
       // dependency between PaxCache.js and dashboardWebapp.js. Keep in sync if either changes.
+      // Also clears bonusWebapp.js's per-sheet bonus entry/pill-shape caches
+      // (bonusEntriesCacheKey_/bonusRowsCacheKey_) so a manual Bonus Tracker edit is picked up
+      // without waiting for BONUS_ENTRIES_CACHE_TTL_SECONDS_ or a webapp-driven bonus write
+      // (F3Go30-nzi0). Same exact-key-string duplication convention as above.
       try {
         var cache = CacheService.getScriptCache();
         cache.remove('go30dash:trackerValues:' + sheetId);
         cache.remove('go30dash:responsesValues:' + sheetId);
+        cache.remove('go30dash:bonusEntries:' + sheetId);
+        cache.remove('go30dash:bonusRows:' + sheetId);
       } catch (e2) { /* best-effort — write-through invalidation at the point of write is the primary path */ }
     }
     props.setProperty(key, String(liveModTime));
   } catch (e) { /* Drive lookup unavailable — trust existing cache rather than block the request */ }
+}
+
+/**
+ * Marks {sheetId}'s cache fresh as of NOW without a DriveApp.getLastUpdated() round trip — for a
+ * caller that has just performed a full LIVE read of the sheet and is about to write those rows
+ * into the cache itself (resolveFullIdentityFromHandle_/resolveCheckinIdentityFull_ in
+ * dashboardWebapp.js). A fresh live read is by definition current, so the Drive-modtime probe
+ * ensurePaxCacheFresh_ would otherwise do before it is pure latency (~½s on GAS) with nothing to
+ * invalidate. Stamping the asOf marker from the read moment keeps any later same-request lean
+ * lookup on the same sheet (getPaxCacheRow_ -> ensurePaxCacheFresh_) from treating the rows the
+ * caller just wrote as stale, and — by also setting the per-execution memo — suppresses a
+ * redundant Drive call for the rest of this execution.
+ *
+ * Uses Date.now(), which is >= the sheet's real getLastUpdated() at the instant of the read
+ * (we read after every edit Drive already knows about). The one tolerated race — an edit landing
+ * in the sub-second window between the caller's getValues() and this stamp — is the same
+ * self-healing case ensurePaxCacheFresh_ already documents for the just-after-write-through read:
+ * the next request's Drive probe (or a write-through) re-invalidates, so no request serves stale
+ * data for more than that instant. Fails open (best-effort) exactly like the write helpers above.
+ */
+function markPaxCacheFreshNow_(sheetId) {
+  paxCacheFreshnessMemo_[sheetId] = true;
+  try {
+    PropertiesService.getScriptProperties().setProperty(paxCacheAsOfKey_(sheetId), String(Date.now()));
+  } catch (e) { /* Properties unavailable — next reader just pays for one rebuild, never stale */ }
 }
 
 /** Resets the per-execution freshness memo — test-only; production never needs to since Apps
@@ -297,6 +328,7 @@ if (typeof module !== 'undefined' && module.exports) {
     wipeAllPaxCache_: wipeAllPaxCache_,
     resolvePaxRowIndex_: resolvePaxRowIndex_,
     ensurePaxCacheFresh_: ensurePaxCacheFresh_,
+    markPaxCacheFreshNow_: markPaxCacheFreshNow_,
     resetPaxCacheFreshnessMemo_: resetPaxCacheFreshnessMemo_,
   };
 }

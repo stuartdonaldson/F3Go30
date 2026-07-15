@@ -67,6 +67,7 @@ const {
   wipePaxCacheForSheet_,
   resolvePaxRowIndex_,
   ensurePaxCacheFresh_,
+  markPaxCacheFreshNow_,
   resetPaxCacheFreshnessMemo_,
 } = require('../script/PaxCache.js');
 
@@ -265,6 +266,42 @@ function resetProps_() {
   assert.equal(fakeCache_.get('go30dash:trackerValues:sheet1'), 'fresh-tracker');
 })();
 
+// F3Go30-nzi0: a manual Bonus Tracker edit must clear the un-gated bonus caches
+// (go30dash:bonusEntries:/go30dash:bonusRows:) too, not just the roster caches — otherwise the
+// dashboard keeps serving pre-edit bonus totals for up to BONUS_ENTRIES_CACHE_TTL_SECONDS_.
+(function testFreshnessGateClearsBonusCacheKeysOnModTimeAdvance() {
+  resetProps_();
+  fakeCache_ = makeFakeCache_();
+  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
+
+  fakeDriveModTimes['sheet1'] = 1000;
+  ensurePaxCacheFresh_('sheet1'); // records asOf = 1000 for this (fresh) execution
+  fakeCache_.put('go30dash:bonusEntries:sheet1', 'stale-bonus-entries');
+  fakeCache_.put('go30dash:bonusRows:sheet1', 'stale-bonus-rows');
+
+  resetPaxCacheFreshnessMemo_();
+  fakeDriveModTimes['sheet1'] = 2000;
+  ensurePaxCacheFresh_('sheet1');
+
+  assert.equal(fakeCache_.get('go30dash:bonusEntries:sheet1'), null);
+  assert.equal(fakeCache_.get('go30dash:bonusRows:sheet1'), null);
+})();
+
+(function testFreshnessGateLeavesBonusCacheKeysAloneWhenModTimeUnchanged() {
+  resetProps_();
+  fakeCache_ = makeFakeCache_();
+  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
+
+  fakeDriveModTimes['sheet1'] = 1000;
+  ensurePaxCacheFresh_('sheet1');
+  fakeCache_.put('go30dash:bonusEntries:sheet1', 'fresh-bonus-entries');
+
+  resetPaxCacheFreshnessMemo_();
+  ensurePaxCacheFresh_('sheet1'); // same modtime — no change detected
+
+  assert.equal(fakeCache_.get('go30dash:bonusEntries:sheet1'), 'fresh-bonus-entries');
+})();
+
 (function testFreshnessGateIsMemoizedPerExecution() {
   resetProps_();
   var calls = 0;
@@ -296,6 +333,44 @@ function resetProps_() {
     assert.deepEqual(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), ['v1']);
   } finally {
     global.DriveApp = realDriveApp;
+  }
+})();
+
+// ── markPaxCacheFreshNow_ (F3Go30-qi26.4) ────────────────────────────────
+// Stamps asOf without a Drive round trip, for callers that just read live. A subsequent
+// ensurePaxCacheFresh_ for the same sheet in the same execution must then be a no-op (memo set),
+// and a fresh execution must see the stamped asOf so an unchanged sheet is NOT re-wiped.
+(function testMarkFreshNowStampsAsOfWithoutDriveCall() {
+  resetProps_();
+  fakeCache_ = makeFakeCache_();
+  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
+
+  var calls = 0;
+  var realGetFileById = global.DriveApp.getFileById;
+  global.DriveApp.getFileById = function(id) { calls++; return realGetFileById(id); };
+  try {
+    var before = Date.now();
+    markPaxCacheFreshNow_('sheet1');
+    assert.equal(calls, 0); // no DriveApp.getFileById — that's the whole point
+
+    // asOf was written from the script clock (>= now), so a same-modtime re-check never wipes.
+    var storedAsOf = Number(fakeProps.getProperty('go30asof:sheet1'));
+    assert.ok(storedAsOf >= before);
+
+    // Same execution: memo is set, so ensurePaxCacheFresh_ short-circuits (still zero Drive calls).
+    fakeCache_.put('go30dash:trackerValues:sheet1', 'freshly-read');
+    ensurePaxCacheFresh_('sheet1');
+    assert.equal(calls, 0);
+    assert.equal(fakeCache_.get('go30dash:trackerValues:sheet1'), 'freshly-read');
+
+    // New execution, sheet unedited (modtime <= stamped asOf) — cache survives, not re-wiped.
+    resetPaxCacheFreshnessMemo_();
+    fakeDriveModTimes['sheet1'] = before - 1000;
+    ensurePaxCacheFresh_('sheet1');
+    assert.equal(calls, 1); // one probe this new execution
+    assert.equal(fakeCache_.get('go30dash:trackerValues:sheet1'), 'freshly-read');
+  } finally {
+    global.DriveApp.getFileById = realGetFileById;
   }
 })();
 

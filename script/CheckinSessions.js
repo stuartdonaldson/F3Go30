@@ -54,6 +54,38 @@ var CHECKIN_SESSION_COL_LAST_USED_ = 4;
 var CHECKIN_SESSION_ABANDONED_DAYS_ = 14;
 var CHECKIN_SESSION_STALE_DAYS_ = 60;
 
+// CacheService's max — write-through target for a bookmarked guid's f3Name, kept warm on every
+// identify (createOrTouchCheckinSession_) so a later doGet on that same bookmark can produce a
+// personalized page <title> without opening the CheckinSessions sheet at all (F3Go30-qi26.3).
+// A cache miss (expiry, or a bookmark that was minted before this rollout) just falls back to
+// the generic namespace title — see dashboardWebapp.js's buildCheckinPageOutput_.
+var CHECKIN_SESSION_TITLE_CACHE_TTL_SECONDS_ = 21600;
+
+function checkinSessionTitleCacheKey_(guid) {
+  return 'checkinSessionTitle_' + guid;
+}
+
+/** Best-effort — a failed write just means the next doGet falls back to the generic title. */
+function cacheCheckinSessionTitle_(guid, f3Name) {
+  try {
+    CacheService.getScriptCache().put(checkinSessionTitleCacheKey_(guid), String(f3Name || ''), CHECKIN_SESSION_TITLE_CACHE_TTL_SECONDS_);
+  } catch (e) { /* best-effort */ }
+}
+
+/**
+ * Cache-only lookup for a bookmarked guid's f3Name — never opens a spreadsheet. Returns null on
+ * a miss (never cached, or expired), which callers must treat as "no personalized title
+ * available" rather than an error.
+ */
+function getCachedCheckinSessionTitle_(guid) {
+  if (!guid) return null;
+  try {
+    return CacheService.getScriptCache().get(checkinSessionTitleCacheKey_(guid)) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function _openOrCreateCheckinSessionsSheet_(spreadsheet) {
   var sheet = spreadsheet.getSheetByName(CHECKIN_SESSIONS_SHEET_NAME_);
   if (!sheet) {
@@ -170,6 +202,50 @@ function findCheckinSessionByIdentity_(spreadsheet, f3Name, email) {
 }
 
 /**
+ * Removes every session row bound to {f3Name, email} (case-insensitive, same matching as
+ * findCheckinSessionByIdentity_), rebuilding the roster index from what's left. Test-support
+ * utility only — exposed via the resetCheckinSession admin action (WebApp.js) so an automated
+ * spec that needs to assert exact createdAt-vs-lastUsedAt "first use" semantics (see
+ * dashboardWebapp.js's handleCheckinIdentify_) can start a fixture PAX from a clean slate on
+ * every run, instead of perpetually reusing whatever session an earlier run already touched.
+ * Never called from any PAX-facing flow. Returns the number of rows removed.
+ */
+function deleteCheckinSessionsByIdentity_(spreadsheet, f3Name, email) {
+  var wantName = normalizeCheckinIdentityField_(f3Name);
+  var wantEmail = normalizeCheckinIdentityField_(email);
+  if (!wantName || !wantEmail) return 0;
+  var sheet = spreadsheet.getSheetByName(CHECKIN_SESSIONS_SHEET_NAME_);
+  if (!sheet) return 0;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+
+  var values = sheet.getRange(2, 1, lastRow - 1, CHECKIN_SESSIONS_HEADERS_.length).getValues();
+  var keepRows = [];
+  var removed = 0;
+  values.forEach(function(row) {
+    var matches = normalizeCheckinIdentityField_(row[CHECKIN_SESSION_COL_F3NAME_]) === wantName &&
+      normalizeCheckinIdentityField_(row[CHECKIN_SESSION_COL_EMAIL_]) === wantEmail;
+    if (matches) {
+      removed++;
+    } else {
+      keepRows.push(row);
+    }
+  });
+  if (!removed) return 0;
+
+  sheet.getRange(2, 1, lastRow - 1, CHECKIN_SESSIONS_HEADERS_.length).clearContent();
+  if (keepRows.length) {
+    sheet.getRange(2, 1, keepRows.length, CHECKIN_SESSIONS_HEADERS_.length).setValues(keepRows);
+  }
+  var newIndex = {};
+  keepRows.forEach(function(row, i) { newIndex[row[CHECKIN_SESSION_COL_ID_]] = i + 2; });
+  _setCheckinSessionRosterIndex_(newIndex);
+
+  GasLogger.log('deleteCheckinSessionsByIdentity_', { f3Name: f3Name, removed: removed });
+  return removed;
+}
+
+/**
  * Returns a bookmarkable session guid for {f3Name, email} — the existing one if this PAX already
  * has a session (bumping its Last Used At so handing it back out as an emailed bookmark keeps it
  * from being pruned), otherwise mints a fresh session and returns its guid. The confirmation
@@ -224,6 +300,7 @@ function createOrTouchCheckinSession_(spreadsheet, guid, f3Name, email, createdA
   var existing = resolveCheckinSession_(spreadsheet, guid);
   if (existing) {
     touchCheckinSession_(spreadsheet, existing.row);
+    cacheCheckinSessionTitle_(guid, f3Name);
     return;
   }
   var sheet = _openOrCreateCheckinSessionsSheet_(spreadsheet);
@@ -240,6 +317,7 @@ function createOrTouchCheckinSession_(spreadsheet, guid, f3Name, email, createdA
     var raced = resolveCheckinSession_(spreadsheet, guid);
     if (raced) {
       touchCheckinSession_(spreadsheet, raced.row);
+      cacheCheckinSessionTitle_(guid, f3Name);
       return;
     }
     var now = new Date().toISOString();
@@ -249,6 +327,7 @@ function createOrTouchCheckinSession_(spreadsheet, guid, f3Name, email, createdA
     var index = _getCheckinSessionRosterIndex_();
     index[guid] = newRow;
     _setCheckinSessionRosterIndex_(index);
+    cacheCheckinSessionTitle_(guid, f3Name);
   } finally {
     lock.releaseLock();
   }
@@ -338,6 +417,9 @@ if (typeof module !== 'undefined' && module.exports) {
     createOrTouchCheckinSession_: createOrTouchCheckinSession_,
     cleanupStaleCheckinSessions_: cleanupStaleCheckinSessions_,
     findCheckinSessionByIdentity_: findCheckinSessionByIdentity_,
+    deleteCheckinSessionsByIdentity_: deleteCheckinSessionsByIdentity_,
     resolveOrCreateCheckinSessionGuid_: resolveOrCreateCheckinSessionGuid_,
+    cacheCheckinSessionTitle_: cacheCheckinSessionTitle_,
+    getCachedCheckinSessionTitle_: getCachedCheckinSessionTitle_,
   };
 }

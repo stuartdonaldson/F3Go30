@@ -1330,3 +1330,110 @@ Rejected: Rewriting `firstActiveDayIndex_`/the denom calc to match the parent bu
 Outcome [developer-facing]: Added 8 new test cases to test/test_dashboard_webapp.js covering the anchor-through-today denominator (canonical joiner, blank-today, blank-yesterday, joined-today, enrolled-slacker, no-data fallback, full-month regression, streak/rollingAverage/daySegments guard); cases 2 and 5 assert the actual shipped behavior with comments flagging the deviation from the parent bug's literal AC text.
 Outcome [internal]: Logged a `bd remember` note (`F3Go30-nhge-ac-deviation`) documenting the AC-vs-shipped-behavior gap and left parent bead F3Go30-nhge open (its AC as written isn't fully satisfied by the code); closed F3Go30-nhge.2. Full local suite (`npm test`) passes.
 Outcome [internal]: Ran the SIT namespace smoke suite (`node tools/smokeTestNamespace.js --env sit --template prod`) as end-to-end verification — signup/check-in/dashboard, bonus add/list, and cross-month bonus-edit relocation all live-verified against a disposed namespace; torn down cleanly on success.
+
+## 2026-07-14 07:27:50
+_session 5f134524 · v3 · 07-14_
+
+### Objective 1: Add an "Edit signup" affordance to the check-in page's goal info
+Rationale: From the check-in page's goals reminder a PAX had no way back into their signup to change WHO/WHAT/HOW; requested a link that "allows editing your signup info. this should be the same as the signup page, and after submitting you should be back on the checkin page." Reused the existing prefilled-signup deep link (`?cmd=signup&targetMonth=current&autoStart=1`) rather than building a new goal editor in check-in; the return trip needed no new code because a current-month save already returns `identityToken` and `performSave_` redirects into check-in.
+Outcome [user-facing]: "Edit" link now renders in the check-in goals reminder (under a "Your goals" title), opens the prefilled signup, and returns the PAX to check-in on save. Verified live on SIT.
+
+### Objective 2: Design review — reuse over proliferation, and justify the separate signup page  [accreted]
+Transition: developer redirected mid-task — "review the design ... we already have a mechanism of dealing with signup if the user is not signed up ... prioritize reuse and simplification rather than proliferation of similar code," and "consider whether we even need a separate signup page ... don't remove it, just evaluate."
+Rationale: The signup deep-link string was hand-built in four places (two identify fallthroughs, the next-month button, and the new Edit link). Both the not-signed-up nudge and the Edit link already converge on the same current-month `identityToken` return path, so they should share one URL builder. The separate signup page is justified — it owns anonymous first-time entry, next-month registration, onboarding/feedback, and email deep-links, and writes a different data contract (Responses/PaxDB/Tracker) than check-in.
+Outcome [developer-facing]: Extracted `signupDeepLinkUrl_(targetMonth)` in CheckinApp.html; all four entry points route through it. Removed three duplicate URL strings.
+Outcome [internal]: Recorded the rationale for keeping SignupApp.html separate; no code removed.
+
+### Key Learnings:
+GAS webapp pages render inside a doubly-nested sandbox iframe with no query string of its own — deep-link params (targetMonth/autoStart/ns/id) must be read server-side in the doGet handler and templated in, never read client-side; Playwright locators must go through `frameLocator('iframe').frameLocator('iframe')`.
+
+## 2026-07-14 09:07:00
+_session 07087755 · v3 · 07-14_
+
+### Objective 1: Share resolved identity/month context across identify → checkin → dashboard (F3Go30-qi26.1)
+Rationale: identify, checkin-submit, and dashboard each independently re-ran resolveMonths + the identity lookup for the SAME PAX in one session (measured ~764/1002/526ms x3 for resolveMonths, ~1226/951/2465ms x3 for resolveIdentity). Have identify mint a lightweight resolved-context handle (target sheetId, PAX Tracker rowIndex, monthKey, canonical F3 name, plus label/url/startDate to rebuild a monthInfo) that the client echoes back on its follow-up POSTs so those handlers skip both re-resolutions and go straight to the known row. Correctness gate required: a stale handle (roster edit shifted rows, month rollover) must transparently fall back to full resolution with no user-visible error.
+Rejected: for the dashboard, skipping resolveDashboardMonth_ purely by trusting the handle's month was rejected in favor of a YYYY-MM guard (requested dateISO's month must equal the handle's monthKey) — this makes month rollover and date-nav into other months fall back to the authoritative TrackerDB resolution automatically, since trackers are per calendar month. Also rejected refactoring the heavily-tested resolveCheckinIdentityFull_ to thread a handle param through it; wrote a parallel resolveFullIdentityFromHandle_ instead so each keeps its own purpose-built Axiom timing.
+Outcome [developer-facing]: dashboardWebapp.js — added buildResolvedContextHandle_/monthInfoFromHandle_/resolveLeanIdentityFromHandle_/resolveFullIdentityFromHandle_; handleCheckinIdentify_ returns resolvedContext; handleCheckinSubmit_ and handleCheckinDashboard_ take the fast path when the handle validates (name-at-rowIndex gate) and fall back otherwise. Cross-month writes still resolve correctly via resolveCheckinDayTarget_'s own date-based month fallback.
+Outcome [developer-facing]: 9 new unit tests in test_dashboard_webapp.js (handle round-trip, lean/full resolve valid + stale + invalid-input paths, submit fast-path + stale-fallback, dashboard own-month fast path vs off-month fallback via a hostile TrackerDB template). Full suite green (exit 0).
+Outcome [user-facing]: CheckinApp.html now stores the identify handle on state and echoes it on checkin/dashboard POSTs — no visible behavior change, faster follow-up calls.
+Open: the echoed handle carries a client-supplied sheetId; the server re-validates the canonical name at rowIndex but does not confirm the sheetId is a registered tracker. Consistent with the pre-existing ANYONE_ANONYMOUS trust model (client name is already trusted; cross-month writes already open date-resolved sheets), but worth a reviewer's eye. Live Axiom timing verification (calls 3/4 showing reduced server time) is deferred — this was a headless session with no SIT deploy. (inferred: the Axiom re-run is part of the AC but requires a deploy the runner performs.)
+
+### Key Learnings:
+A background process in this repo (the beads runner / a clasp-adjacent tool) transiently renames script/*.js to *.txt during its own operations — git status briefly showed script/WebApp.js deleted with an untracked WebApp.js.txt, then self-restored. Not a change to worry about if caught mid-flight.
+
+## 2026-07-14 00:00:00
+_session eb0e72cb · v3 · 07-14_
+
+### Objective 1: Prefetch dashboard payload after identify so Continue-to-Dashboard is instant (F3Go30-qi26.2)
+Rationale: The Continue-to-Dashboard click always incurred a fresh ~9.65s dashboard round trip while the user waited on a Loading state, even though identify already resolves the identity/context needed to fetch it. Firing loadDashboard_() in the background as soon as auto-identify resolves lets that fetch overlap with the time the user spends reading the check-in screen, removing a serialized round trip from the perceived path.
+Outcome [user-facing]: script/CheckinApp.html — applyIdentifySuccess_ now calls a new prefetchDashboard_() right after showStep('checkin'), which fires loadDashboard_(undefined, {silent:true}) in the background and tracks it in state.dashboardPrefetchPromise. loadDashboard_ gained a silent option that skips DOM/loading-state mutation and error-banner display (background failures are swallowed; the click path falls back). The dashboardBtn click handler now renders directly from state.monthCache with no fetch when the prefetch has already landed, rides the in-flight prefetch promise and renders from cache once it resolves if it's still in flight, or falls back to a normal loadDashboard_() fetch if the prefetch failed or never started.
+Outcome [developer-facing]: No test coverage added — CheckinApp.html is client-side HTML/JS with no harness in this repo's `npm test` suite (backend-only); full suite (27 test files) still passes. Manual/live verification of perceived latency improvement (harness re-run per AC) was not performed this session.
+Open: AC's "harness re-run shows the dashboard step no longer adds a full server round trip to perceived tap-to-dashboard time" was not independently re-measured — no perf harness was run against a live deployment in this session.
+
+## 2026-07-14 00:00:00
+_session 06317824 · v3 · 07-14_
+
+### Objective 1: Reduce the dashboard whole-roster read / freshCheck cost (F3Go30-qi26.4)
+Rationale: The dashboard's identity resolution paid an unconditional ~½s Drive-modtime freshCheck (DriveApp.getFileById().getLastUpdated()) before every whole-roster read, even on the hot handle fast path (resolveFullIdentityFromHandle_) the check-in→dashboard flow now takes post-qi26.1/qi26.2. The whole-roster read itself is genuinely required — every PAX's Tracker row backs the team/board view (allPaxRows/paxBoard/myTeamMembers) — so per the AC that read stays on the critical path with a documented rationale; the reducible cost is the freshCheck. Insight: the freshCheck only exists to validate a *cached* roster; on a cold cache the code reads live anyway, and a live read is definitionally current, so probing Drive first is pure latency with nothing to invalidate. This mirrors resolveLeanIdentityFromHandle_, which already trusts its single-row live read with no probe.
+Rejected: splitting the dashboard payload (user tile first, board deferred/lazy) — the AC's other allowed path. Deferred as a large, higher-risk client+server change unsuitable for an unattended session with no live GAS verification available; the freshCheck deferral is a correctness-preserving, unit-testable win.
+Outcome [developer-facing]: Added markPaxCacheFreshNow_(sheetId) to PaxCache.js — stamps the asOf marker from the read moment (Date.now(), >= the sheet's real last-updated at read time) and sets the per-execution memo, no Drive round trip. Refactored resolveFullIdentityFromHandle_ and its parallel fallback resolveCheckinIdentityFull_ to peek the roster cache(s) up front, run ensurePaxCacheFresh_ only when there's something cached to validate, and stamp asOf-now when reading live instead. Documented the whole-roster read as required-for-board in-code.
+Outcome [developer-facing]: New unit tests — test_pax_cache.js proves markPaxCacheFreshNow_ stamps asOf with zero DriveApp calls, short-circuits a same-execution ensurePaxCacheFresh_, and survives an unchanged-sheet re-check in a fresh execution; test_dashboard_webapp.js proves resolveFullIdentityFromHandle_ makes 0 Drive calls on a cold roster cache (still returning the full 2-PAX roster) and exactly 1 probe on a warm cache. Full suite (npm test) green.
+Open: The AC's "dashboard totalMs in Axiom materially reduced" and "harness re-run confirms" require a live SIT deploy + the Playwright/Axiom perf harness (separate bead F3Go30-qi26.5, not yet built) — neither possible in this unattended, no-deploy session. Live confirmation is deferred to a human/harness run; the code-level freshCheck elimination is complete and unit-verified. Design-doc/ADR updates are out of scope here (owned by F3Go30-qi26.6).
+
+## 2026-07-14 21:50:00
+_session 730af92f-e9c0-419f-9d7f-f4ece1201b59 · v3 · 07-14_
+
+### Objective 1: Build repeatable Playwright+Axiom check-in performance harness (F3Go30-qi26.5)
+Rationale: Optimization work needs a repeatable measurement tool to capture before/after performance numbers. The harness measures the full returning-user check-in flow (page load → auto-identify → check-in → dashboard) with per-request TTFB and total timings, enabling correlation with GAS logs via Axiom.
+
+Outcome [developer-facing]: Created `tools/measureCheckinPerformance.js` — a Node.js CLI tool that mints identity tokens, drives the check-in flow with Playwright, captures per-host network timings (GAS + googleusercontent), and prints an Axiom correlation window for log filtering. Supports `--env sit|prod` and `--rounds N` for repeated runs. Reuses the existing `callWebapp.js` pattern for deployment ID loading and token minting.
+
+Outcome [internal]: Added brief section to `docs/OPERATIONS.md` under "Performance Testing — Check-in Round-Trip Harness" documenting usage, output format, and the Axiom correlation workflow.
+
+
+## 2026-07-14 15:05:00
+_session a12f2bbd-a37f-4f0b-9c43-396ecb31930d · v3 · 07-14_
+
+### Objective 1: Document the check-in/dashboard round-trip reduction (F3Go30-qi26.6)
+Rationale: qi26.1-.5 landed the implementation (shared resolved-context handle, dashboard prefetch, doGet title-cache deferral, dashboard freshCheck deferral, and the Playwright+Axiom perf harness) across prior sessions; qi26.6 closes the epic's documentation gap so the architecture and its tradeoffs are recorded before the epic is considered done. Docs-only session per the bead's scope — no code changed.
+Outcome [developer-facing]: Added adr/015-checkin-dashboard-round-trip-reduction.md recording the round-trip-reduction decision (five coordinated sub-changes under one architectural decision, matching ADR-014's D1-D7 style), its tradeoffs (parallel fast/slow-path implementations, client-held handle correctness burden), and a cross-reference to the qi26.5 measurement harness; ran adr-quality-check's checklist against it inline (all fields present, single overarching decision, status/content consistent, no broken supersede chain). Updated docs/DESIGN.md's Decisions(short) section with a summary of the same four implementation changes and their in-code rationale.
+Outcome [user-facing]: Added a docs/CHANGELOG.md Unreleased bullet noting the PAX-visible speedup (instant "Continue to Dashboard", faster bookmarked check-in page load).
+Open: qi26.4's AC item confirming dashboard totalMs is materially reduced against a live deployment (via the qi26.5 harness) is still outstanding — flagged as a human follow-up in both the bead notes and ADR-015's Consequences, since it requires a live SIT/PROD run this unattended session could not perform.
+
+## 2026-07-14 17:31:03
+_session 08f5daed-0006-454d-bc92-295e921fdc99 · v3 · 07-14_
+
+### Objective 1: Fix and resolve F3Go30-nzi0 (bonus cache not wired to Drive-modtime staleness gate)
+Rationale: `ensurePaxCacheFresh_`'s Drive-modtime gate existed specifically to catch manual sheet edits the webapp didn't make, but the bonus-entries CacheService keys (`go30dash:bonusEntries:`/`go30dash:bonusRows:`) were added later in bonusWebapp.js and never wired into that invalidation block — so a manual Bonus Tracker edit could serve a stale phantom bonus total for up to the 6h TTL.
+Outcome [developer-facing]: `script/PaxCache.js`'s `ensurePaxCacheFresh_` now also removes the two bonus CacheService keys alongside the existing roster keys on modtime advance. Added two regression tests to `test/test_pax_cache.js` mirroring the existing roster-cache tests. Full suite (28 files) passed.
+
+### Objective 2: Fix and resolve F3Go30-0gx6 (dashboard renders pre-check-in prefetched payload)
+Rationale: `prefetchDashboard_()` (from F3Go30-qi26.2) caches the dashboard payload at identify time, before any check-in; the check-in submit success handlers updated local UI state but never invalidated that cache, so Continue-to-Dashboard's cache-hit fast path rendered the pre-check-in snapshot until a reload.
+Outcome [developer-facing]: Added `invalidateMonthCacheFor_(dateIso)` to `script/CheckinApp.html`, called from both `submitCheckin_` and `submitSelectionCheckin_` success handlers, deleting just the affected month's `state.monthCache` entry so Continue-to-Dashboard re-fetches live data instead of the stale prefetch. Added a static-shape regression test (`test/test_checkin_monthcache_invalidation.js`, following this project's existing no-jsdom precedent) and wired it into `npm test`. Full suite (29 files) passed.
+
+## 2026-07-14 20:29:20
+_session 929dd4c5 · v3 · 07-14_
+
+### Objective 1: Review and close qi26 epic + qi26.4/qi26.6 (check-in round-trip reduction)
+Rationale: An unattended bd-run-beads session (20260714-213422Z) had implemented and committed qi26.4/.5/.6 but left qi26.4 IN_PROGRESS and qi26.6 OPEN; the task was to "identify what needs to be done to close them off." Verified the work was genuinely complete before closing: qi26.4 code shipped in 96b31cb (freshCheck deferral, markPaxCacheFreshNow_, unit tests) with a live SIT verification in its notes (dashboard 4212ms cold / ~2.4s warm vs ~7.4s baseline); qi26.6 docs shipped in 81ce9a1 (ADR-015 Accepted, DESIGN.md runtime section, CHANGELOG bullet, harness+Axiom cross-refs); full npm test suite green (exit 0). The beads had simply never been transitioned out of their working states — closing was the only missing step.
+Outcome [internal]: Closed F3Go30-qi26.4, F3Go30-qi26.6, and the F3Go30-qi26 epic (6/6 children) with verification-backed close reasons; all three persisted to issues.jsonl.
+Open: Uncommitted working-tree changes (PaxCache.js, CheckinApp.html, test_pax_cache.js, test_checkin_monthcache_invalidation.js, package.json, measureCheckinPerformance.js) belong to separate beads (F3Go30-nzi0 bonus-cache invalidation, F3Go30-0gx6 prefetch-staleness) plus the qi26.4 live-verification harness tweak — not part of qi26, still uncommitted. Dolt remote is not configured (bd emitted a `bd dolt remote add origin ... && bd dolt push` repair hint) — a bd-maintenance §2 follow-up.
+
+### Key Learnings:
+`.beads/metadata.json` had `dolt_mode: server` (with a stale `dolt sql-server` on PID 5878), which per bd-maintenance §7 makes every bd command re-import an empty DB from issues.jsonl and silently drops some writes back to the jsonl — qi26.4/.6 closes persisted but the epic close repeatedly did not. Symptom is the `auto-importing N bytes ... into empty database` banner on every bd invocation. Fix is `dolt_mode: embedded`; once flipped (externally, by the developer), the epic close persisted on the first try.
+
+## 2026-07-15 16:45:00
+_session 3668c52d · v3 · 07-15_
+
+### Objective 1: Verify test coverage and SIT deploy before shipping the check-in monthCache/bonus-cache branch
+Rationale: before treating the check-in monthCache-invalidation and bonus-cache-clearing work (feat/checkin-edit-signup-link) as done, confirm both unit coverage and a live SIT deploy actually exercise it — "lets review test coverage, and do a deploy to sit and run the test suite including playwright tests."
+Outcome [developer-facing]: confirmed test_checkin_monthcache_invalidation.js and the new test_pax_cache.js bonus-cache-clearing cases give solid static-shape coverage for the diffed CheckinApp.html/PaxCache.js changes; full 29-file unit suite passes.
+Outcome [internal]: deployed to SIT (v2.3.15.22, deployment @161); ran checkin-advanced-grid.spec.js and identity-token-flow.spec.js live against it — 23/24 Playwright tests passed, one deterministic failure surfaced in identity-token-flow.spec.js.
+
+### Objective 2: Fix the identity-token-flow "first use" test failure  [accreted]
+Transition: user said "fix it now" once the root cause was diagnosed, rather than deferring it as a filed issue.
+Rationale: the failure wasn't flaky (confirmed by an isolated rerun) — `resolveOrCreateCheckinSessionGuid_` (CheckinSessions.js) reuses an existing session for a known identity and immediately touches `lastUsedAt` at mint time, so the spec's reused fixture PAX (`TokenFlowTest`) could only ever pass the exact `createdAt === lastUsedAt` firstUse check on its very first-ever run against a given SIT environment — every subsequent run was structurally guaranteed to fail. Confirmed via the fix: resetting the fixture's sessions removed 33 stale rows accumulated from prior runs.
+Rejected: switching the test to a freshly-generated PAX per run — rejected as it would grow Tracker/PaxDB roster rows unboundedly across CI runs, unlike the project's other idempotent SIT fixtures.
+Outcome [developer-facing]: added `deleteCheckinSessionsByIdentity_` (script/CheckinSessions.js) + a test-support-only `resetCheckinSession` admin action (script/WebApp.js), with unit coverage in test/test_checkin_sessions.js; tests/playwright/identity-token-flow.spec.js now calls the reset action before asserting first-use, so the fixture starts clean every run instead of accumulating touched sessions.
+Outcome [internal]: redeployed to SIT (@162); verified the new admin action live (cleared the 33 accumulated stale rows for `TokenFlowTest`).
+Open: a second consecutive Playwright run to confirm the fix holds repeatably was queued but not observed before the session was paused ("lets stop here") — worth confirming next session.

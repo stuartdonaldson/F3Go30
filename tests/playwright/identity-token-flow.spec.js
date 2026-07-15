@@ -22,6 +22,7 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
 const fs = require('fs');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '../..');
 
@@ -142,6 +143,17 @@ test.describe('Identity-token check-in flow (SIT)', () => {
   });
 
   test('current-month signup mints a token and redirects into check-in', async ({ page }) => {
+    // This assertion depends on the mint being CURRENT_MONTH_PAX's very first session ever
+    // (createdAt === lastUsedAt) — see handleCheckinIdentify_'s exact firstUse comparison
+    // (dashboardWebapp.js). Since this fixture is reused across runs, resolveOrCreateCheckinSessionGuid_
+    // (CheckinSessions.js) would otherwise find and touch an existing session from a prior run,
+    // making firstUse false before the browser even navigates. Reset it first so every run starts
+    // from a clean slate, same as a truly-new signup would.
+    execFileSync('node', [
+      path.join(ROOT, 'tools', 'callWebapp.js'), 'resetCheckinSession',
+      '--body', JSON.stringify({ f3Name: CURRENT_MONTH_PAX.f3Name, email: CURRENT_MONTH_PAX.email }),
+    ], { stdio: 'pipe' });
+
     await page.goto(signupUrl, { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     let app = page.frameLocator('iframe').frameLocator('iframe');
