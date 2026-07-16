@@ -57,3 +57,7 @@ local.settings.json
 playwright-report/
 test-results/
 test/output/
+
+.bd-run-beads/
+*CONCEPT*.md
+
