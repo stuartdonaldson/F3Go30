@@ -26,6 +26,12 @@ var findSignupMatchByF3NameOnly_dw_ = (dashboardWebappSignupModule_ && dashboard
 var findPaxDbMatch_dw_ = (dashboardWebappSignupModule_ && dashboardWebappSignupModule_.findPaxDbMatch_)
   || (typeof globalThis !== 'undefined' && globalThis.findPaxDbMatch_);
 
+var dashboardWebappUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./Utilities.js')
+  : null;
+var getConfigValue_dw_ = (dashboardWebappUtilitiesModule_ && dashboardWebappUtilitiesModule_.getConfigValue_)
+  || (typeof globalThis !== 'undefined' && globalThis.getConfigValue_);
+
 var dashboardWebappResponseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./response_utils.js')
   : null;
@@ -1248,6 +1254,35 @@ function resolveCheckinToken_dw_(spreadsheet, token) {
   return null;
 }
 
+/**
+ * Site-config payload for check-in front ends: bonus type rules/labels, Site Q contact, the
+ * namespace label, and the current app version — the same values buildCheckinPageOutput_ bakes
+ * into the GAS-hosted CheckinApp.html via server templating. Attached to every
+ * handleCheckinIdentify_ response (F3Go30-5nfj.2 follow-up: static-pages/index.html has no
+ * server-render step to bake these into, so it reads them from here instead) — one function so
+ * the two front ends' config values can't drift apart.
+ */
+function checkinClientConfig_dw_(spreadsheet) {
+  // Best-effort: a Config-sheet lookup hiccup must never break identify itself (the config
+  // payload only feeds cosmetic/secondary UI — error-banner contact info, bonus type labels —
+  // nothing on the critical identify/checkin path depends on it).
+  var siteQConfig = {}, nameSpaceConfig = {};
+  try {
+    siteQConfig = getConfigValue_dw_(spreadsheet, 'Site Q', null) || {};
+    nameSpaceConfig = getConfigValue_dw_(spreadsheet, 'NameSpace', null) || {};
+  } catch (e) {
+    // fall through with the {} defaults below
+  }
+  return {
+    appVersion: typeof APP_VERSION !== 'undefined' ? APP_VERSION : '',
+    bonusTypeRules: bonusTypeClientRules_dw_(),
+    bonusTypeCodes: bonusTypeDisplayList_dw_(),
+    siteQName: siteQConfig.primary || 'Site Q',
+    siteQEmail: siteQConfig.secondary || '',
+    nameSpace: nameSpaceConfig.primary || 'F3 Go30',
+  };
+}
+
 function handleCheckinIdentify_(templateSpreadsheet, payload) {
   var t0 = Date.now();
   // A saved-link token stands in for typed f3Name/email — resolving it only proves this exact
@@ -1289,7 +1324,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
   GasLogger.log('checkinWebapp.identify', { f3Name: f3Name, viaToken: !!payload.token });
   if (tokenInvalid) {
     GasLogger.log('checkinWebapp.identify.result', { matched: false, tokenInvalid: true, durationMs: Date.now() - t0 });
-    return { ok: true, matched: false, tokenInvalid: true };
+    return { ok: true, matched: false, tokenInvalid: true, config: checkinClientConfig_dw_(templateSpreadsheet) };
   }
   var identity = resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, payload.targetMonth, payload.targetSheetId, payload.contextDate);
   if (!identity.matched) {
@@ -1308,10 +1343,11 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
       return {
         ok: true, matched: false, tokenInvalid: !!payload.token,
         knownPaxNotRegistered: true, f3Name: paxDbMatch.f3Name, email: paxDbMatch.email,
+        config: checkinClientConfig_dw_(templateSpreadsheet),
       };
     }
     GasLogger.log('checkinWebapp.identify.result', { matched: false, durationMs: Date.now() - t0 });
-    return { ok: true, matched: false, tokenInvalid: !!payload.token };
+    return { ok: true, matched: false, tokenInvalid: !!payload.token, config: checkinClientConfig_dw_(templateSpreadsheet) };
   }
 
   var classified = classifyTrackerColumns_(identity.row2, identity.row3);
@@ -1357,6 +1393,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
   return {
     ok: true,
     matched: true,
+    config: checkinClientConfig_dw_(templateSpreadsheet),
     emailMismatch: !!identity.emailMismatch,
     f3Name: trackerRow[TRACKER_NAME_COL_],
     email: email,

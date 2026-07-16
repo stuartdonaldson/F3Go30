@@ -1,0 +1,1657 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Go30 Dashboard</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #f4f1ea; font-family: Arial, Helvetica, sans-serif; color: #2b2b2b; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 8px 48px; }
+  .header { background: #2f5d50; color: #f8f4ea; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+  .header-right { text-align: right; display: flex; align-items: center; gap: 12px; }
+  .header-name { font-weight: bold; font-size: 20px; }
+  .header-sub { font-size: 13px; opacity: .6; }
+  .more-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); color: #f8f4ea; width: 32px; height: 32px; border-radius: 8px; font-size: 20px; font-weight: bold; cursor: pointer; line-height: 1; }
+  .card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 22px; box-shadow: 0 2px 10px rgba(47,93,80,.07); margin-top: 18px; }
+  .card h1, .card h2 { margin: 0 0 6px; color: #2f5d50; }
+  .card h1 { font-size: 23px; }
+  .card h2 { font-size: 19px; }
+  p.muted { color: #555; font-size: 17px; line-height: 1.5; }
+  label.field-label { display: block; font-size: 16px; font-weight: bold; color: #2f5d50; margin-bottom: 5px; }
+  input[type=text], input[type=email], input[type=date], select, textarea {
+    width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px;
+    font-size: 18px; font-family: inherit; margin-bottom: 16px; background: #fff;
+  }
+  textarea { resize: vertical; }
+  button.primary { width: 100%; padding: 14px; border: none; border-radius: 9px; background: #2f5d50; color: #f8f4ea; font-size: 18px; font-weight: bold; cursor: pointer; font-family: inherit; }
+  button.secondary { width: 100%; margin-top: 10px; padding: 10px; border: none; border-radius: 9px; background: transparent; color: #0b5c86; font-size: 17px; cursor: pointer; font-family: inherit; }
+  .checkin-row { display: flex; gap: 10px; margin-bottom: 8px; }
+  .checkin-btn { flex: 1; padding: 16px 8px; border-radius: 10px; border: 2px solid #d8cfbf; background: #fff; font-family: inherit; font-size: 17px; font-weight: bold; cursor: pointer; text-align: center; }
+  .checkin-btn.yes { color: #2f5d50; }
+  .checkin-btn.yes:hover { border-color: #2f5d50; background: #eef3f0; }
+  .checkin-btn.no { color: #a3401a; }
+  .checkin-btn.no:hover { border-color: #a3401a; background: #fdeceb; }
+  .checkin-btn.none { color: #8a8272; }
+  .checkin-btn.none:hover { border-color: #b0a898; background: #f5f2ea; }
+  .checkin-btn.current.yes { background: #eef3f0; border-color: #2f5d50; }
+  .checkin-btn.current.no { background: #fdeceb; border-color: #a3401a; }
+  .checkin-btn.current.none { background: #f5f2ea; border-color: #b0a898; }
+  .checkin-btn.fail { color: #b8390f; }
+  .checkin-btn.fail:hover { border-color: #b8390f; background: #fbe4db; }
+  .checkin-btn.current.fail { background: #fbe4db; border-color: #b8390f; }
+  .checkin-btn:disabled { opacity: .45; cursor: not-allowed; }
+  .checkin-selected-date { font-size: 17px; font-weight: bold; color: #2f5d50; margin-bottom: 2px; }
+  .checkin-row .checkin-btn.fail { flex: 1; }
+
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 10px; container-type: inline-size; }
+  .cal-dow { text-align: center; font-size: 11px; font-weight: bold; color: #8a8272; padding-bottom: 2px; }
+  .cal-cell { position: relative; aspect-ratio: 1; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: clamp(16px, 6.5cqw, 28px); font-weight: bold; cursor: pointer; border: 2px solid transparent; font-family: inherit; padding: 0; }
+  .cal-cell.pad { visibility: hidden; cursor: default; }
+  .cal-cell.st-done { background: #3f8b75; color: #f8f4ea; }
+  .cal-cell.st-missed { background: #f7b209; color: #2b2b2b; }
+  .cal-cell.st-pending { background: #d8cfbf; color: #6b6255; }
+  .cal-cell.st-absent { background: #de521c; color: #f8f4ea; }
+  .cal-cell.today { border-color: #0b5c86; }
+  .cal-cell.selected { box-shadow: 0 0 0 2px #0b5c86; }
+  .cal-cell .day-num { position: relative; z-index: 1; }
+  .cal-cell .x-mark { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+  .cal-cell .x-mark::before, .cal-cell .x-mark::after {
+    content: ''; position: absolute; top: 50%; left: 8%; width: 84%; height: 3px;
+    background: rgba(43,43,43,.35); border-radius: 2px;
+  }
+  .cal-cell .x-mark::before { transform: translateY(-50%) rotate(45deg); }
+  .cal-cell .x-mark::after { transform: translateY(-50%) rotate(-45deg); }
+  .checkin-status { font-size: 15px; color: #888; margin: -2px 0 8px; }
+  .checkin-section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 18px 0 8px; }
+  .goals-reminder { background: #eef3f0; border: 1px solid #cfe0d8; border-radius: 8px; padding: 10px 12px; margin-bottom: 4px; }
+  .goals-reminder-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .goals-reminder-title { font-size: 12px; font-weight: bold; letter-spacing: .04em; text-transform: uppercase; color: #2f5d50; }
+  .goals-reminder-row { font-size: 15px; line-height: 1.4; margin: 3px 0; }
+  .goals-reminder-row strong { color: #2f5d50; }
+  .error-text { font-size: 16px; color: #a3401a; margin-bottom: 8px; }
+  .warning-text { font-size: 15px; color: #8a6d00; background: #fdf6e3; border: 1px solid #e8d9a0; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
+  .hidden { display: none; }
+  .stats-row { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 12px; margin-top: 32px; align-items: stretch; }
+  .stat-card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 16px; text-align: center; display: flex; flex-direction: column; align-items: center; }
+  .stat-card-clickable { cursor: pointer; }
+  .stat-card-clickable:hover, .stat-card-clickable:focus-visible { border-color: #2f5d50; background: #f5f8f6; }
+  .stat-label { font-size: 13px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin-bottom: 6px; }
+  .stat-value { font-size: 41px; font-weight: bold; line-height: 1; }
+  .stat-sub { font-size: 13px; color: #b0a898; margin-top: 6px; letter-spacing: .06em; }
+  .ring-svg { display: block; margin: 0 auto; }
+  .day-mini-bar { display: flex; gap: 1.5px; align-items: center; justify-content: center; flex: 1; min-width: 0; }
+  .day-mini-cell { width: 6px; height: 12px; border-radius: 1px; flex-shrink: 0; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #888; }
+  .legend-swatch { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
+  .score-tile-body { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
+  .score-main { display: flex; flex-direction: column; align-items: center; }
+  .score-bonus-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; border-top: 1px solid #ede9df; padding-top: 8px; width: 100%; justify-items: center; }
+  .bonus-type-row { display: flex; align-items: center; gap: 5px; }
+  .bonus-type-code { font-family: monospace; font-weight: bold; font-size: 12px; padding: 1px 5px; border-radius: 3px; }
+  .bonus-type-code.fe { background: #eef3f0; color: #2f5d50; }
+  .bonus-type-code.q { background: #e5eff6; color: #0b5c86; }
+  .bonus-type-code.ins { background: #f1e9f6; color: #6a3d9a; }
+  .bonus-type-code.eh { background: #fdf1de; color: #9a6b00; }
+  .bonus-type-value { font-size: 14px; font-weight: bold; color: #2b2b2b; min-width: 16px; }
+  .team-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(120px,1fr)); gap: 10px; margin-top: 12px; }
+  .team-tile { position: relative; border-radius: 10px; padding: 12px 8px; text-align: center; border: 1.5px solid #d8cfbf; background: #fff; display: flex; flex-direction: column; align-items: center; }
+  .team-tile .checkin-status-badge { position: absolute; top: 6px; left: 7px; font-size: 14px; margin-right: 0; }
+  .team-tile.me { border-color: #2f5d50; background: #eef3f0; }
+  .team-tile .tname { font-weight: bold; font-size: 15px; margin: 4px 0 2px; }
+  .team-tile .tscore { font-size: 21px; font-weight: bold; }
+  .team-tile .tstreak { font-size: 12px; color: #b0a898; margin-top: 2px; }
+  .team-tile .tbonuses { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; margin-top: 5px; }
+  .team-tile .tbonuses .bonus-type-code { font-size: 10px; padding: 0 4px; }
+  .board-group { border: 1px solid #d8cfbf; border-radius: 12px; overflow: hidden; margin-top: 12px; }
+  .board-head { background: #2f5d50; color: #f8f4ea; padding: 9px 16px; font-size: 15px; font-weight: bold; letter-spacing: .16em; display: flex; justify-content: space-between; }
+  .board-rows { padding: 6px 12px; }
+  .board-row { padding: 6px 4px; border-radius: 4px; }
+  .board-row.me { background: #eef3f0; font-weight: bold; }
+  .board-row-main { display: flex; align-items: center; gap: 8px; justify-content: space-between; font-size: 15px; }
+  .board-row-main .bname { width: 117px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: bold; }
+  .board-row-main .bstatus { width: 20px; flex-shrink: 0; text-align: center; }
+  .board-row-main .bpct { width: 30px; flex-shrink: 0; text-align: right; font-family: monospace; font-weight: bold; }
+  .checkin-status-badge { margin-right: 3px; display: inline-block; }
+  .checkin-status-badge.urgent { color: #c0272d; font-weight: bold; font-size: 1.15em; line-height: 1; }
+  .board-row-bonuses { display: flex; gap: 3px; margin-top: 3px; padding-left: 4px; }
+  .board-row-bonuses .bonus-type-code { font-size: 10px; padding: 0 4px; }
+  .chart-card { margin-top: 12px; }
+  .section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 22px 0 4px; }
+  .api-error-banner { background: #fdeceb; border-bottom: 3px solid #a3401a; color: #6b1f0a; padding: 12px 18px; font-size: 17px; line-height: 1.5; }
+  .api-error-banner strong { display: block; margin-bottom: 2px; }
+  .api-error-detail { margin-top: 6px; font-family: monospace; font-size: 15px; background: #fff; border: 1px solid #e3b8af; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .date-nav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 18px; }
+  .date-nav-btn { width: 44px; height: 44px; border-radius: 8px; border: 2px solid #2f5d50; background: #fffdf8; color: #2f5d50; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
+  .date-nav-btn svg { width: 20px; height: 20px; display: block; }
+  .date-nav-btn:disabled { color: #d8cfbf; border-color: #d8cfbf; cursor: default; }
+  .date-nav-label { font-size: 16px; font-weight: bold; color: #2f5d50; min-width: 150px; text-align: center; }
+  .streak-best { font-size: 15px; font-weight: bold; color: #6b6255; margin-top: 20px; }
+  .streak-best span { display: block; color: #2f5d50; font-size: 32px; margin-top: 10px; }
+  .bonus-entry { border: 1px solid #d8cfbf; border-radius: 10px; padding: 12px 14px; margin-top: 10px; }
+  .bonus-entry-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .bonus-entry-type { font-family: monospace; font-weight: bold; font-size: 13px; padding: 2px 7px; border-radius: 4px; background: #eef3f0; color: #2f5d50; }
+  .bonus-entry-date { font-size: 13px; color: #888; }
+  .bonus-entry-message { font-size: 15px; margin: 8px 0; line-height: 1.4; }
+  .bonus-entry-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .bonus-badge { font-size: 12px; font-weight: bold; padding: 2px 8px; border-radius: 10px; }
+  .bonus-badge.complete { background: #eef3f0; color: #2f5d50; }
+  .bonus-badge.pending { background: #fdf6e3; color: #8a6d00; }
+  .bonus-badge.extra { background: #eef2fa; color: #35538a; }
+  .bonus-entry-note { font-size: 12.5px; color: #35538a; margin-top: 6px; line-height: 1.35; }
+  .bonus-edit-btn { background: transparent; border: none; color: #0b5c86; font-size: 14px; cursor: pointer; font-family: inherit; text-decoration: underline; padding: 0; }
+  .card-head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .card-head-row h2 { margin: 0; white-space: nowrap; }
+  .btn-inline { width: auto; margin: 0; padding: 8px 14px; flex-shrink: 0; }
+  @media (max-width: 480px) {
+    .stats-row { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .stat-card { padding: 10px; }
+    .stat-card:nth-child(3) { grid-column: 1 / -1; }
+    .stat-label { font-size: 12px; margin-bottom: 4px; }
+    .stat-value { font-size: 27px; }
+    .stat-sub { font-size: 12px; }
+    .streak-best { font-size: 13px; }
+    .streak-best span { font-size: 20px; }
+    .ring-svg { width: 100px; height: 100px; }
+    .legend { gap: 6px; }
+    .legend-item { font-size: 11px; }
+    .team-grid { grid-template-columns: repeat(auto-fill,minmax(96px,1fr)); }
+    .board-row { padding: 3px 4px; }
+    .board-row-main { flex-wrap: wrap; row-gap: 1px; }
+    .day-mini-bar { order: 1; flex-basis: auto; width: calc(100% - 125px); margin-left: 125px; justify-content: flex-start; }
+    .day-mini-cell { height: 9px; }
+    .cal-grid { gap: 3px; }
+    .cal-cell .x-mark::before, .cal-cell .x-mark::after { height: 2px; }
+    .cal-cell { border-radius: 6px; }
+  }
+  .how-btn { width: 100%; padding: 14px 18px; border: none; background: transparent; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-family: inherit; font-size: 15px; font-weight: bold; color: #2f5d50; }
+  .how-section-head { margin: 14px 0 6px; font-size: 13px; font-weight: bold; color: #2f5d50; letter-spacing: .04em; }
+  .how-badge { min-width: 28px; height: 28px; border-radius: 50%; background: #2f5d50; color: #f8f4ea; font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div id="headerLeft">
+      <div class="header-name" id="headerName"></div>
+      <div class="header-sub" id="headerSub"></div>
+    </div>
+    <div class="header-right">
+      <button id="bonusBtn" class="more-btn hidden" title="Manage Bonus Points">&#127942;</button>
+      <button id="moreBtn" class="more-btn hidden" title="Open tracker spreadsheet">&#128202;</button>
+    </div>
+  </div>
+
+  <div id="apiErrorBanner" class="api-error-banner hidden">
+    <strong>Something went wrong.</strong>
+    <span>Please try again, or refresh the browser and try again. If the problem persists,
+      notify <span id="apiErrorSiteQName">your Site Q</span><a id="apiErrorContactLink" class="hidden" href="#">(email)</a>.</span>
+    <div id="apiErrorDetail" class="api-error-detail"></div>
+  </div>
+
+  <div class="wrap">
+
+    <div id="step-tokenLoading" class="hidden">
+      <div class="card"><p class="muted">Signing you in…</p></div>
+    </div>
+
+    <div id="step-signupRedirect" class="hidden">
+      <div class="card">
+        <p class="muted">
+          Looks like you haven't signed up for this month yet. Tap below to verify your goals and
+          get checked in.
+        </p>
+        <a id="signupRedirectAnchor" class="primary" style="display:block;text-align:center;padding:14px;border-radius:9px;background:#2f5d50;color:#f8f4ea;text-decoration:none;font-weight:bold;" href="#" target="_top">Continue to sign up &rarr;</a>
+      </div>
+    </div>
+
+    <div id="step-identify">
+      <div class="card">
+        <h1>Daily Check-in</h1>
+        <p class="muted">Enter your F3 name and email to check in for today and see your dashboard.</p>
+        <form id="identifyForm">
+          <label class="field-label">F3 Name</label>
+          <input type="text" id="idF3Name" name="f3Name" placeholder="e.g. Splinter">
+          <label class="field-label">Email</label>
+          <input type="email" id="idEmail" name="email" placeholder="you@example.com">
+          <div id="idError" class="error-text hidden"></div>
+          <button class="primary" type="submit" id="identifyBtn">Continue</button>
+        </form>
+        <button class="secondary hidden" id="idSignupBtn" style="margin-top:10px;">Sign up &rarr;</button>
+      </div>
+    </div>
+
+    <div id="step-checkin" class="card hidden">
+      <div class="card-head-row">
+        <h2 id="checkinHeading">Welcome back!</h2>
+        <a id="notYouLink" href="#" target="_top" class="bonus-edit-btn">Not you?</a>
+      </div>
+      <p class="muted" id="checkinSub"></p>
+      <div id="emailMismatchNote" class="warning-text hidden"></div>
+
+      <div id="bookmarkHereNote" class="hidden warning-text">
+        This is your personal check-in page — use your browser's Share or menu button to
+        bookmark it or Add to Home Screen so you can get back here without typing your name.
+        <button id="bookmarkHereDismiss" type="button" style="background:none;border:none;color:#8a6d00;text-decoration:underline;cursor:pointer;font-size:12px;padding:0;margin-left:4px;">Got it</button>
+      </div>
+
+      <div id="goalsReminder" class="hidden"></div>
+
+      <div id="checkinTodayBlock">
+        <div class="checkin-section-label">TODAY</div>
+        <div class="checkin-status" id="todayStatusNote"></div>
+        <div class="checkin-row">
+          <button class="checkin-btn yes" id="todayYesBtn">&#10003; I Hit it!</button>
+          <button class="checkin-btn no" id="todayNoBtn">&#10007; Missed it</button>
+          <button class="checkin-btn none" id="todayNoneBtn">No Check-in</button>
+        </div>
+      </div>
+
+      <div id="yesterdayBlock" class="hidden">
+        <div class="checkin-section-label">YESTERDAY</div>
+        <div class="checkin-status" id="yesterdayStatusNote"></div>
+        <div class="checkin-row">
+          <button class="checkin-btn yes" id="yesterdayYesBtn">&#10003; I Hit it!</button>
+          <button class="checkin-btn no" id="yesterdayNoBtn">&#10007; Missed it</button>
+          <button class="checkin-btn none" id="yesterdayNoneBtn">No Check-in</button>
+        </div>
+      </div>
+
+      <div id="advancedGrid" class="hidden">
+        <div class="checkin-section-label">STATUS FOR</div>
+        <div class="checkin-selected-date" id="checkinSelectedDate"></div>
+        <div class="checkin-status" id="checkinStatusNote"></div>
+        <div class="checkin-row">
+          <button class="checkin-btn yes" id="selYesBtn">&#10003; Hit it</button>
+          <button class="checkin-btn no" id="selNoBtn">&#10007; Missed it</button>
+          <button class="checkin-btn none" id="selNoneBtn">No check-in</button>
+          <button class="checkin-btn fail" id="selFailBtn">&#10008; Failed</button>
+        </div>
+        <div class="cal-grid" id="calGrid"></div>
+      </div>
+
+      <div id="nextMonthNote" class="warning-text hidden">
+        <span id="nextMonthNoteText"></span>
+        <button class="secondary" id="nextMonthSignupBtn" style="margin-top:8px;padding:8px;">Sign up for next month &rarr;</button>
+      </div>
+
+      <button class="primary" id="dashboardBtn" style="margin-top:14px;">Continue to Dashboard &rarr;</button>
+      <button class="secondary" id="advancedToggleBtn" style="margin-top:6px;">Show month calendar &#9662;</button>
+    </div>
+
+    <div id="step-dashboard" class="hidden">
+      <div class="date-nav">
+        <button id="datePrevBtn" class="date-nav-btn" title="Previous day"><svg viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <div class="date-nav-label" id="dateNavLabel">&nbsp;</div>
+        <button id="dateNextBtn" class="date-nav-btn" title="Next day"><svg viewBox="0 0 24 24" fill="none"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+      <div class="stats-row">
+        <div class="stat-card stat-card-clickable" id="dMonthProgressTile" role="button" tabindex="0" title="Edit today's/yesterday's check-in">
+          <div class="stat-label">MONTH PROGRESS</div>
+          <div id="dMonthRing"></div>
+          <div class="legend" style="margin-top:8px;justify-content:center;">
+            <div class="legend-item"><div class="legend-swatch" style="background:#3f8b75;"></div>Hits</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#f7b209;"></div>Misses</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#de521c;"></div>None</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">STREAK</div>
+          <div class="stat-value" id="dStreak" style="color:#2f5d50;"></div>
+          <div class="streak-best">Best (30d): <span id="dStreakBest30"></span></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">TOTAL SCORE</div>
+          <div class="score-tile-body">
+            <div class="score-main">
+              <div class="stat-value" id="dScore"></div>
+              <div class="stat-sub" id="dScoreSub"></div>
+            </div>
+            <div class="score-bonus-list" id="dBonuses"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card chart-card">
+        <div class="section-label" style="margin-top:0;">7-DAY ROLLING AVERAGE</div>
+        <div id="dAvgChart"></div>
+      </div>
+
+      <div class="section-label">MY TEAM &middot; <span id="dTeamName"></span></div>
+      <div class="team-grid" id="dMyTeam"></div>
+
+      <div class="section-label">PAX BOARD</div>
+      <div id="dPaxBoard"></div>
+
+      <div class="card" style="margin-top:10px;padding:0;overflow:hidden;">
+        <button class="how-btn" id="howBtn">
+          <span>How it Works</span>
+          <span id="howChevron">&#9660;</span>
+        </button>
+        <div id="howBody" class="hidden" style="padding:0 18px 20px;font-size:14px;line-height:1.6;color:#333;border-top:1px solid #e8e0d0;">
+          <p class="how-section-head">THE CORE MISSION</p>
+          <p style="margin:0 0 14px;">Execute a Daily Challenge that aligns with your Ultimate Goals, supported by the accountability of your fellow HIMs.</p>
+
+          <p class="how-section-head">THREE LAYERS OF CHANGE</p>
+          <p style="margin:0 0 10px;">Adapted from the Identity/Process/Outcome model in <a href="https://jamesclear.com" target="_blank" rel="noopener">James Clear</a>'s <em>Atomic Habits</em> — see also his <a href="https://drive.google.com/file/d/1QX2KSlKxmgkaijfLK4QMrtniqydSkV1L/view" target="_blank" rel="noopener">Habits Cheat Sheet</a>.</p>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+            <div style="display:flex;gap:10px;align-items:flex-start;">
+              <div class="how-badge">W</div>
+              <div><strong>Identity (Who)</strong> — Change your beliefs about who you are.</div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:flex-start;">
+              <div class="how-badge">H</div>
+              <div><strong>Processes (How)</strong> — Change your daily habits and systems.</div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:flex-start;">
+              <div class="how-badge">W</div>
+              <div><strong>Outcomes (What)</strong> — Change your specific results.</div>
+            </div>
+          </div>
+
+          <p class="how-section-head">YOUR DAILY MISSION</p>
+          <p style="margin:0 0 10px;">Each day scores one of three ways: <strong>Hit</strong> (1) if you did it, <strong>Miss</strong> (0) if you didn't, or <strong>No-report</strong> (&minus;1) if you forget to check in — so it always pays to report, even a miss.</p>
+          <ol style="margin:0 0 14px;padding-left:18px;display:flex;flex-direction:column;gap:6px;">
+            <li><strong>Choose your challenge</strong> — small, specific, actionable (e.g. 15 min stretching, daily journaling).</li>
+            <li><strong>Record your score</strong> — tap "I Hit it!" / "Missed it" each day right here on the check-in page. All Go30 data lives in a shared Google Sheet called the Tracker — you never need to open it, but if you prefer, you can check in by entering <strong>1</strong> for a Hit / <strong>0</strong> for a Miss directly in its Tracker tab, or open it any time from the chart icon (&#128202;) — either way updates the same record.</li>
+            <li><strong>Beat the deadline</strong> — report by 10:00 AM the next day. There's a short grace period, but it expires that same day — after that the system automatically marks it a &minus;1 for you, so don't rely on it.</li>
+          </ol>
+
+          <p class="how-section-head">BONUS POINTS</p>
+          <p style="margin:0 0 14px;">Beyond your daily challenge, log EHing an FNG, a Fellowship moment, taking a Q, or an Inspire moment for extra points — EHing an FNG counts most. Add these from the Bonus Points section (trophy icon), or directly in the Bonus Tracker sheet. EHing FNG, Q Point, and Inspire need a link to Slack as evidence before they count.</p>
+
+          <p class="how-section-head">STRENGTH IN NUMBERS</p>
+          <p style="margin:0;">You can go it alone — but you won't go as far. Team up with 3–5 fellow HIMs who share your drive, usually grouped by AO since Shieldlock works best with proximity: hold each other to the standard, call out the misses, celebrate the wins. Joining a team is optional but highly encouraged — you can also participate solo.</p>
+          <p style="margin:8px 0 0;">Men who pursue hard things together become men who achieve them.</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="step-bonus" class="hidden">
+      <div class="card">
+        <div class="card-head-row">
+          <h2>Bonus Points</h2>
+          <button class="secondary btn-inline" id="bonusBackBtn">&larr; Back</button>
+        </div>
+        <div class="section-label" id="bonusMonthLabel" style="margin-top:0;"></div>
+        <p class="muted">Log EHing an FNG, Fellowship, a Q, or an Inspire moment. EHing FNG, Q
+          Point, and Inspire need a link to Slack as evidence before they count.</p>
+        <div id="bonusListError" class="error-text hidden"></div>
+        <div id="bonusList"></div>
+        <button class="secondary" id="bonusAddBtn" style="margin-top:14px;">+ Add Bonus</button>
+      </div>
+
+      <div id="bonusFormCard" class="card hidden">
+        <h2 id="bonusFormHeading">Add Bonus</h2>
+        <label class="field-label">Date</label>
+        <input type="date" id="bonusWhen">
+        <label class="field-label">Type</label>
+        <select id="bonusType"></select>
+        <label class="field-label">What / Where / Who</label>
+        <textarea id="bonusMessage" rows="3" placeholder="What happened?"></textarea>
+        <label class="field-label" id="bonusLinkLabel">Slack Link</label>
+        <input type="text" id="bonusLink" placeholder="https://...slack.com/...">
+        <div id="bonusFormError" class="error-text hidden"></div>
+        <button class="primary" id="bonusSaveBtn">Save</button>
+        <button class="secondary" id="bonusCancelBtn">Cancel</button>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="text-align:center;padding:12px 0 24px;font-size:14px;color:#aaa;" id="versionFooter"></div>
+
+<script>
+  // Static build (F3Go30-5nfj.2 follow-up) — config normally baked in server-side by GAS
+  // templating (buildCheckinPageOutput_/renderCheckinPage_, script/CheckinApp.html) instead
+  // comes from this page's own URL query string, plus the identify JSON response's `config`
+  // field (checkinClientConfig_dw_, script/dashboardWebapp.js) — same values, same shapes, so
+  // this page's rendering logic below is otherwise identical to CheckinApp.html's.
+  var STATIC_PARAMS_ = new URLSearchParams(location.search);
+  var WEBAPP_URL = STATIC_PARAMS_.get('webapp') || '';
+  var APP_VERSION = null; // filled in by applyServerConfig_ once an identify response lands
+  var CMD_ = 'checkin'; // read by IdentityCore's callApi() to post to ?cmd=checkin
+  var NS_ = STATIC_PARAMS_.get('ns') || '';
+  var CONTEXT_DATE_ = STATIC_PARAMS_.get('contextDate') || '';
+  var STATIC_TOKEN_ = STATIC_PARAMS_.get('id') || '';
+  // A fresh guid for a typed-identify (name+email) submission on this page — mirrors GAS's
+  // renderCheckinPage_ formGuid, which binds a CheckinSessions row on first successful match.
+  // No server-render step here to bake one in, so it's minted client-side instead.
+  var STATIC_IDENTIFY_GUID_ = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (String(Date.now()) + '-' + Math.random().toString(16).slice(2));
+  // Stamped by tools/build-static-pages.js at publish time (mirrors script/version.js's
+  // per-env APP_VERSION — see manage-deployments.js's stampVersion) — shown immediately so the
+  // footer isn't blank while the page waits on its first live identify call. null when this
+  // file is served unbuilt (e.g. straight from static-pages/src for local/Playwright testing).
+  var STATIC_BUILD_VERSION_ = null;
+</script>
+<script>
+  // ── Inlined from script/IdentityCore.html (shared identity/HTTP client plumbing) ──────────
+  // Kept byte-for-byte identical to the GAS include so callApi()/setButtonLoading_()/
+  // attemptTopRedirect_() etc. never drift between the two front ends.
+
+  var IDENTITY_STORAGE_KEY = 'go30SignupIdentity';
+
+  function saveIdentityToStorage_(f3Name, email) {
+    try {
+      localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify({ f3Name: f3Name, email: email }));
+    } catch (e) { /* localStorage unavailable (private browsing, etc.) — not fatal */ }
+  }
+
+  function loadIdentityFromStorage_() {
+    try {
+      var raw = localStorage.getItem(IDENTITY_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function callApi(action, payload) {
+    var body = Object.assign({}, payload, {
+      action: action,
+      ns: (typeof NS_ !== 'undefined' ? NS_ : ''),
+      contextDate: (typeof CONTEXT_DATE_ !== 'undefined' ? CONTEXT_DATE_ : '')
+    });
+    return fetch(WEBAPP_URL + '?cmd=' + CMD_, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(body),
+    }).then(function(res) {
+      if (!res.ok) throw new Error('Server returned HTTP ' + res.status);
+      return res.json();
+    }).then(function(json) {
+      if (!json.ok) throw new Error(json.error || 'Server reported an error with no detail');
+      return json;
+    });
+  }
+
+  function hideApiError_() {
+    $('apiErrorBanner').classList.add('hidden');
+  }
+
+  function setButtonLoading_(btn, isLoading, loadingText) {
+    if (isLoading) {
+      if (!btn.disabled) btn.dataset.originalText = btn.textContent;
+      btn.textContent = loadingText || 'Working…';
+      btn.disabled = true;
+    } else {
+      btn.textContent = btn.dataset.originalText || btn.textContent;
+      btn.disabled = false;
+    }
+  }
+
+  function attemptTopRedirect_(url, fallback) {
+    var fallbackTimer = setTimeout(fallback, 400);
+    try {
+      window.top.location.href = url;
+    } catch (e) {
+      clearTimeout(fallbackTimer);
+      fallback();
+    }
+  }
+
+  window.addEventListener('pageshow', function(e) {
+    if (e.persisted) location.reload();
+  });
+</script>
+<script>
+  var SAVED_IDENTITY_TOKEN = STATIC_TOKEN_ || null;
+  // No server-render step exists for this static page, so neither of these is ever
+  // pre-resolved the way GAS's renderCheckinPage_/renderCheckinPageForTypedIdentify_ do —
+  // both async paths below (SAVED_IDENTITY_TOKEN's callApi('identify') and identifyForm's
+  // submit handler) resolve identity themselves instead.
+  var TYPED_IDENTIFY_RESULT = null;
+  var TOKEN_IDENTIFY_RESULT = null;
+
+  // Site config (bonus type rules/labels, Site Q contact, namespace, app version) — normally
+  // template-baked (GAS); here it arrives on the identify response's `config` field
+  // (checkinClientConfig_dw_, script/dashboardWebapp.js) and is applied once, as soon as it
+  // lands, by applyServerConfig_ below.
+  var BONUS_TYPE_RULES_ = {};
+  var SITE_Q_NAME = null;
+  var SITE_Q_EMAIL = null;
+  var NAME_SPACE = null;
+
+  var savedIdentity = loadIdentityFromStorage_();
+  var state = {
+    f3Name: (savedIdentity && savedIdentity.f3Name) || '',
+    email: (savedIdentity && savedIdentity.email) || '',
+    trackerUrl: '',
+    resolvedContext: null,
+    monthCache: {},
+    viewDate: null,
+    dashboardLoading: false,
+    dashboardPrefetchPromise: null,
+    bonusReturnStep: 'checkin',
+    bonusEntries: [],
+    bonusEditingRowIndex: null,
+    bonusEditingOriginalWhenIso: null,
+    bonusEditingOriginalSnapshot: null,
+    bonusListContextIso: undefined,
+    monthGrid: [],
+    todayIso: '',
+    yesterdayIso: '',
+    todayStatus: null,
+    yesterdayStatus: null,
+    yesterdayAvailable: false,
+    advancedOpen: false,
+    selectedDateIso: null,
+    lastEditedDayIso: null,
+  };
+
+  function $(id) { return document.getElementById(id); }
+
+  // Shows the build-time-stamped version right away (no network round trip needed) — reconciled
+  // with the live GAS-reported version once the first identify response's `config.appVersion`
+  // lands (applyServerConfig_ below overwrites this with the authoritative value).
+  if (STATIC_BUILD_VERSION_) $('versionFooter').textContent = 'v' + STATIC_BUILD_VERSION_ + ' (build)';
+
+  function showStep(name) {
+    ['identify', 'checkin', 'dashboard', 'bonus'].forEach(function(s) {
+      $('step-' + s).classList.toggle('hidden', s !== name);
+    });
+    $('moreBtn').classList.toggle('hidden', name !== 'dashboard');
+    $('bonusBtn').classList.toggle('hidden', name === 'identify' || name === 'bonus');
+    if (name === 'checkin' || name === 'dashboard') state.bonusReturnStep = name;
+  }
+
+  function showApiError_(action, err) {
+    var detail =
+      'Time: ' + new Date().toISOString() + '\n' +
+      'Action: ' + action + '\n' +
+      'Error: ' + (err && err.message ? err.message : String(err));
+    $('apiErrorDetail').textContent = detail;
+
+    $('apiErrorSiteQName').textContent = SITE_Q_NAME || 'your Site Q';
+    var contactLink = $('apiErrorContactLink');
+    if (SITE_Q_EMAIL) {
+      contactLink.href = 'mailto:' + SITE_Q_EMAIL +
+        '?subject=' + encodeURIComponent('F3 Go30 check-in error') +
+        '&body=' + encodeURIComponent(detail);
+      contactLink.classList.remove('hidden');
+    } else {
+      contactLink.classList.add('hidden');
+    }
+
+    $('apiErrorBanner').classList.remove('hidden');
+  }
+
+  function updateHeaderIdentity_(f3Name, team, monthLabel) {
+    $('headerName').textContent = (NAME_SPACE || '') + ': ' + f3Name;
+    $('headerSub').textContent = team || '';
+  }
+
+  /** Applies the site-config values from an identify response's `config` field — the static
+   * counterpart of GAS's server-templated bootstrap (see CheckinApp.html's equivalent vars).
+   * Idempotent: harmless to call again on every subsequent identify response. */
+  function applyServerConfig_(cfg) {
+    if (!cfg) return;
+    APP_VERSION = cfg.appVersion;
+    BONUS_TYPE_RULES_ = cfg.bonusTypeRules || {};
+    SITE_Q_NAME = cfg.siteQName;
+    SITE_Q_EMAIL = cfg.siteQEmail;
+    NAME_SPACE = cfg.nameSpace;
+    BONUS_TYPE_CODES_ = cfg.bonusTypeCodes || [];
+    BONUS_TYPE_CODE_BY_KEY_ = {};
+    BONUS_TYPE_CODES_.forEach(function(code) { BONUS_TYPE_CODE_BY_KEY_[code.key] = code; });
+    BONUS_GRID_ORDER_ = BONUS_GRID_ORDER_KEYS_
+      .map(function(key) { return BONUS_TYPE_CODE_BY_KEY_[key]; })
+      .filter(Boolean);
+    if (!applyServerConfig_.bonusSelectPopulated) {
+      applyServerConfig_.bonusSelectPopulated = true;
+      Object.keys(BONUS_TYPE_RULES_).forEach(function(type) {
+        var opt = document.createElement('option');
+        opt.value = type;
+        opt.textContent = type;
+        $('bonusType').appendChild(opt);
+      });
+    }
+    if (NAME_SPACE) $('headerName').textContent = NAME_SPACE;
+    if (APP_VERSION) $('versionFooter').textContent = 'v' + APP_VERSION;
+  }
+
+  // ── Step: identify ────────────────────────────────────────────────────
+  $('idF3Name').value = state.f3Name;
+  $('idEmail').value = state.email;
+
+  $('notYouLink').href = location.pathname + '?webapp=' + encodeURIComponent(WEBAPP_URL) +
+    (NS_ ? '&ns=' + encodeURIComponent(NS_) : '') + (CONTEXT_DATE_ ? '&contextDate=' + encodeURIComponent(CONTEXT_DATE_) : '');
+  $('notYouLink').addEventListener('click', function() {
+    try { localStorage.removeItem(IDENTITY_STORAGE_KEY); } catch (e) { /* not fatal */ }
+  });
+
+  $('bookmarkHereDismiss').addEventListener('click', function() {
+    $('bookmarkHereNote').classList.add('hidden');
+  });
+
+  function applyIdentifySuccess_(res) {
+    state.f3Name = res.f3Name;
+    state.email = res.email;
+    state.resolvedContext = res.resolvedContext || null;
+    $('idSignupBtn').classList.add('hidden');
+    saveIdentityToStorage_(res.f3Name, res.email);
+    state.monthCache = {};
+    state.viewDate = null;
+    updateHeaderIdentity_(res.f3Name, res.team, res.monthLabel);
+    $('checkinHeading').textContent = (res.firstUse ? 'Welcome, ' : 'Welcome back, ') + res.f3Name + '!';
+    $('checkinSub').textContent = res.monthLabel + ' — How did you do on your commitment for today?';
+    renderGoalsReminder_(res.goals);
+    renderCheckinStatus_('today', res.todayStatus);
+    $('yesterdayBlock').classList.toggle('hidden', !res.yesterdayAvailable);
+    if (res.yesterdayAvailable) renderCheckinStatus_('yesterday', res.yesterdayStatus);
+
+    state.monthGrid = res.monthGrid || [];
+    state.todayStatus = res.todayStatus;
+    state.yesterdayStatus = res.yesterdayStatus;
+    state.yesterdayAvailable = !!res.yesterdayAvailable;
+    state.selectedDateIso = null;
+    state.lastEditedDayIso = null;
+    var todayD = new Date();
+    state.todayIso = isoDate_(todayD);
+    var yesterdayD = new Date(todayD);
+    yesterdayD.setDate(yesterdayD.getDate() - 1);
+    state.yesterdayIso = isoDate_(yesterdayD);
+    state.advancedOpen = false;
+    $('checkinTodayBlock').classList.remove('hidden');
+    $('advancedGrid').classList.add('hidden');
+    $('advancedToggleBtn').textContent = 'Show month calendar ▾';
+    $('emailMismatchNote').textContent = "Note: this email doesn't match what we have on file for " + res.f3Name + ', but we found your check-in.';
+    $('emailMismatchNote').classList.toggle('hidden', !res.emailMismatch);
+    $('nextMonthNoteText').textContent = "You're not signed up for " + res.nextMonthLabel + ' yet — verify or update your goals before the month starts.';
+    $('nextMonthNote').classList.toggle('hidden', res.nextMonthRegistered !== false);
+    $('bookmarkHereNote').classList.toggle('hidden', !res.firstUse);
+    showStep('checkin');
+    prefetchDashboard_();
+  }
+
+  /** Applies a resolved typed-identify result (matched / knownPaxNotRegistered / miss) — this
+   * page's identifyForm submit handler (below) calls it directly from a fetch response, since
+   * unlike GAS's real <form target="_top"> POST there's no server-render step to bake the
+   * result into a fresh page. */
+  function applyTypedIdentifyResult_(result) {
+    if (result.config) applyServerConfig_(result.config);
+    if (result.matched) {
+      applyIdentifySuccess_(result);
+    } else if (result.knownPaxNotRegistered) {
+      saveIdentityToStorage_(result.f3Name, result.email);
+      var signupUrl = signupDeepLinkUrl_('current');
+      $('signupRedirectAnchor').href = signupUrl;
+      $('step-identify').classList.add('hidden');
+      $('step-tokenLoading').classList.remove('hidden');
+      attemptTopRedirect_(signupUrl, function() {
+        $('step-tokenLoading').classList.add('hidden');
+        $('step-signupRedirect').classList.remove('hidden');
+      });
+    } else {
+      $('idF3Name').value = result.submittedF3Name || '';
+      $('idEmail').value = result.submittedEmail || '';
+      saveIdentityToStorage_(result.submittedF3Name, result.submittedEmail);
+      $('idError').textContent = "We couldn't find a signup with that name and email for the current month. Please sign up first.";
+      $('idError').classList.remove('hidden');
+      $('idSignupBtn').classList.remove('hidden');
+    }
+    setButtonLoading_($('identifyBtn'), false);
+  }
+
+  $('identifyForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var f3Name = $('idF3Name').value.trim();
+    var email = $('idEmail').value.trim();
+    $('idError').classList.add('hidden');
+    hideApiError_();
+    if (!f3Name || !email) {
+      $('idError').textContent = 'Please enter both your F3 name and email.';
+      $('idError').classList.remove('hidden');
+      return;
+    }
+    state.f3Name = f3Name;
+    state.email = email;
+    setButtonLoading_($('identifyBtn'), true, 'Checking…');
+    callApi('identify', { f3Name: f3Name, email: email, guid: STATIC_IDENTIFY_GUID_ })
+      .then(applyTypedIdentifyResult_)
+      .catch(function(err) {
+        setButtonLoading_($('identifyBtn'), false);
+        showApiError_('identify', err);
+      });
+  });
+
+  if (!TOKEN_IDENTIFY_RESULT && SAVED_IDENTITY_TOKEN) {
+    $('step-identify').classList.add('hidden');
+    $('step-tokenLoading').classList.remove('hidden');
+    callApi('identify', { token: SAVED_IDENTITY_TOKEN })
+      .then(function(res) {
+        if (res.config) applyServerConfig_(res.config);
+        if (res.matched) {
+          applyIdentifySuccess_(res);
+        } else if (res.knownPaxNotRegistered) {
+          saveIdentityToStorage_(res.f3Name, res.email);
+          var signupCurrentMonthUrl = signupDeepLinkUrl_('current');
+          attemptTopRedirect_(signupCurrentMonthUrl, function() {
+            $('step-identify').classList.remove('hidden');
+            $('idSignupBtn').classList.remove('hidden');
+          });
+        } else {
+          $('step-identify').classList.remove('hidden');
+        }
+      })
+      .catch(function() {
+        $('step-identify').classList.remove('hidden'); // fall through to the blank identify form
+      })
+      .then(function() {
+        $('step-tokenLoading').classList.add('hidden');
+      });
+  }
+
+  // ── Step: checkin ──────────────────────────────────────────────────────
+  var CHECKIN_STATUS_TEXT_ = {
+    done: '✓ You said: I Hit it!',
+    missed: '✗ You said: Missed it',
+    pending: 'No check-in yet',
+    absent: 'Marked absent by your Q',
+    unavailable: 'No tracker day for this date yet',
+  };
+
+  function valueToCheckinStatus_(value) {
+    return value === 1 ? 'done' : value === 0 ? 'missed' : 'pending';
+  }
+
+  function renderGoalsReminder_(goals) {
+    var el = $('goalsReminder');
+    var rows = [
+      { label: 'WHO', value: goals && goals.who },
+      { label: 'WHAT', value: goals && goals.what },
+      { label: 'HOW', value: goals && goals.how },
+    ].filter(function(r) { return r.value; });
+    if (!rows.length) {
+      el.classList.add('hidden');
+      el.innerHTML = '';
+      return;
+    }
+    var editUrl = signupDeepLinkUrl_('current');
+    el.innerHTML = '<div class="goals-reminder">' +
+      '<div class="goals-reminder-head">' +
+        '<span class="goals-reminder-title">Your goals</span>' +
+        '<a href="' + editUrl + '" target="_top" class="bonus-edit-btn">Edit</a>' +
+      '</div>' +
+      rows.map(function(r) {
+        return '<div class="goals-reminder-row"><strong>' + r.label + ':</strong> ' + escapeHtml_(r.value) + '</div>';
+      }).join('') + '</div>';
+    el.classList.remove('hidden');
+  }
+
+  function renderCheckinStatus_(prefix, status) {
+    var yesBtn = $(prefix + 'YesBtn');
+    var noBtn = $(prefix + 'NoBtn');
+    var noneBtn = $(prefix + 'NoneBtn');
+    $(prefix + 'StatusNote').textContent = CHECKIN_STATUS_TEXT_[status] || '';
+    yesBtn.classList.toggle('current', status === 'done');
+    noBtn.classList.toggle('current', status === 'missed');
+    noneBtn.classList.toggle('current', status === 'pending');
+    var disabled = status === 'unavailable';
+    yesBtn.disabled = disabled;
+    noBtn.disabled = disabled;
+    noneBtn.disabled = disabled;
+  }
+
+  function submitCheckin_(btn, day, value) {
+    hideApiError_();
+    setButtonLoading_(btn, true, 'Saving…');
+    callApi('checkin', { f3Name: state.f3Name, email: state.email, day: day, value: value, resolvedContext: state.resolvedContext })
+      .then(function() {
+        var status = valueToCheckinStatus_(value);
+        renderCheckinStatus_(day, status);
+        var dateIso = day === 'today' ? state.todayIso : state.yesterdayIso;
+        state.lastEditedDayIso = dateIso;
+        if (day === 'today') state.todayStatus = status; else state.yesterdayStatus = status;
+        updateMonthGridEntry_(dateIso, status);
+        invalidateMonthCacheFor_(dateIso);
+        if (state.advancedOpen) {
+          updateCalCellStatus_(dateIso, status);
+          if (state.selectedDateIso === dateIso) renderSelectionPanel_(dateIso);
+        }
+      })
+      .catch(function(err) {
+        showApiError_('checkin', err);
+      })
+      .finally(function() {
+        setButtonLoading_(btn, false);
+      });
+  }
+
+  $('todayYesBtn').addEventListener('click', function() { submitCheckin_(this, 'today', 1); });
+  $('todayNoBtn').addEventListener('click', function() { submitCheckin_(this, 'today', 0); });
+  $('todayNoneBtn').addEventListener('click', function() { submitCheckin_(this, 'today', null); });
+  $('yesterdayYesBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', 1); });
+  $('yesterdayNoBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', 0); });
+  $('yesterdayNoneBtn').addEventListener('click', function() { submitCheckin_(this, 'yesterday', null); });
+
+  // ── Step: checkin — Advanced whole-month calendar (F3Go30-th22) ───────────
+  var CAL_DOW_LABELS_ = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  var CAL_STATUS_LABELS_ = { done: 'Hit it', missed: 'Missed it', pending: 'No check-in', absent: 'Failed' };
+  var CAL_SELECTION_STATUS_TEXT_ = {
+    done: '✓ Hit it',
+    missed: '✗ Missed it',
+    pending: 'No check-in yet',
+    absent: 'Marked Failed',
+  };
+
+  function valueToMonthGridStatus_(value) {
+    return value === 1 ? 'done' : value === 0 ? 'missed' : value === -1 ? 'absent' : 'pending';
+  }
+
+  function monthGridEntryFor_(dateIso) {
+    return (state.monthGrid || []).filter(function(e) { return e.dateIso === dateIso; })[0] || null;
+  }
+
+  function updateMonthGridEntry_(dateIso, status) {
+    var entry = monthGridEntryFor_(dateIso);
+    if (entry) entry.status = status;
+  }
+
+  function invalidateMonthCacheFor_(dateIso) {
+    delete state.monthCache[monthKeyOf_(parseIsoDate_(dateIso))];
+  }
+
+  function buildCalCell_(entry) {
+    var d = parseIsoDate_(entry.dateIso);
+    var cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'cal-cell st-' + entry.status + (entry.dateIso === state.todayIso ? ' today' : '') +
+      (entry.dateIso === state.selectedDateIso ? ' selected' : '');
+    cell.dataset.date = entry.dateIso;
+    var numEl = document.createElement('span');
+    numEl.className = 'day-num';
+    numEl.textContent = String(d.getDate());
+    cell.appendChild(numEl);
+    if (entry.status === 'absent') {
+      var xEl = document.createElement('span');
+      xEl.className = 'x-mark';
+      xEl.setAttribute('aria-hidden', 'true');
+      cell.appendChild(xEl);
+    }
+    var weekdayLong = d.toLocaleDateString(undefined, { weekday: 'long' });
+    var monthShort = d.toLocaleDateString(undefined, { month: 'short' });
+    cell.setAttribute('aria-label', weekdayLong + ' ' + monthShort + ' ' + d.getDate() + ': ' + (CAL_STATUS_LABELS_[entry.status] || ''));
+    return cell;
+  }
+
+  function renderCalendar_() {
+    var grid = $('calGrid');
+    grid.innerHTML = '';
+    var entries = state.monthGrid || [];
+    if (!entries.length) return;
+    var frag = document.createDocumentFragment();
+    CAL_DOW_LABELS_.forEach(function(label) {
+      var el = document.createElement('div');
+      el.className = 'cal-dow';
+      el.textContent = label;
+      frag.appendChild(el);
+    });
+    var offset = parseIsoDate_(entries[0].dateIso).getDay();
+    for (var i = 0; i < offset; i++) {
+      var pad = document.createElement('div');
+      pad.className = 'cal-cell pad';
+      frag.appendChild(pad);
+    }
+    entries.forEach(function(entry) { frag.appendChild(buildCalCell_(entry)); });
+    grid.appendChild(frag);
+  }
+
+  function updateCalCellStatus_(dateIso, status) {
+    var cell = $('calGrid').querySelector('.cal-cell[data-date="' + dateIso + '"]');
+    if (!cell) return;
+    cell.className = 'cal-cell st-' + status + (dateIso === state.todayIso ? ' today' : '') +
+      (dateIso === state.selectedDateIso ? ' selected' : '');
+    var d = parseIsoDate_(dateIso);
+    var weekdayLong = d.toLocaleDateString(undefined, { weekday: 'long' });
+    var monthShort = d.toLocaleDateString(undefined, { month: 'short' });
+    cell.setAttribute('aria-label', weekdayLong + ' ' + monthShort + ' ' + d.getDate() + ': ' + (CAL_STATUS_LABELS_[status] || ''));
+    var xMark = cell.querySelector('.x-mark');
+    if (status === 'absent' && !xMark) {
+      var xEl = document.createElement('span');
+      xEl.className = 'x-mark';
+      xEl.setAttribute('aria-hidden', 'true');
+      cell.appendChild(xEl);
+    } else if (status !== 'absent' && xMark) {
+      xMark.remove();
+    }
+  }
+
+  function updateCalendarSelection_(oldIso, newIso) {
+    var grid = $('calGrid');
+    if (oldIso) {
+      var oldCell = grid.querySelector('.cal-cell[data-date="' + oldIso + '"]');
+      if (oldCell) oldCell.classList.remove('selected');
+    }
+    var newCell = grid.querySelector('.cal-cell[data-date="' + newIso + '"]');
+    if (newCell) newCell.classList.add('selected');
+  }
+
+  function renderSelectionPanel_(dateIso) {
+    state.selectedDateIso = dateIso;
+    [$('selYesBtn'), $('selNoBtn'), $('selNoneBtn')].forEach(function(btn) {
+      if (btn.disabled) setButtonLoading_(btn, false);
+    });
+    var entry = monthGridEntryFor_(dateIso);
+    var status = entry ? entry.status
+      : dateIso === state.todayIso ? state.todayStatus
+      : dateIso === state.yesterdayIso ? state.yesterdayStatus
+      : 'pending';
+    var d = parseIsoDate_(dateIso);
+    var prefix = dateIso === state.todayIso ? 'Today · ' : dateIso === state.yesterdayIso ? 'Yesterday · ' : '';
+    $('checkinSelectedDate').textContent = prefix + formatNavDate_(d);
+    $('checkinStatusNote').textContent = CAL_SELECTION_STATUS_TEXT_[status] || CAL_SELECTION_STATUS_TEXT_.pending;
+    $('selYesBtn').classList.toggle('current', status === 'done');
+    $('selNoBtn').classList.toggle('current', status === 'missed');
+    $('selNoneBtn').classList.toggle('current', status === 'pending');
+    $('selFailBtn').classList.toggle('current', status === 'absent');
+    var isPast = dateIso < state.todayIso;
+    $('selFailBtn').disabled = !isPast;
+    $('selFailBtn').title = isPast ? '' : 'Failed can only be set for a past day';
+  }
+
+  function submitSelectionCheckin_(btn, value) {
+    hideApiError_();
+    setButtonLoading_(btn, true, 'Saving…');
+    var dateIso = state.selectedDateIso;
+    callApi('checkin', { f3Name: state.f3Name, email: state.email, day: dateIso, value: value, resolvedContext: state.resolvedContext })
+      .then(function() {
+        var status = valueToMonthGridStatus_(value);
+        updateMonthGridEntry_(dateIso, status);
+        invalidateMonthCacheFor_(dateIso);
+        updateCalCellStatus_(dateIso, status);
+        renderSelectionPanel_(dateIso);
+        state.lastEditedDayIso = dateIso;
+        if (dateIso === state.todayIso) { state.todayStatus = status; renderCheckinStatus_('today', status); }
+        else if (dateIso === state.yesterdayIso) { state.yesterdayStatus = status; renderCheckinStatus_('yesterday', status); }
+      })
+      .catch(function(err) { showApiError_('checkin', err); })
+      .finally(function() { setButtonLoading_(btn, false); });
+  }
+
+  $('selYesBtn').addEventListener('click', function() { submitSelectionCheckin_(this, 1); });
+  $('selNoBtn').addEventListener('click', function() { submitSelectionCheckin_(this, 0); });
+  $('selNoneBtn').addEventListener('click', function() { submitSelectionCheckin_(this, null); });
+  $('selFailBtn').addEventListener('click', function() { submitSelectionCheckin_(this, -1); });
+
+  $('calGrid').addEventListener('click', function(e) {
+    var cell = e.target.closest('.cal-cell');
+    if (!cell || cell.classList.contains('pad')) return;
+    var oldIso = state.selectedDateIso;
+    var newIso = cell.dataset.date;
+    if (newIso === oldIso) return;
+    renderSelectionPanel_(newIso);
+    updateCalendarSelection_(oldIso, newIso);
+    cell.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+
+  $('advancedToggleBtn').addEventListener('click', function() {
+    state.advancedOpen = !state.advancedOpen;
+    $('checkinTodayBlock').classList.toggle('hidden', state.advancedOpen);
+    $('yesterdayBlock').classList.toggle('hidden', state.advancedOpen || !state.yesterdayAvailable);
+    $('advancedGrid').classList.toggle('hidden', !state.advancedOpen);
+    this.textContent = state.advancedOpen ? 'Hide month calendar ▴' : 'Show month calendar ▾';
+    if (state.advancedOpen) {
+      state.selectedDateIso = state.selectedDateIso || state.lastEditedDayIso || state.todayIso;
+      renderCalendar_();
+      renderSelectionPanel_(state.selectedDateIso);
+    }
+  });
+
+  $('dashboardBtn').addEventListener('click', function() {
+    var btn = this;
+    var todayIso = isoDate_(new Date());
+    var cached = state.monthCache[monthKeyOf_(new Date())];
+    if (cached && !state.dashboardPrefetchPromise && cached.dayDates.indexOf(todayIso) !== -1) {
+      renderDashboard_(cached, cached.dayDates.indexOf(todayIso));
+      return;
+    }
+    setButtonLoading_(btn, true, 'Loading…');
+    var pending = state.dashboardPrefetchPromise
+      ? state.dashboardPrefetchPromise.then(function() {
+          var c = state.monthCache[monthKeyOf_(new Date())];
+          if (c && c.dayDates.indexOf(todayIso) !== -1) {
+            renderDashboard_(c, c.dayDates.indexOf(todayIso));
+            return;
+          }
+          return loadDashboard_();
+        })
+      : loadDashboard_();
+    pending.finally(function() { setButtonLoading_(btn, false); });
+  });
+  $('dMonthProgressTile').addEventListener('click', function() { showStep('checkin'); });
+  $('dMonthProgressTile').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showStep('checkin'); }
+  });
+
+  function signupDeepLinkUrl_(targetMonth) {
+    return WEBAPP_URL + '?cmd=signup&targetMonth=' + targetMonth + '&autoStart=1';
+  }
+
+  function openSignup_(targetMonth) {
+    window.top.location.href = signupDeepLinkUrl_(targetMonth);
+  }
+
+  $('idSignupBtn').addEventListener('click', function() { openSignup_('current'); });
+  $('nextMonthSignupBtn').addEventListener('click', function() { openSignup_('next'); });
+
+  // ── Step: dashboard ─────────────────────────────────────────────────────
+  function scoreColor_(pct) {
+    return pct >= 80 ? '#3f8b75' : pct >= 50 ? '#f7b209' : '#de521c';
+  }
+
+  var SEGMENT_COLORS_ = { done: '#3f8b75', missed: '#f7b209', absent: '#de521c', pending: '#d8cfbf', upcoming: '#e7e2d8' };
+  var SEGMENT_VALUES_ = { done: 1, missed: 0, absent: -1 };
+  var DISPLAY_WINDOW_DAYS_ = 14;
+  var ROLLING_AVERAGE_WINDOW_DAYS_ = 7;
+  var MAX_STREAK_WINDOW_DAYS_ = 30;
+  // Populated by applyServerConfig_ once the identify response's `config` field lands.
+  var BONUS_TYPE_CODES_ = [];
+  var BONUS_GRID_ORDER_KEYS_ = ['fe', 'ins', 'q', 'eh'];
+  var BONUS_TYPE_CODE_BY_KEY_ = {};
+  var BONUS_GRID_ORDER_ = [];
+
+  function escapeHtml_(s) {
+    var div = document.createElement('div');
+    div.textContent = String(s == null ? '' : s);
+    return div.innerHTML;
+  }
+
+  function toRad_(deg) { return deg * Math.PI / 180; }
+
+  function ringArcPath_(cx, cy, ro, ri, s0, s1) {
+    var a0 = toRad_(s0 - 90), a1 = toRad_(s1 - 90);
+    var x1 = cx + ro * Math.cos(a0), y1 = cy + ro * Math.sin(a0);
+    var x2 = cx + ro * Math.cos(a1), y2 = cy + ro * Math.sin(a1);
+    var x3 = cx + ri * Math.cos(a1), y3 = cy + ri * Math.sin(a1);
+    var x4 = cx + ri * Math.cos(a0), y4 = cy + ri * Math.sin(a0);
+    var largeArc = (s1 - s0) > 180 ? 1 : 0;
+    return 'M' + x1.toFixed(2) + ' ' + y1.toFixed(2) + ' A' + ro + ' ' + ro + ' 0 ' + largeArc + ' 1 ' +
+      x2.toFixed(2) + ' ' + y2.toFixed(2) + ' L' + x3.toFixed(2) + ' ' + y3.toFixed(2) +
+      ' A' + ri + ' ' + ri + ' 0 ' + largeArc + ' 0 ' + x4.toFixed(2) + ' ' + y4.toFixed(2) + 'Z';
+  }
+
+  function buildRingSvg_(daySegments, size, centerLine1, centerLine2, centerColor, bgColor) {
+    var total = (daySegments || []).length || 1;
+    var cx = size / 2, cy = size / 2;
+    var ro = size * 0.46, ri = size * 0.32;
+    var seg = 360 / total, gap = Math.min(2.2, seg * 0.15);
+    var bg = bgColor ? '<circle cx="' + cx + '" cy="' + cy + '" r="' + (size * 0.49) + '" fill="' + bgColor + '"></circle>' : '';
+    var paths = '';
+    for (var i = 0; i < total; i++) {
+      var color = SEGMENT_COLORS_[daySegments[i]] || '#d8cfbf';
+      var s0 = i * seg + gap / 2, s1 = (i + 1) * seg - gap / 2;
+      if (s1 <= s0) s1 = s0 + 0.1;
+      paths += '<path d="' + ringArcPath_(cx, cy, ro, ri, s0, s1) + '" fill="' + color + '"></path>';
+    }
+    var f1 = Math.round(size * 0.22), f2 = Math.round(size * 0.09);
+    var t1 = centerLine1 ? '<text x="' + cx + '" y="' + (cy + f1 * 0.35) + '" text-anchor="middle" font-size="' + f1 +
+      '" font-family="Arial, sans-serif" font-weight="bold" fill="' + (centerColor || '#2f5d50') + '">' + escapeHtml_(centerLine1) + '</text>' : '';
+    var t2 = centerLine2 ? '<text x="' + cx + '" y="' + (cy + f1 * 0.35 + f2 + 2) + '" text-anchor="middle" font-size="' + f2 +
+      '" font-family="monospace" fill="#888">' + escapeHtml_(centerLine2) + '</text>' : '';
+    return '<svg class="ring-svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' + bg + paths + t1 + t2 + '</svg>';
+  }
+
+  function reportedValues_(daySegments, currentDay) {
+    return (daySegments || []).slice(0, currentDay)
+      .map(function(s) { return SEGMENT_VALUES_[s]; })
+      .filter(function(v) { return v === 1 || v === 0 || v === -1; });
+  }
+
+  function buildSparklineSvg_(daySegments, currentDay, color, w, h) {
+    var last14 = reportedValues_(daySegments, currentDay).slice(-DISPLAY_WINDOW_DAYS_);
+    if (last14.length < 2) return '';
+    var pts = last14.map(function(v, i) {
+      var x = (i / (last14.length - 1)) * w;
+      var y = v === 1 ? 2 : v === 0 ? h / 2 : h - 2;
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
+      '<polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+  }
+
+  function buildDayMiniBar_(daySegments, currentDay) {
+    var el = document.createElement('div');
+    el.className = 'day-mini-bar';
+    (daySegments || []).slice(0, currentDay).forEach(function(status) {
+      var cell = document.createElement('div');
+      cell.className = 'day-mini-cell';
+      cell.style.background = SEGMENT_COLORS_[status] || '#d8cfbf';
+      el.appendChild(cell);
+    });
+    return el;
+  }
+
+  function buildAvgChartSvg_(rollingAverage, daySegments, currentDay) {
+    if (!currentDay) return '<p class="muted" style="margin:0;">Not enough data yet.</p>';
+    var W = 600, H = 130, PADT = 12, PADB = 22, PADL = 28, PADR = 6;
+    var PW = W - PADL - PADR, PH = H - PADT - PADB;
+    var mapY = function(v) { return PADT + PH * (1 - (v + 1) / 2); };
+    var xDenom = Math.max(currentDay - 1, 1);
+    var mapX = function(i) { return PADL + (i / xDenom) * PW; };
+    var bw = Math.max(3, PW / currentDay - 3);
+    var zY = mapY(0);
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;">';
+    svg += '<line x1="' + PADL + '" y1="' + mapY(1) + '" x2="' + W + '" y2="' + mapY(1) + '" stroke="#eef3f0" stroke-width="1"/>';
+    svg += '<line x1="' + PADL + '" y1="' + zY + '" x2="' + W + '" y2="' + zY + '" stroke="#d8cfbf" stroke-width="1" stroke-dasharray="4,4"/>';
+    svg += '<line x1="' + PADL + '" y1="' + mapY(-1) + '" x2="' + W + '" y2="' + mapY(-1) + '" stroke="#f2e2d9" stroke-width="1"/>';
+    svg += '<text x="0" y="' + (mapY(1) + 4) + '" font-size="13" fill="#888">+1</text>';
+    svg += '<text x="0" y="' + (zY - 2) + '" font-size="13" fill="#888">0</text>';
+    svg += '<text x="0" y="' + (mapY(-1) + 4) + '" font-size="13" fill="#888">-1</text>';
+    for (var i = 0; i < currentDay; i++) {
+      var status = daySegments[i];
+      var color = SEGMENT_COLORS_[status] || '#d8cfbf';
+      var v = SEGMENT_VALUES_[status] || 0;
+      var x = mapX(i) - bw / 2, top = Math.min(zY, mapY(v)), ht = Math.abs(zY - mapY(v));
+      svg += '<rect x="' + x.toFixed(1) + '" y="' + top.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(ht, 2).toFixed(1) + '" fill="' + color + '" opacity="0.35"/>';
+    }
+    var points = (rollingAverage || []).map(function(v, i) { return mapX(i).toFixed(1) + ',' + mapY(v).toFixed(1); }).join(' ');
+    svg += '<polyline points="' + points + '" fill="none" stroke="#2f5d50" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
+    (rollingAverage || []).forEach(function(v, i) {
+      svg += '<circle cx="' + mapX(i).toFixed(1) + '" cy="' + mapY(v).toFixed(1) + '" r="3" fill="#2f5d50"/>';
+    });
+    svg += '</svg>';
+    return svg;
+  }
+
+  function buildBonusChipsHtml_(bonusByType) {
+    var chips = BONUS_TYPE_CODES_
+      .filter(function(code) { return (bonusByType && bonusByType[code.key]) > 0; })
+      .map(function(code) {
+        return '<span class="bonus-type-code ' + code.key + '">' + code.label + '·' + bonusByType[code.key] + '</span>';
+      });
+    return chips.join('');
+  }
+
+  var YESTERDAY_CHECKIN_WARNING_HOUR_ = 10;
+
+  function findDayIndex_(dayDates, iso) {
+    return (dayDates || []).indexOf(iso);
+  }
+
+  function yesterdayCheckinStatus_(rawMember, yesterdayIndex) {
+    if (yesterdayIndex < 0) return null;
+    var v = (rawMember.dayValues || [])[yesterdayIndex];
+    if (v === 1 || v === 0 || v === -1) return null;
+    return new Date().getHours() < YESTERDAY_CHECKIN_WARNING_HOUR_ ? 'warning' : 'urgent';
+  }
+
+  function checkinStatusBadgeHtml_(status) {
+    if (status === 'warning') return '<span class="checkin-status-badge warning" title="Yesterday not checked in yet">⚠️</span>';
+    if (status === 'urgent') return '<span class="checkin-status-badge urgent" title="Yesterday not checked in">Ⓧ</span>';
+    return '';
+  }
+
+  var CHECKIN_STATUS_RING_BG_ = { warning: '#fdf1c9', urgent: '#f8d6d3' };
+
+  function renderTeamTile_(member, isMe, currentDay, checkinStatus) {
+    var el = document.createElement('div');
+    el.className = 'team-tile' + (isMe ? ' me' : '');
+    var ring = buildRingSvg_(member.daySegments, 72, member.scorePct + '%', '', scoreColor_(member.scorePct), CHECKIN_STATUS_RING_BG_[checkinStatus]);
+    var spark = buildSparklineSvg_(member.daySegments, currentDay, scoreColor_(member.scorePct), 66, 20);
+    var bonusChipsHtml = buildBonusChipsHtml_(member.bonusByType);
+    el.innerHTML =
+      checkinStatusBadgeHtml_(checkinStatus) +
+      ring +
+      '<div class="tname">' + escapeHtml_(member.name) + '</div>' +
+      (spark ? '<div>' + spark + '</div>' : '') +
+      '<div class="tscore" style="color:' + scoreColor_(member.scorePct) + ';">' +
+      (member.score >= 0 ? '+' : '') + member.score + '</div>' +
+      '<div class="tstreak">' + (member.streak || 0) + 'd streak</div>' +
+      (bonusChipsHtml ? '<div class="tbonuses">' + bonusChipsHtml + '</div>' : '');
+    return el;
+  }
+
+  function trimTrailingBlanks_(values) {
+    var v = (values || []).slice();
+    while (v.length && v[v.length - 1] === '') v.pop();
+    return v;
+  }
+
+  function computeStreakLocal_(dayValues) {
+    var values = trimTrailingBlanks_(dayValues);
+    var streak = 0;
+    for (var i = values.length - 1; i >= 0; i--) {
+      if (values[i] === 1) streak++; else break;
+    }
+    return streak;
+  }
+
+  function computeMaxStreakLocal_(dayValues, windowDays) {
+    var values = trimTrailingBlanks_(dayValues);
+    if (windowDays) values = values.slice(-windowDays);
+    var max = 0, run = 0;
+    for (var i = 0; i < values.length; i++) {
+      if (values[i] === 1) { run++; if (run > max) max = run; } else { run = 0; }
+    }
+    return max;
+  }
+
+  function computeWindowedStreaks_(dayValues, priorMonthTailValues, windowDays) {
+    var combined = (priorMonthTailValues || []).concat(dayValues || []).slice(-windowDays);
+    return {
+      current: computeStreakLocal_(combined),
+      best: computeMaxStreakLocal_(combined, windowDays),
+    };
+  }
+
+  function buildDaySegmentsLocal_(dayValues, totalDays) {
+    var values = dayValues || [];
+    var segments = [];
+    for (var i = 0; i < totalDays; i++) {
+      if (i >= values.length) { segments.push('upcoming'); continue; }
+      var v = values[i];
+      if (v === 1) segments.push('done');
+      else if (v === 0) segments.push('missed');
+      else if (v === -1) segments.push('absent');
+      else segments.push('pending');
+    }
+    return segments;
+  }
+
+  function valueToSegmentLocal_(v) {
+    return v === 1 ? 'done' : v === 0 ? 'missed' : v === -1 ? 'absent' : 'pending';
+  }
+
+  function buildRollingAverageLocal_(values, windowSize) {
+    var series = [];
+    for (var i = 0; i < values.length; i++) {
+      var start = Math.max(0, i - windowSize + 1);
+      var windowVals = values.slice(start, i + 1).filter(function(v) { return v === 1 || v === 0 || v === -1; });
+      var avg = windowVals.length ? windowVals.reduce(function(a, b) { return a + b; }, 0) / windowVals.length : 0;
+      series.push(avg);
+    }
+    return series;
+  }
+
+  function isoDate_(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function monthKeyOf_(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+
+  function parseIsoDate_(iso) {
+    var parts = iso.split('-').map(Number);
+    return new Date(parts[0], parts[1] - 1, parts[2]);
+  }
+
+  function formatNavDate_(d) {
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  function formatMonthLabel_(d) {
+    return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  }
+
+  function memberViewForIndex_(member, dayIndex, totalDays) {
+    var sliced = (member.dayValues || []).slice(0, dayIndex + 1);
+    return {
+      name: member.name,
+      team: member.team,
+      score: member.score,
+      scorePct: member.scorePct,
+      streak: computeStreakLocal_(sliced),
+      daySegments: buildDaySegmentsLocal_(sliced, totalDays),
+      bonusByType: (member.bonusByTypeSeries && member.bonusByTypeSeries[dayIndex]) || member.bonusByType,
+    };
+  }
+
+  function renderDateNav_(viewDateObj) {
+    var todayClient = new Date();
+    var isToday = isoDate_(viewDateObj) === isoDate_(todayClient);
+    $('dateNavLabel').textContent = (isToday ? 'Today · ' : '') + formatNavDate_(viewDateObj);
+    $('dateNextBtn').disabled = isToday;
+    $('datePrevBtn').disabled = false;
+  }
+
+  function renderDashboard_(d, dayIndex) {
+    updateHeaderIdentity_(d.f3Name, d.team, d.monthLabel);
+    state.trackerUrl = d.trackerUrl || '';
+
+    var viewDateObj = parseIsoDate_(d.dayDates[dayIndex] || d.viewDate);
+    state.viewDate = viewDateObj;
+    renderDateNav_(viewDateObj);
+
+    var currentDay = dayIndex + 1;
+    var selfValues = (d.dayValues || []).slice(0, currentDay);
+    var daySegments = buildDaySegmentsLocal_(selfValues, d.totalDays);
+    var rollingAverage = (d.rollingAverage || []).slice(0, currentDay);
+
+    var avgWindowStart = Math.max(0, currentDay - DISPLAY_WINDOW_DAYS_);
+    var avgDaySegments = daySegments.slice(avgWindowStart, currentDay);
+    var avgRollingAverage = rollingAverage.slice(avgWindowStart, currentDay);
+
+    var priorNeeded = DISPLAY_WINDOW_DAYS_ - avgDaySegments.length;
+    if (priorNeeded > 0 && d.priorMonthDayValues && d.priorMonthDayValues.length) {
+      var priorSlice = d.priorMonthDayValues.slice(-priorNeeded);
+      avgDaySegments = priorSlice.map(valueToSegmentLocal_).concat(avgDaySegments);
+      avgRollingAverage = buildRollingAverageLocal_(priorSlice, ROLLING_AVERAGE_WINDOW_DAYS_).concat(avgRollingAverage);
+    }
+    var avgWindowCount = avgDaySegments.length;
+
+    var streaks = computeWindowedStreaks_(selfValues, d.priorMonthDayValues, MAX_STREAK_WINDOW_DAYS_);
+    $('dStreak').textContent = streaks.current;
+    $('dStreakBest30').textContent = streaks.best;
+
+    $('dMonthRing').innerHTML = buildRingSvg_(
+      daySegments, 140, d.scorePct + '%', (d.score >= 0 ? '+' : '') + d.score + ' pts', scoreColor_(d.scorePct)
+    );
+
+    $('dScore').textContent = (d.score >= 0 ? '+' : '') + d.score;
+    $('dScore').style.color = scoreColor_(d.scorePct);
+    $('dScoreSub').innerHTML = d.done + ' hits<br>' + d.missed + ' misses<br>' + d.absent + ' no check-in';
+
+    $('dAvgChart').innerHTML = buildAvgChartSvg_(avgRollingAverage, avgDaySegments, avgWindowCount);
+
+    var dBonusesForDay = (d.bonusByTypeSeries && d.bonusByTypeSeries[dayIndex]) || d.bonusByType;
+    var bonusesEl = $('dBonuses');
+    bonusesEl.innerHTML = '';
+    BONUS_GRID_ORDER_.forEach(function(code) {
+      var value = (dBonusesForDay && dBonusesForDay[code.key]) || 0;
+      var row = document.createElement('div');
+      row.className = 'bonus-type-row';
+      row.innerHTML =
+        '<span class="bonus-type-code ' + code.key + '">' + code.label + '</span>' +
+        '<span class="bonus-type-value">' + (value >= 0 ? '+' : '') + value + '</span>';
+      bonusesEl.appendChild(row);
+    });
+
+    $('dTeamName').textContent = d.team || 'Unassigned';
+
+    var yesterdayReal = new Date();
+    yesterdayReal.setDate(yesterdayReal.getDate() - 1);
+    var yesterdayIndex = findDayIndex_(d.dayDates, isoDate_(yesterdayReal));
+
+    var myTeamEl = $('dMyTeam');
+    myTeamEl.innerHTML = '';
+    (d.myTeam || []).forEach(function(m) {
+      var view = memberViewForIndex_(m, dayIndex, d.totalDays);
+      var checkinStatus = yesterdayCheckinStatus_(m, yesterdayIndex);
+      myTeamEl.appendChild(renderTeamTile_(view, m.name === d.f3Name, currentDay, checkinStatus));
+    });
+
+    var boardEl = $('dPaxBoard');
+    boardEl.innerHTML = '';
+    (d.paxBoard || []).forEach(function(group) {
+      var groupEl = document.createElement('div');
+      groupEl.className = 'board-group';
+      var head = document.createElement('div');
+      head.className = 'board-head';
+      head.innerHTML = '<span>' + escapeHtml_(group.name) + '</span><span>' + group.members.length + ' PAX</span>';
+      groupEl.appendChild(head);
+      var rowsEl = document.createElement('div');
+      rowsEl.className = 'board-rows';
+      group.members.forEach(function(rawMember) {
+        var m = memberViewForIndex_(rawMember, dayIndex, d.totalDays);
+        var checkinStatus = yesterdayCheckinStatus_(rawMember, yesterdayIndex);
+        var row = document.createElement('div');
+        row.className = 'board-row' + (m.name === d.f3Name ? ' me' : '');
+        var mainEl = document.createElement('div');
+        mainEl.className = 'board-row-main';
+        var nameEl = document.createElement('span');
+        nameEl.className = 'bname';
+        nameEl.textContent = m.name;
+        var pctEl = document.createElement('span');
+        pctEl.className = 'bpct';
+        pctEl.style.color = scoreColor_(m.scorePct);
+        pctEl.textContent = m.scorePct + '%';
+        var statusEl = document.createElement('span');
+        statusEl.className = 'bstatus';
+        statusEl.innerHTML = checkinStatusBadgeHtml_(checkinStatus);
+        mainEl.appendChild(nameEl);
+        mainEl.appendChild(statusEl);
+        mainEl.appendChild(buildDayMiniBar_(m.daySegments, currentDay));
+        mainEl.appendChild(pctEl);
+        row.appendChild(mainEl);
+        var bonusChipsHtml = buildBonusChipsHtml_(m.bonusByType);
+        if (bonusChipsHtml) {
+          var bonusesRow = document.createElement('div');
+          bonusesRow.className = 'board-row-bonuses';
+          bonusesRow.innerHTML = bonusChipsHtml;
+          row.appendChild(bonusesRow);
+        }
+        rowsEl.appendChild(row);
+      });
+      groupEl.appendChild(rowsEl);
+      boardEl.appendChild(groupEl);
+    });
+
+    showStep('dashboard');
+  }
+
+  function loadDashboard_(dateISO, opts) {
+    var silent = !!(opts && opts.silent);
+    if (!silent) hideApiError_();
+    dateISO = dateISO || isoDate_(new Date());
+    state.dashboardLoading = true;
+    if (!silent) {
+      $('datePrevBtn').disabled = true;
+      $('dateNextBtn').disabled = true;
+      $('dateNavLabel').textContent = 'Loading…';
+    }
+    return callApi('dashboard', { f3Name: state.f3Name, email: state.email, dateISO: dateISO, resolvedContext: state.resolvedContext })
+      .then(function(payload) {
+        state.monthCache[payload.monthKey] = payload;
+        if (!silent) renderDashboard_(payload, payload.viewDayIndex);
+        return payload;
+      })
+      .catch(function(err) {
+        if (silent) throw err;
+        var friendly = (err && err.message === 'no_tracker_for_date')
+          ? new Error('No tracker exists for that date yet.')
+          : err;
+        showApiError_('dashboard', friendly);
+        if (state.viewDate) renderDateNav_(state.viewDate);
+      })
+      .finally(function() {
+        state.dashboardLoading = false;
+      });
+  }
+
+  function prefetchDashboard_() {
+    state.dashboardPrefetchPromise = loadDashboard_(undefined, { silent: true })
+      .catch(function() { /* swallowed — see dashboardBtn click handler's fallback */ })
+      .finally(function() { state.dashboardPrefetchPromise = null; });
+  }
+
+  function navigateDashboard_(deltaDays) {
+    if (!state.viewDate || state.dashboardLoading) return;
+    var newDate = new Date(state.viewDate);
+    newDate.setDate(newDate.getDate() + deltaDays);
+
+    var todayClient = new Date();
+    if (newDate > todayClient && isoDate_(newDate) !== isoDate_(todayClient)) return;
+
+    var cached = state.monthCache[monthKeyOf_(newDate)];
+    if (cached) {
+      var idx = cached.dayDates.indexOf(isoDate_(newDate));
+      if (idx === -1) { loadDashboard_(isoDate_(newDate)); return; }
+      renderDashboard_(cached, idx);
+    } else {
+      loadDashboard_(isoDate_(newDate));
+    }
+  }
+
+  $('datePrevBtn').addEventListener('click', function() { navigateDashboard_(-1); });
+  $('dateNextBtn').addEventListener('click', function() { navigateDashboard_(1); });
+
+  var howOpen = false;
+  $('howBtn').addEventListener('click', function() {
+    howOpen = !howOpen;
+    $('howBody').classList.toggle('hidden', !howOpen);
+    $('howChevron').innerHTML = howOpen ? '&#9650;' : '&#9660;';
+  });
+
+  $('moreBtn').addEventListener('click', function() {
+    if (state.trackerUrl) window.open(state.trackerUrl, '_blank');
+  });
+
+  // ── Step: bonus ──────────────────────────────────────────────────────────
+  function bonusTypeRequiresLink_(type) {
+    return !!(BONUS_TYPE_RULES_[type] && BONUS_TYPE_RULES_[type].requiresLink);
+  }
+
+  function renderBonusList_() {
+    var el = $('bonusList');
+    el.innerHTML = '';
+    if (!state.bonusEntries.length) {
+      el.innerHTML = '<p class="muted" style="margin:10px 0 0;">No bonus entries yet this month.</p>';
+      return;
+    }
+    state.bonusEntries.forEach(function(entry) {
+      var row = document.createElement('div');
+      row.className = 'bonus-entry';
+      var dateLabel = entry.whenIso ? formatNavDate_(parseIsoDate_(entry.whenIso)) : '';
+      var isExtra = !!entry.complete && entry.counts === false;
+      var badgeClass = !entry.complete ? 'pending' : (isExtra ? 'extra' : 'complete');
+      var badgeText = !entry.complete ? 'Needs link' : (isExtra ? 'Logged (extra)' : '✓ Counted');
+      row.innerHTML =
+        '<div class="bonus-entry-top">' +
+          '<span class="bonus-entry-type">' + escapeHtml_(entry.type) + '</span>' +
+          '<span class="bonus-entry-date">' + escapeHtml_(dateLabel) + '</span>' +
+        '</div>' +
+        '<div class="bonus-entry-message">' + escapeHtml_(entry.message) + '</div>' +
+        (isExtra
+          ? '<div class="bonus-entry-note">Great job getting out there! Only one ' + escapeHtml_(entry.type) +
+            ' counts per week, so this one won’t add extra points — keep up the good work.</div>'
+          : '') +
+        '<div class="bonus-entry-bottom">' +
+          '<span class="bonus-badge ' + badgeClass + '">' + badgeText + '</span>' +
+          '<button class="bonus-edit-btn" data-row="' + entry.rowIndex + '">Edit</button>' +
+        '</div>';
+      el.appendChild(row);
+    });
+    Array.prototype.forEach.call(el.querySelectorAll('.bonus-edit-btn'), function(btn) {
+      btn.addEventListener('click', function() {
+        var rowIndex = Number(btn.dataset.row);
+        var entry = state.bonusEntries.filter(function(e) { return e.rowIndex === rowIndex; })[0];
+        if (entry) openBonusForm_(entry);
+      });
+    });
+  }
+
+  function loadBonusList_() {
+    hideApiError_();
+    $('bonusListError').classList.add('hidden');
+    var dateISO = state.viewDate ? isoDate_(state.viewDate) : undefined;
+    state.bonusListContextIso = dateISO;
+    $('bonusMonthLabel').textContent = formatMonthLabel_(state.viewDate || new Date());
+    $('bonusList').innerHTML = '<p class="muted" style="margin:10px 0 0;">Loading…</p>';
+    return callApi('bonusList', { f3Name: state.f3Name, email: state.email, dateISO: dateISO })
+      .then(function(res) {
+        state.bonusEntries = res.entries || [];
+        renderBonusList_();
+      })
+      .catch(function(err) {
+        $('bonusList').innerHTML = '';
+        $('bonusListError').textContent = "Couldn't load your bonus entries — please try again.";
+        $('bonusListError').classList.remove('hidden');
+        showApiError_('bonusList', err);
+      });
+  }
+
+  var BONUS_DEFAULT_TYPE_ = 'Fellowship';
+
+  function setBonusWhenRange_() {
+    var contextDay = state.viewDate || new Date();
+    var firstOfLastMonth = new Date(contextDay.getFullYear(), contextDay.getMonth() - 1, 1);
+    var lastOfThisMonth = new Date(contextDay.getFullYear(), contextDay.getMonth() + 1, 0);
+    $('bonusWhen').min = isoDate_(firstOfLastMonth);
+    $('bonusWhen').max = isoDate_(lastOfThisMonth);
+  }
+
+  function openBonusForm_(entry) {
+    state.bonusEditingRowIndex = entry ? entry.rowIndex : null;
+    state.bonusEditingOriginalWhenIso = entry ? (state.bonusListContextIso || isoDate_(new Date())) : null;
+    state.bonusEditingOriginalSnapshot = entry
+      ? { type: entry.type, whenIso: entry.whenIso, message: entry.message, link: entry.link }
+      : null;
+    $('bonusFormHeading').textContent = entry ? 'Edit Bonus' : 'Add Bonus';
+    setBonusWhenRange_();
+    $('bonusWhen').value = entry ? entry.whenIso : isoDate_(state.viewDate || new Date());
+    $('bonusType').value = entry ? entry.type : BONUS_DEFAULT_TYPE_;
+    $('bonusMessage').value = entry ? entry.message : '';
+    $('bonusLink').value = entry ? entry.link : '';
+    $('bonusFormError').classList.add('hidden');
+    updateBonusLinkVisibility_();
+    $('bonusFormCard').classList.remove('hidden');
+    $('bonusFormCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function closeBonusForm_() {
+    $('bonusFormCard').classList.add('hidden');
+    state.bonusEditingRowIndex = null;
+    state.bonusEditingOriginalWhenIso = null;
+    state.bonusEditingOriginalSnapshot = null;
+  }
+
+  function updateBonusLinkVisibility_() {
+    var required = bonusTypeRequiresLink_($('bonusType').value);
+    $('bonusLinkLabel').textContent = required ? 'Slack Link (required)' : 'Slack Link (optional)';
+  }
+
+  $('bonusType').addEventListener('change', updateBonusLinkVisibility_);
+
+  $('bonusBtn').addEventListener('click', function() {
+    hideApiError_();
+    closeBonusForm_();
+    showStep('bonus');
+    loadBonusList_();
+  });
+  $('bonusBackBtn').addEventListener('click', function() { showStep(state.bonusReturnStep); });
+  $('bonusAddBtn').addEventListener('click', function() { openBonusForm_(null); });
+  $('bonusCancelBtn').addEventListener('click', closeBonusForm_);
+
+  var BONUS_ERROR_TEXT_ = {
+    invalid_type: 'Please choose a bonus type.',
+    invalid_when: 'Please choose a valid date.',
+    message_required: 'Please describe what happened.',
+    link_required: 'This bonus type needs a Slack link before it counts.',
+    invalid_link: 'That doesn’t look like a valid link (must start with http:// or https://).',
+    not_found: 'That entry could not be found — please refresh and try again.',
+    locked: 'Bonus Tracker is busy right now — please try again in a moment.',
+    bonus_sheet_full: 'This month’s Bonus Tracker is full — please contact your Q.',
+  };
+
+  $('bonusSaveBtn').addEventListener('click', function() {
+    var btn = this;
+    var payload = {
+      f3Name: state.f3Name,
+      email: state.email,
+      type: $('bonusType').value,
+      whenIso: $('bonusWhen').value,
+      message: $('bonusMessage').value.trim(),
+      link: $('bonusLink').value.trim(),
+    };
+    $('bonusFormError').classList.add('hidden');
+    hideApiError_();
+    var action = state.bonusEditingRowIndex ? 'bonusEdit' : 'bonusAdd';
+    if (state.bonusEditingRowIndex) {
+      payload.rowIndex = state.bonusEditingRowIndex;
+      payload.originalWhenIso = state.bonusEditingOriginalWhenIso;
+      payload.original = state.bonusEditingOriginalSnapshot;
+    }
+    setButtonLoading_(btn, true, 'Saving…');
+    callApi(action, payload)
+      .then(function() {
+        closeBonusForm_();
+        return loadBonusList_();
+      })
+      .catch(function(err) {
+        var msg = BONUS_ERROR_TEXT_[err && err.message] || null;
+        if (msg) {
+          $('bonusFormError').textContent = msg;
+          $('bonusFormError').classList.remove('hidden');
+        } else {
+          showApiError_(action, err);
+        }
+      })
+      .finally(function() {
+        setButtonLoading_(btn, false);
+      });
+  });
+</script>
+</body>
+</html>

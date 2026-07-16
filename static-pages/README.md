@@ -3,7 +3,36 @@
 A static HTML/JS check-in page — additive alongside the GAS HtmlService check-in page
 (`script/CheckinApp.html`), which continues to work unchanged. Paints instantly from a CDN-backed
 static host instead of booting inside HtmlService's sandboxed iframe, then calls the same
-JSON identify/checkin/dashboard endpoints the GAS page already exposes.
+JSON identify/checkin/dashboard endpoints the GAS page already exposes. It's a hand-ported,
+same-behavior copy of `CheckinApp.html` + `IdentityCore.html` — same CSS, same DOM ids/classes,
+same client logic — not templated/generated from them; see `src/index.html`'s own header comment
+for how the config values that GAS bakes in server-side (bonus type rules, Site Q contact,
+namespace, app version) instead arrive on the JSON `identify` response's `config` field
+(`checkinClientConfig_dw_`, `script/dashboardWebapp.js`).
+
+## Layout / deploy process
+
+```
+static-pages/
+  src/index.html     <- source, edit this
+  dist/sit/           <- generated (gitignored) — SIT-stamped build
+  dist/prod/           <- generated (gitignored) — PROD-stamped build
+```
+
+`node tools/build-static-pages.js [--env sit|prod|all]` stamps `STATIC_BUILD_VERSION_` (a
+placeholder in the source) with a version string in the same shape `script/version.js` gets
+stamped with — `<version>.<build>` for sit, bare `<version>` for prod — and writes each
+environment's copy (plus a small `version.json` the GAS About dialog reads) to its own `dist/`
+subfolder. The GitHub Pages workflow (`.github/workflows/pages.yml`) runs this build on every
+push to `main` that touches `src/`, then publishes both subfolders as one Pages site:
+
+- SIT:  `https://stuartdonaldson.github.io/F3Go30/sit/`
+- PROD: `https://stuartdonaldson.github.io/F3Go30/prod/`
+
+Never edit `dist/` directly — it's regenerated from `src/index.html` every publish. Local testing
+(`tests/playwright/static-checkin.spec.js`) serves `src/index.html` directly (unbuilt — its
+`STATIC_BUILD_VERSION_` placeholder is `null`, which is a valid, fully-functional state; the page
+reconciles it with the live GAS-reported version on its first identify call regardless).
 
 ## Config
 
@@ -52,9 +81,8 @@ same principle as the GAS page's own `prefetchDashboard_`.
 ## Open decisions (not resolved by this issue)
 
 - **Static host.** Provisioned on GitHub Pages (2026-07-15), deployed via
-  `.github/workflows/pages.yml` (GitHub Actions "deploy from workflow" source, not a branch)
-  on every push to `main` that touches this directory. Publishes at
-  `https://stuartdonaldson.github.io/F3Go30/`.
+  `.github/workflows/pages.yml` (GitHub Actions "deploy from workflow" source, not a branch).
+  See "Layout / deploy process" above for the per-environment (`sit`/`prod`) URLs.
 - **URL distribution to PAX.** Out of scope per the issue — `CheckinSessions`' saved-link minting
   and the email templates still point at the GAS `/exec` URL. Migrating them is a separate,
   later issue.

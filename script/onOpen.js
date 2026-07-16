@@ -266,6 +266,21 @@ function showAbout() {
   const propsKB = (propsMetrics.totalBytes / 1024).toFixed(1);
   const propsPct = ((propsMetrics.totalBytes / (500 * 1024)) * 100).toFixed(1);
 
+  // Static check-in front end (F3Go30-5nfj.2) — a separate GitHub Pages deployment, one
+  // subpath per environment (tools/build-static-pages.js), independent of this webapp's own
+  // clasp deploy. Best-effort: a slow/unreachable Pages host must never block opening About.
+  const staticEnvPath = (typeof APP_DEPLOY_TARGET !== 'undefined' && APP_DEPLOY_TARGET === 'TEMPLATE') ? 'prod' : 'sit';
+  const staticBaseUrl = STATIC_PAGES_BASE_URL_ + staticEnvPath + '/';
+  let staticVersion = 'unavailable';
+  try {
+    const versionRes = UrlFetchApp.fetch(staticBaseUrl + 'version.json', { muteHttpExceptions: true });
+    if (versionRes.getResponseCode() === 200) {
+      staticVersion = JSON.parse(versionRes.getContentText()).version || 'unavailable';
+    }
+  } catch (e) {
+    // unreachable / not yet published — leave as 'unavailable'
+  }
+
   const html = HtmlService.createHtmlOutput(
     '<style>' +
     '  body { font-family: Arial, sans-serif; padding: 16px; font-size: 13px; color: #333; }' +
@@ -280,7 +295,8 @@ function showAbout() {
     'copying the template, linking the HC sign-up form, initializing sheets, ' +
     'setting up triggers, and nightly miss-marking.</p>' +
     '<hr>' +
-    '<p><span class="label">Version:</span> ' + APP_VERSION + ' (' + APP_VERSION_DATE + ')</p>' +
+    '<p><span class="label">Version (GAS):</span> ' + APP_VERSION + ' (' + APP_VERSION_DATE + ')</p>' +
+    '<p><span class="label">Version (static page):</span> ' + staticVersion + '</p>' +
     '<p><span class="label">Author:</span> ' + APP_AUTHOR + '</p>' +
     '<p><span class="label">Contact:</span> <a href="mailto:' + APP_CONTACT + '">' + APP_CONTACT + '</a></p>' +
     '<hr>' +
@@ -295,7 +311,9 @@ function showAbout() {
     (serviceUrl ? (
       '<hr>' +
       '<p><span class="label">Signup:</span> <a href="' + serviceUrl + '?cmd=signup" target="_blank">' + serviceUrl + '?cmd=signup</a></p>' +
-      '<p><span class="label">Dashboard:</span> <a href="' + serviceUrl + '?cmd=checkin" target="_blank">' + serviceUrl + '?cmd=checkin</a></p>'
+      '<p><span class="label">Checkin:</span> <a href="' + serviceUrl + '?cmd=checkin" target="_blank">' + serviceUrl + '?cmd=checkin</a></p>' +
+      '<p><span class="label">Checkin (static page):</span> <a href="' + staticBaseUrl + '?webapp=' + encodeURIComponent(serviceUrl) +
+        '" target="_blank">' + staticBaseUrl + '</a></p>'
     ) : '')
   ).setWidth(480).setHeight(420);
 
