@@ -628,6 +628,19 @@
     state.f3Name = res.f3Name;
     state.email = res.email;
     state.resolvedContext = res.resolvedContext || null;
+    // Makes the address bar bookmarkable — GAS gets this for free from the real top-level
+    // navigation its typed-identify form POST performs (renderCheckinPage_'s formGuid landing
+    // the browser on a URL that already carries ?id=); this page never navigates (identify is
+    // an async fetch either way, typed or token), so nothing else ever puts the token in the
+    // URL. history.replaceState (not pushState) keeps this a no-op for the browser's back
+    // button, same as GAS's single-page-load-per-identify model has no extra history entry.
+    if (res.identityToken) {
+      try {
+        var bookmarkUrl = new URL(location.href);
+        bookmarkUrl.searchParams.set('id', res.identityToken);
+        history.replaceState(null, '', bookmarkUrl);
+      } catch (e) { /* not fatal — worst case the URL just isn't bookmarkable this visit */ }
+    }
     $('idSignupBtn').classList.add('hidden');
     saveIdentityToStorage_(res.f3Name, res.email);
     state.monthCache = {};

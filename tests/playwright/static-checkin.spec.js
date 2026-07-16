@@ -119,6 +119,29 @@ test.describe('Static check-in front end (client, live SIT)', () => {
     await expect(page.locator('#idError')).toBeHidden();
   });
 
+  test('typed identify lands the address bar on a bookmarkable ?id= URL', async ({ page }) => {
+    // No ?id= on load — this exercises the fetch-based typed-identify path (identifyForm's
+    // submit handler), which has no real navigation to land the browser on a token'd URL the
+    // way GAS's real form POST does — applyIdentifySuccess_ must patch the URL itself instead.
+    await page.goto(`${staticOrigin}/index.html?webapp=${encodeURIComponent(checkinUrl)}`);
+    await expect(page.locator('#step-identify')).toBeVisible({ timeout: 15000 });
+    expect(new URL(page.url()).searchParams.get('id')).toBeNull();
+
+    await page.locator('#idF3Name').fill(DEMO_PAX.f3Name);
+    await page.locator('#idEmail').fill(DEMO_PAX.email);
+    await page.locator('#identifyBtn').click();
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+
+    const idParam = new URL(page.url()).searchParams.get('id');
+    expect(idParam).toBeTruthy();
+
+    // Reloading that exact URL (simulating a reopened bookmark) must skip the identify form
+    // entirely — the whole point of landing on a token'd URL in the first place.
+    await page.reload();
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#headerName')).toContainText(DEMO_PAX.f3Name);
+  });
+
   test.describe('once identified', () => {
     test.beforeEach(async ({ page }) => {
       await page.goto(checkinPageUrl());
