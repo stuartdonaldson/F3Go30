@@ -51,10 +51,10 @@ same principle as the GAS page's own `prefetchDashboard_`.
 
 ## Open decisions (not resolved by this issue)
 
-- **Static host.** GitHub Pages / Firebase Hosting / Cloud Storage were all viable per the issue;
-  none has been provisioned — that's a live, visible infrastructure change (enabling public
-  hosting, DNS/branch config) outside what this issue scoped. This directory (`static-checkin/`)
-  is ready to be pointed at whichever host ops prefers.
+- **Static host.** Provisioned on GitHub Pages (2026-07-15), deployed via
+  `.github/workflows/pages.yml` (GitHub Actions "deploy from workflow" source, not a branch)
+  on every push to `main` that touches this directory. Publishes at
+  `https://stuartdonaldson.github.io/F3Go30/`.
 - **URL distribution to PAX.** Out of scope per the issue — `CheckinSessions`' saved-link minting
   and the email templates still point at the GAS `/exec` URL. Migrating them is a separate,
   later issue.

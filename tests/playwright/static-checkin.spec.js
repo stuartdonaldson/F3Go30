@@ -1,7 +1,7 @@
 /**
  * Static check-in front end — CORS spike + live SIT verification (F3Go30-5nfj.2)
  *
- * Serves static-checkin/index.html from a local http server on 127.0.0.1 (a genuinely
+ * Serves static-pages/index.html from a local http server on 127.0.0.1 (a genuinely
  * different origin from script.google.com / script.googleusercontent.com — the same class of
  * cross-origin boundary a real CDN-hosted deployment would have) and drives it with a real
  * browser against the live SIT web app. This IS the SPIKE the issue's AC requires: if the
@@ -23,7 +23,7 @@ const http = require('http');
 const crypto = require('crypto');
 
 const ROOT = path.resolve(__dirname, '../..');
-const STATIC_DIR = path.join(ROOT, 'static-checkin');
+const STATIC_DIR = path.join(ROOT, 'static-pages');
 const DEMO_PAX = { f3Name: 'NoSadClown', email: 'nosadclown@example.com' };
 
 test.use({ storageState: undefined, viewport: { width: 390, height: 844 }, headless: true });
