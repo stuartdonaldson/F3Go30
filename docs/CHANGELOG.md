@@ -27,20 +27,42 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
-- The daily "missing check-in" reminder email now leads with the check-in web app — a PAX taps in
-  their F3 name once, then bookmarks the page so it remembers them — and demotes the Tracker sheet
-  to an "older sheet interface" fallback link, instead of leading with the Tracker sheet.
+The two headline efforts this cycle: making check-in feel instant for a returning PAX, and
+publishing check-in as a plain web page instead of a Google-hosted one. Most of the smaller items
+below exist because of those two — fixes and fine-tuning that came out of getting each initiative
+working end to end, not independent changes.
+
+**Speed — returning-PAX check-in**
+- Check-in is noticeably faster for a returning PAX: "Continue to Dashboard" now opens instantly
+  instead of waiting on a fresh load, and the bookmarked check-in page itself opens quicker.
+- Fixed "Continue to Dashboard" occasionally showing your dashboard as if today's (or a
+  calendar-edited day's) check-in hadn't happened yet, right after you'd just submitted it.
+- A Site Q's manual edit to the Bonus Tracker sheet is now picked up by the dashboard right away,
+  instead of only after the next webapp-driven bonus write or a short caching delay.
 - Fixed the bookmarked check-in link intermittently failing to appear after identify (a PAX could
   get stuck re-typing their name/email every visit, or land back on the sign-in form after
   reopening the app) — the bookmark link is now assigned the instant identify succeeds instead of
   via a follow-up redirect that some phone browsers could block.
 - Removed an unnecessary "tap here to continue" step after entering your name/email on check-in —
   you now land straight on the check-in screen (with the bookmark note) in one step.
-- A PAX known from a prior month who isn't yet signed up for the current month is now carried
-  straight into a pre-filled sign-up instead of being told they can't be found.
+
+**New: check-in as a plain web page**
+- Check-in is now also available as an ordinary web page (not just inside the Google-hosted app) —
+  same look, same features, but it opens close to instantly since it isn't waiting on Google's
+  page wrapper to boot first. Reached the same way, via your saved link or the sign-up
+  confirmation email; the original app-hosted page still works unchanged.
 - The check-in page's browser tab now shows your own name and the group's logo once you've
   identified, instead of a generic title/icon — helpful when it's saved to your phone's home
   screen alongside other apps.
+- A saved check-in link now updates the address bar as soon as you identify, so refreshing or
+  re-bookmarking the page keeps working immediately rather than only after a follow-up visit.
+
+**Other check-in / sign-up improvements**
+- The daily "missing check-in" reminder email now leads with the check-in web app — a PAX taps in
+  their F3 name once, then bookmarks the page so it remembers them — and demotes the Tracker sheet
+  to an "older sheet interface" fallback link, instead of leading with the Tracker sheet.
+- A PAX known from a prior month who isn't yet signed up for the current month is now carried
+  straight into a pre-filled sign-up instead of being told they can't be found.
 - The "sign up for next month" nudge on check-in now only appears in the few days before next
   month starts, instead of the whole month before.
 - The signup confirmation email now leads with your personal, bookmarkable check-in link (your
@@ -51,12 +73,6 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   Hit / Miss / No-Check-in / Failed status, instead of only being able to edit today and
   yesterday. You can pre-mark a day you already know you'll miss (e.g. planned travel), or correct
   a past day that was recorded wrong. "Failed" can only be set on a day that's already over.
-- Check-in is noticeably faster for a returning PAX: "Continue to Dashboard" now opens instantly
-  instead of waiting on a fresh load, and the bookmarked check-in page itself opens quicker.
-- Fixed "Continue to Dashboard" occasionally showing your dashboard as if today's (or a
-  calendar-edited day's) check-in hadn't happened yet, right after you'd just submitted it.
-- A Site Q's manual edit to the Bonus Tracker sheet is now picked up by the dashboard right away,
-  instead of only after the next webapp-driven bonus write or a short caching delay.
 
 ---
 
