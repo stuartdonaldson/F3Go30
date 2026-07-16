@@ -30,12 +30,12 @@
   .checkin-btn { flex: 1; padding: 16px 8px; border-radius: 10px; border: 2px solid #d8cfbf; background: #fff; font-family: inherit; font-size: 17px; font-weight: bold; cursor: pointer; text-align: center; }
   .checkin-btn.yes { color: #2f5d50; }
   .checkin-btn.yes:hover { border-color: #2f5d50; background: #eef3f0; }
-  .checkin-btn.no { color: #a3401a; }
-  .checkin-btn.no:hover { border-color: #a3401a; background: #fdeceb; }
+  .checkin-btn.no { color: #f7b209; }
+  .checkin-btn.no:hover { border-color: #f7b209; background: #fdf3d9; }
   .checkin-btn.none { color: #8a8272; }
   .checkin-btn.none:hover { border-color: #b0a898; background: #f5f2ea; }
   .checkin-btn.current.yes { background: #eef3f0; border-color: #2f5d50; }
-  .checkin-btn.current.no { background: #fdeceb; border-color: #a3401a; }
+  .checkin-btn.current.no { background: #fdf3d9; border-color: #f7b209; }
   .checkin-btn.current.none { background: #f5f2ea; border-color: #b0a898; }
   .checkin-btn.fail { color: #b8390f; }
   .checkin-btn.fail:hover { border-color: #b8390f; background: #fbe4db; }
@@ -337,7 +337,7 @@
           <div class="legend" style="margin-top:8px;justify-content:center;">
             <div class="legend-item"><div class="legend-swatch" style="background:#3f8b75;"></div>Hits</div>
             <div class="legend-item"><div class="legend-swatch" style="background:#f7b209;"></div>Misses</div>
-            <div class="legend-item"><div class="legend-swatch" style="background:#de521c;"></div>None</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#de521c;"></div>Fails</div>
           </div>
         </div>
         <div class="stat-card">
@@ -398,7 +398,7 @@
           </div>
 
           <p class="how-section-head">YOUR DAILY MISSION</p>
-          <p style="margin:0 0 10px;">Each day scores one of three ways: <strong>Hit</strong> (1) if you did it, <strong>Miss</strong> (0) if you didn't, or <strong>No-report</strong> (&minus;1) if you forget to check in — so it always pays to report, even a miss.</p>
+          <p style="margin:0 0 10px;">Each day scores one of three ways: <strong>Hit</strong> (1) if you did it, <strong>Miss</strong> (0) if you didn't, or <strong>Failed to report</strong> (&minus;1) if you forget to check in — so it always pays to report, even a miss.</p>
           <ol style="margin:0 0 14px;padding-left:18px;display:flex;flex-direction:column;gap:6px;">
             <li><strong>Choose your challenge</strong> — small, specific, actionable (e.g. 15 min stretching, daily journaling).</li>
             <li><strong>Record your score</strong> — tap "I Hit it!" / "Missed it" each day right here on the check-in page. All Go30 data lives in a shared Google Sheet called the Tracker — you never need to open it, but if you prefer, you can check in by entering <strong>1</strong> for a Hit / <strong>0</strong> for a Miss directly in its Tracker tab, or open it any time from the chart icon (&#128202;) — either way updates the same record.</li>
@@ -1870,6 +1870,13 @@
     setButtonLoading_(btn, true, 'Saving…');
     callApi(action, payload)
       .then(function() {
+        // Bonus totals are baked into the cached per-month dashboard payload (see monthCache
+        // above); a save here would otherwise leave the dashboard showing pre-edit bonus totals
+        // until the user navigates months, mirroring the checkin invalidation pattern.
+        invalidateMonthCacheFor_(payload.whenIso);
+        if (state.bonusEditingOriginalWhenIso) {
+          invalidateMonthCacheFor_(state.bonusEditingOriginalWhenIso);
+        }
         closeBonusForm_();
         return loadBonusList_();
       })

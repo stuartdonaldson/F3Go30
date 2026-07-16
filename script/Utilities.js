@@ -399,6 +399,40 @@ function resolveWebAppBaseUrl_() {
   return ScriptApp.getService().getUrl() || '';
 }
 
+/**
+ * Resolves the static check-in front end's base URL (STATIC_PAGES_BASE_URL_, version.js) for
+ * the current deployment target — 'prod/' for the Template, 'sit/' otherwise, always
+ * trailing-slash. Returns '' if STATIC_PAGES_BASE_URL_ isn't loaded (e.g. Node tests without
+ * version.js's globals), mirroring resolveWebAppBaseUrl_'s "omit the link" fallback contract.
+ */
+function resolveStaticCheckinBaseUrl_() {
+  if (typeof STATIC_PAGES_BASE_URL_ === 'undefined') return '';
+  var envPath = (typeof APP_DEPLOY_TARGET !== 'undefined' && APP_DEPLOY_TARGET === 'TEMPLATE') ? 'prod' : 'sit';
+  return STATIC_PAGES_BASE_URL_ + envPath + '/';
+}
+
+/**
+ * Builds a check-in link that opens the static check-in front end (GitHub Pages) wrapping the
+ * given GAS webapp base URL as its API backend, instead of the GAS-hosted ?cmd=checkin page
+ * directly — every PAX-facing generated check-in link (nag/signup emails, the home landing
+ * page, the signup app's own links) should go through this rather than building `?cmd=checkin`
+ * by hand, so they all move to the static front end together. Query params mirror what
+ * static-pages/src/index.html reads (STATIC_PARAMS_): webapp, id, ns, contextDate. Returns ''
+ * if either the static base or webAppBaseUrl is unavailable, so callers can omit the link.
+ * @param {string} webAppBaseUrl
+ * @param {{id: string=, ns: string=, contextDate: string=}=} opts
+ */
+function buildStaticCheckinUrl_(webAppBaseUrl, opts) {
+  var staticBase = resolveStaticCheckinBaseUrl_();
+  if (!staticBase || !webAppBaseUrl) return '';
+  opts = opts || {};
+  var url = staticBase + '?webapp=' + encodeURIComponent(webAppBaseUrl);
+  if (opts.id) url += '&id=' + encodeURIComponent(opts.id);
+  if (opts.ns) url += '&ns=' + encodeURIComponent(opts.ns);
+  if (opts.contextDate) url += '&contextDate=' + encodeURIComponent(opts.contextDate);
+  return url;
+}
+
 function getLockedRowA1Notation(sheet, row, column) {
   var cellNotation = sheet.getRange(row, column).getA1Notation();
   
@@ -427,6 +461,8 @@ if (typeof module !== 'undefined' && module.exports) {
     prepareOutboundEmailDelivery_: prepareOutboundEmailDelivery_,
     sendConfiguredEmail_: sendConfiguredEmail_,
     resolveWebAppBaseUrl_: resolveWebAppBaseUrl_,
+    resolveStaticCheckinBaseUrl_: resolveStaticCheckinBaseUrl_,
+    buildStaticCheckinUrl_: buildStaticCheckinUrl_,
     buildSlackMessage_: buildSlackMessage_,
     buildSignupSlackMessage_: buildSignupSlackMessage_
   };

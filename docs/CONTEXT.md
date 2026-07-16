@@ -352,7 +352,7 @@ Constraints:
 | HC | Hard Commit — a formal commitment by a PAX to participate; submitted via Google Form |
 | Q | Leader of an F3 workout or challenge session; in this context the site Q manages the Go30 tracker |
 | Site Q | The Q responsible for a specific F3 region's Go30 instance; typically the spreadsheet owner |
-| Go30 | A monthly F3 habit-building challenge, rooted in *Atomic Habits*: each PAX picks one small, specific Daily Challenge and scores it Hit (1) / Miss (0) / No-report (−1) each day for the month, with a team for accountability. Tracked in Google Sheets. The "30" is the ~30 days of consistent daily repetition, not a per-day duration |
+| Go30 | A monthly F3 habit-building challenge, rooted in *Atomic Habits*: each PAX picks one small, specific Daily Challenge and scores it Hit (1) / Miss (0) / Failed to report (−1) each day for the month, with a team for accountability. Tracked in Google Sheets. The "30" is the ~30 days of consistent daily repetition, not a per-day duration |
 | FNG | Friendly New Guy — a first-time F3 participant |
 | Tracker sheet | The primary worksheet in the Go30 spreadsheet; one row per PAX, one column per day |
 | Bonus Tracker | A secondary sheet where PAX log bonus-point activities (EH, Fellowship, Inspiration, Q) |

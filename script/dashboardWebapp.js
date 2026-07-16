@@ -49,10 +49,10 @@ var setPaxCacheRow_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCa
   || (typeof globalThis !== 'undefined' && globalThis.setPaxCacheRow_);
 var setPaxCacheRowsBulk_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.setPaxCacheRowsBulk_)
   || (typeof globalThis !== 'undefined' && globalThis.setPaxCacheRowsBulk_);
-var deletePaxCacheRow_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.deletePaxCacheRow_)
-  || (typeof globalThis !== 'undefined' && globalThis.deletePaxCacheRow_);
 var resolvePaxRowIndex_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.resolvePaxRowIndex_)
   || (typeof globalThis !== 'undefined' && globalThis.resolvePaxRowIndex_);
+var getPaxRosterIndex_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.getPaxRosterIndex_)
+  || (typeof globalThis !== 'undefined' && globalThis.getPaxRosterIndex_);
 var paxCacheNormalizeName_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.paxCacheNormalizeName_)
   || (typeof globalThis !== 'undefined' && globalThis.paxCacheNormalizeName_);
 var ensurePaxCacheFresh_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.ensurePaxCacheFresh_)
@@ -633,6 +633,40 @@ function invalidateFullRosterCache_(sheetId) {
 }
 
 /**
+ * Assembles the whole Tracker roster (in row-index order) from PaxCache's per-PAX rows via its
+ * roster index (F3Go30-5nfj.3), instead of a whole-sheet CacheService blob — a single check-in
+ * write-through patch (handleCheckinSubmit_) then keeps every OTHER pax's cached row untouched
+ * and correct, so this assembly stays a cache hit across writes rather than being invalidated
+ * wholesale. Returns null on any incompleteness (no roster index cached, or any indexed pax
+ * missing its own row) so the caller falls back to its existing live Sheet range read + bulk
+ * repopulate — same backstop pattern PaxCache already uses elsewhere.
+ * @returns {Array<Array>|null}
+ */
+function buildTrackerValuesFromPaxCache_(sheetId) {
+  if (!getPaxRosterIndex_dw_ || !getPaxCacheRow_dw_) return null;
+  var rosterIndex = getPaxRosterIndex_dw_('tracker', sheetId);
+  if (rosterIndex && ensurePaxCacheFresh_dw_) {
+    ensurePaxCacheFresh_dw_(sheetId); // may wipe the roster index if the sheet was edited since
+    rosterIndex = getPaxRosterIndex_dw_('tracker', sheetId);
+  }
+  if (!rosterIndex) return null;
+  var names = Object.keys(rosterIndex);
+  if (!names.length) return null;
+
+  var maxIndex = -1;
+  for (var i = 0; i < names.length; i++) {
+    if (rosterIndex[names[i]] > maxIndex) maxIndex = rosterIndex[names[i]];
+  }
+  var values = new Array(maxIndex + 1);
+  for (var j = 0; j < names.length; j++) {
+    var row = getPaxCacheRow_dw_('tracker', sheetId, names[j]);
+    if (!row) return null; // incomplete cache — caller falls back to a live read
+    values[rosterIndex[names[j]]] = row;
+  }
+  return values;
+}
+
+/**
  * Lean identity resolution for identify/checkin-submit — the two actions that only ever need
  * one PAX's own data, not the whole roster (contrast resolveCheckinIdentityFull_, used by the
  * dashboard's team/board view). Matches Responses by F3 Name alone (findSignupMatchByF3NameOnly_
@@ -832,36 +866,36 @@ function getPriorMonthTailValues_(monthInfo, f3Name, windowSize, templateSpreads
 /**
  * Full-roster identity resolution for the dashboard's team/board view, which needs every PAX's
  * Tracker row (contrast resolveCheckinIdentityLean_, used by identify/checkin-submit, which
- * only ever need one PAX's own row). Both full-range reads (Responses, Tracker) go through
- * getCachedSheetValuesOnly_/setCachedSheetValues_ — CacheService-backed, invalidated explicitly
- * by handleCheckinSubmit_ (the primary write path) and by ensurePaxCacheFresh_'s Drive-modtime
- * gate as a backstop (PaxCache.js) — so a month with no new writes since its last dashboard load
- * doesn't pay for a full-sheet read on every single request, only the first one. Since every row
- * is already in memory either way, this also opportunistically writes each one into PaxCache's
- * per-PAX row cache and rebuilds the roster index as a side effect, so the very next
- * identify/checkin for any of these PAX (same day) hits the lean per-PAX path instead of
- * another scan.
+ * only ever need one PAX's own row). The Tracker roster comes from PaxCache's per-PAX rows +
+ * roster index (buildTrackerValuesFromPaxCache_, F3Go30-5nfj.3) rather than a whole-sheet
+ * CacheService blob: a single check-in write-through patch leaves every OTHER pax's row
+ * untouched, so this assembly stays a cache hit across writes instead of needing invalidation.
+ * Responses still goes through getCachedSheetValuesOnly_/setCachedSheetValues_ (whole-sheet
+ * CacheService blob) — check-in writes never touch Responses, so that cache has no write-through
+ * counterpart to build here. Both are backstopped by ensurePaxCacheFresh_'s Drive-modtime gate
+ * (PaxCache.js) for edits that don't go through this webapp's own code. On any Tracker cache
+ * miss, this falls back to a live full-range read and opportunistically writes every row into
+ * PaxCache as a side effect, so the very next identify/checkin for any of these PAX (same day)
+ * hits the lean per-PAX path instead of another scan.
  */
 function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var t0 = Date.now();
   var targetSs = SpreadsheetApp.openById(monthInfo.sheetId);
   var openMs = Date.now() - t0;
 
-  // Same Drive-probe deferral as resolveFullIdentityFromHandle_ (F3Go30-qi26.4), applied to this
-  // fallback path's two full-range reads (Responses + Tracker). The freshCheck must precede any
-  // cache read (it wipes stale entries), so both roster caches are peeked up front: run the ~½s
-  // probe only when there's something cached to validate, and stamp asOf from the read moment
-  // (markPaxCacheFreshNow_) whenever we instead read live — a live read is definitionally current.
+  // Same Drive-probe deferral as resolveFullIdentityFromHandle_ (F3Go30-qi26.4): run the ~½s
+  // probe only when there's something cached to validate for EACH cache independently (the
+  // per-sheetId freshness memo in PaxCache.js makes a second probe for the same sheet within
+  // this execution a no-op), and stamp asOf from the read moment (markPaxCacheFreshNow_)
+  // whenever we instead read live — a live read is definitionally current.
   var responsesCacheKey = responsesValuesCacheKey_(monthInfo.sheetId);
-  var trackerCacheKey = trackerValuesCacheKey_(monthInfo.sheetId);
   var tFresh = Date.now();
   var dataRows = getCachedSheetValuesOnly_(responsesCacheKey);
-  var trackerValues = getCachedSheetValuesOnly_(trackerCacheKey);
-  if ((dataRows || trackerValues) && ensurePaxCacheFresh_dw_) {
-    ensurePaxCacheFresh_dw_(monthInfo.sheetId);       // may wipe either cache if the sheet was edited since
+  if (dataRows && ensurePaxCacheFresh_dw_) {
+    ensurePaxCacheFresh_dw_(monthInfo.sheetId);       // may wipe the Responses cache if the sheet was edited since
     dataRows = getCachedSheetValuesOnly_(responsesCacheKey);
-    trackerValues = getCachedSheetValuesOnly_(trackerCacheKey);
   }
+  var trackerValues = buildTrackerValuesFromPaxCache_(monthInfo.sheetId);
   var freshCheckMs = Date.now() - tFresh;
   var freshRead = false;
 
@@ -897,11 +931,11 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
 
   var t2 = Date.now();
   var layout = getTrackerLayout_(trackerSheet, monthInfo.sheetId);
+  var trackerFromCache = !!trackerValues;
   if (!trackerValues) {
     var lastRow = trackerSheet.getLastRow();
     var lastCol = trackerSheet.getLastColumn();
     trackerValues = trackerSheet.getRange(4, 1, lastRow - 3, lastCol).getValues();
-    setCachedSheetValues_(trackerCacheKey, trackerValues);
     freshRead = true;
   }
   var trackerMs = Date.now() - t2;
@@ -919,9 +953,12 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
     if (!Object.prototype.hasOwnProperty.call(rosterIndex, norm)) rosterIndex[norm] = idx;
     rowsByName[name] = row;
   });
-  // One PropertiesService.setProperties() call for the whole roster instead of one
-  // setProperty() per PAX — every row is already in memory from the full-range read above.
-  setPaxCacheRowsBulk_dw_('tracker', monthInfo.sheetId, rowsByName, rosterIndex);
+  // trackerValues already came from PaxCache's own per-PAX rows + roster index — writing it back
+  // would just be an unconditional PropertiesService round trip for data already stored there.
+  // Only a live read (cold cache) needs this bulk repopulate.
+  if (!trackerFromCache) {
+    setPaxCacheRowsBulk_dw_('tracker', monthInfo.sheetId, rowsByName, rosterIndex);
+  }
   var cacheWriteMs = Date.now() - t3;
 
   var rowIndex = rosterIndex[paxCacheNormalizeName_dw_(f3Name)];
@@ -1055,26 +1092,23 @@ function resolveFullIdentityFromHandle_(handle) {
   var layout = getTrackerLayout_(trackerSheet, monthInfo.sheetId);
   // Whole-roster read — required for the dashboard's team/board view: every PAX's Tracker row
   // backs allPaxRows/paxBoard/myTeamMembers (see handleCheckinDashboard_), so this read stays on
-  // the critical path by necessity. What we DON'T pay for unconditionally anymore (F3Go30-qi26.4)
-  // is the ~½s Drive-modtime freshCheck: only run it when there's a CACHED roster to validate. A
-  // cold cache means the live read below is authoritative — a fresh read is by definition current,
-  // so probing Drive first is pure latency with nothing to invalidate. On a fresh read we stamp the
-  // asOf marker from the read moment (markPaxCacheFreshNow_) so the rows bulk-written below stay
-  // trusted by later same-request lean lookups without that round trip. Mirrors
+  // the critical path by necessity. Sourced from PaxCache's per-PAX rows + roster index
+  // (buildTrackerValuesFromPaxCache_, F3Go30-5nfj.3) rather than a whole-sheet CacheService blob:
+  // a check-in write-through patch leaves every OTHER pax's row untouched, so this stays a cache
+  // hit across writes. That helper itself only pays the ~½s Drive-modtime freshCheck when there's
+  // a cached roster to validate — a cold cache means the live read below is authoritative, so
+  // probing Drive first would be pure latency with nothing to invalidate. On a fresh read we
+  // stamp the asOf marker from the read moment (markPaxCacheFreshNow_) so the rows bulk-written
+  // below stay trusted by later same-request lean lookups without that round trip. Mirrors
   // resolveLeanIdentityFromHandle_, which already trusts its single-row live read with no probe.
-  var trackerCacheKey = trackerValuesCacheKey_(monthInfo.sheetId);
   var tFresh = Date.now();
-  var trackerValues = getCachedSheetValuesOnly_(trackerCacheKey);
-  if (trackerValues && ensurePaxCacheFresh_dw_) {
-    ensurePaxCacheFresh_dw_(monthInfo.sheetId);       // may wipe the roster cache if the sheet was edited since
-    trackerValues = getCachedSheetValuesOnly_(trackerCacheKey);
-  }
+  var trackerValues = buildTrackerValuesFromPaxCache_(monthInfo.sheetId);
   var freshCheckMs = Date.now() - tFresh;
+  var trackerFromCache = !!trackerValues;
   if (!trackerValues) {
     var lastRow = trackerSheet.getLastRow();
     var lastCol = trackerSheet.getLastColumn();
     trackerValues = trackerSheet.getRange(4, 1, lastRow - 3, lastCol).getValues();
-    setCachedSheetValues_(trackerCacheKey, trackerValues);
     if (markPaxCacheFreshNow_dw_) markPaxCacheFreshNow_dw_(monthInfo.sheetId);
   }
   var trackerMs = Date.now() - t2;
@@ -1089,7 +1123,12 @@ function resolveFullIdentityFromHandle_(handle) {
     if (!Object.prototype.hasOwnProperty.call(rosterIndex, norm)) rosterIndex[norm] = idx;
     rowsByName[name] = row;
   });
-  setPaxCacheRowsBulk_dw_('tracker', monthInfo.sheetId, rowsByName, rosterIndex);
+  // trackerValues already came from PaxCache's own per-PAX rows + roster index when trackerFromCache
+  // is true — writing it back would just be an unconditional PropertiesService round trip for data
+  // already stored there. Only a live read (cold cache) needs this bulk repopulate.
+  if (!trackerFromCache) {
+    setPaxCacheRowsBulk_dw_('tracker', monthInfo.sheetId, rowsByName, rosterIndex);
+  }
   var cacheWriteMs = Date.now() - t3;
 
   // Staleness gate: prefer the handle's own rowIndex, but only if that row still names this PAX.
@@ -1169,7 +1208,9 @@ function checkNextMonthRegistration_(months, f3Name) {
  * month, when the current month's tracker has no column for it at all). Mirrors the cross-month
  * lookback pattern in getPriorMonthTailValues_. Returns null when no tracker has a day column
  * for targetDate (never throws).
- * @returns {?{trackerSheet:Sheet, sheetId:string, rowIndex:number, col:number, value:*}}
+ * @returns {?{trackerSheet:Sheet, sheetId:string, rowIndex:number, col:number, value:*, row:Array}}
+ *   row is the PAX's full pre-write Tracker row (F3Go30-5nfj.3) — handleCheckinSubmit_ patches a
+ *   copy of it into PaxCache instead of deleting the cached entry after the write.
  */
 function resolveCheckinDayTarget_(identity, f3Name, targetDate, templateSpreadsheet) {
   var classified = classifyTrackerColumns_(identity.row2, identity.row3);
@@ -1181,6 +1222,7 @@ function resolveCheckinDayTarget_(identity, f3Name, targetDate, templateSpreadsh
       rowIndex: identity.trackerRowIndex,
       col: col,
       value: identity.trackerRow[col],
+      row: identity.trackerRow,
     };
   }
 
@@ -1215,6 +1257,7 @@ function resolveCheckinDayTarget_(identity, f3Name, targetDate, templateSpreadsh
       rowIndex: otherRowIndex,
       col: otherCol,
       value: otherRow[otherCol],
+      row: otherRow,
     };
   } catch (e) {
     return null;
@@ -1515,13 +1558,20 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
   if (cell.getFormula()) return { ok: false, error: 'cell_is_formula' };
 
   if (payload.value === null) cell.clearContent(); else cell.setValue(payload.value);
-  // Write-through: this PAX's own row changed, so drop just their cached copy rather than the
-  // whole sheet's — the next lean identify/checkin repopulates it with one row read.
-  deletePaxCacheRow_dw_('tracker', target.sheetId, payload.f3Name);
-  // The dashboard/board's full-roster cache (resolveCheckinIdentityFull_) has no per-PAX
-  // granularity — any single check-in invalidates the whole sheet's cached copy, same as every
-  // other write-through call in this file.
-  invalidateFullRosterCache_(target.sheetId);
+  // True write-through (F3Go30-5nfj.3): patch a copy of the PAX's own pre-write row in memory
+  // (target.row, from resolveCheckinDayTarget_) with the new cell value, and store that directly
+  // rather than deleting the cached entry — no re-read needed, and every OTHER pax's PaxCache row
+  // (and the dashboard's PaxCache-assembled full-board read, resolveCheckinIdentityFull_/
+  // resolveFullIdentityFromHandle_) stays untouched and correct.
+  var patchedRow = target.row.slice();
+  patchedRow[target.col] = payload.value === null ? '' : payload.value;
+  setPaxCacheRow_dw_('tracker', target.sheetId, payload.f3Name, patchedRow);
+  // This webapp's own setValue()/clearContent() call above just bumped the sheet's Drive modtime,
+  // which would otherwise make ensurePaxCacheFresh_'s next probe treat the patch just written as
+  // stale and wipe it (PaxCache.js landmine). Re-stamp asOf from this write moment instead — the
+  // same sub-second tolerance ensurePaxCacheFresh_/markPaxCacheFreshNow_ already document for a
+  // live-read-then-cache race applies here in reverse (live-write-then-cache).
+  if (markPaxCacheFreshNow_dw_) markPaxCacheFreshNow_dw_(target.sheetId);
   GasLogger.log('checkinWebapp.checkin', { f3Name: payload.f3Name, day: payload.day, value: payload.value });
   return { ok: true };
 }
@@ -1935,6 +1985,7 @@ if (typeof module !== 'undefined' && module.exports) {
     trackerValuesCacheKey_: trackerValuesCacheKey_,
     responsesValuesCacheKey_: responsesValuesCacheKey_,
     invalidateFullRosterCache_: invalidateFullRosterCache_,
+    buildTrackerValuesFromPaxCache_: buildTrackerValuesFromPaxCache_,
     handleCheckinIdentify_: handleCheckinIdentify_,
     checkNextMonthRegistration_: checkNextMonthRegistration_,
     buildMonthGridEntries_: buildMonthGridEntries_,

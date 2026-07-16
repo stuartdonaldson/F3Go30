@@ -58,7 +58,7 @@ the Tracker sheet, see above).
 ## How is my daily score calculated?
 
 Each day scores one of three ways: **Hit** (`1`) if you did your Daily Challenge, **Miss** (`0`)
-if you didn't, or **No-report** (`-1`) if you forget to check in by the deadline — so it always
+if you didn't, or **Failed to report** (`-1`) if you forget to check in by the deadline — so it always
 pays to report, even a miss.
 
 ## Why do I have a -1?

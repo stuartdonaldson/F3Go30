@@ -61,6 +61,7 @@ const {
   monthInfoFromHandle_,
   resolveLeanIdentityFromHandle_,
   resolveFullIdentityFromHandle_,
+  buildTrackerValuesFromPaxCache_,
 } = require('../script/dashboardWebapp.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
@@ -680,7 +681,9 @@ function makeFakeTrackerSheet_(row2, row3, paxRows) {
   var sheet = {
     getLastRow: function() { return 3 + paxRows.length; },
     getLastColumn: function() { return width; },
+    _fullRangeReadCount: 0,
     getRange: function(row, col, numRows) {
+      if (row === 4 && numRows > 1) sheet._fullRangeReadCount++;
       return {
         getValues: function() {
           if (row === 2) return [row2.slice()];
@@ -923,6 +926,138 @@ function makeHandleFixture_() {
   assert.equal(offMonth.error, 'no_tracker_for_date');
   delete global.SpreadsheetApp;
   global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// ── Write-through PaxCache patch on check-in submit (F3Go30-5nfj.3) ─────────────────────────────
+// handleCheckinSubmit_ patches the PAX's own PaxCache row in place instead of deleting it, and
+// the dashboard's full-board read builds trackerValues from PaxCache's per-PAX rows + roster
+// index instead of a whole-sheet CacheService blob — so a check-in write no longer forces the
+// very next dashboard load (for ANY pax on that sheet) to pay for a live full-roster Sheet read.
+
+// handleCheckinSubmit_ patches PaxCache directly — the updated row is readable back from
+// PaxCache without any re-read, and the pre-existing full-resolution path is never touched
+// (hostileTemplate throws if it is).
+(function testSubmitPatchesPaxCacheRowInPlace() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); }; // "today" = Jul 2
+  PaxCache.resetPaxCacheFreshnessMemo_();
+
+  var fx = makeHandleFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
+  var hostileTemplate = { getSheetByName: function() { throw new Error('full resolution must not run'); } };
+
+  var res = handleCheckinSubmit_(hostileTemplate, { f3Name: 'Anchor', email: 'a@x.com', day: '2026-07-02', value: 1, resolvedContext: handle });
+  assert.equal(res.ok, true);
+
+  // Jul 2 is day-col index 9 (0-based) — the patched row must reflect it without deleting the entry.
+  var patched = PaxCache.getPaxCacheRow_('tracker', 'sheet-jul', 'Anchor');
+  assert.ok(patched, 'PaxCache row should be patched in place, not deleted');
+  assert.equal(patched[9], 1);
+  // The rest of the pre-write row is preserved untouched (a true patch, not a rebuilt row).
+  assert.equal(patched[0], 'Anchor');
+  assert.equal(patched[6], 5);
+
+  delete global.SpreadsheetApp;
+  global.resolveContextDate_ = function() { return new Date(); };
+  PaxCache.resetPaxCacheFreshnessMemo_();
+})();
+
+// handleCheckinSubmit_'s clearContent (value: null) path patches the cache with an empty string,
+// matching what a live re-read of an actually-cleared cell would return.
+(function testSubmitClearPatchesPaxCacheWithEmptyString() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); };
+  PaxCache.resetPaxCacheFreshnessMemo_();
+
+  var fx = makeHandleFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 1, 'Slaw'); // Slaw's Jul 2 (col 9) starts at 1
+  var res = handleCheckinSubmit_({ getSheetByName: function() { throw new Error('full resolution must not run'); } },
+    { f3Name: 'Slaw', email: 's@x.com', day: '2026-07-02', value: null, resolvedContext: handle });
+  assert.equal(res.ok, true);
+  var patched = PaxCache.getPaxCacheRow_('tracker', 'sheet-jul', 'Slaw');
+  assert.equal(patched[9], '');
+
+  delete global.SpreadsheetApp;
+  global.resolveContextDate_ = function() { return new Date(); };
+  PaxCache.resetPaxCacheFreshnessMemo_();
+})();
+
+// End-to-end: once the dashboard's full-board read has warmed PaxCache's roster index + every
+// pax's row (one live full-range read), a check-in submit for one pax followed by another
+// dashboard read for the OTHER pax reflects the update WITHOUT any further full-range Sheet read
+// — the whole point of this write-through patch (F3Go30-5nfj.3).
+(function testCheckinWriteThroughAvoidsFullRosterRebuildOnNextDashboardRead() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.DriveApp = { getFileById: function() { return { getLastUpdated: function() { return new Date(1000); } }; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); };
+  PaxCache.resetPaxCacheFreshnessMemo_();
+
+  var fx = makeHandleFixture_();
+
+  // Cold dashboard read warms PaxCache's roster index + both pax rows via one live full-range read.
+  var coldHandle = buildResolvedContextHandle_(fx.monthInfo, 1, 'Slaw');
+  var cold = resolveFullIdentityFromHandle_(coldHandle);
+  assert.ok(cold);
+  assert.equal(fx.trackerSheet._fullRangeReadCount, 1);
+
+  // Anchor checks in for Jul 2 — write-through patches ONLY Anchor's PaxCache row.
+  PaxCache.resetPaxCacheFreshnessMemo_();
+  var anchorHandle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
+  var submitRes = handleCheckinSubmit_({ getSheetByName: function() { throw new Error('full resolution must not run'); } },
+    { f3Name: 'Anchor', email: 'a@x.com', day: '2026-07-02', value: 1, resolvedContext: anchorHandle });
+  assert.equal(submitRes.ok, true);
+
+  // Slaw's dashboard read afterward assembles the board purely from PaxCache — zero additional
+  // full-range Sheet reads — and sees Anchor's patched value in the assembled roster.
+  PaxCache.resetPaxCacheFreshnessMemo_();
+  var slawHandle = buildResolvedContextHandle_(fx.monthInfo, 1, 'Slaw');
+  var warm = resolveFullIdentityFromHandle_(slawHandle);
+  assert.ok(warm);
+  assert.equal(fx.trackerSheet._fullRangeReadCount, 1, 'no additional full-roster read after the write-through patch');
+  assert.equal(warm.trackerValues[0][9], 1); // Anchor's rowIndex 0, Jul 2 col 9
+
+  delete global.SpreadsheetApp;
+  delete global.DriveApp;
+  global.resolveContextDate_ = function() { return new Date(); };
+  PaxCache.resetPaxCacheFreshnessMemo_();
+})();
+
+// buildTrackerValuesFromPaxCache_ directly: null on a cold/incomplete cache (no roster index, or
+// an indexed pax missing its own row), assembled array in roster order once every row is warm.
+(function testBuildTrackerValuesFromPaxCacheDirect() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  global.DriveApp = { getFileById: function() { return { getLastUpdated: function() { return new Date(1000); } }; } };
+  PaxCache.resetPaxCacheFreshnessMemo_();
+
+  assert.equal(buildTrackerValuesFromPaxCache_('sheet-empty'), null);
+
+  PaxCache.setPaxRosterIndex_('tracker', 'sheet-warm', { anchor: 0, slaw: 1 });
+  // Roster index present but Slaw's own row isn't cached yet -> incomplete -> null. Stamp asOf
+  // after seeding (as every real write path does via markPaxCacheFreshNow_) so the freshness
+  // probe below doesn't see a stale (never-stamped) asOf and wipe what was just seeded.
+  PaxCache.setPaxCacheRow_('tracker', 'sheet-warm', 'Anchor', ['Anchor', 'Crucible']);
+  PaxCache.markPaxCacheFreshNow_('sheet-warm');
+  PaxCache.resetPaxCacheFreshnessMemo_();
+  assert.equal(buildTrackerValuesFromPaxCache_('sheet-warm'), null);
+
+  PaxCache.setPaxCacheRow_('tracker', 'sheet-warm', 'Slaw', ['Slaw', 'Impala']);
+  PaxCache.markPaxCacheFreshNow_('sheet-warm');
+  PaxCache.resetPaxCacheFreshnessMemo_();
+  var values = buildTrackerValuesFromPaxCache_('sheet-warm');
+  assert.deepEqual(values, [['Anchor', 'Crucible'], ['Slaw', 'Impala']]);
+
+  delete global.DriveApp;
+  PaxCache.resetPaxCacheFreshnessMemo_();
 })();
 
 // Reset the module-level PropertiesService/CacheService stubs the earlier tests relied on, in case

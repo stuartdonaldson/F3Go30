@@ -27,10 +27,12 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+---
+
+## v2.4 — Faster check-in, published as a plain web page (2026-07-16)
+
 The two headline efforts this cycle: making check-in feel instant for a returning PAX, and
-publishing check-in as a plain web page instead of a Google-hosted one. Most of the smaller items
-below exist because of those two — fixes and fine-tuning that came out of getting each initiative
-working end to end, not independent changes.
+publishing check-in as a plain web page instead of a Google-hosted one.
 
 **Speed — returning-PAX check-in**
 - Check-in is noticeably faster for a returning PAX: "Continue to Dashboard" now opens instantly
@@ -45,6 +47,8 @@ working end to end, not independent changes.
   via a follow-up redirect that some phone browsers could block.
 - Removed an unnecessary "tap here to continue" step after entering your name/email on check-in —
   you now land straight on the check-in screen (with the bookmark note) in one step.
+- Editing or adding a bonus entry now immediately reflects on the dashboard without a manual
+  reload, on both front ends.
 
 **New: check-in as a plain web page**
 - Check-in is now also available as an ordinary web page (not just inside the Google-hosted app) —
@@ -56,6 +60,9 @@ working end to end, not independent changes.
   screen alongside other apps.
 - A saved check-in link now updates the address bar as soon as you identify, so refreshing or
   re-bookmarking the page keeps working immediately rather than only after a follow-up visit.
+- Sign-up confirmation emails, reminder emails, and the home page's check-in link now all open the
+  faster plain-web-page check-in surface, matching your bookmarked link — previously only the
+  bookmarked link itself used it.
 
 **Other check-in / sign-up improvements**
 - The daily "missing check-in" reminder email now leads with the check-in web app — a PAX taps in
@@ -73,6 +80,9 @@ working end to end, not independent changes.
   Hit / Miss / No-Check-in / Failed status, instead of only being able to edit today and
   yesterday. You can pre-mark a day you already know you'll miss (e.g. planned travel), or correct
   a past day that was recorded wrong. "Failed" can only be set on a day that's already over.
+- Renamed the "No-report" outcome to "Failed to report" everywhere it appears (check-in, sign-up,
+  dashboard legend, FAQ), and fixed the check-in "Missed it" button and dashboard legend swatch to
+  use a consistent color for that state.
 
 ---
 

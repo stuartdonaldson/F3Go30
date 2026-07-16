@@ -6,6 +6,8 @@ var signupEmailUtilitiesModule_ = (typeof module !== 'undefined' && module.expor
   : null;
 var resolveWebAppBaseUrl_ = (signupEmailUtilitiesModule_ && signupEmailUtilitiesModule_.resolveWebAppBaseUrl_)
   || (typeof globalThis !== 'undefined' && globalThis.resolveWebAppBaseUrl_);
+var buildStaticCheckinUrl_ = (signupEmailUtilitiesModule_ && signupEmailUtilitiesModule_.buildStaticCheckinUrl_)
+  || (typeof globalThis !== 'undefined' && globalThis.buildStaticCheckinUrl_);
 
 function resolveSignupEmailMode_(options) {
   if (options && options.mode) return options.mode;
@@ -77,13 +79,17 @@ var CHECKIN_EMAIL_COPY_ = {
   trackerLabel: 'Open the Tracker sheet'
 };
 
-// ?cmd=checkin / ?cmd=signup with the PAX's session guid pre-installed (when known), so the very
+// The check-in link opens the static check-in front end (GitHub Pages) wrapping this webapp as
+// its API backend, rather than the GAS ?cmd=checkin page directly (see buildStaticCheckinUrl_,
+// Utilities.js). The edit-goals link has no static counterpart, so it stays a plain GAS
+// ?cmd=signup link. Both carry the PAX's session guid pre-installed (when known), so the very
 // first tap lands them straight in the app already identified — see CheckinSessions.js.
 function buildCheckinEmailLinks_(webAppBaseUrl, checkinSessionGuid) {
   if (!webAppBaseUrl) return { checkinUrl: '', editGoalsUrl: '' };
   var idSuffix = checkinSessionGuid ? ('&id=' + encodeURIComponent(checkinSessionGuid)) : '';
+  var staticCheckinUrl = buildStaticCheckinUrl_ ? buildStaticCheckinUrl_(webAppBaseUrl, { id: checkinSessionGuid }) : '';
   return {
-    checkinUrl: webAppBaseUrl + '?cmd=checkin' + idSuffix,
+    checkinUrl: staticCheckinUrl || (webAppBaseUrl + '?cmd=checkin' + idSuffix),
     editGoalsUrl: webAppBaseUrl + '?cmd=signup' + idSuffix
   };
 }

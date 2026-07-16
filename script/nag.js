@@ -22,6 +22,8 @@ var sanitizeEmailDisplayName_ = (nagUtilitiesModule_ && nagUtilitiesModule_.sani
   || (typeof globalThis !== 'undefined' && globalThis.sanitizeEmailDisplayName_);
 var resolveWebAppBaseUrl_ = (nagUtilitiesModule_ && nagUtilitiesModule_.resolveWebAppBaseUrl_)
   || (typeof globalThis !== 'undefined' && globalThis.resolveWebAppBaseUrl_);
+var buildStaticCheckinUrl_ = (nagUtilitiesModule_ && nagUtilitiesModule_.buildStaticCheckinUrl_)
+  || (typeof globalThis !== 'undefined' && globalThis.buildStaticCheckinUrl_);
 var nagResponseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./response_utils.js')
   : null;
@@ -127,7 +129,10 @@ function renderReminderEmailHtmlFallback_(options) {
     var goal = member.who ? (' - goal: ' + escapeHtmlForEmail_(member.who)) : '';
     return '<li><strong>' + escapeHtmlForEmail_(member.name) + '</strong>' + goal + '</li>';
   }).join('');
-  var checkinUrl = (resolveWebAppBaseUrl_ && resolveWebAppBaseUrl_()) ? resolveWebAppBaseUrl_() + '?cmd=checkin' : '';
+  var nagWebAppBaseUrl = resolveWebAppBaseUrl_ ? resolveWebAppBaseUrl_() : '';
+  var checkinUrl = nagWebAppBaseUrl
+    ? ((buildStaticCheckinUrl_ && buildStaticCheckinUrl_(nagWebAppBaseUrl)) || (nagWebAppBaseUrl + '?cmd=checkin'))
+    : '';
   var trackerUrl = escapeHtmlForEmail_(options.trackerUrl);
 
   var ctaBlock = checkinUrl
@@ -161,7 +166,9 @@ function renderReminderEmailHtml_(options) {
   template.teamName = options.teamName;
   template.targetDateString = options.targetDateString;
   template.trackerUrl = options.trackerUrl;
-  template.checkinUrl = webAppBaseUrl ? webAppBaseUrl + '?cmd=checkin' : '';
+  template.checkinUrl = webAppBaseUrl
+    ? ((buildStaticCheckinUrl_ && buildStaticCheckinUrl_(webAppBaseUrl)) || (webAppBaseUrl + '?cmd=checkin'))
+    : '';
   template.funFact = options.funFact;
   template.missing = options.missing || [];
   template.appVersion = typeof APP_VERSION !== 'undefined' ? APP_VERSION : '';
@@ -187,11 +194,14 @@ function buildReminderEmailTemplate_(options) {
   bodyLines.push('');
 
   var webAppBaseUrl = resolveWebAppBaseUrl_ ? resolveWebAppBaseUrl_() : '';
-  if (webAppBaseUrl) {
+  var plainCheckinUrl = webAppBaseUrl
+    ? ((buildStaticCheckinUrl_ && buildStaticCheckinUrl_(webAppBaseUrl)) || (webAppBaseUrl + '?cmd=checkin'))
+    : '';
+  if (plainCheckinUrl) {
     bodyLines.push('The quickest way to log your Daily Challenge is the Go30 check-in page. Enter your');
     bodyLines.push('F3 name once, then bookmark it (or Add to Home Screen) - it will remember you, so');
     bodyLines.push('you never have to type your name again:');
-    bodyLines.push(webAppBaseUrl + '?cmd=checkin');
+    bodyLines.push(plainCheckinUrl);
     bodyLines.push('');
     bodyLines.push('Prefer the older sheet interface? You can still open the Tracker sheet directly:');
     bodyLines.push(options.trackerUrl);

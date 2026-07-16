@@ -50,7 +50,11 @@ function renderHomePage_(e) {
 
   var template = HtmlService.createTemplateFromFile('HomeApp');
   template.signupUrl = webAppUrl + '?cmd=signup';
-  template.checkinUrl = webAppUrl + '?cmd=checkin';
+  // Opens the static check-in front end wrapping this webapp as its API backend, rather than
+  // the GAS ?cmd=checkin page directly (see buildStaticCheckinUrl_, Utilities.js) — falls back
+  // to the GAS page if the static host isn't configured (e.g. Node tests).
+  template.checkinUrl = (typeof buildStaticCheckinUrl_ === 'function' && buildStaticCheckinUrl_(webAppUrl))
+    || (webAppUrl + '?cmd=checkin');
   template.trackerUrl = (months.current && months.current.trackerUrl) || '';
   template.monthLabel = (months.current && months.current.label) || '';
   // See renderCheckinPage_'s comment (dashboardWebapp.js) — addMetaTag is required for the
@@ -74,7 +78,17 @@ function renderSignupPage_(e) {
   var months = getCurrentAndNextMonths_(spreadsheet, undefined, urlContextDate);
 
   var template = HtmlService.createTemplateFromFile('SignupApp');
-  template.webAppUrl = JSON.stringify(ScriptApp.getService().getUrl());
+  var signupWebAppUrl = ScriptApp.getService().getUrl();
+  template.webAppUrl = JSON.stringify(signupWebAppUrl);
+  // Static check-in front end base (no id yet — SignupApp.html appends its own &id= once one
+  // is known, exactly like it already does for the GAS fallback URL). '' if unconfigured (e.g.
+  // Node tests), in which case SignupApp.html falls back to the GAS ?cmd=checkin page itself.
+  template.staticCheckinBaseUrlJson = JSON.stringify(
+    (typeof buildStaticCheckinUrl_ === 'function' && buildStaticCheckinUrl_(signupWebAppUrl, {
+      ns: (e && e.parameter && e.parameter.ns) || undefined,
+      contextDate: urlContextDate || undefined,
+    })) || ''
+  );
   template.aoListJson = JSON.stringify(lists.aoList);
   template.goalListJson = JSON.stringify(lists.goalList);
   // Only current/next are ever meant for the client — getCurrentAndNextMonths_ also returns

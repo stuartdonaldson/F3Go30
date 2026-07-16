@@ -33,7 +33,7 @@ carries you on the days motivation doesn't.
 ## Your Daily Mission
 
 Each day scores one of three ways: **Hit** (`1`) if you did it, **Miss** (`0`) if you didn't, or
-**No-report** (`−1`) if you forget to check in — so it always pays to report, even a miss.
+**Failed to report** (`−1`) if you forget to check in — so it always pays to report, even a miss.
 
 1. **Choose your challenge** — small, specific, actionable (e.g. 15 minutes of stretching, daily
    journaling). It should be easy to score as a plain hit or miss.
