@@ -467,6 +467,12 @@
   // (renderCheckinPageForTypedIdentify_, dashboardWebapp.js) — the identify result is already
   // resolved server-side, so there's no async callApi() round trip needed on load for this case.
   var TYPED_IDENTIFY_RESULT = <?!= typedIdentifyResultJson ?>;
+  // Set when this page's own ?id=<token> was resolved server-side inside the same doGet
+  // (renderCheckinPage_, dashboardWebapp.js, F3Go30-5nfj.1) — same idea as TYPED_IDENTIFY_RESULT,
+  // extended to the saved-link path: no async callApi('identify', {token}) round trip needed on
+  // load. SAVED_IDENTITY_TOKEN is always null whenever this is set (see that function's gotcha
+  // comment), so the two branches below are mutually exclusive in practice.
+  var TOKEN_IDENTIFY_RESULT = <?!= tokenIdentifyResultJson ?>;
   var BONUS_TYPE_RULES_ = <?!= bonusTypesJson ?>;
   var SITE_Q_NAME = <?!= JSON.stringify(siteQName) ?>;
   var SITE_Q_EMAIL = <?!= JSON.stringify(siteQEmail) ?>;
@@ -696,6 +702,35 @@
     }
   }, 0);
 
+  // Present when this page's own ?id=<token> was resolved server-side inside the same doGet
+  // (F3Go30-5nfj.1) — the identify result is already resolved, so there's no async
+  // callApi('identify', {token}) round trip needed on load for this case. tokenInvalid
+  // (stale/purged/tampered/roster-changed link) and a plain miss both fall through to the
+  // normal blank identify form silently, with no error text, exactly like the async path below
+  // did. knownPaxNotRegistered carries the PAX straight into signup, same as the async path.
+  // Deferred via setTimeout(0) for the same reason as TYPED_IDENTIFY_RESULT above — keeps this
+  // branch's timing consistent with the (now rarely reached) async SAVED_IDENTITY_TOKEN path.
+  if (TOKEN_IDENTIFY_RESULT) setTimeout(function() {
+    if (TOKEN_IDENTIFY_RESULT.matched) {
+      applyIdentifySuccess_(TOKEN_IDENTIFY_RESULT);
+    } else if (TOKEN_IDENTIFY_RESULT.knownPaxNotRegistered) {
+      // Same known-but-unregistered fallthrough as TYPED_IDENTIFY_RESULT's above (F3Go30-xj1q.1).
+      saveIdentityToStorage_(TOKEN_IDENTIFY_RESULT.f3Name, TOKEN_IDENTIFY_RESULT.email);
+      var signupUrl = signupDeepLinkUrl_('current');
+      $('signupRedirectAnchor').href = signupUrl;
+      $('step-identify').classList.add('hidden');
+      $('step-tokenLoading').classList.remove('hidden');
+      attemptTopRedirect_(signupUrl, function() {
+        $('step-tokenLoading').classList.add('hidden');
+        $('step-signupRedirect').classList.remove('hidden');
+      });
+    } else {
+      // tokenInvalid or a plain not-matched miss: fall back to the blank identify form, no
+      // error text — the PAX didn't type anything wrong, their saved link just stopped working.
+      $('step-identify').classList.remove('hidden');
+    }
+  }, 0);
+
   // A saved-link token (?id=..., see CheckinSessions.js — still falls back to a pre-2026-07
   // signed IdentityToken.js token if that's what this bookmark happens to carry) bypasses the
   // identify form entirely — tokenInvalid (stale/purged/tampered/roster-changed link) falls
@@ -704,7 +739,11 @@
   // token round-trip is in flight,
   // rather than flashing the (localStorage-prefilled) identify form first — the identify step
   // is visible by default in the static HTML, and the token check is an async server call.
-  if (SAVED_IDENTITY_TOKEN) {
+  // Only reached when TOKEN_IDENTIFY_RESULT is absent — renderCheckinPage_ (dashboardWebapp.js)
+  // now resolves ?id=<token> synchronously into TOKEN_IDENTIFY_RESULT above, so
+  // SAVED_IDENTITY_TOKEN is always null whenever a token was present; this path only remains
+  // as a defensive fallback.
+  if (!TOKEN_IDENTIFY_RESULT && SAVED_IDENTITY_TOKEN) {
     $('step-identify').classList.add('hidden');
     $('step-tokenLoading').classList.remove('hidden');
     callApi('identify', { token: SAVED_IDENTITY_TOKEN })

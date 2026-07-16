@@ -377,8 +377,13 @@ var CHECKIN_PAGE_FAVICON_URL_ = 'https://raw.githubusercontent.com/stuartdonalds
  * @param {?string} contextDate The request's raw contextDate value (F3Go30-31w5.1), templated
  *   in for the same reason as ns — lets a developer pin a whole check-in session to one test
  *   date for month-boundary fallback testing.
+ * @param {?Object} tokenIdentifyResult The exact object handleCheckinIdentify_ returns for a
+ *   saved-link `id` token resolved server-side inside this same doGet (F3Go30-5nfj.1), or null
+ *   for a fresh visit with no token. Same gotcha as typedIdentifyResult: callers must pass
+ *   savedToken as null whenever this is given, or the client's async SAVED_IDENTITY_TOKEN
+ *   branch re-fires identify(token) in parallel and clobbers this baked-in result.
  */
-function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spreadsheet, ns, contextDate) {
+function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spreadsheet, ns, contextDate, tokenIdentifyResult) {
   var template = HtmlService.createTemplateFromFile('CheckinApp');
   var webAppUrl = ScriptApp.getService().getUrl();
   template.webAppUrl = JSON.stringify(webAppUrl);
@@ -387,6 +392,7 @@ function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spre
   template.appVersion = APP_VERSION;
   template.savedIdentityTokenJson = JSON.stringify(savedToken || null);
   template.typedIdentifyResultJson = JSON.stringify(typedIdentifyResult || null);
+  template.tokenIdentifyResultJson = JSON.stringify(tokenIdentifyResult || null);
   template.urlNsJson = JSON.stringify(ns || null);
   template.urlContextDateJson = JSON.stringify(contextDate || null);
   template.bonusTypesJson = JSON.stringify(bonusTypeClientRules_dw_());
@@ -404,6 +410,7 @@ function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spre
   // resolveCheckinToken_dw_ here, since that opens the CheckinSessions sheet and would put the
   // spreadsheet open right back on this first-paint path.
   var titleF3Name = (typedIdentifyResult && typedIdentifyResult.f3Name) ||
+    (tokenIdentifyResult && tokenIdentifyResult.f3Name) ||
     (savedToken && getCachedCheckinSessionTitle_dw_(savedToken));
   var pageTitle = titleF3Name ? (nameSpace + ': ' + titleF3Name) : nameSpace;
   // HtmlService serves this inside an IFRAME-sandboxed wrapper that does not honor a
@@ -416,6 +423,14 @@ function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spre
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
+/**
+ * Serves the cmd=checkin page for a plain doGet, optionally carrying a saved-link `id` token
+ * (F3Go30-5nfj.1). When `id` is present, resolves it via handleCheckinIdentify_ synchronously
+ * and bakes the result into the page render exactly like renderCheckinPageForTypedIdentify_
+ * does for a typed-identify POST — this is what lets doGet return an already-populated
+ * check-in page instead of an empty shell that the client then has to identify(token) against
+ * over a second /exec round trip.
+ */
 function renderCheckinPage_(e) {
   var savedToken = (e && e.parameter && e.parameter.id) || null;
   // A fresh visit (no incoming id) still needs a guid to bake into the identify form's action
@@ -425,7 +440,17 @@ function renderCheckinPage_(e) {
   var formGuid = savedToken || Utilities.getUuid();
   var ns = (e && e.parameter && e.parameter.ns) || null;
   var contextDate = (e && e.parameter && e.parameter.contextDate) || null;
-  return buildCheckinPageOutput_(savedToken, null, formGuid, resolveTemplateSpreadsheet_(e), ns, contextDate);
+  var spreadsheet = resolveTemplateSpreadsheet_(e);
+  var tokenResult = savedToken
+    ? handleCheckinIdentify_(spreadsheet, { token: savedToken, contextDate: contextDate })
+    : null;
+  // savedToken (1st arg) is deliberately null whenever tokenResult is baked in — passing it
+  // too would also make the client's SAVED_IDENTITY_TOKEN branch fire, re-running an async
+  // identify(token) call in parallel with TOKEN_IDENTIFY_RESULT's own handling and clobbering
+  // it once that second call resolves (same documented gotcha as
+  // renderCheckinPageForTypedIdentify_ below). The guid still reaches the client via
+  // tokenResult.identityToken.
+  return buildCheckinPageOutput_(null, null, formGuid, spreadsheet, ns, contextDate, tokenResult);
 }
 
 /**
