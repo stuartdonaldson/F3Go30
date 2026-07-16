@@ -293,6 +293,21 @@ function deploy(targetKey, options = {}) {
       cwd: ROOT,
     });
   }
+
+  // The static check-in front end (static-pages/) shares this same package.json version/build
+  // counter (build-static-pages.js's versionStringFor) — publish it as part of the same
+  // deploy rather than as a separate step, so the two spaces never drift out of sync (a
+  // static-only publish that skipped this would either reuse a stale build stamp or need its
+  // own bump of the same counter, double-counting against the next real deploy). --skip-bump
+  // here because deploy() already bumped/reset the counter above; publishStaticPages_ just
+  // builds+publishes whatever package.json now says. test (SIT) publishes the sit/ bundle only;
+  // template (PROD) publishes the prod/ bundle only — matches which script project was pushed.
+  const staticEnv = targetKey === 'template' ? 'prod' : 'sit';
+  console.log(`\n📄 Publishing static pages (${staticEnv})…\n`);
+  execSync(
+    `node ${path.join(__dirname, 'publish-static-pages.js')} --env ${staticEnv} --skip-bump`,
+    { stdio: 'inherit', cwd: ROOT }
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────

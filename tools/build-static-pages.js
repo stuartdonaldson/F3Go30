@@ -23,6 +23,7 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const SRC_PATH = path.join(ROOT, 'static-pages', 'src', 'index.html');
+const ASSETS_SRC_DIR = path.join(ROOT, 'static-pages', 'src', 'assets');
 const DIST_ROOT = path.join(ROOT, 'static-pages', 'dist');
 const PKG_PATH = path.join(ROOT, 'package.json');
 
@@ -47,6 +48,12 @@ function buildOne(env) {
   // Small companion file the GAS About dialog fetches (UrlFetchApp) to show the live static
   // page's own build stamp alongside APP_VERSION — see script/onOpen.js's showAbout().
   fs.writeFileSync(path.join(outDir, 'version.json'), JSON.stringify({ version: versionString }), 'utf8');
+  // Static assets (currently just the favicon) — copied as-is, no stamping.
+  const assetsOutDir = path.join(outDir, 'assets');
+  fs.mkdirSync(assetsOutDir, { recursive: true });
+  for (const entry of fs.readdirSync(ASSETS_SRC_DIR)) {
+    fs.copyFileSync(path.join(ASSETS_SRC_DIR, entry), path.join(assetsOutDir, entry));
+  }
   console.log(`built static-pages/dist/${env}/index.html (v${versionString})`);
 }
 

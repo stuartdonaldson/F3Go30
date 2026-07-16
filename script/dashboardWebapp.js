@@ -332,12 +332,14 @@ function buildRollingAverageWithLookback_(dayValues, windowSize, priorMonthTailV
 // verified against the live TEST_APP deployment, same boundary as signupWebapp.js).
 // ─────────────────────────────────────────────────────────────────────────
 
-// Hosted from the public GitHub repo (raw.githubusercontent.com) rather than Apps Script itself
-// — HtmlService has no static asset hosting for binary files, clasp push only syncs .gs/.html/
+// Hosted from the f3go30/static-pages GitHub Pages repo rather than Apps Script itself —
+// HtmlService has no static asset hosting for binary files, clasp push only syncs .gs/.html/
 // manifest sources, and HtmlOutput.setFaviconUrl() explicitly requires an external URL (favicon
-// <link> tags written directly in an Apps Script HTML file are documented as ignored). Keep this
-// in sync with docs/references/Go30-Logo.png's committed path.
-var CHECKIN_PAGE_FAVICON_URL_ = 'https://raw.githubusercontent.com/stuartdonaldson/F3Go30/main/docs/references/Go30-Logo.png';
+// <link> tags written directly in an Apps Script HTML file are documented as ignored). Same PNG
+// the static check-in page uses as its own favicon (static-pages/src/assets/Go30-Logo.png,
+// tools/build-static-pages.js copies it alongside index.html) — consolidated onto one hosted
+// copy so this URL and the static page's favicon can't drift.
+var CHECKIN_PAGE_FAVICON_URL_ = 'https://f3go30.github.io/static-pages/dist/prod/assets/Go30-Logo.png';
 
 /**
  * Renders the cmd=checkin HTML page.

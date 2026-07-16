@@ -23,13 +23,25 @@ static-pages/
 placeholder in the source) with a version string in the same shape `script/version.js` gets
 stamped with — `<version>.<build>` for sit, bare `<version>` for prod — and writes each
 environment's copy (plus a small `version.json` the GAS About dialog reads) to its own `dist/`
-subfolder. The GitHub Pages workflow (`.github/workflows/pages.yml`) runs this build on every
-push to `main` that touches `src/`, then publishes both subfolders as one Pages site:
+subfolder.
 
-- SIT:  `https://stuartdonaldson.github.io/F3Go30/sit/`
-- PROD: `https://stuartdonaldson.github.io/F3Go30/prod/`
+Publishing lives in a sibling repo rather than this one, and is not a separate step you run by
+hand — `npm run deploy:sit` / `deploy:prod` (`tools/manage-deployments.js`) call
+`tools/publish-static-pages.js` automatically as their last step, once the GAS push itself has
+succeeded. It builds, then copies that target's env folder (`static-pages/dist/sit/` for a test
+deploy, `dist/prod/` for a template deploy) into the `f3go30/static-pages` repo's own
+`dist/<env>/` (local checkout path from `local.settings.json`'s `staticPagesRepoPath`, e.g.
+`../F3Static`), then commits and pushes from that repo — GitHub Pages serves straight from its
+`main` branch, so the push is what makes a build live:
 
-Never edit `dist/` directly — it's regenerated from `src/index.html` every publish. Local testing
+- SIT:  `https://f3go30.github.io/static-pages/dist/sit/`
+- PROD: `https://f3go30.github.io/static-pages/dist/prod/`
+
+The static page shares `package.json`'s version/build counter with the GAS webapp, so there's no
+supported path for publishing a static-only change independently of a deploy — see
+`tools/publish-static-pages.js`'s header comment for why (and the recovery-only case where you'd
+run it directly). Never edit `dist/` directly (in either repo) — it's regenerated from
+`src/index.html` every publish. Local testing
 (`tests/playwright/static-checkin.spec.js`) serves `src/index.html` directly (unbuilt — its
 `STATIC_BUILD_VERSION_` placeholder is `null`, which is a valid, fully-functional state; the page
 reconciles it with the live GAS-reported version on its first identify call regardless).
@@ -80,9 +92,11 @@ same principle as the GAS page's own `prefetchDashboard_`.
 
 ## Open decisions (not resolved by this issue)
 
-- **Static host.** Provisioned on GitHub Pages (2026-07-15), deployed via
-  `.github/workflows/pages.yml` (GitHub Actions "deploy from workflow" source, not a branch).
-  See "Layout / deploy process" above for the per-environment (`sit`/`prod`) URLs.
+- **Static host.** Provisioned on GitHub Pages (2026-07-15) via the `f3go30/static-pages` repo
+  (checked out locally as `../F3Static`), "deploy from a branch" source (`main`, root). Moved
+  out of this repo (2026-07-15) so publishing a static-page build doesn't require a push to
+  F3Go30's own `main`; `tools/publish-static-pages.js` pushes there instead. See "Layout / deploy
+  process" above for the per-environment (`sit`/`prod`) URLs.
 - **URL distribution to PAX.** Out of scope per the issue — `CheckinSessions`' saved-link minting
   and the email templates still point at the GAS `/exec` URL. Migrating them is a separate,
   later issue.

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Go30 Dashboard</title>
+<link rel="icon" type="image/png" href="assets/Go30-Logo.png">
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; min-height: 100vh; background: #f4f1ea; font-family: Arial, Helvetica, sans-serif; color: #2b2b2b; }
@@ -577,8 +578,14 @@
   }
 
   function updateHeaderIdentity_(f3Name, team, monthLabel) {
-    $('headerName').textContent = (NAME_SPACE || '') + ': ' + f3Name;
+    var title = (NAME_SPACE || '') + (f3Name ? ': ' + f3Name : '');
+    $('headerName').textContent = title;
     $('headerSub').textContent = team || '';
+    // No HtmlService sandbox iframe on this static page (unlike CheckinApp.html, see
+    // buildCheckinPageOutput_'s docstring, dashboardWebapp.js) — this document IS the
+    // top-level document, so a client-side document.title write reaches the browser tab
+    // directly instead of needing to be baked in server-side.
+    if (title) document.title = title;
   }
 
   /** Applies the site-config values from an identify response's `config` field — the static

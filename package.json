@@ -1,7 +1,7 @@
 {
   "name": "f3go30",
   "version": "2.3.16",
-  "build": 3,
+  "build": 7,
   "private": true,
   "scripts": {
     "push": "node tools/manage-deployments.js --deploy-template",
@@ -15,8 +15,7 @@
     "test:gaslogger": "npx playwright test tests/playwright/gaslogger.spec.js",
     "test:identity-token": "npx playwright test tests/playwright/identity-token-flow.spec.js",
     "demo:screenshots": "npx playwright test tests/playwright/demo-screenshots.spec.js --headed",
-    "auth": "node authenticate.js",
-    "build:static-pages": "node tools/build-static-pages.js"
+    "auth": "node authenticate.js"
   },
   "devDependencies": {
     "@inquirer/prompts": "^7.5.2",
