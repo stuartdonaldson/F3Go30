@@ -1081,6 +1081,47 @@ function makeLeanIdentityResponsesSheet_(rows) {
   delete global.SpreadsheetApp;
 })();
 
+// resolveCheckinIdentityLean_(..., needGoals=false) — checkin-submit's fallback and bonus both
+// resolve identity/write without ever consuming goals/emailMismatch (F3Go30-o39s.9 audit, F9), so
+// passing needGoals=false must skip the per-PAX Responses row fetch entirely (no rows-read, no
+// PaxCache 'responses' row write) while still resolving matched/trackerRow via the Responses
+// match + Tracker lookup, same as the needGoals=true path.
+(function testResolveCheckinIdentityLeanNeedGoalsFalseSkipsResponsesRowRead() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
+  var monthInfo = { sheetId: 'sheet-needgoals', trackerUrl: 'https://x/needgoals', label: 'July 2026', startDate: new Date(2026, 6, 1) };
+  var responsesRow = ['', 'bonus@x.com', 'Yes', 'BonusPax', '', 'Crucible', '', 'Who', 'What', 'How', '', '', ''];
+  var responsesSheetInstance = makeLeanIdentityResponsesSheet_([responsesRow]);
+  installCountingSpreadsheetApp_({
+    'sheet-needgoals': {
+      getSheetByName: function(n) {
+        if (n === 'Responses') return responsesSheetInstance;
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 6, 1), new Date(2026, 6, 2)],
+            [['BonusPax', 'Crucible', '', '', '', '', 5, 0.5, 1, '']]
+          );
+        }
+        return null;
+      },
+    },
+  });
+
+  var identity = resolveCheckinIdentityLean_(monthInfo, 'BonusPax', 'bonus@x.com', null, false);
+  assert.equal(identity.matched, true);
+  assert.equal(identity.trackerRow[0], 'BonusPax', 'Tracker resolution still happens without goals');
+  assert.equal(identity.goals, undefined, 'goals omitted when needGoals=false');
+  assert.equal(identity.emailMismatch, undefined, 'emailMismatch omitted when needGoals=false');
+  // 1 read = the roster-index build (needed for matching); the per-PAX row fetch that
+  // needGoals=true would additionally pay for never happens.
+  assert.equal(responsesSheetInstance._readCount.rows, 1, 'only the roster-index read happens; the per-PAX Responses row fetch is skipped when needGoals=false');
+
+  delete global.SpreadsheetApp;
+})();
+
 // resolveFullIdentityFromHandle_ — full cache hit never calls SpreadsheetApp.openById either.
 (function testFullFromHandleFullCacheHitNeverOpens() {
   installFakePropertiesStore_();

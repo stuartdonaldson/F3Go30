@@ -174,6 +174,42 @@ handle). `resolveCheckinIdentityLean_` (`dashboardWebapp.js:762-772`) reads the
 layout unconditionally — verify each caller actually needs it, and skip on a
 handle fast-path where it doesn't. → **C8**.
 
+#### C8 findings (F3Go30-o39s.9)
+
+Traced every caller that reaches `resolveCheckinIdentityLean_`/`resolveCheckinIdentity_`:
+
+| Caller | Consumes `goals`/`email`? | Path before this fix |
+|---|---|---|
+| `handleCheckinIdentify_` → `resolveCheckinIdentity_` | Yes — surfaces `goals` and `emailMismatch` to the client. | Reads Responses layout + per-PAX row. Load-bearing, unchanged. |
+| `handleCheckinSubmit_` fast path → `resolveLeanIdentityFromHandle_` | No — reads only the Tracker row/day column. | Already skips Responses **entirely** (no layout read, no match) — fixed by F3Go30-440b.6/qi26.1 before this issue. No change needed. |
+| `handleCheckinSubmit_` no-handle fallback → `resolveCheckinIdentity_` | No — same as above, never touches `identity.goals`/`identity.emailMismatch`. | Was paying for the full Responses layout read + per-PAX row fetch + WHO/WHAT/HOW/EMAIL extraction just to reach `matched`/`trackerRow`. **Fixed here.** |
+| `resolveBonusSheet_` (bonus list/add/edit) → `resolveCheckinIdentityLean_` | No — only reads `identity.targetSs`/`identity.trackerRow`. | Same waste as the submit fallback. **Fixed here.** |
+
+Distinguishing the two live reads that `resolveCheckinIdentityLean_` does against
+Responses:
+1. **Layout read** (`getResponsesLayout_`, cached under `go30dash:responsesLayout:`)
+   — a cheap 1-row header read, needed by every caller (including the two fixed
+   here) to resolve `columns` for the roster-index match. This is what actually
+   proves `matched` (the server-side re-derivation of identity a client-supplied
+   name can't be trusted to skip — see `resolveBonusSheet_`'s own header comment).
+   It cannot be skipped without changing that security property, so it stays
+   unconditional.
+2. **Per-PAX Responses row read** (a second, separate live read/PaxCache entry)
+   plus the WHO/WHAT/HOW/EMAIL extraction that follows it — this is *only* ever
+   used to build `identity.goals` and `identity.emailMismatch`. Neither
+   `handleCheckinSubmit_`'s fallback nor `resolveBonusSheet_` ever reads either
+   field.
+
+Fix: added a `needGoals` parameter (default `true`) to
+`resolveCheckinIdentityLean_`/`resolveCheckinIdentity_`. When `false`, the
+per-PAX Responses row fetch and the goals/email-mismatch computation are skipped
+entirely (`identity.goals`/`identity.emailMismatch` come back `undefined`), while
+`matched`/`trackerRow`/`targetSs` resolve exactly as before. `handleCheckinSubmit_`'s
+no-handle fallback and `resolveBonusSheet_` now pass `false`; `resolveCheckinIdentity_`
+(identify's only caller) keeps the default `true`. Covered by
+`testResolveCheckinIdentityLeanNeedGoalsFalseSkipsResponsesRowRead` in
+`test/test_dashboard_webapp.js`.
+
 ---
 
 ## Bead plan (dependency-ordered)

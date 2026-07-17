@@ -732,20 +732,29 @@ function buildTrackerValuesFromPaxCache_(sheetId) {
 }
 
 /**
- * Lean identity resolution for identify/checkin-submit — the two actions that only ever need
- * one PAX's own data, not the whole roster (contrast resolveCheckinIdentityFull_, used by the
+ * Lean identity resolution for identify/checkin-submit/bonus — actions that only ever need one
+ * PAX's own data, not the whole roster (contrast resolveCheckinIdentityFull_, used by the
  * dashboard's team/board view). Matches Responses by F3 Name alone (findSignupMatchByF3NameOnly_
  * — see file header on why email isn't a hard gate) via PaxCache's roster index, so a repeat
  * lookup for the same PAX resolves via a single-row read (or a cache hit) instead of scanning
- * every PAX's row. Never caches a name that isn't found (see PaxCache.js).
+ * every PAX's row. Never caches a name that isn't found (see PaxCache.js). The Responses match
+ * itself (existence check) is load-bearing for every caller — it's the server-side re-derivation
+ * of identity a client-supplied name can't be trusted to skip (see resolveBonusSheet_'s header) —
+ * so it always runs; only the goals/email extraction below it is conditional.
  * Lazy about SpreadsheetApp.openById() (F3Go30-440b.6): on a full cache hit — Responses layout,
  * Tracker layout, roster index, and per-PAX row all already warm — the spreadsheet is never
  * opened at all. targetSs in the returned object is the lazy wrapper (call .get() to force an
  * open), not a raw Spreadsheet, so a caller that never touches it (identify) never pays for one.
+ * @param {boolean=} needGoals Default true. identify is the only caller that surfaces
+ *   goals (WHO/WHAT/HOW) or emailMismatch to the client — checkin-submit's fallback path and
+ *   bonus (resolveBonusSheet_) use neither (F3Go30-o39s.9 audit, F9), so passing false skips the
+ *   per-PAX Responses row fetch + WHO/WHAT/HOW/EMAIL extraction entirely once the Responses match
+ *   itself has confirmed `matched`.
  * @returns {{matched:boolean, emailMismatch?:boolean, months:Object, monthInfo:Object,
  *   targetSs:Object, row2:Array, row3:Array, trackerRow:Array, trackerRowIndex:number}}
  */
-function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
+function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months, needGoals) {
+  if (needGoals === undefined) needGoals = true;
   var t0 = Date.now();
   var lazySs = makeLazySpreadsheet_dw_(monthInfo.sheetId);
 
@@ -781,20 +790,29 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
     return { matched: false, months: months };
   }
 
-  var responsesRow = getPaxCacheRow_dw_('responses', monthInfo.sheetId, f3Name);
-  if (!responsesRow) {
-    var rs2 = responsesSheet_();
-    responsesRow = rs2.getRange(responsesRowIndex + 2, 1, 1, rs2.getLastColumn()).getValues()[0];
-    setPaxCacheRow_dw_('responses', monthInfo.sheetId, f3Name, responsesRow);
+  // The per-PAX Responses row itself (as opposed to the match above, which only proves
+  // existence) backs nothing but goals (WHO/WHAT/HOW) and the registered-email mismatch check —
+  // skip fetching/caching it for a caller that surfaces neither (F3Go30-o39s.9 audit, F9).
+  var responsesRow = null;
+  if (needGoals) {
+    responsesRow = getPaxCacheRow_dw_('responses', monthInfo.sheetId, f3Name);
+    if (!responsesRow) {
+      var rs2 = responsesSheet_();
+      responsesRow = rs2.getRange(responsesRowIndex + 2, 1, 1, rs2.getLastColumn()).getValues()[0];
+      setPaxCacheRow_dw_('responses', monthInfo.sheetId, f3Name, responsesRow);
+    }
   }
   var responsesMs = Date.now() - t1;
 
-  var registeredEmail = String(
-    responsesLayout.headers && typeof getResponseEmailValue_dw_ === 'function'
-      ? getResponseEmailValue_dw_(responsesRow, columns, responsesLayout.headers)
-      : responsesRow[columns.EMAIL]
-  ).trim().toLowerCase();
-  var emailMismatch = registeredEmail !== String(email || '').trim().toLowerCase();
+  var emailMismatch;
+  if (needGoals) {
+    var registeredEmail = String(
+      responsesLayout.headers && typeof getResponseEmailValue_dw_ === 'function'
+        ? getResponseEmailValue_dw_(responsesRow, columns, responsesLayout.headers)
+        : responsesRow[columns.EMAIL]
+    ).trim().toLowerCase();
+    emailMismatch = registeredEmail !== String(email || '').trim().toLowerCase();
+  }
 
   var t2 = Date.now();
   var trackerLayout = getCachedTrackerLayoutOnly_(monthInfo.sheetId);
@@ -839,11 +857,11 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
     row3: trackerLayout.row3,
     trackerRow: trackerRow,
     trackerRowIndex: trackerRowIndex,
-    goals: {
+    goals: needGoals ? {
       who: responsesRow[columns.WHO] || '',
       what: responsesRow[columns.WHAT] || '',
       how: responsesRow[columns.HOW] || '',
-    },
+    } : undefined,
   };
 }
 
@@ -858,14 +876,16 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
  * @param {string=} contextDateOverride Per-request contextDate override (F3Go30-31w5.1) — must
  *   be threaded through to getCurrentAndNextMonths_dw_ so "current month" for identify itself
  *   honors the pinned test date, not just the day/yesterday arithmetic layered on top of it.
+ * @param {boolean=} needGoals See resolveCheckinIdentityLean_ — default true (identify's own
+ *   need); handleCheckinSubmit_'s no-handle fallback passes false (F3Go30-o39s.9 audit, F9).
  */
-function resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, targetMonth, targetSheetId, contextDateOverride) {
+function resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, targetMonth, targetSheetId, contextDateOverride, needGoals) {
   var t0 = Date.now();
   var months = getCurrentAndNextMonths_dw_(templateSpreadsheet, targetSheetId, contextDateOverride);
   GasLogger.log('checkinWebapp.resolveMonths.timing', { durationMs: Date.now() - t0 });
   var monthInfo = selectTargetMonth_dw_(months, targetMonth);
   if (!monthInfo) return { matched: false, months: months };
-  return resolveCheckinIdentityLean_(monthInfo, f3Name, email, months);
+  return resolveCheckinIdentityLean_(monthInfo, f3Name, email, months, needGoals);
 }
 
 /**
@@ -1607,7 +1627,10 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
   // which month this identity is anchored to.
   var identity = payload.resolvedContext ? resolveLeanIdentityFromHandle_(payload.resolvedContext) : null;
   if (!identity) {
-    identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth, payload.targetSheetId, payload.contextDate);
+    // needGoals=false: submit never reads identity.goals/emailMismatch (only the tracker row/day
+    // column below), so this fallback skips the per-PAX Responses row fetch entirely
+    // (F3Go30-o39s.9 audit, F9).
+    identity = resolveCheckinIdentity_(templateSpreadsheet, payload.f3Name, payload.email, payload.targetMonth, payload.targetSheetId, payload.contextDate, false);
   }
   if (!identity.matched) return { ok: false, error: 'not_found' };
 
@@ -1674,7 +1697,9 @@ function resolveBonusSheet_(templateSpreadsheet, payload, dateIso) {
   // correct namespace tracker id downstream, so identity/write steps need no ns awareness.
   var monthInfo = resolveDashboardMonth_(targetDate, templateSpreadsheet);
   if (!monthInfo) return { error: 'not_found' };
-  var identity = resolveCheckinIdentityLean_(monthInfo, payload.f3Name, payload.email, null);
+  // needGoals=false: bonus consumes only identity.targetSs/trackerRow below, never
+  // goals/emailMismatch (F3Go30-o39s.9 audit, F9) — skips the per-PAX Responses row fetch.
+  var identity = resolveCheckinIdentityLean_(monthInfo, payload.f3Name, payload.email, null, false);
   if (!identity.matched) return { error: 'not_found' };
   var bonusSheet = identity.targetSs.get().getSheetByName('Bonus Tracker');
   if (!bonusSheet) return { error: 'bonus_sheet_not_found' };
