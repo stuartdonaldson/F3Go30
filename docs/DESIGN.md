@@ -113,6 +113,47 @@ Two logging channels serve different execution contexts:
 `NoticeLog()` mirrors to `Logger.log()` (HTML-stripped) regardless of sidebar state. Functions
 that cannot guarantee a sidebar context must call `Logger.log()` directly.
 
+### Caching
+
+Freshness for every cache touching PAX/token data is driven by exactly **two**
+mechanisms (ADR-016): **write-through** (every write this system performs —
+webapp-driven and server-side/script-driven alike — patches or invalidates the
+affected cache at the point of write) and **installable `onEdit`** (catches the
+one thing write-through cannot see: a human editing `Tracker`, `Responses`, or
+`Bonus Tracker` directly in the Sheets UI). The Drive-modtime poll
+(`ensurePaxCacheFresh_`) is retired from the read path once these two
+mechanisms cover every writer — it existed only to backstop staleness sources
+the two mechanisms now own explicitly. See ADR-016 for the full rationale and
+the accepted residual risk (a manual edit made in the window before `onEdit`
+fires).
+
+Ten caches make up the PAX/token-data caching surface today (from
+`docs/staging/caching-consolidation-review.md`; the poll and `asOf` marker
+rows are transitional and are removed once ADR-016's prerequisites land):
+
+| # | Cache | Backing store | Granularity | Populated by | Invalidated by |
+|---|-------|---------------|-------------|--------------|----------------|
+| 1 | PaxCache per-PAX row (`kind=tracker`) | PropertiesService `go30pax:` | one PAX row | identity/full reads, check-in write-through | write-through patch; poll wipe; onEdit wipe; nightly purge |
+| 2 | PaxCache per-PAX row (`kind=responses`) | PropertiesService `go30pax:` | one PAX row | identity/full reads | signup delete; poll wipe; onEdit wipe; nightly purge |
+| 3 | PaxCache roster index | PropertiesService `go30idx:` | one map/sheet | roster rebuild, bulk write | signup patch; poll wipe; onEdit wipe |
+| 4 | PaxCache asOf marker | PropertiesService `go30asof:` | one ts/sheet | poll + `markPaxCacheFreshNow_` | — (exists only to serve the poll; removed post-retirement, ADR-016) |
+| 5 | Tracker layout (row2/row3) | CacheService `go30dash:trackerLayout:` | one/sheet | `getTrackerLayout_` | TTL only (21600s); poll/onEdit wipe |
+| 6 | Responses layout (header+cols) | CacheService `go30dash:responsesLayout:` | one/sheet | `getResponsesLayout_` | TTL only; poll/onEdit wipe |
+| 7 | Tracker full-roster values | CacheService `go30dash:trackerValues:` | whole sheet | assembled from #1+#3 | `invalidateFullRosterCache_`; poll/onEdit wipe |
+| 8 | Responses full-roster values | CacheService `go30dash:responsesValues:` | whole sheet | full read | `invalidateFullRosterCache_`; poll/onEdit wipe |
+| 9 | Bonus entries (pill shape) | CacheService `go30dash:bonusEntries:` | whole sheet | `getAllBonusEntriesCached_` | `invalidateBonusEntriesCache_`; poll/onEdit wipe |
+| 10 | Bonus rows (client shape) | CacheService `go30dash:bonusRows:` | whole sheet | `getAllBonusRowsCached_` | `invalidateBonusEntriesCache_`; poll/onEdit wipe |
+
+Four invalidation vocabularies currently touch these ten caches
+(`invalidateFullRosterCache_`, `invalidateBonusEntriesCache_`,
+`wipePaxCacheForSheet_`, `wipePaxCacheAndRelatedCachesForSheet_`) plus TTL,
+plus the poll, plus onEdit, plus the nightly purge — the fragmentation
+ADR-016's two-mechanism model converges on. Until the poll-retirement
+prerequisites (onEdit covering all three sheets, write-through nightly sweep
+and form-submit signup, onEdit provisioned on every tracker including
+namespace copies) land, the poll and `asOf` marker (row 4) remain in place as
+an active backstop — see the epic tracked under F3Go30-o39s for sequencing.
+
 ## Decisions (short)
 
 - **PAX motivation data source (F3Go30-r1b) — DECIDED:** Use the `FunFacts` sheet as the motivation source. Reminder emails will include a randomly-selected entry from the `FunFacts` sheet when personalization is desired. This removes the need for an additional per-person profile submission for basic motivational text; code must implement a random-row selector and include the chosen text in the email payload.
