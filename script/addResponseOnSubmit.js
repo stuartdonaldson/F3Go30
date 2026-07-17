@@ -5,6 +5,33 @@ var addResponseResponseUtilsModule_ = (typeof module !== 'undefined' && module.e
   ? require('./response_utils.js')
   : null;
 
+// PaxCache write-through (F3Go30-o39s.4) — same require()/globalThis fallback pattern as
+// signupWebapp.js. This handler runs via the centralized onFormSubmit installable trigger
+// (ADR-010), so — like TrackerEditTrigger.js — it can reach the shared PaxCache store.
+var addResponsePaxCacheModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./PaxCache.js')
+  : null;
+var patchPaxRosterIndex_ars_ = (addResponsePaxCacheModule_ && addResponsePaxCacheModule_.patchPaxRosterIndex_)
+  || (typeof globalThis !== 'undefined' && globalThis.patchPaxRosterIndex_);
+var deletePaxCacheRow_ars_ = (addResponsePaxCacheModule_ && addResponsePaxCacheModule_.deletePaxCacheRow_)
+  || (typeof globalThis !== 'undefined' && globalThis.deletePaxCacheRow_);
+
+// Duplicated full-roster CacheService key prefixes (dashboardWebapp.js's trackerValuesCacheKey_/
+// responsesValuesCacheKey_) — same convention TrackerEditTrigger.js and PaxCache.js's
+// wipePaxCacheAndRelatedCachesForSheet_ already use to avoid a circular require (dashboardWebapp.js
+// requires signupWebapp.js, which requires this file). Keep in sync if either changes.
+var FULL_ROSTER_CACHE_PREFIX_TRACKER_ARS_ = 'go30dash:trackerValues:';
+var FULL_ROSTER_CACHE_PREFIX_RESPONSES_ARS_ = 'go30dash:responsesValues:';
+
+/** Drops the full-roster CacheService blobs (Tracker + Responses) for one tracker spreadsheet. */
+function invalidateFullRosterCachesForSheet_ars_(sheetId) {
+  try {
+    var cache = CacheService.getScriptCache();
+    cache.remove(FULL_ROSTER_CACHE_PREFIX_TRACKER_ARS_ + sheetId);
+    cache.remove(FULL_ROSTER_CACHE_PREFIX_RESPONSES_ARS_ + sheetId);
+  } catch (e) { /* best-effort */ }
+}
+
 // Old handler name — kept here so clearFormSubmitTrigger can remove stale triggers registered
 // before the handler was renamed. Safe to remove once all trackers have been re-triggered.
 var LEGACY_FORM_SUBMIT_HANDLER_ = 'onFormSubmit';
@@ -220,17 +247,29 @@ function onFormSubmitLocked_(e) {
   // Append the processed row to Responses (template column order) — Goals by HIM/AO read here.
   var f3Name = getResponseValue_(formResponses, responseColumns, 'F3_NAME');
   var appendedRowNumber = appendToResponsesSheet_(responsesSheet, formResponses, responseColumns);
+  var sheetId = sheet.getId();
+
+  // Write-through (F3Go30-o39s.4): patch the new Responses row straight into an already-cached
+  // roster index (no-op if nothing's cached yet — the next miss rebuilds from the sheet), and
+  // drop any stale per-PAX value cache under this name (Responses data starts row 2).
+  if (typeof patchPaxRosterIndex_ars_ === 'function') {
+    patchPaxRosterIndex_ars_('responses', sheetId, f3Name, appendedRowNumber - 2);
+  }
+  if (typeof deletePaxCacheRow_ars_ === 'function') {
+    deletePaxCacheRow_ars_('responses', sheetId, f3Name);
+  }
 
   // Phase 2 — Dedup Responses sheet using the just-appended row as the keeper.
   // Keyed on F3 Name (not email) per ADR-008 — allows a PAX to change their email address.
   GasLogger.log('formSubmit.dedupStart', { submittedRow: appendedRowNumber, f3Name: f3Name });
   var responsesColumns = resolveResponseColumns(responsesSheet);
-  deduplicateResponsesSheet_(responsesSheet, appendedRowNumber, f3Name, responsesColumns);
+  deduplicateResponsesSheet_(responsesSheet, appendedRowNumber, f3Name, responsesColumns, sheetId);
 
   // Phase 4 — Write to Tracker.
   var trackerLastRow = destinationSheet.getLastRow();
   if (trackerLastRow < 4) {
     GasLogger.log('formSubmit.trackerTooFewRows', { rows: trackerLastRow });
+    invalidateFullRosterCachesForSheet_ars_(sheetId);
     return;
   }
 
@@ -269,6 +308,12 @@ function onFormSubmitLocked_(e) {
       destinationSheet.getRangeList(clearRanges).clearContent();
     }
 
+    // Write-through (F3Go30-o39s.4): patch the new PAX straight into the Tracker roster index
+    // if one's already cached (Tracker data starts row 4 — same convention as resolvePaxRowIndex_).
+    if (typeof patchPaxRosterIndex_ars_ === 'function') {
+      patchPaxRosterIndex_ars_('tracker', sheetId, f3Name, nextRow - 4);
+    }
+
     // Re-read last row so the newly inserted row is included in the sort range.
     trackerLastRow = destinationSheet.getLastRow();
     GasLogger.log('formSubmit.processed', { row: nextRow });
@@ -276,6 +321,11 @@ function onFormSubmitLocked_(e) {
 
   // Phase 5 — Sort Tracker and log the activity.
   sortTrackerSheet_(destinationSheet);
+
+  // Drop the full-roster CacheService blobs (dashboardWebapp.js's Tracker/Responses whole-sheet
+  // reads) — this handler always writes at least a new Responses row, so the sheet's full-roster
+  // snapshot (if cached) is unconditionally stale by the time this runs.
+  invalidateFullRosterCachesForSheet_ars_(sheetId);
 
   logActivity('Response', f3Name);
 }
@@ -318,8 +368,12 @@ function removeDuplicateResponseRow_(responsesSheet, rowNumber, responseColumns)
  * Removes prior Responses rows whose F3 Name matches f3Name, keeping only submittedRowNumber.
  * Keyed on F3 Name per ADR-008. Rows are marked DELETED highest-row-first to avoid mutating
  * the linked form response sheet structure during submit handling; deleteRow is a fallback.
+ *
+ * sheetId is optional (omitted by existing standalone tests) — when provided, write-through
+ * invalidates this name's PaxCache responses entry (F3Go30-o39s.4) so a deduplicated/DELETED
+ * row's stale cached content can never outlive this call.
  */
-function deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, responseColumns) {
+function deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, responseColumns, sheetId) {
   if (!f3Name) return;
   var lastRow = responsesSheet.getLastRow();
   if (lastRow < 3) return; // header + submitted row only — nothing else to check
@@ -335,6 +389,10 @@ function deduplicateResponsesSheet_(responsesSheet, submittedRowNumber, f3Name, 
   for (var j = 0; j < toDelete.length; j++) {
     var action = removeDuplicateResponseRow_(responsesSheet, toDelete[j], responseColumns);
     GasLogger.log('formSubmit.responseDeduplicated', { removedRow: toDelete[j], keptRow: submittedRowNumber, action: action, f3Name: f3Name });
+  }
+
+  if (sheetId && toDelete.length > 0 && typeof deletePaxCacheRow_ars_ === 'function') {
+    deletePaxCacheRow_ars_('responses', sheetId, f3Name);
   }
 }
 

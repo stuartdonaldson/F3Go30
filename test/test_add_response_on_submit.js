@@ -32,6 +32,35 @@ global.getConfigValue_ = function() { return null; };
 global.logActivity = function() {};
 global._registrationConfirmationCalls = [];
 
+// PaxCache write-through (F3Go30-o39s.4) stubs — in-memory PropertiesService/CacheService/
+// LockService, same shape/behavior contract as test_pax_cache.js. DriveApp is deliberately left
+// undefined: ensurePaxCacheFresh_ fails open with no DriveApp global (its own documented
+// behavior), so a warmed roster index in these tests is never wiped out from under us.
+var fakePaxCacheProps_ = {};
+global.PropertiesService = {
+  getScriptProperties: function() {
+    return {
+      getProperty: function(key) { return Object.prototype.hasOwnProperty.call(fakePaxCacheProps_, key) ? fakePaxCacheProps_[key] : null; },
+      setProperty: function(key, value) { fakePaxCacheProps_[key] = value; },
+      deleteProperty: function(key) { delete fakePaxCacheProps_[key]; },
+      getKeys: function() { return Object.keys(fakePaxCacheProps_); },
+    };
+  },
+};
+global.LockService = {
+  getScriptLock: function() { return { waitLock: function() {}, releaseLock: function() {} }; },
+};
+var fakeScriptCacheStore_ = {};
+global.CacheService = {
+  getScriptCache: function() {
+    return {
+      get: function(key) { return Object.prototype.hasOwnProperty.call(fakeScriptCacheStore_, key) ? fakeScriptCacheStore_[key] : null; },
+      put: function(key, value) { fakeScriptCacheStore_[key] = value; },
+      remove: function(key) { delete fakeScriptCacheStore_[key]; },
+    };
+  },
+};
+
 const {
   findDuplicateResponseRows_,
   removeDuplicateResponseRow_,
@@ -39,8 +68,68 @@ const {
   getTrackerStartDate_,
   formatRegistrationMonth_,
   maybeSendRegistrationConfirmation_,
-  appendToResponsesSheet_
+  appendToResponsesSheet_,
+  onFormSubmitLocked_
 } = require('../script/addResponseOnSubmit.js');
+
+const {
+  setPaxRosterIndex_,
+  getPaxRosterIndex_,
+  resolvePaxRowIndex_,
+  getPaxCacheRow_,
+  setPaxCacheRow_,
+} = require('../script/PaxCache.js');
+
+// Minimal grid-backed Sheet stand-in: 1-based getRange(row, col, numRows, numCols) over a plain
+// 2D array, supporting the getValues/setValues/setValue/getFormulas/copyTo/sort surface that
+// onFormSubmitLocked_'s 5-phase pipeline exercises.
+function makeGridSheet_(initialRows) {
+  var data = initialRows.map(function(r) { return r.slice(); });
+  function range(row, col, numRows, numCols) {
+    numRows = numRows || 1; numCols = numCols || 1;
+    return {
+      getValues: function() {
+        var out = [];
+        for (var r = 0; r < numRows; r++) {
+          var srcRow = data[row - 1 + r] || [];
+          var rowArr = [];
+          for (var c = 0; c < numCols; c++) rowArr.push(srcRow[col - 1 + c] !== undefined ? srcRow[col - 1 + c] : '');
+          out.push(rowArr);
+        }
+        return out;
+      },
+      setValues: function(vals) {
+        for (var r = 0; r < vals.length; r++) {
+          while (data.length < row + r) data.push([]);
+          for (var c = 0; c < vals[r].length; c++) data[row - 1 + r][col - 1 + c] = vals[r][c];
+        }
+      },
+      setValue: function(v) {
+        while (data.length < row) data.push([]);
+        data[row - 1][col - 1] = v;
+      },
+      getFormulas: function() {
+        var out = [];
+        for (var r = 0; r < numRows; r++) {
+          var rowArr = [];
+          for (var c = 0; c < numCols; c++) rowArr.push('');
+          out.push(rowArr);
+        }
+        return out;
+      },
+      getA1Notation: function() { return 'R' + row + 'C' + col; },
+      copyTo: function(target) { target.setValues(this.getValues()); },
+      sort: function() { /* row order doesn't matter for these tests */ },
+    };
+  }
+  return {
+    getLastRow: function() { return data.length; },
+    getLastColumn: function() { return data.length ? data[0].length : 0; },
+    getRange: range,
+    getRangeList: function() { return { clearContent: function() {} }; },
+    appendRow: function(row) { data.push(row.slice()); },
+  };
+}
 
 // Helper: build a single-column values array as getRange().getValues() returns.
 function col(values) {
@@ -247,6 +336,99 @@ function col(values) {
   assert.equal(appended[0][2], 'Anchor',          'F3_NAME mapped to Responses col 2');
   assert.equal(appended[0][3], 'My Challenge',     'WHAT mapped to Responses col 3');
   assert.equal(appended[0][4], 'AO-Team',          'TEAM mapped to Responses col 4');
+}
+
+// F3Go30-o39s.4 — a Form-submit new signup must write-through into PaxCache so a warm-but-stale
+// roster index (predating this signup) doesn't mask the new PAX as "not found" (F4b).
+{
+  var sheetId = 'sheet-formsubmit-new';
+
+  var formSubmitSheet = makeGridSheet_([
+    ['F3 Name', 'Email Address', 'Are you currently participating in Go30?'],
+    ['Anchor', 'anchor@example.com', ''],
+  ]);
+  formSubmitSheet._headers = { F3_NAME: 0, EMAIL: 1, PARTICIPATION: 2 };
+
+  var responsesSheet = makeGridSheet_([
+    ['F3 Name', 'Email Address', 'Are you currently participating in Go30?'],
+    ['Sapper', 'sapper@example.com', 'Yes'],
+  ]);
+  responsesSheet._headers = { F3_NAME: 0, EMAIL: 1, PARTICIPATION: 2 };
+
+  var trackerSheet = makeGridSheet_([
+    ['Tracker', ''],
+    ['Sub', ''],
+    ['', ''], // row 3: no start date columns (lastColumn < 9) — skips the confirmation-email path
+    ['Sapper', 10],
+  ]);
+
+  var trackerSpreadsheet = {
+    getId: function() { return sheetId; },
+    getSheetByName: function(name) {
+      if (name === 'Responses') return responsesSheet;
+      if (name === 'Tracker') return trackerSheet;
+      return null;
+    },
+  };
+  formSubmitSheet.getParent = function() { return trackerSpreadsheet; };
+
+  var e = {
+    range: {
+      getSheet: function() { return formSubmitSheet; },
+      getRow: function() { return 2; },
+      getValues: function() { return [['Anchor', 'anchor@example.com', '']]; },
+    },
+  };
+
+  // Warm both roster indexes with an existing PAX only — 'Anchor' is deliberately absent,
+  // simulating a roster index that predates this signup.
+  setPaxRosterIndex_('responses', sheetId, { sapper: 0 });
+  setPaxRosterIndex_('tracker', sheetId, { sapper: 0 });
+  fakeScriptCacheStore_['go30dash:trackerValues:' + sheetId] = '[]';
+  fakeScriptCacheStore_['go30dash:responsesValues:' + sheetId] = '[]';
+
+  onFormSubmitLocked_(e);
+
+  var mustNotRebuild = function() { throw new Error('resolvePaxRowIndex_ should have hit the write-through-patched roster index, not rebuilt live'); };
+  assert.equal(
+    resolvePaxRowIndex_('responses', sheetId, 'Anchor', mustNotRebuild), 1,
+    'new Responses row is resolvable via the write-through-patched roster index (no false not_found)'
+  );
+  assert.equal(
+    resolvePaxRowIndex_('tracker', sheetId, 'Anchor', mustNotRebuild), 1,
+    'new Tracker row is resolvable via the write-through-patched roster index'
+  );
+  assert.equal(fakeScriptCacheStore_['go30dash:trackerValues:' + sheetId], undefined, 'full-roster Tracker CacheService blob invalidated');
+  assert.equal(fakeScriptCacheStore_['go30dash:responsesValues:' + sheetId], undefined, 'full-roster Responses CacheService blob invalidated');
+}
+
+// F3Go30-o39s.4 — the DELETED-marking path (dedup of a re-submitted PAX) must also invalidate
+// PaxCache so a stale cached row can never outlive the row it once described.
+{
+  var sheetId2 = 'sheet-formsubmit-dedup';
+
+  var responsesColumns = { F3_NAME: 0, EMAIL: 1, PARTICIPATION: 2 };
+  var responsesSheet2 = {
+    getLastRow: function() { return 3; },
+    getLastColumn: function() { return 3; },
+    getRange: function(row, column, numRows, numCols) {
+      if (column === 1 && numCols === 1 && numRows > 1) {
+        return { getValues: function() { return [['Anchor'], ['Anchor']]; } };
+      }
+      return { setValue: function() {} };
+    },
+  };
+
+  // A stale per-PAX value cache from before this resubmission.
+  setPaxCacheRow_('responses', sheetId2, 'Anchor', ['Anchor', 'old-email@example.com', 'Yes']);
+  assert.notEqual(getPaxCacheRow_('responses', sheetId2, 'Anchor'), null, 'precondition: stale row cache is warm');
+
+  deduplicateResponsesSheet_(responsesSheet2, 3, 'Anchor', responsesColumns, sheetId2);
+
+  assert.equal(
+    getPaxCacheRow_('responses', sheetId2, 'Anchor'), null,
+    'DELETED-marking path drops the stale per-PAX value cache — it no longer resolves to old content'
+  );
 }
 
 console.log('test_add_response_on_submit.js: PASS');
