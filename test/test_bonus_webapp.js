@@ -370,13 +370,60 @@ function makeMockBonusSheet_(maxRows, names, fullRows) {
   assert.equal(fakeScriptCache_.get(bonusRowsCacheKey_('sheet-both')), null);
 })();
 
-(function testAddBonusEntryInvalidatesCacheForItsSheet() {
+// ── write-through cache patching (F3Go30-o39s.6) ──────────────────────────
+// addBonusEntry_/editBonusEntry_/clearBonusEntry_ now patch go30dash:bonusRows and
+// go30dash:bonusEntries in place instead of deleting them on every write — the next read for the
+// same sheet must be a cache HIT reflecting the write, proven below by stubbing the underlying
+// sheet read to throw so any accidental reread fails the test loudly.
+
+(function testAddBonusEntryPatchesBothCachesWithoutRereadingSheet() {
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
+  var sheet = makeMockBonusSheet_(892, null, [makeLittleJohnFellowshipRow_()]);
+  // Warm both caches with real pre-write data (Little John's existing row only).
+  getAllBonusEntriesCached_(sheet, 'sheet-under-test');
+  getAllBonusRowsCached_(sheet, 'sheet-under-test');
+
+  var result = addBonusEntry_(sheet, 'Crazy Ivan', { type: 'Fellowship', whenIso: '2026-06-02', message: 'gathered with PAX' });
+  assert.equal(result.ok, true);
+  assert.equal(result.rowIndex, 3); // Little John occupies row 2 — next blank pre-formatted row is 3
+
+  sheet.getRange = function() { throw new Error('must not reread the sheet — cache should be patched'); };
+
+  var rows = getAllBonusRowsCached_(sheet, 'sheet-under-test');
+  assert.equal(rows.length, 2);
+  var addedRow = rows.filter(function(r) { return r.name === 'Crazy Ivan'; })[0];
+  assert.ok(addedRow);
+  assert.equal(addedRow.rowIndex, 3);
+  assert.equal(addedRow.type, 'Fellowship');
+  assert.equal(addedRow.whenIso, '2026-06-02');
+  assert.equal(addedRow.complete, true);
+
+  var entries = getAllBonusEntriesCached_(sheet, 'sheet-under-test');
+  assert.equal(entries.length, 2);
+  var addedEntry = entries.filter(function(e) { return e.name === 'Crazy Ivan'; })[0];
+  assert.ok(addedEntry);
+  assert.equal(addedEntry.nameNorm, 'crazy ivan');
+  assert.equal(addedEntry.type, 'Fellowship');
+  assert.equal(addedEntry.date.getTime(), new Date(2026, 5, 2).getTime());
+  assert.equal(addedEntry.complete, true);
+})();
+
+(function testAddBonusEntryFallsBackToInvalidateOnRowIndexCollision() {
   fakeScriptCache_ = makeFakeScriptCache_();
   global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
 
   var sheet = makeMockBonusSheet_(892, []);
-  fakeScriptCache_.put(bonusEntriesCacheKey_('sheet-under-test'), JSON.stringify([{ stale: true }]));
-  addBonusEntry_(sheet, 'Little John', { type: 'Fellowship', whenIso: '2026-06-01', message: 'gathered with PAX' });
+  // Simulate a corrupt/stale bonusRows cache that already claims row 2 — the row findNextBonusRow_
+  // is about to hand out — so the patch's own-collision guard must trip instead of silently
+  // clobbering or duplicating that entry.
+  fakeScriptCache_.put(bonusRowsCacheKey_('sheet-under-test'), JSON.stringify([{ rowIndex: 2, name: 'Ghost', type: 'Fellowship' }]));
+  fakeScriptCache_.put(bonusEntriesCacheKey_('sheet-under-test'), JSON.stringify([{ name: 'Ghost', nameNorm: 'ghost', type: 'Fellowship', dateIso: '2026-06-01', complete: true }]));
+
+  var result = addBonusEntry_(sheet, 'Little John', { type: 'Fellowship', whenIso: '2026-06-01', message: 'gathered with PAX' });
+  assert.equal(result.ok, true);
+  assert.equal(fakeScriptCache_.get(bonusRowsCacheKey_('sheet-under-test')), null);
   assert.equal(fakeScriptCache_.get(bonusEntriesCacheKey_('sheet-under-test')), null);
 })();
 
@@ -394,6 +441,32 @@ var LITTLE_JOHN_SNAPSHOT_ = { type: 'Fellowship', whenIso: '2026-06-01', message
   var result = editBonusEntry_(sheet, 'Little John', 2, { type: 'Fellowship', whenIso: '2026-06-01', message: 'updated' }, LITTLE_JOHN_SNAPSHOT_);
   assert.equal(result.ok, true);
   assert.equal(fakeScriptCache_.get(bonusEntriesCacheKey_('sheet-under-test')), null);
+})();
+
+(function testEditBonusEntryPatchesBothCachesWithoutRereadingSheet() {
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
+  var sheet = makeMockBonusSheet_(892, null, [makeLittleJohnFellowshipRow_()]);
+  getAllBonusEntriesCached_(sheet, 'sheet-under-test');
+  getAllBonusRowsCached_(sheet, 'sheet-under-test');
+
+  var result = editBonusEntry_(sheet, 'Little John', 2, { type: 'Q Point', whenIso: '2026-06-01', message: 'updated', link: 'https://f3nation.slack.com/archives/C1/p1' }, LITTLE_JOHN_SNAPSHOT_);
+  assert.equal(result.ok, true);
+
+  sheet.getRange = function() { throw new Error('must not reread the sheet — cache should be patched'); };
+
+  var rows = getAllBonusRowsCached_(sheet, 'sheet-under-test');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].rowIndex, 2);
+  assert.equal(rows[0].type, 'Q Point');
+  assert.equal(rows[0].message, 'updated');
+  assert.equal(rows[0].link, 'https://f3nation.slack.com/archives/C1/p1');
+
+  var entries = getAllBonusEntriesCached_(sheet, 'sheet-under-test');
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].type, 'Q Point');
+  assert.equal(entries[0].nameNorm, 'little john');
 })();
 
 (function testEditBonusEntryFallsBackToScanWhenRowIndexHintIsStale() {
@@ -455,6 +528,31 @@ var LITTLE_JOHN_SNAPSHOT_ = { type: 'Fellowship', whenIso: '2026-06-01', message
   var result = clearBonusEntry_(sheet, 'Little John', 2, LITTLE_JOHN_SNAPSHOT_);
   assert.equal(result.ok, true);
   assert.equal(fakeScriptCache_.get(bonusEntriesCacheKey_('sheet-under-test')), null);
+})();
+
+(function testClearBonusEntryPatchesBothCachesWithoutRereadingSheet() {
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
+  var sheet = makeMockBonusSheet_(892, null, [
+    makeLittleJohnFellowshipRow_(),
+    ['Crazy Ivan', 1, '', 1, true, 'Fellowship', new Date(2026, 5, 5), 'ruck', ''],
+  ]);
+  getAllBonusEntriesCached_(sheet, 'sheet-under-test');
+  getAllBonusRowsCached_(sheet, 'sheet-under-test');
+
+  var result = clearBonusEntry_(sheet, 'Little John', 2, LITTLE_JOHN_SNAPSHOT_);
+  assert.equal(result.ok, true);
+
+  sheet.getRange = function() { throw new Error('must not reread the sheet — cache should be patched'); };
+
+  var rows = getAllBonusRowsCached_(sheet, 'sheet-under-test');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, 'Crazy Ivan');
+
+  var entries = getAllBonusEntriesCached_(sheet, 'sheet-under-test');
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].nameNorm, 'crazy ivan');
 })();
 
 // ── findBonusRowByIdentity_ ──────────────────────────────────────────────

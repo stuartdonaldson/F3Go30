@@ -253,13 +253,123 @@ function getAllBonusEntriesCached_(bonusSheet, sheetId) {
   return entries;
 }
 
-/** Called after any write to Bonus Tracker so the next dashboard/bonus-list load re-reads live
- *  data instead of serving a pre-edit cached copy for up to BONUS_ENTRIES_CACHE_TTL_SECONDS_ —
- *  clears both the pill-shape cache (getAllBonusEntriesCached_) and the client-shape cache
- *  (getAllBonusRowsCached_), since a single write invalidates both. */
+/** Called when a write can't be safely write-through patched (see patchBonusCaches_) so the next
+ *  dashboard/bonus-list load re-reads live data instead of serving a stale or corrupt cached copy
+ *  for up to BONUS_ENTRIES_CACHE_TTL_SECONDS_ — clears both the pill-shape cache
+ *  (getAllBonusEntriesCached_) and the client-shape cache (getAllBonusRowsCached_). */
 function invalidateBonusEntriesCache_(sheetId) {
   try { CacheService.getScriptCache().remove(bonusEntriesCacheKey_(sheetId)); } catch (e) { /* best-effort */ }
   try { CacheService.getScriptCache().remove(bonusRowsCacheKey_(sheetId)); } catch (e) { /* best-effort */ }
+}
+
+/**
+ * Builds the two cache-shape objects a write already has enough information to construct without
+ * a re-read: the pill-shape entry (readAllBonusEntries_/serializeBonusEntriesForCache_'s shape)
+ * and the client-shape row (formatBonusRowForClient_'s shape, plus name/nameNorm the way
+ * getAllBonusRowsCached_ adds them). `complete` mirrors column E's spilled formula result
+ * (readAllBonusEntries_'s doc) — duplicating that rule here (rather than the single source of
+ * truth those reads use) is the deliberate tradeoff a write-through patch requires: there's no
+ * live cell to read without paying the cost this cache exists to avoid. It's safe because
+ * validateBonusEntry_ already guarantees "requires a link" implies a non-blank link.
+ * @returns {{entry:Object, row:Object}}
+ */
+function buildBonusCacheShapes_(f3Name, rowIndex, payload) {
+  var def = bonusTypeDef_bw_(payload.type);
+  var nameNorm = paxCacheNormalizeName_bw_(f3Name);
+  var complete = !def || !def.requiresLink || !!String(payload.link || '').trim();
+  var message = String(payload.message || '').trim();
+  var link = String(payload.link || '').trim();
+  return {
+    entry: { name: f3Name, nameNorm: nameNorm, dateIso: payload.whenIso, type: payload.type, complete: complete },
+    row: { rowIndex: rowIndex, type: payload.type, whenIso: payload.whenIso, message: message, link: link, complete: complete, name: f3Name, nameNorm: nameNorm },
+  };
+}
+
+/**
+ * Write-through patch for both cached bonus arrays (F3Go30-o39s.6, closes finding F5) — replaces
+ * addBonusEntry_/editBonusEntry_/clearBonusEntry_'s former invalidate-and-reread with an in-place
+ * patch, so the next bonusList/dashboard read for this sheet is a cache HIT reflecting the write
+ * instead of paying a full cold rebuild (see getAllBonusRowsCached_'s doc for why that rebuild is
+ * expensive). Must be called inside the same LockService section as the sheet write, so a
+ * concurrent writer can never interleave a stale patch.
+ *
+ * go30dash:bonusRows carries rowIndex, so add/edit/clear there match by rowIndex directly.
+ * go30dash:bonusEntries (the pill shape) carries no rowIndex — it's matched by content instead
+ * (nameNorm + type + dateIso, the same identity originalSnapshot already captures), requiring
+ * exactly one match. Any cache miss on a key is a no-op for that key (nothing cached to patch);
+ * any mismatch — the array isn't there in the expected shape, a rowIndex/content match fails, or
+ * a match is ambiguous — falls back to invalidateBonusEntriesCache_ for both keys rather than
+ * risk serving a wrongly patched array.
+ * @param {string} sheetId
+ * @param {'add'|'edit'|'clear'} op
+ * @param {number} rowIndex Row the write landed on (add/edit) or cleared (clear).
+ * @param {string} f3Name
+ * @param {{entry:Object, row:Object}|null} newShapes buildBonusCacheShapes_ output for add/edit;
+ *   null for clear (nothing to insert, only remove).
+ * @param {{type:string, whenIso:string}|null} originalSnapshot Pre-write identity, required for
+ *   edit/clear (to locate the old pill-cache entry); null for add.
+ */
+function patchBonusCaches_(sheetId, op, rowIndex, f3Name, newShapes, originalSnapshot) {
+  var cache = CacheService.getScriptCache();
+  var nameNorm = paxCacheNormalizeName_bw_(f3Name);
+  var rowsPatchOk = true;
+
+  try {
+    var rowsCached = cache.get(bonusRowsCacheKey_(sheetId));
+    if (rowsCached) {
+      var rows = JSON.parse(rowsCached);
+      var idx = -1;
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].rowIndex === rowIndex) { idx = i; break; }
+      }
+      if (op === 'add') {
+        if (idx !== -1) throw new Error('rowIndex already present');
+        rows.push(newShapes.row);
+      } else if (idx === -1) {
+        throw new Error('rowIndex not found');
+      } else if (op === 'edit') {
+        rows[idx] = newShapes.row;
+      } else { // clear
+        rows.splice(idx, 1);
+      }
+      cache.put(bonusRowsCacheKey_(sheetId), JSON.stringify(rows), BONUS_ENTRIES_CACHE_TTL_SECONDS_);
+    }
+  } catch (e) {
+    rowsPatchOk = false;
+  }
+
+  if (!rowsPatchOk) {
+    invalidateBonusEntriesCache_(sheetId);
+    return;
+  }
+
+  try {
+    var entriesCached = cache.get(bonusEntriesCacheKey_(sheetId));
+    if (entriesCached) {
+      var entries = JSON.parse(entriesCached);
+      if (op === 'add') {
+        entries.push(newShapes.entry);
+      } else {
+        var matchIdx = -1, matchCount = 0;
+        for (var j = 0; j < entries.length; j++) {
+          var e = entries[j];
+          if (e.nameNorm === nameNorm && e.type === originalSnapshot.type && e.dateIso === originalSnapshot.whenIso) {
+            matchCount++;
+            matchIdx = j;
+          }
+        }
+        if (matchCount !== 1) throw new Error('content match not unique');
+        if (op === 'edit') {
+          entries[matchIdx] = newShapes.entry;
+        } else { // clear
+          entries.splice(matchIdx, 1);
+        }
+      }
+      cache.put(bonusEntriesCacheKey_(sheetId), JSON.stringify(entries), BONUS_ENTRIES_CACHE_TTL_SECONDS_);
+    }
+  } catch (e) {
+    invalidateBonusEntriesCache_(sheetId);
+  }
 }
 
 /**
@@ -310,7 +420,7 @@ function addBonusEntry_(bonusSheet, f3Name, payload) {
     if (!nextRow) return { ok: false, error: 'bonus_sheet_full' };
 
     writeBonusEnteredColumns_(bonusSheet, nextRow, f3Name, payload);
-    invalidateBonusEntriesCache_(bonusSheet.getParent().getId());
+    patchBonusCaches_(bonusSheet.getParent().getId(), 'add', nextRow, f3Name, buildBonusCacheShapes_(f3Name, nextRow, payload), null);
     return { ok: true, rowIndex: nextRow };
   } finally {
     lock.releaseLock();
@@ -385,7 +495,7 @@ function editBonusEntry_(bonusSheet, f3Name, rowIndexHint, payload, originalSnap
     if (!rowIndex) return { ok: false, error: 'not_found' };
 
     writeBonusEnteredColumns_(bonusSheet, rowIndex, f3Name, payload);
-    invalidateBonusEntriesCache_(bonusSheet.getParent().getId());
+    patchBonusCaches_(bonusSheet.getParent().getId(), 'edit', rowIndex, f3Name, buildBonusCacheShapes_(f3Name, rowIndex, payload), originalSnapshot);
     return { ok: true, rowIndex: rowIndex };
   } finally {
     lock.releaseLock();
@@ -416,7 +526,7 @@ function clearBonusEntry_(bonusSheet, f3Name, rowIndexHint, originalSnapshot) {
     bonusSheet.getRange(rowIndex, BONUS_TRACKER_WHEN_COL_).clearContent();
     bonusSheet.getRange(rowIndex, BONUS_TRACKER_WHAT_COL_).clearContent();
     bonusSheet.getRange(rowIndex, BONUS_TRACKER_LINK_COL_).clearContent();
-    invalidateBonusEntriesCache_(bonusSheet.getParent().getId());
+    patchBonusCaches_(bonusSheet.getParent().getId(), 'clear', rowIndex, f3Name, null, originalSnapshot);
     return { ok: true };
   } finally {
     lock.releaseLock();
@@ -449,6 +559,8 @@ if (typeof module !== 'undefined' && module.exports) {
     getAllBonusEntriesCached_: getAllBonusEntriesCached_,
     getAllBonusRowsCached_: getAllBonusRowsCached_,
     invalidateBonusEntriesCache_: invalidateBonusEntriesCache_,
+    buildBonusCacheShapes_: buildBonusCacheShapes_,
+    patchBonusCaches_: patchBonusCaches_,
     bonusEntriesCacheKey_: bonusEntriesCacheKey_,
     bonusRowsCacheKey_: bonusRowsCacheKey_,
   };
