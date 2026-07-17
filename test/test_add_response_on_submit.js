@@ -34,8 +34,8 @@ global._registrationConfirmationCalls = [];
 
 // PaxCache write-through (F3Go30-o39s.4) stubs — in-memory PropertiesService/CacheService/
 // LockService, same shape/behavior contract as test_pax_cache.js. DriveApp is deliberately left
-// undefined: ensurePaxCacheFresh_ fails open with no DriveApp global (its own documented
-// behavior), so a warmed roster index in these tests is never wiped out from under us.
+// undefined: PaxCache no longer touches it at all (the Drive-modtime poll was retired,
+// F3Go30-o39s.7), so a warmed roster index in these tests is never wiped out from under us.
 var fakePaxCacheProps_ = {};
 global.PropertiesService = {
   getScriptProperties: function() {

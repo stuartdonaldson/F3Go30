@@ -21,15 +21,6 @@ global.PropertiesService = {
   getScriptProperties: function() { return fakeProps; },
 };
 
-// In-memory stand-in for DriveApp.getFileById(id).getLastUpdated() — the Drive-modtime
-// freshness gate's only external dependency. fakeDriveModTimes maps sheetId -> ms.
-var fakeDriveModTimes;
-global.DriveApp = {
-  getFileById: function(id) {
-    return { getLastUpdated: function() { return new Date(fakeDriveModTimes[id] || 0); } };
-  },
-};
-
 // In-memory stand-in for LockService.getScriptLock() — single-process tests never contend, so
 // this just needs to satisfy the waitLock/releaseLock contract patchPaxRosterIndex_ relies on.
 global.LockService = {
@@ -39,9 +30,9 @@ global.LockService = {
 };
 global.GasLogger = { log: function() {}, run: function(name, fn) { return fn(); } };
 
-// In-memory stand-in for CacheService.getScriptCache() — ensurePaxCacheFresh_ also clears
-// dashboardWebapp.js's full-roster cache keys (go30dash:trackerValues:/go30dash:responsesValues:)
-// on a modtime-detected change; this just needs to satisfy get/put/remove.
+// In-memory stand-in for CacheService.getScriptCache() — wipePaxCacheAndRelatedCachesForSheet_
+// also clears dashboardWebapp.js's full-roster cache keys (go30dash:trackerValues:/
+// go30dash:responsesValues:); this just needs to satisfy get/put/remove.
 var fakeCache_;
 function makeFakeCache_() {
   var store = {};
@@ -66,7 +57,6 @@ const {
   patchPaxRosterIndex_,
   wipePaxCacheForSheet_,
   resolvePaxRowIndex_,
-  ensurePaxCacheFresh_,
   markPaxCacheFreshNow_,
   resetPaxCacheFreshnessMemo_,
   getPaxCacheRequestStats_,
@@ -79,7 +69,6 @@ const {
 
 function resetProps_() {
   fakeProps = makeFakeProperties_();
-  fakeDriveModTimes = {};
   resetPaxCacheFreshnessMemo_();
   resetPaxCacheRequestStats_();
 }
@@ -203,182 +192,16 @@ function resetProps_() {
   assert.equal(paxCacheNormalizeName_(null), '');
 })();
 
-// ── Drive-modtime freshness gate (replaces the onEdit trigger, which can't reach this store —
-// see PaxCache.js file header) ──────────────────────────────────────────────────────────────
-(function testFreshnessGateTrustsCacheWhenModTimeUnchanged() {
-  resetProps_();
-  fakeDriveModTimes['sheet1'] = 1000;
-  ensurePaxCacheFresh_('sheet1'); // establishes the asOf baseline for this modtime
-  setPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan', ['v1']);
-  resetPaxCacheFreshnessMemo_(); // simulate a new execution re-checking the same sheet
-  assert.deepEqual(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), ['v1']);
-})();
-
-(function testFreshnessGateWipesSheetWhenModTimeAdvances() {
-  resetProps_();
-  fakeDriveModTimes['sheet1'] = 1000;
-  setPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan', ['v1']);
-  ensurePaxCacheFresh_('sheet1'); // records asOf = 1000 for this (fresh) execution
-
-  resetPaxCacheFreshnessMemo_(); // next execution
-  fakeDriveModTimes['sheet1'] = 2000; // someone edited the sheet directly in the Sheets UI
-  assert.equal(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), null);
-})();
-
-(function testFreshnessGateWipesBothKindsSharingAFile() {
-  resetProps_();
-  fakeDriveModTimes['sheet1'] = 1000;
-  setPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan', ['t']);
-  setPaxCacheRow_('responses', 'sheet1', 'Crazy Ivan', ['r']);
-  ensurePaxCacheFresh_('sheet1');
-
-  resetPaxCacheFreshnessMemo_();
-  fakeDriveModTimes['sheet1'] = 2000;
-  ensurePaxCacheFresh_('sheet1');
-
-  assert.equal(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), null);
-  assert.equal(getPaxCacheRow_('responses', 'sheet1', 'Crazy Ivan'), null);
-})();
-
-(function testFreshnessGateClearsDashboardWebappFullRosterCacheKeysOnModTimeAdvance() {
-  resetProps_();
-  fakeCache_ = makeFakeCache_();
-  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
-
-  fakeDriveModTimes['sheet1'] = 1000;
-  ensurePaxCacheFresh_('sheet1'); // records asOf = 1000 for this (fresh) execution
-  fakeCache_.put('go30dash:trackerValues:sheet1', 'stale-tracker');
-  fakeCache_.put('go30dash:responsesValues:sheet1', 'stale-responses');
-
-  resetPaxCacheFreshnessMemo_();
-  fakeDriveModTimes['sheet1'] = 2000;
-  ensurePaxCacheFresh_('sheet1');
-
-  assert.equal(fakeCache_.get('go30dash:trackerValues:sheet1'), null);
-  assert.equal(fakeCache_.get('go30dash:responsesValues:sheet1'), null);
-})();
-
-(function testFreshnessGateLeavesDashboardWebappCacheKeysAloneWhenModTimeUnchanged() {
-  resetProps_();
-  fakeCache_ = makeFakeCache_();
-  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
-
-  fakeDriveModTimes['sheet1'] = 1000;
-  ensurePaxCacheFresh_('sheet1');
-  fakeCache_.put('go30dash:trackerValues:sheet1', 'fresh-tracker');
-
-  resetPaxCacheFreshnessMemo_();
-  ensurePaxCacheFresh_('sheet1'); // same modtime — no change detected
-
-  assert.equal(fakeCache_.get('go30dash:trackerValues:sheet1'), 'fresh-tracker');
-})();
-
-// F3Go30-nzi0: a manual Bonus Tracker edit must clear the un-gated bonus caches
-// (go30dash:bonusEntries:/go30dash:bonusRows:) too, not just the roster caches — otherwise the
-// dashboard keeps serving pre-edit bonus totals for up to BONUS_ENTRIES_CACHE_TTL_SECONDS_.
-(function testFreshnessGateClearsBonusCacheKeysOnModTimeAdvance() {
-  resetProps_();
-  fakeCache_ = makeFakeCache_();
-  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
-
-  fakeDriveModTimes['sheet1'] = 1000;
-  ensurePaxCacheFresh_('sheet1'); // records asOf = 1000 for this (fresh) execution
-  fakeCache_.put('go30dash:bonusEntries:sheet1', 'stale-bonus-entries');
-  fakeCache_.put('go30dash:bonusRows:sheet1', 'stale-bonus-rows');
-
-  resetPaxCacheFreshnessMemo_();
-  fakeDriveModTimes['sheet1'] = 2000;
-  ensurePaxCacheFresh_('sheet1');
-
-  assert.equal(fakeCache_.get('go30dash:bonusEntries:sheet1'), null);
-  assert.equal(fakeCache_.get('go30dash:bonusRows:sheet1'), null);
-})();
-
-(function testFreshnessGateLeavesBonusCacheKeysAloneWhenModTimeUnchanged() {
-  resetProps_();
-  fakeCache_ = makeFakeCache_();
-  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
-
-  fakeDriveModTimes['sheet1'] = 1000;
-  ensurePaxCacheFresh_('sheet1');
-  fakeCache_.put('go30dash:bonusEntries:sheet1', 'fresh-bonus-entries');
-
-  resetPaxCacheFreshnessMemo_();
-  ensurePaxCacheFresh_('sheet1'); // same modtime — no change detected
-
-  assert.equal(fakeCache_.get('go30dash:bonusEntries:sheet1'), 'fresh-bonus-entries');
-})();
-
-(function testFreshnessGateIsMemoizedPerExecution() {
-  resetProps_();
-  var calls = 0;
-  var realGetFileById = global.DriveApp.getFileById;
-  global.DriveApp.getFileById = function(id) { calls++; return realGetFileById(id); };
-  try {
-    fakeDriveModTimes['sheet1'] = 1000;
-    getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan');
-    getPaxCacheRow_('tracker', 'sheet1', 'Little John');
-    resolvePaxRowIndex_('tracker', 'sheet1', 'Splinter', function() { return ['Splinter']; });
-    assert.equal(calls, 1); // one DriveApp call for the whole execution, not one per lookup
-  } finally {
-    global.DriveApp.getFileById = realGetFileById;
-  }
-})();
-
-(function testFreshnessGateFailsOpenWhenDriveUnavailable() {
-  resetProps_();
-  var realDriveApp = global.DriveApp;
-  delete global.DriveApp;
-  try {
-    setPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan', ['v1']); // write path doesn't touch DriveApp
-  } finally {
-    global.DriveApp = realDriveApp;
-  }
-  delete global.DriveApp;
-  try {
-    // A read with no DriveApp available must not throw, and must trust the existing cache.
-    assert.deepEqual(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), ['v1']);
-  } finally {
-    global.DriveApp = realDriveApp;
-  }
-})();
-
 // ── markPaxCacheFreshNow_ (F3Go30-qi26.4) ────────────────────────────────
-// Stamps asOf without a Drive round trip, for callers that just read live. A subsequent
-// ensurePaxCacheFresh_ for the same sheet in the same execution must then be a no-op (memo set),
-// and a fresh execution must see the stamped asOf so an unchanged sheet is NOT re-wiped.
+// Stamps asOf without a Drive round trip — no reader consumes this marker anymore (the
+// Drive-modtime freshness gate it used to backstop was retired, F3Go30-o39s.7), so this just
+// verifies the write itself is still side-effect-free.
 (function testMarkFreshNowStampsAsOfWithoutDriveCall() {
   resetProps_();
-  fakeCache_ = makeFakeCache_();
-  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
-
-  var calls = 0;
-  var realGetFileById = global.DriveApp.getFileById;
-  global.DriveApp.getFileById = function(id) { calls++; return realGetFileById(id); };
-  try {
-    var before = Date.now();
-    markPaxCacheFreshNow_('sheet1');
-    assert.equal(calls, 0); // no DriveApp.getFileById — that's the whole point
-
-    // asOf was written from the script clock (>= now), so a same-modtime re-check never wipes.
-    var storedAsOf = Number(fakeProps.getProperty('go30asof:sheet1'));
-    assert.ok(storedAsOf >= before);
-
-    // Same execution: memo is set, so ensurePaxCacheFresh_ short-circuits (still zero Drive calls).
-    fakeCache_.put('go30dash:trackerValues:sheet1', 'freshly-read');
-    ensurePaxCacheFresh_('sheet1');
-    assert.equal(calls, 0);
-    assert.equal(fakeCache_.get('go30dash:trackerValues:sheet1'), 'freshly-read');
-
-    // New execution, sheet unedited (modtime <= stamped asOf) — cache survives, not re-wiped.
-    resetPaxCacheFreshnessMemo_();
-    fakeDriveModTimes['sheet1'] = before - 1000;
-    ensurePaxCacheFresh_('sheet1');
-    assert.equal(calls, 1); // one probe this new execution
-    assert.equal(fakeCache_.get('go30dash:trackerValues:sheet1'), 'freshly-read');
-  } finally {
-    global.DriveApp.getFileById = realGetFileById;
-  }
+  var before = Date.now();
+  markPaxCacheFreshNow_('sheet1');
+  var storedAsOf = Number(fakeProps.getProperty('go30asof:sheet1'));
+  assert.ok(storedAsOf >= before);
 })();
 
 // ── request stats (F3Go30-440b.1) ────────────────────────────────────────
@@ -402,21 +225,14 @@ function resetProps_() {
   assert.equal(stats.paxRosterHit, 1);
 })();
 
-(function testRequestStatsFlagWipeEvent() {
+// paxCacheWiped has no remaining writer since the Drive-modtime freshness gate was retired
+// (F3Go30-o39s.7) — wipes now happen via wipePaxCacheForSheet_/wipePaxCacheAndRelatedCachesForSheet_
+// (TrackerEditTrigger.js's onEdit path), which don't set this per-request flag.
+(function testRequestStatsWipeFlagStaysFalse() {
   resetProps_();
-  fakeDriveModTimes['sheet1'] = 1000;
-  ensurePaxCacheFresh_('sheet1'); // establishes the asOf baseline for this modtime
-
-  resetPaxCacheFreshnessMemo_(); // simulate a new execution, unedited sheet
   resetPaxCacheRequestStats_();
-  ensurePaxCacheFresh_('sheet1');
+  getPaxCacheRow_('tracker', 'sheet1', 'Nobody');
   assert.equal(getPaxCacheRequestStats_().paxCacheWiped, false);
-
-  resetPaxCacheFreshnessMemo_(); // another new execution
-  resetPaxCacheRequestStats_();
-  fakeDriveModTimes['sheet1'] = 2000; // manual edit
-  ensurePaxCacheFresh_('sheet1');
-  assert.equal(getPaxCacheRequestStats_().paxCacheWiped, true);
 })();
 
 (function testRequestStatsResetClearsAllCounters() {
@@ -520,8 +336,8 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   var result = purgeStalePaxCache_(now, spreadsheet);
   assert.deepEqual(result, { checked: 2, purged: 1, kept: 1, paxRowsPurged: 0, orphanedSheetsPurged: 0 });
 
-  // Check the asOf marker directly (not via getPaxCacheRow_/ensurePaxCacheFresh_, which would
-  // itself re-stamp it as a side effect and mask whether the purge actually deleted it).
+  // Check the asOf marker directly rather than via a read helper that might re-stamp it as a
+  // side effect and mask whether the purge actually deleted it.
   assert.equal(fakeProps.getProperty('go30asof:sheet-old'), null);
   assert.equal(fakeProps.getKeys().some(function(k) { return k.indexOf('go30pax:tracker:sheet-old:') === 0; }), false);
   assert.equal(fakeProps.getKeys().some(function(k) { return k.indexOf('go30pax:responses:sheet-old:') === 0; }), false);

@@ -55,8 +55,6 @@ var getPaxRosterIndex_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPa
   || (typeof globalThis !== 'undefined' && globalThis.getPaxRosterIndex_);
 var paxCacheNormalizeName_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.paxCacheNormalizeName_)
   || (typeof globalThis !== 'undefined' && globalThis.paxCacheNormalizeName_);
-var ensurePaxCacheFresh_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.ensurePaxCacheFresh_)
-  || (typeof globalThis !== 'undefined' && globalThis.ensurePaxCacheFresh_);
 var markPaxCacheFreshNow_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.markPaxCacheFreshNow_)
   || (typeof globalThis !== 'undefined' && globalThis.markPaxCacheFreshNow_);
 var getPaxCacheRequestStats_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.getPaxCacheRequestStats_)
@@ -696,10 +694,9 @@ function setCachedSheetValues_(cacheKey, values) {
 
 /**
  * Explicit write-through invalidation for the whole-sheet caches above — call at the point of
- * any write to a month's Tracker (day check-ins, -1 marking) or Responses (signups) sheet. This
- * is the primary invalidation path; ensurePaxCacheFresh_'s Drive-modtime gate (PaxCache.js) is
- * the backstop for writes that don't go through this webapp's own code (a human editing the
- * sheet directly, or a future code path that forgets to call this).
+ * any write to a month's Tracker (day check-ins, -1 marking) or Responses (signups) sheet.
+ * Manual edits that don't go through this webapp's own code are caught instead by
+ * TrackerEditTrigger.js's onEdit-driven invalidation (F3Go30-o39s epic).
  */
 function invalidateFullRosterCache_(sheetId) {
   try { CacheService.getScriptCache().remove(trackerValuesCacheKey_(sheetId)); } catch (e) { /* best-effort */ }
@@ -719,10 +716,6 @@ function invalidateFullRosterCache_(sheetId) {
 function buildTrackerValuesFromPaxCache_(sheetId) {
   if (!getPaxRosterIndex_dw_ || !getPaxCacheRow_dw_) return null;
   var rosterIndex = getPaxRosterIndex_dw_('tracker', sheetId);
-  if (rosterIndex && ensurePaxCacheFresh_dw_) {
-    ensurePaxCacheFresh_dw_(sheetId); // may wipe the roster index if the sheet was edited since
-    rosterIndex = getPaxRosterIndex_dw_('tracker', sheetId);
-  }
   if (!rosterIndex) return null;
   var names = Object.keys(rosterIndex);
   if (!names.length) return null;
@@ -967,31 +960,20 @@ function getPriorMonthTailValues_(monthInfo, f3Name, windowSize, templateSpreads
  * untouched, so this assembly stays a cache hit across writes instead of needing invalidation.
  * Responses still goes through getCachedSheetValuesOnly_/setCachedSheetValues_ (whole-sheet
  * CacheService blob) — check-in writes never touch Responses, so that cache has no write-through
- * counterpart to build here. Both are backstopped by ensurePaxCacheFresh_'s Drive-modtime gate
- * (PaxCache.js) for edits that don't go through this webapp's own code. On any Tracker cache
- * miss, this falls back to a live full-range read and opportunistically writes every row into
- * PaxCache as a side effect, so the very next identify/checkin for any of these PAX (same day)
- * hits the lean per-PAX path instead of another scan.
+ * counterpart to build here. Manual edits that don't go through this webapp's own code are caught
+ * instead by TrackerEditTrigger.js's onEdit-driven invalidation (F3Go30-o39s epic). On any Tracker
+ * cache miss, this falls back to a live full-range read and opportunistically writes every row
+ * into PaxCache as a side effect, so the very next identify/checkin for any of these PAX (same
+ * day) hits the lean per-PAX path instead of another scan.
  */
 function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var t0 = Date.now();
   var targetSs = SpreadsheetApp.openById(monthInfo.sheetId);
   var openMs = Date.now() - t0;
 
-  // Same Drive-probe deferral as resolveFullIdentityFromHandle_ (F3Go30-qi26.4): run the ~½s
-  // probe only when there's something cached to validate for EACH cache independently (the
-  // per-sheetId freshness memo in PaxCache.js makes a second probe for the same sheet within
-  // this execution a no-op), and stamp asOf from the read moment (markPaxCacheFreshNow_)
-  // whenever we instead read live — a live read is definitionally current.
   var responsesCacheKey = responsesValuesCacheKey_(monthInfo.sheetId);
-  var tFresh = Date.now();
   var dataRows = getCachedSheetValuesOnly_(responsesCacheKey);
-  if (dataRows && ensurePaxCacheFresh_dw_) {
-    ensurePaxCacheFresh_dw_(monthInfo.sheetId);       // may wipe the Responses cache if the sheet was edited since
-    dataRows = getCachedSheetValuesOnly_(responsesCacheKey);
-  }
   var trackerValues = buildTrackerValuesFromPaxCache_(monthInfo.sheetId);
-  var freshCheckMs = Date.now() - tFresh;
   var freshRead = false;
 
   var responsesSheet = targetSs.getSheetByName('Responses');
@@ -1010,7 +992,7 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var match = findSignupMatchByF3NameOnly_dw_(dataRows, f3Name, columns);
   var responsesMs = Date.now() - t1;
   if (!match) {
-    GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({ matched: false, lean: false, openMs: openMs, freshCheckMs: freshCheckMs, responsesMs: responsesMs, totalMs: Date.now() - t0 }, paxCacheStatsForLog_dw_()));
+    GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({ matched: false, lean: false, openMs: openMs, responsesMs: responsesMs, totalMs: Date.now() - t0 }, paxCacheStatsForLog_dw_()));
     return { matched: false, months: months };
   }
 
@@ -1034,8 +1016,6 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
     freshRead = true;
   }
   var trackerMs = Date.now() - t2;
-  // If either read went live (cold cache), the probe above was skipped — stamp asOf from the read
-  // moment so the rows bulk-written below stay trusted without a Drive round trip (F3Go30-qi26.4).
   if (freshRead && markPaxCacheFreshNow_dw_) markPaxCacheFreshNow_dw_(monthInfo.sheetId);
 
   var t3 = Date.now();
@@ -1061,7 +1041,7 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
 
   GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({
     matched: true, lean: false, emailMismatch: emailMismatch,
-    openMs: openMs, freshCheckMs: freshCheckMs, responsesMs: responsesMs, trackerMs: trackerMs,
+    openMs: openMs, responsesMs: responsesMs, trackerMs: trackerMs,
     cacheWriteMs: cacheWriteMs, totalMs: Date.now() - t0,
   }, paxCacheStatsForLog_dw_()));
 
@@ -1201,15 +1181,11 @@ function resolveFullIdentityFromHandle_(handle) {
   // the critical path by necessity. Sourced from PaxCache's per-PAX rows + roster index
   // (buildTrackerValuesFromPaxCache_, F3Go30-5nfj.3) rather than a whole-sheet CacheService blob:
   // a check-in write-through patch leaves every OTHER pax's row untouched, so this stays a cache
-  // hit across writes. That helper itself only pays the ~½s Drive-modtime freshCheck when there's
-  // a cached roster to validate — a cold cache means the live read below is authoritative, so
-  // probing Drive first would be pure latency with nothing to invalidate. On a fresh read we
-  // stamp the asOf marker from the read moment (markPaxCacheFreshNow_) so the rows bulk-written
-  // below stay trusted by later same-request lean lookups without that round trip. Mirrors
-  // resolveLeanIdentityFromHandle_, which already trusts its single-row live read with no probe.
-  var tFresh = Date.now();
+  // hit across writes. On a fresh (cold-cache) read we stamp the asOf marker from the read moment
+  // (markPaxCacheFreshNow_) so the rows bulk-written below stay trusted by later same-request
+  // lean lookups. Mirrors resolveLeanIdentityFromHandle_, which already trusts its single-row
+  // live read with no probe.
   var trackerValues = buildTrackerValuesFromPaxCache_(monthInfo.sheetId);
-  var freshCheckMs = Date.now() - tFresh;
   var trackerFromCache = !!trackerValues;
   if (!layout || !trackerValues) {
     var ts = trackerSheet_();
@@ -1256,7 +1232,7 @@ function resolveFullIdentityFromHandle_(handle) {
 
   GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({
     matched: true, fromHandle: true, lean: false,
-    openMs: lazySs.getOpenMs(), freshCheckMs: freshCheckMs, trackerMs: trackerMs, cacheWriteMs: cacheWriteMs, totalMs: Date.now() - t0,
+    openMs: lazySs.getOpenMs(), trackerMs: trackerMs, cacheWriteMs: cacheWriteMs, totalMs: Date.now() - t0,
   }, paxCacheStatsForLog_dw_()));
   return {
     matched: true,
@@ -1679,12 +1655,6 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
   var patchedRow = target.row.slice();
   patchedRow[target.col] = payload.value === null ? '' : payload.value;
   setPaxCacheRow_dw_('tracker', target.sheetId, payload.f3Name, patchedRow);
-  // This webapp's own setValue()/clearContent() call above just bumped the sheet's Drive modtime,
-  // which would otherwise make ensurePaxCacheFresh_'s next probe treat the patch just written as
-  // stale and wipe it (PaxCache.js landmine). Re-stamp asOf from this write moment instead — the
-  // same sub-second tolerance ensurePaxCacheFresh_/markPaxCacheFreshNow_ already document for a
-  // live-read-then-cache race applies here in reverse (live-write-then-cache).
-  if (markPaxCacheFreshNow_dw_) markPaxCacheFreshNow_dw_(target.sheetId);
   GasLogger.log('checkinWebapp.checkin', { f3Name: payload.f3Name, day: payload.day, value: payload.value });
   return { ok: true };
 }

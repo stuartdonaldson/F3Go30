@@ -339,8 +339,8 @@ function createTrackerSpreadsheet_(options) {
 
     // Edit-trigger PaxCache invalidation (F3Go30-440b.4): same centralization rationale as
     // setupFormSubmitTrigger above — installed once here so a manual Sheets-UI edit on this
-    // tracker proactively invalidates the shared cache instead of relying solely on
-    // ensurePaxCacheFresh_'s per-request Drive-modtime poll.
+    // tracker proactively invalidates the shared cache (the sole invalidation path for such
+    // edits since F3Go30-o39s.7 retired the per-request Drive-modtime poll).
     setupTrackerEditTrigger_(newSpreadsheet);
 
     var signupShortUrl = ensureSignupShortUrl_(configSheet, configData, nameSpace);

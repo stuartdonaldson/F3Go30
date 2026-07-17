@@ -217,9 +217,8 @@ function resolveTrackerEditSpreadsheet_(e) {
  * Edit-trigger entry point. Filters to the sheets PaxCache actually caches — Tracker,
  * Responses, and Bonus Tracker; edits to Config, Links, Activity, etc. don't touch anything
  * PaxCache caches, so wiping on those would just be wasted work. Tries a narrow per-PAX-row
- * patch first (C10, F3Go30-o39s.11 — tryPatchSinglePaxRow_te_) and only falls back to the
- * whole-sheet wipe (matching ensurePaxCacheFresh_'s coarseness) when the edit can't be safely
- * narrowed to one known PAX row.
+ * patch first (C10, F3Go30-o39s.11 — tryPatchSinglePaxRow_te_) and only falls back to a
+ * whole-sheet wipe when the edit can't be safely narrowed to one known PAX row.
  * @param {Object} e Edit event object.
  */
 function handleTrackerEdit_(e) {
@@ -238,12 +237,11 @@ function handleTrackerEdit_(e) {
       return;
     }
 
-    // Deliberately logged here, not just inside the shared wipe helper — this is the one
-    // signal that distinguishes "the onEdit trigger itself fired" from ensurePaxCacheFresh_'s
-    // own Drive-modtime poll also catching the same human edit on the next request (both would
-    // see an updated modtime, so a wipe alone doesn't prove which path caught it). GasLogger.run
-    // (not a bare GasLogger.log) is required here — log() only queues the entry in memory;
-    // flush() is what actually POSTs to Axiom, and only .run() calls flush() automatically.
+    // Deliberately logged here, not just inside the shared wipe helper — this is the Axiom
+    // signal that this onEdit trigger itself fired a whole-sheet wipe (as opposed to the narrow
+    // per-row patch above). GasLogger.run (not a bare GasLogger.log) is required here — log()
+    // only queues the entry in memory; flush() is what actually POSTs to Axiom, and only .run()
+    // calls flush() automatically.
     GasLogger.log('handleTrackerEdit_.invalidated', { sheetId: sheetId, sheetName: sheetName });
     wipePaxCacheAndRelatedCachesForSheet_te_(sheetId);
     markPaxCacheFreshNow_te_(sheetId);

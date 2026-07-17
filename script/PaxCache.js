@@ -5,16 +5,21 @@
  * webapp's write paths (signupWebapp.js). Backed by PropertiesService rather than CacheService:
  * CacheService caps expiration at 6 hours, which is shorter than the gap between a PAX's daily
  * check-ins, so a TTL-based cache would be a guaranteed miss every single day. PropertiesService
- * has no built-in expiry — freshness here comes from write-through invalidation (the webapp's
- * own writes) plus the Drive-modtime staleness gate below (manual spreadsheet edits, and
- * anything else this webapp didn't itself write through).
+ * has no built-in expiry — freshness here comes solely from write-through invalidation (the
+ * webapp's own writes, see PaxCache read/write pairs below) plus TrackerEditTrigger.js's
+ * onEdit-driven invalidation for manual spreadsheet edits (F3Go30-o39s epic).
  *
  * Manual edits were originally meant to be caught by an onEdit simple trigger, but a monthly
  * Tracker spreadsheet is a Drive copy (CreateNewTracker.js's makeCopy) and a copy carries its
  * own independent bound script + PropertiesService store. onEdit installed as a simple trigger
  * runs in *that* copy's script context, which has no way to reach the PropertiesService store
- * this deployed webapp actually reads from — so it could never invalidate anything. See
- * ensurePaxCacheFresh_ below for the replacement.
+ * this deployed webapp actually reads from. TrackerEditTrigger.js solves this by installing the
+ * onEdit trigger from the Template's own script project (installable triggers run using the
+ * creating project's code, not the bound spreadsheet's), so it can reach the shared store.
+ * An earlier per-request Drive-modtime poll (ensurePaxCacheFresh_) backstopped this before every
+ * write path had write-through coverage and onEdit was provisioned on every live tracker;
+ * retired once both landed (F3Go30-o39s.7) since it was pure per-request latency with nothing
+ * left to catch.
  *
  * Two kinds of entry, both namespaced by {kind, sheetId}:
  *   - Roster index: name (normalized) -> zero-based data-row offset, one JSON blob per sheet.
@@ -100,7 +105,6 @@ function paxCacheDeserializeRow_(row) {
 
 /** Returns the cached row for {kind, sheetId, name}, or null on a miss (never throws). */
 function getPaxCacheRow_(kind, sheetId, name) {
-  ensurePaxCacheFresh_(sheetId);
   try {
     var raw = PropertiesService.getScriptProperties().getProperty(paxCacheRowKey_(kind, sheetId, name));
     if (!raw) { paxCacheRequestStats_.rowMiss++; return null; }
@@ -240,9 +244,8 @@ function wipeAllPaxCache_() {
 /**
  * Wipes both PaxCache kinds (tracker + responses) plus the CacheService-backed full-roster/
  * bonus caches for one sheetId — the complete "this sheet's cache is no longer trustworthy"
- * action, shared by ensurePaxCacheFresh_ (Drive-modtime poll) and handleTrackerEdit_
- * (TrackerEditTrigger.js's onEdit-driven invalidation) so the CacheService key list only ever
- * lives in one place.
+ * action, used by handleTrackerEdit_ (TrackerEditTrigger.js's onEdit-driven invalidation) so
+ * the CacheService key list only ever lives in one place.
  */
 function wipePaxCacheAndRelatedCachesForSheet_(sheetId) {
   wipePaxCacheForSheet_('tracker', sheetId);
@@ -266,58 +269,11 @@ function wipePaxCacheAndRelatedCachesForSheet_(sheetId) {
 }
 
 /**
- * Gates every PaxCache read on the Tracker/Responses spreadsheet's Drive-level modification
- * time — the replacement for the onEdit trigger that can't reach this store (see file header).
- * DriveApp.getFileById().getLastUpdated() is readable from any script project regardless of
- * which one owns the file, so unlike PropertiesService/CacheService it isn't split per Drive
- * copy. Any edit — human, via the Sheets UI, or programmatic, from any script — bumps it.
- *
- * Coarser than the old per-row onEdit invalidation: any edit wipes the whole sheet's cache
- * (both kinds, since tracker + responses tabs live in one file and share one modtime), rather
- * than just the touched row. Also means the request right after a write-through pays for one
- * avoidable rebuild (this webapp's own write bumps the live modtime; the next read's stored
- * asOf is still the pre-write value, so it looks stale even though the write already kept the
- * cache correct) — that's a self-healing performance cost, not a correctness bug: the rebuild
- * reads live data and immediately re-marks asOf, so no request ever serves stale data.
- *
- * Memoized per sheetId for this execution (paxCacheFreshnessMemo_) so a request touching many
- * PAX on the same sheet pays for one DriveApp call, not one per lookup. Fails open on any Drive
- * error (quota, transient failure, or — in tests — no DriveApp global at all): trusts whatever
- * is already cached rather than blocking the request.
- */
-function ensurePaxCacheFresh_(sheetId) {
-  if (Object.prototype.hasOwnProperty.call(paxCacheFreshnessMemo_, sheetId)) return;
-  paxCacheFreshnessMemo_[sheetId] = true;
-  try {
-    var liveModTime = DriveApp.getFileById(sheetId).getLastUpdated().getTime();
-    var props = PropertiesService.getScriptProperties();
-    var key = paxCacheAsOfKey_(sheetId);
-    var storedAsOf = Number(props.getProperty(key)) || 0;
-    if (liveModTime > storedAsOf) {
-      paxCacheRequestStats_.wiped = true;
-      wipePaxCacheAndRelatedCachesForSheet_(sheetId);
-    }
-    props.setProperty(key, String(liveModTime));
-  } catch (e) { /* Drive lookup unavailable — trust existing cache rather than block the request */ }
-}
-
-/**
- * Marks {sheetId}'s cache fresh as of NOW without a DriveApp.getLastUpdated() round trip — for a
- * caller that has just performed a full LIVE read of the sheet and is about to write those rows
- * into the cache itself (resolveFullIdentityFromHandle_/resolveCheckinIdentityFull_ in
- * dashboardWebapp.js). A fresh live read is by definition current, so the Drive-modtime probe
- * ensurePaxCacheFresh_ would otherwise do before it is pure latency (~½s on GAS) with nothing to
- * invalidate. Stamping the asOf marker from the read moment keeps any later same-request lean
- * lookup on the same sheet (getPaxCacheRow_ -> ensurePaxCacheFresh_) from treating the rows the
- * caller just wrote as stale, and — by also setting the per-execution memo — suppresses a
- * redundant Drive call for the rest of this execution.
- *
- * Uses Date.now(), which is >= the sheet's real getLastUpdated() at the instant of the read
- * (we read after every edit Drive already knows about). The one tolerated race — an edit landing
- * in the sub-second window between the caller's getValues() and this stamp — is the same
- * self-healing case ensurePaxCacheFresh_ already documents for the just-after-write-through read:
- * the next request's Drive probe (or a write-through) re-invalidates, so no request serves stale
- * data for more than that instant. Fails open (best-effort) exactly like the write helpers above.
+ * Marks {sheetId}'s cache fresh as of NOW — historically consumed by ensurePaxCacheFresh_'s
+ * Drive-modtime probe (removed F3Go30-o39s.7; see git history for the full rationale this
+ * docstring used to carry). Freshness is now solely write-through + onEdit (TrackerEditTrigger.js),
+ * so the go30asof marker this writes has no remaining reader — dead weight kept only because its
+ * removal, along with the marker itself and paxCacheFreshnessMemo_, is scoped to F3Go30-o39s.8.
  */
 function markPaxCacheFreshNow_(sheetId) {
   paxCacheFreshnessMemo_[sheetId] = true;
@@ -366,7 +322,6 @@ function resolvePaxRowIndex_(kind, sheetId, f3Name, readNameColumn_) {
   var norm = paxCacheNormalizeName_(f3Name);
   if (!norm) return -1;
 
-  ensurePaxCacheFresh_(sheetId);
   var index = getPaxRosterIndex_(kind, sheetId);
   if (index && Object.prototype.hasOwnProperty.call(index, norm)) {
     paxCacheRequestStats_.rosterHit++;
@@ -565,7 +520,6 @@ if (typeof module !== 'undefined' && module.exports) {
     wipePaxCacheAndRelatedCachesForSheet_: wipePaxCacheAndRelatedCachesForSheet_,
     wipeAllPaxCache_: wipeAllPaxCache_,
     resolvePaxRowIndex_: resolvePaxRowIndex_,
-    ensurePaxCacheFresh_: ensurePaxCacheFresh_,
     markPaxCacheFreshNow_: markPaxCacheFreshNow_,
     resetPaxCacheFreshnessMemo_: resetPaxCacheFreshnessMemo_,
     getPaxCacheRequestStats_: getPaxCacheRequestStats_,
