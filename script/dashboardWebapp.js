@@ -59,6 +59,14 @@ var ensurePaxCacheFresh_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebapp
   || (typeof globalThis !== 'undefined' && globalThis.ensurePaxCacheFresh_);
 var markPaxCacheFreshNow_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.markPaxCacheFreshNow_)
   || (typeof globalThis !== 'undefined' && globalThis.markPaxCacheFreshNow_);
+var getPaxCacheRequestStats_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.getPaxCacheRequestStats_)
+  || (typeof globalThis !== 'undefined' && globalThis.getPaxCacheRequestStats_);
+
+/** F3Go30-440b.1 — folds this execution's PaxCache hit/miss/wipe counters into the caller's own
+ *  per-request GasLogger event object; {} if PaxCache isn't wired (never true in production). */
+function paxCacheStatsForLog_dw_() {
+  return getPaxCacheRequestStats_dw_ ? getPaxCacheRequestStats_dw_() : {};
+}
 
 var dashboardWebappBonusModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./bonusWebapp.js')
@@ -701,7 +709,7 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
     });
   });
   if (responsesRowIndex === -1) {
-    GasLogger.log('checkinWebapp.resolveIdentity.timing', { matched: false, lean: true, openMs: openMs, totalMs: Date.now() - t0 });
+    GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({ matched: false, lean: true, openMs: openMs, totalMs: Date.now() - t0 }, paxCacheStatsForLog_dw_()));
     return { matched: false, months: months };
   }
 
@@ -737,10 +745,10 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
   }
   var trackerMs = Date.now() - t2;
 
-  GasLogger.log('checkinWebapp.resolveIdentity.timing', {
+  GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({
     matched: true, lean: true, emailMismatch: emailMismatch,
     openMs: openMs, responsesMs: responsesMs, trackerMs: trackerMs, totalMs: Date.now() - t0,
-  });
+  }, paxCacheStatsForLog_dw_()));
 
   return {
     matched: true,
@@ -915,7 +923,7 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var match = findSignupMatchByF3NameOnly_dw_(dataRows, f3Name, columns);
   var responsesMs = Date.now() - t1;
   if (!match) {
-    GasLogger.log('checkinWebapp.resolveIdentity.timing', { matched: false, lean: false, openMs: openMs, freshCheckMs: freshCheckMs, responsesMs: responsesMs, totalMs: Date.now() - t0 });
+    GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({ matched: false, lean: false, openMs: openMs, freshCheckMs: freshCheckMs, responsesMs: responsesMs, totalMs: Date.now() - t0 }, paxCacheStatsForLog_dw_()));
     return { matched: false, months: months };
   }
 
@@ -964,11 +972,11 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var rowIndex = rosterIndex[paxCacheNormalizeName_dw_(f3Name)];
   if (rowIndex === undefined) return { matched: false, months: months };
 
-  GasLogger.log('checkinWebapp.resolveIdentity.timing', {
+  GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({
     matched: true, lean: false, emailMismatch: emailMismatch,
     openMs: openMs, freshCheckMs: freshCheckMs, responsesMs: responsesMs, trackerMs: trackerMs,
     cacheWriteMs: cacheWriteMs, totalMs: Date.now() - t0,
-  });
+  }, paxCacheStatsForLog_dw_()));
 
   return {
     matched: true,
@@ -1045,14 +1053,14 @@ function resolveLeanIdentityFromHandle_(handle) {
   var trackerRow = trackerSheet.getRange(handle.rowIndex + 4, 1, 1, trackerSheet.getLastColumn()).getValues()[0];
   // Staleness gate: the row the handle pointed at must still carry the same canonical PAX name.
   if (paxCacheNormalizeName_dw_(trackerRow[TRACKER_NAME_COL_]) !== paxCacheNormalizeName_dw_(handle.f3Name)) {
-    GasLogger.log('checkinWebapp.resolveIdentity.timing', { matched: false, fromHandle: true, stale: true, totalMs: Date.now() - t0 });
+    GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({ matched: false, fromHandle: true, stale: true, totalMs: Date.now() - t0 }, paxCacheStatsForLog_dw_()));
     return null;
   }
   var layout = getTrackerLayout_(trackerSheet, monthInfo.sheetId);
   // Keep PaxCache's per-PAX row warm for any follow-up lean lookup that DOESN'T carry the handle.
   setPaxCacheRow_dw_('tracker', monthInfo.sheetId, trackerRow[TRACKER_NAME_COL_], trackerRow);
 
-  GasLogger.log('checkinWebapp.resolveIdentity.timing', { matched: true, fromHandle: true, lean: true, totalMs: Date.now() - t0 });
+  GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({ matched: true, fromHandle: true, lean: true, totalMs: Date.now() - t0 }, paxCacheStatsForLog_dw_()));
   return {
     matched: true,
     fromHandle: true,
@@ -1138,15 +1146,15 @@ function resolveFullIdentityFromHandle_(handle) {
   if (paxCacheNormalizeName_dw_((trackerValues[rowIndex] || [])[TRACKER_NAME_COL_]) !== paxCacheNormalizeName_dw_(handle.f3Name)) {
     rowIndex = rosterIndex[paxCacheNormalizeName_dw_(handle.f3Name)];
     if (rowIndex === undefined) {
-      GasLogger.log('checkinWebapp.resolveIdentity.timing', { matched: false, fromHandle: true, lean: false, stale: true, totalMs: Date.now() - t0 });
+      GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({ matched: false, fromHandle: true, lean: false, stale: true, totalMs: Date.now() - t0 }, paxCacheStatsForLog_dw_()));
       return null;
     }
   }
 
-  GasLogger.log('checkinWebapp.resolveIdentity.timing', {
+  GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({
     matched: true, fromHandle: true, lean: false,
     openMs: openMs, freshCheckMs: freshCheckMs, trackerMs: trackerMs, cacheWriteMs: cacheWriteMs, totalMs: Date.now() - t0,
-  });
+  }, paxCacheStatsForLog_dw_()));
   return {
     matched: true,
     fromHandle: true,
@@ -1914,11 +1922,11 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
 
   var paxBoard = groupByTeam_(allPaxRows);
 
-  GasLogger.log('checkinWebapp.dashboard', {
+  GasLogger.log('checkinWebapp.dashboard', Object.assign({
     f3Name: payload.f3Name, currentDay: currentDay, totalDays: totalDays, viewDayIndex: viewDayIndex,
     paxRows: allPaxRows.length, resolveMonthMs: resolveMonthMs, resolveIdentityMs: resolveIdentityMs,
     totalMs: Date.now() - t0,
-  });
+  }, paxCacheStatsForLog_dw_()));
 
   return {
     ok: true,

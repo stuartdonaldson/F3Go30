@@ -27,6 +27,14 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+- Dark mode: check-in (both the app-hosted and static pages) now automatically matches your
+  browser/OS light-or-dark preference, switching live if you flip your OS theme while the page
+  is open.
+- Fixed the Total Score tile showing a number that didn't match your hits/misses/bonus/fails —
+  it could run ahead of "today" if you'd pre-marked a future day, and the Fail count in the
+  breakdown was mislabeled "no check-in" instead of "fails". Scrubbing the date-nav arrows back
+  to a prior day now shows your score as of that day, not always today's running total. (v2.4.1)
+
 ---
 
 ## v2.4 — Faster check-in, published as a plain web page (2026-07-16)

@@ -459,6 +459,14 @@ function handleAdminPost_(e) {
       var result = sendNagEmail_(contextDate);
       return jsonOutput_({ ok: true, result: result });
     }
+    if (payload.action === 'runPaxCachePurge') {
+      // Runs the nightly PaxCache purge (F3Go30-440b.2) on demand, for live SIT verification.
+      // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload to test against a
+      // pinned "now" rather than the real clock.
+      var purgeContextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
+      var purgeResult = purgeStalePaxCache_(purgeContextDate);
+      return jsonOutput_({ ok: true, result: purgeResult });
+    }
     if (payload.action === 'copyTemplate') {
       // Stands up a new environment's files: copies a source Template (+ bound script,
       // typically PROD's) and the N most recent real trackers into a new sibling Drive

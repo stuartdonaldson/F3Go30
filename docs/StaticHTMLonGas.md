@@ -5,6 +5,12 @@
 > a plain JSON API. Source issues: F3Go30-5nfj.1/.2 and same-day follow-ups (favicon, title,
 > bookmarkable URL). Intended as a transferable playbook for other GAS bound/unbound web-app
 > projects considering the same move.
+>
+> The last two sections — **Storage persistence on iOS/Safari** and **What a real first-party page
+> unlocks next: your own identity & access control** — were appended 2026-07 as follow-on learnings
+> about what the first-party move *enables*, beyond the performance/chrome wins that motivated it.
+> The identity section is forward-looking architecture (validated as feasible, **not yet built** in
+> F3Go30 at time of writing); the storage section documents an already-observed iOS problem.
 
 ## Why do this
 
@@ -212,6 +218,99 @@ show up in a functional smoke test (the page works; it just doesn't behave like 
   everything that doesn't need live data (shell HTML, CSS, JS) — only the actual identify/data
   calls still pay a server round trip, same as before.
 
+## Storage persistence on iOS/Safari — a first-party-only benefit
+
+This one motivated part of the migration and is worth calling out because it is *invisible* to the
+kind of testing done on desktop Chromium: it only manifests on iOS/Safari, and only after a week.
+
+WebKit's Intelligent Tracking Prevention (ITP) puts a **7-day cap on all script-writable storage** —
+`localStorage`, `IndexedDB`, and client-set (`document.cookie`) cookies alike. The rule: that
+storage is deleted after 7 days of Safari use *without the user interacting with the site as a
+first-party, top-level document*. First-party interaction (a tap, a keystroke on the real page)
+resets the clock.
+
+- **In the `HtmlService` sandbox this cap was effectively unavoidable.** The served page lived in a
+  nested cross-origin iframe on `script.googleusercontent.com`; its storage was partitioned, taps
+  *inside* that frame did not count as first-party interaction with the app's origin, and because
+  the top-level (Google-controlled) URL never changed, no top-level navigation ever "blessed" the
+  storage either. So the 7-day clock never reset **no matter how often the user actually used the
+  app** — a saved-identity token / bookmark stored on iOS reliably vanished after a week. This is a
+  concrete, user-visible instance of the same sandbox constraint the "Why do this" section
+  describes, not a separate defect.
+- **A static first-party page fixes the common case for free.** The static page *is* the top-level
+  document, on a stable origin (GitHub Pages, or a custom domain). Now ordinary taps count as
+  first-party interaction and each visit resets the 7-day clock. For an app used on a **weekly or
+  tighter cadence** (F3Go30's check-in is weekly), active users re-visit well inside 7 days, so
+  their local storage persists indefinitely in practice. Only genuinely lapsed users (no visit for
+  >7 days) lose it — and for them the cost is one re-identify.
+- **What the static move does *not* fix.** The 7-day cap on *pure JavaScript* storage is a Safari
+  policy you cannot remove client-side. The one storage class exempt from it is a **server-set
+  `HttpOnly` cookie** (an HTTP `Set-Cookie` response header) — and a purely static host (GitHub
+  Pages) has no server to issue one. A cookie set by the cross-origin GAS backend is third-party
+  from the page's perspective and gets blocked anyway. So if surviving >7-day idle gaps is a hard
+  requirement, the options are: (a) accept the re-identify for lapsed users; (b) front the static
+  file with a host that *can* set a first-party cookie (Cloudflare Workers, Firebase Hosting + a
+  function, Cloud Run), which means leaving pure static hosting; or (c) lean on silent re-auth
+  (see the identity section — Google One Tap auto-select re-establishes identity with no friction
+  on each visit, which also counts as the interaction that resets the clock).
+
+The transferable lesson: **first-party hosting turns "storage dies every 7 days regardless" into
+"storage persists for anyone who keeps using the app,"** but it does not make client-side storage
+permanent. Match the expectation to the app's usage cadence, and reach for a server-set cookie or
+silent re-auth only if lapsed-user re-identify is genuinely unacceptable.
+
+## What a real first-party page unlocks next: your own identity & access control
+
+*(Forward-looking architecture — feasible on any real first-party page, validated but not yet built
+in F3Go30. Included because it is the single biggest capability the migration makes available, and
+it is impossible from inside the `HtmlService` anonymous sandbox.)*
+
+Under `ANYONE_ANONYMOUS`, an `HtmlService` web app knows *nothing* about who is visiting —
+`Session.getActiveUser().getEmail()` returns `''`. A real first-party static page changes that: it
+can run **Google Identity Services (GIS)** and obtain a *verifiable* identity for the visitor,
+without asking the visitor to grant the app any access to their data. The pattern separates two
+concerns that are easy to conflate:
+
+1. **What the backend is allowed to do = the app's *own* credentials — the visitor authorizes
+   nothing.** F3Go30's manifest is already `executeAs: USER_DEPLOYING` + `access:
+   ANYONE_ANONYMOUS`, so **every anonymous request already runs with the deploying owner's
+   authority.** Adding Drive/Calendar/Gmail scopes to the script lets the backend do anything the
+   owner can, against the *owner's own* content. The users grant nothing because they are not the
+   ones authorizing — the owner authorized once, at deploy time.
+2. **Who the visitor is = a Google ID token (authentication only, no data access).** The static
+   page runs GIS "Sign in with Google" / One Tap and receives a **signed ID token (JWT)** carrying
+   `sub` (immutable per-account id), `email`, `email_verified`, `aud` (your client id), `iss`,
+   `exp` — using only the **non-sensitive** `openid`/`email`/`profile` scopes. It POSTs that token
+   to the GAS backend (as a `text/plain` simple request, same CORS shape as every other call). The
+   backend **verifies** it — at low volume the simplest route is Google's
+   `https://oauth2.googleapis.com/tokeninfo?id_token=…` endpoint via `UrlFetchApp`; higher volume
+   warrants local JWKS/RS256 verification — checking `aud` == your client id, `iss`, and `exp`, then
+   keys on `sub` and applies **your own allowlist** (a Script Property or Config sheet).
+
+**Why this avoids the "scary" Google friction entirely.** The consent screen, app verification, and
+"Google hasn't verified this app" wall are all triggered by an app **requesting access to the
+user's data** (sensitive/restricted scopes: Gmail/Drive/Calendar). This model requests *none of the
+visitor's data* — it uses the owner's own authority for the Google side and asks the visitor only
+to *prove identity*. Sign-in with only `openid`/`email`/`profile` (non-sensitive) publishes to
+production self-serve, with no review, no cap, and no unverified-app warning; the visitor sees at
+most a minimal account-picker, never a permissions checklist.
+
+**Why not a service account (for "act as me, including my Gmail").** A service account has its *own*
+Drive/Calendar and **no Gmail at all**; it can only act *as you* via Workspace domain-wide
+delegation, which does not exist for a personal `@gmail.com`. The `executeAs: USER_DEPLOYING` web
+app already gives the backend full Gmail/Drive/Calendar as the owner with zero extra infrastructure
+— it is the direct route, and the service-account path is strictly more work for less reach here.
+
+**The security boundary this creates — concentrate testing here.** Because the backend runs with
+the owner's *full* authority for *every* anonymous request, the app-level ACL is the **entire**
+security boundary. Design it default-deny: a request with no valid, allowlisted, verified token
+gets only the public actions (F3Go30: name-based check-in); every privileged Drive/Calendar/Gmail
+action requires a verified, allowlisted `sub`. Verify the JWT (signature + `aud` + `iss` + `exp`)
+on every privileged call, or verify once and bind the identity into an existing server session
+(F3Go30 has GUID sessions in `CheckinSessions.js`), and **fail closed**. Gate on `sub`, not `email`
+(email can be reassigned, especially in Workspace). A bug here exposes the owner's content, so this
+is where the test coverage belongs.
+
 ## Checklist for the next project
 
 - [ ] Spike CORS live, from a real cross-origin static serve, against the actual web app — before
@@ -235,3 +334,14 @@ show up in a functional smoke test (the page works; it just doesn't behave like 
 - [ ] Add a regression test that exercises the static page from a genuinely different origin
       against a live deployment, plus a "the original GAS page still works" guard in the same
       suite.
+- [ ] **iOS/Safari storage:** confirm any saved-identity token / bookmark in `localStorage`
+      survives on a real iOS device across the app's usage cadence. First-party hosting resets the
+      ITP 7-day clock on each visit, so weekly-or-tighter usage persists — but validate the
+      lapsed-user (>7-day idle) path re-identifies cleanly rather than erroring, and reach for a
+      server-set cookie or silent re-auth only if that re-identify is unacceptable.
+- [ ] **If gating operations by identity:** obtain a Google ID token client-side via GIS (only
+      `openid`/`email`/`profile` — non-sensitive, no consent screen or verification), POST it
+      `text/plain`, and verify it server-side (`aud`/`iss`/`exp`, key on `sub`) before applying an
+      allowlist. Keep the backend's Google authority as the app's own credentials (`executeAs`
+      owner / service account) — never request the *visitor's* data scopes. Treat the app-level ACL
+      as the whole security boundary: default-deny, fail closed, and concentrate tests there.

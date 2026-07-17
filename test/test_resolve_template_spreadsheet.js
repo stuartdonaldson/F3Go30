@@ -9,7 +9,8 @@ global.GasLogger = {
 
 const {
   resolveTemplateSpreadsheet_, _lookupNamespaceTemplateId_, _lookupNamespaceRegistryRow_, NAMESPACE_DB_SHEET_NAME_,
-  NAMESPACE_DB_HEADERS_, buildNamespaceRegistryRow_, appendNamespaceRegistryRow_, removeNamespaceRegistryRow_
+  NAMESPACE_DB_HEADERS_, buildNamespaceRegistryRow_, appendNamespaceRegistryRow_, removeNamespaceRegistryRow_,
+  _listNamespaceRegistryRows_
 } = require('../script/go30tools.js');
 
 function fakeSheet_(headers, rows) {
@@ -159,6 +160,34 @@ function fakeBoundSpreadsheet_(namespaceDbSheet) {
     autoGenerateEnabled: true,
     cleanupSessionsEnabled: false
   });
+})();
+
+// _listNamespaceRegistryRows_ (F3Go30-440b.2 follow-up) — every registered namespace's row,
+// contrast _lookupNamespaceRegistryRow_'s single-ns lookup.
+(function testListNamespaceRegistryRowsReturnsEmptyWhenSheetMissing() {
+  assert.deepEqual(_listNamespaceRegistryRows_(fakeBoundSpreadsheet_(null)), []);
+})();
+
+(function testListNamespaceRegistryRowsReturnsEmptyWhenSheetHasNoRows() {
+  var boundSpreadsheet = fakeBoundSpreadsheet_(fakeSheet_(['NameSpace', 'TemplateId'], []));
+  assert.deepEqual(_listNamespaceRegistryRows_(boundSpreadsheet), []);
+})();
+
+(function testListNamespaceRegistryRowsReturnsEveryRow() {
+  var boundSpreadsheet = fakeBoundSpreadsheet_(fakeSheet_(
+    ['NameSpace', 'TemplateId', 'Kind', 'NagEnabled', 'MinusOneEnabled', 'AutoGenerateEnabled', 'CleanupSessionsEnabled'],
+    [
+      ['sit-smoke', 'tmpl-1', 'smoke', 'Yes', 'no', 'true', ''],
+      ['demo-env', 'tmpl-2', 'demo', '', '', '', ''],
+    ]
+  ));
+  var rows = _listNamespaceRegistryRows_(boundSpreadsheet);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].namespace, 'sit-smoke');
+  assert.equal(rows[0].templateId, 'tmpl-1');
+  assert.equal(rows[0].nagEnabled, true);
+  assert.equal(rows[1].namespace, 'demo-env');
+  assert.equal(rows[1].templateId, 'tmpl-2');
 })();
 
 (function testBuildNamespaceRegistryRowDefaultsKindAndBlanksTriggerFlags() {

@@ -116,6 +116,7 @@ const {
   deleteCheckinSessionsByIdentity_,
   resolveOrCreateCheckinSessionGuid_,
   getCachedCheckinSessionTitle_,
+  listActiveCheckinSessionF3Names_,
 } = require('../script/CheckinSessions.js');
 
 // resolveCheckinSession_ returns null for a guid that's never existed.
@@ -327,6 +328,26 @@ const {
   assert.equal(getCachedCheckinSessionTitle_('guid-cache'), 'Anchor Renamed');
 
   assert.equal(getCachedCheckinSessionTitle_(''), null, 'no guid is always a miss');
+}
+
+// listActiveCheckinSessionF3Names_ (F3Go30-440b.2) — normalized {name: true} set from whatever
+// currently lives in the sheet; empty (never throws) when the sheet is missing/empty.
+{
+  fakeProps = makeFakeProperties_();
+  var sheet = makeFakeSessionsSheet_([
+    ['guid-1', 'Crazy Ivan', 'ivan@example.com', 't1', 't2'],
+    ['guid-2', '  Little John  ', 'lj@example.com', 't1', 't2'], // whitespace must be normalized
+  ]);
+  var ss = makeFakeSpreadsheet_(sheet);
+
+  var names = listActiveCheckinSessionF3Names_(ss);
+  assert.deepEqual(names, { 'crazy ivan': true, 'little john': true });
+
+  var emptySheet = makeFakeSpreadsheet_(makeFakeSessionsSheet_([]));
+  assert.deepEqual(listActiveCheckinSessionF3Names_(emptySheet), {});
+
+  var noSheet = { getSheetByName: function() { return null; } };
+  assert.deepEqual(listActiveCheckinSessionF3Names_(noSheet), {});
 }
 
 console.log('test_checkin_sessions.js: all assertions passed');

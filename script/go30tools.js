@@ -890,6 +890,18 @@ function resolveTemplateSpreadsheet_(e, payload) {
  * callers must treat null as "not allowlisted", never as permission to fall through to a
  * request-supplied id.
  */
+function _parseNamespaceRegistryRow_(row, headerIndex) {
+	return {
+		namespace: _getCellByHeader_(row, headerIndex, ['NameSpace', 'Namespace', 'ns']),
+		templateId: _getCellByHeader_(row, headerIndex, ['TemplateId', 'Template Id', 'TemplateID']),
+		kind: _getCellByHeader_(row, headerIndex, ['Kind']),
+		nagEnabled: _isNamespaceFlagEnabled_(_getCellByHeader_(row, headerIndex, ['NagEnabled', 'Nag Enabled'])),
+		minusOneEnabled: _isNamespaceFlagEnabled_(_getCellByHeader_(row, headerIndex, ['MinusOneEnabled', 'MinusOne Enabled'])),
+		autoGenerateEnabled: _isNamespaceFlagEnabled_(_getCellByHeader_(row, headerIndex, ['AutoGenerateEnabled', 'AutoGenerate Enabled'])),
+		cleanupSessionsEnabled: _isNamespaceFlagEnabled_(_getCellByHeader_(row, headerIndex, ['CleanupSessionsEnabled', 'CleanupSessions Enabled']))
+	};
+}
+
 function _lookupNamespaceRegistryRow_(boundSpreadsheet, ns) {
 	var sheet = boundSpreadsheet.getSheetByName(NAMESPACE_DB_SHEET_NAME_);
 	if (!sheet) return null;
@@ -904,17 +916,37 @@ function _lookupNamespaceRegistryRow_(boundSpreadsheet, ns) {
 		var row = values[i] || [];
 		var rowNamespace = _getCellByHeader_(row, headerIndex, ['NameSpace', 'Namespace', 'ns']);
 		if (rowNamespace !== ns) continue;
-		return {
-			namespace: rowNamespace,
-			templateId: _getCellByHeader_(row, headerIndex, ['TemplateId', 'Template Id', 'TemplateID']),
-			kind: _getCellByHeader_(row, headerIndex, ['Kind']),
-			nagEnabled: _isNamespaceFlagEnabled_(_getCellByHeader_(row, headerIndex, ['NagEnabled', 'Nag Enabled'])),
-			minusOneEnabled: _isNamespaceFlagEnabled_(_getCellByHeader_(row, headerIndex, ['MinusOneEnabled', 'MinusOne Enabled'])),
-			autoGenerateEnabled: _isNamespaceFlagEnabled_(_getCellByHeader_(row, headerIndex, ['AutoGenerateEnabled', 'AutoGenerate Enabled'])),
-			cleanupSessionsEnabled: _isNamespaceFlagEnabled_(_getCellByHeader_(row, headerIndex, ['CleanupSessionsEnabled', 'CleanupSessions Enabled']))
-		};
+		return _parseNamespaceRegistryRow_(row, headerIndex);
 	}
 	return null;
+}
+
+/**
+ * Every registered namespace's full NamespaceDB row (F3Go30-440b.2 follow-up) — for a caller
+ * that needs to fan out across ALL namespaces rather than resolve one (contrast
+ * _lookupNamespaceRegistryRow_). PaxCache.js's purgeStalePaxCache_ is the first such caller: its
+ * PropertiesService store is shared by the one deployed script regardless of which namespace a
+ * request's ns targeted (unlike TrackerDB/PaxDB/CheckinSessions, which live in each namespace's
+ * own copied spreadsheet), so it needs every namespace's own TrackerDB to know which sheetIds
+ * are still live anywhere before treating an unrecognized one as orphaned.
+ * @returns {Array<Object>} Empty array if the sheet is absent or has no rows.
+ */
+function _listNamespaceRegistryRows_(boundSpreadsheet) {
+	var sheet = boundSpreadsheet.getSheetByName(NAMESPACE_DB_SHEET_NAME_);
+	if (!sheet) return [];
+
+	var values = sheet.getDataRange().getValues();
+	if (!values || values.length < 2) return [];
+
+	var headers = values[0] || [];
+	var headerIndex = _buildHeaderIndex_(headers);
+	var out = [];
+	for (var i = 1; i < values.length; i++) {
+		var row = values[i] || [];
+		var parsed = _parseNamespaceRegistryRow_(row, headerIndex);
+		if (parsed.namespace) out.push(parsed);
+	}
+	return out;
 }
 
 function _isNamespaceFlagEnabled_(val) {
@@ -1802,6 +1834,7 @@ if (typeof module !== 'undefined' && module.exports) {
 		resolveContextDate_: resolveContextDate_,
 		_lookupNamespaceTemplateId_: _lookupNamespaceTemplateId_,
 		_lookupNamespaceRegistryRow_: _lookupNamespaceRegistryRow_,
+		_listNamespaceRegistryRows_: _listNamespaceRegistryRows_,
 		buildNamespaceRegistryRow_: buildNamespaceRegistryRow_,
 		appendNamespaceRegistryRow_: appendNamespaceRegistryRow_,
 		removeNamespaceRegistryRow_: removeNamespaceRegistryRow_,

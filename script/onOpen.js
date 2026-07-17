@@ -322,18 +322,19 @@ function showAbout() {
 
 /**
  * Installs the daily ADR-010 dispatch triggers — minus-one marking (markMinusOne.js), nag
- * email (nag.js), and check-in session cleanup (CheckinSessions.js) — exactly once, on the
- * Go30 Template only. All three now resolve their own target per run rather than needing
- * per-monthly-copy setup; form-submit trigger setup happens automatically per tracker in
- * CreateNewTracker.js and is not part of this menu item.
+ * email (nag.js), check-in session cleanup (CheckinSessions.js), and PaxCache purge
+ * (PaxCache.js, F3Go30-440b.2) — exactly once, on the Go30 Template only. All four now resolve
+ * their own target per run rather than needing per-monthly-copy setup; form-submit trigger
+ * setup happens automatically per tracker in CreateNewTracker.js and is not part of this menu
+ * item.
  */
 function initializeTemplateDispatchTriggers() {
   return GasLogger.run('initializeTemplateDispatchTriggers', function() {
     if (typeof isTemplateHost_ === 'function' && !isTemplateHost_()) {
       SpreadsheetApp.getUi().alert(
         'This installs the daily ADR-010 dispatch triggers (minus-one marking, nag email, ' +
-        'check-in session cleanup). Run this once, on the Go30 Template only — not on a ' +
-        'monthly tracker copy.'
+        'check-in session cleanup, PaxCache purge). Run this once, on the Go30 Template only ' +
+        '— not on a monthly tracker copy.'
       );
     }
     setupDailyMinusOneTrigger();
@@ -342,6 +343,9 @@ function initializeTemplateDispatchTriggers() {
     }
     if (typeof setupCheckinSessionCleanupTrigger_ === 'function') {
       try { setupCheckinSessionCleanupTrigger_(); } catch (e) { GasLogger.log('initializeTemplateDispatchTriggers.setupCheckinSessionCleanupTriggerFailed', { error: e.message }); }
+    }
+    if (typeof setupPaxCachePurgeTrigger_ === 'function') {
+      try { setupPaxCachePurgeTrigger_(); } catch (e) { GasLogger.log('initializeTemplateDispatchTriggers.setupPaxCachePurgeTriggerFailed', { error: e.message }); }
     }
   });
 }

@@ -395,6 +395,32 @@ function clearCheckinSessionCleanupTrigger_() {
   });
 }
 
+/**
+ * Returns the set of F3 Names (normalized) currently holding a CheckinSessions row — i.e. still
+ * "active" per that sheet's own nightly prune (cleanupStaleCheckinSessions_ above). Used by
+ * PaxCache.js's purgeStalePaxCache_ (F3Go30-440b.2) as an activity-based staleness signal for
+ * per-PAX cache rows on sheets too recent to qualify for its own tracker-age wipe: since every
+ * identify (dashboardWebapp.js's handleCheckinIdentify_) and every signup
+ * (signupWebapp.js's resolveOrCreateCheckinSessionGuid_) creates or touches a session, a PAX
+ * absent here hasn't been seen in at least CHECKIN_SESSION_STALE_DAYS_ — reusing that already-
+ * pruned store as the activity signal instead of re-deriving a second staleness window in
+ * PaxCache.js. Read-only: never provisions the sheet.
+ * @returns {Object<string, boolean>} {normalizedF3Name: true}
+ */
+function listActiveCheckinSessionF3Names_(spreadsheet) {
+  var names = {};
+  var sheet = spreadsheet.getSheetByName(CHECKIN_SESSIONS_SHEET_NAME_);
+  if (!sheet) return names;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return names;
+  var values = sheet.getRange(2, 1, lastRow - 1, CHECKIN_SESSIONS_HEADERS_.length).getValues();
+  values.forEach(function(row) {
+    var norm = normalizeCheckinIdentityField_(row[CHECKIN_SESSION_COL_F3NAME_]);
+    if (norm) names[norm] = true;
+  });
+  return names;
+}
+
 /** Installs the nightly session-cleanup trigger exactly once — mirrors markMinusOne.js's
  *  setupDailyMinusOneTrigger convention (clear-then-recreate, so re-running this is idempotent). */
 function setupCheckinSessionCleanupTrigger_() {
@@ -421,5 +447,6 @@ if (typeof module !== 'undefined' && module.exports) {
     resolveOrCreateCheckinSessionGuid_: resolveOrCreateCheckinSessionGuid_,
     cacheCheckinSessionTitle_: cacheCheckinSessionTitle_,
     getCachedCheckinSessionTitle_: getCachedCheckinSessionTitle_,
+    listActiveCheckinSessionF3Names_: listActiveCheckinSessionF3Names_,
   };
 }

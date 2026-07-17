@@ -266,7 +266,7 @@ visible only when the spreadsheet is opened by the owner account.
 | Menu Item | Function | When to Use |
 |-----------|----------|------------|
 | Copy and Initialize | `copyAndInit()` | Start of each new month (manual). Registers the new tracker in `TrackerDB` and installs its form-submit trigger directly — no separate trigger step needed on the copy. |
-| Initialize Template Dispatch Triggers (Template only!) | `initializeTemplateDispatchTriggers()` | Once, on the Template only — installs the daily minus-one, nag-email, and check-in session cleanup dispatch triggers. Warns if run elsewhere. |
+| Initialize Template Dispatch Triggers (Template only!) | `initializeTemplateDispatchTriggers()` | Once, on the Template only — installs the daily minus-one, nag-email, check-in session cleanup, and PaxCache purge dispatch triggers. Warns if run elsewhere. |
 | Initialize Monthly Trigger | `initializeMonthlyTrigger()` | Once on the template spreadsheet to schedule auto-generate |
 | Reinitialize this spreadsheet | `reinitializeSheets()` | Development or reset |
 | Run test function (DEV) | `testFunction()` | Developer use only |
@@ -278,7 +278,21 @@ visible only when the spreadsheet is opened by the owner account.
 > tracker by resolving against `TrackerDB` or the firing event (ADR-010). A fourth trigger,
 > `cleanupStaleCheckinSessions` (`CheckinSessions.js`), is installed the same way and prunes
 > abandoned/stale check-in bookmark sessions nightly — it does not resolve a tracker, since the
-> `CheckinSessions` sheet lives on the Template itself.
+> `CheckinSessions` sheet lives on the Template itself. A fifth trigger, `purgeStalePaxCache`
+> (`PaxCache.js`, F3Go30-440b.2), also runs nightly on the Template and purges PaxCache
+> Script Properties entries (`go30pax:`/`go30idx:`/`go30asof:`) three ways: wholesale, for any
+> `TrackerDB` sheet whose tracker month started more than ~60 days ago; per-PAX, on sheets too
+> recent for that wholesale wipe, for any PAX who no longer has a row in `CheckinSessions`
+> (reusing that sheet's own nightly prune as an activity signal); and an orphan sweep, for any
+> `go30pax:`/`go30idx:`/`go30asof:` entry whose sheetId has no `TrackerDB` row anywhere at
+> all — a single deleted tracker (`cleanupTracker`) or a whole torn-down namespace
+> (`teardownEnvironment`). PaxCache's Script Properties store is shared by the one deployed
+> script regardless of which `ns` a request targeted, but `TrackerDB` is not (each namespace
+> from `copyTemplate`/ADR-014 has its own copied spreadsheet with its own `TrackerDB`), so the
+> orphan sweep first unions the bound Template's `TrackerDB` with every registered namespace's
+> own `TrackerDB` (via `NamespaceDB`) before treating a sheetId as truly gone — see PaxCache.js's
+> `purgeStalePaxCache_`/`collectKnownTrackerSheetIds_` docstrings. Callable on demand for testing
+> via the `runPaxCachePurge` admin action (`node tools/callWebapp.js runPaxCachePurge --env <env>`).
 
 ### LogFile Verification (UC-5)
 

@@ -6,111 +6,200 @@
 <title>Go30 Dashboard</title>
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; background: #f4f1ea; font-family: Arial, Helvetica, sans-serif; color: #2b2b2b; }
+  :root {
+    --bg: #f4f1ea;
+    --card-bg: #fffdf8;
+    --input-bg: #fff;
+    --border: #d8cfbf;
+    --text: #2b2b2b;
+    --text-muted: #555;
+    --text-faint: #888;
+    --text-faint2: #b0a898;
+    --brand: #2f5d50;
+    --brand-bg: #2f5d50;
+    --brand-contrast: #f8f4ea;
+    --soft-bg: #eef3f0;
+    --soft-border: #cfe0d8;
+    --link: #0b5c86;
+    --shadow: rgba(47,93,80,.07);
+    --x-mark: rgba(43,43,43,.35);
+
+    --pill-fe-bg: #eef3f0; --pill-fe-fg: #2f5d50;
+    --pill-q-bg: #e5eff6; --pill-q-fg: #0b5c86;
+    --pill-ins-bg: #f1e9f6; --pill-ins-fg: #6a3d9a;
+    --pill-eh-bg: #fdf1de; --pill-eh-fg: #9a6b00;
+
+    --badge-complete-bg: #eef3f0; --badge-complete-fg: #2f5d50;
+    --badge-pending-bg: #fdf6e3; --badge-pending-fg: #8a6d00;
+    --badge-extra-bg: #eef2fa; --badge-extra-fg: #35538a;
+
+    --warn-bg: #fdf6e3; --warn-border: #e8d9a0; --warn-fg: #8a6d00;
+    --error-bg: #fdeceb; --error-border: #a3401a; --error-fg: #6b1f0a; --error-detail-border: #e3b8af;
+    --danger: #a3401a;
+    --urgent: #c0272d;
+
+    --cal-done-bg: #3f8b75; --cal-done-fg: #f8f4ea;
+    --cal-missed-bg: #f7b209; --cal-missed-fg: #2b2b2b;
+    --cal-pending-bg: #d8cfbf; --cal-pending-fg: #6b6255;
+    --cal-absent-bg: #de521c; --cal-absent-fg: #f8f4ea;
+
+    --btn-yes-fg: #2f5d50; --btn-yes-hover-border: #2f5d50; --btn-yes-hover-bg: #eef3f0;
+    --btn-no-fg: #f7b209; --btn-no-hover-border: #f7b209; --btn-no-hover-bg: #fdf3d9;
+    --btn-none-fg: #8a8272; --btn-none-hover-border: #b0a898; --btn-none-hover-bg: #f5f2ea;
+    --btn-fail-fg: #b8390f; --btn-fail-hover-border: #b8390f; --btn-fail-hover-bg: #fbe4db;
+
+    --score-divider: #ede9df;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #171b19;
+      --card-bg: #20241f;
+      --input-bg: #262b27;
+      --border: #3a4640;
+      --text: #ece7dc;
+      --text-muted: #b7b0a2;
+      --text-faint: #93a49b;
+      --text-faint2: #93a49b;
+      --brand: #7fc4ac;
+      --brand-bg: #234036;
+      --brand-contrast: #eee9df;
+      --soft-bg: #1d2e28;
+      --soft-border: #2e463d;
+      --link: #6cbce0;
+      --shadow: rgba(0,0,0,.4);
+      --x-mark: rgba(238,233,223,.35);
+
+      --pill-fe-bg: #1d2e28; --pill-fe-fg: #82c4ac;
+      --pill-q-bg: #1c2c36; --pill-q-fg: #7bc0e8;
+      --pill-ins-bg: #2a1f36; --pill-ins-fg: #c39ee8;
+      --pill-eh-bg: #33270f; --pill-eh-fg: #e0b656;
+
+      --badge-complete-bg: #1d2e28; --badge-complete-fg: #82c4ac;
+      --badge-pending-bg: #332a10; --badge-pending-fg: #e0c15f;
+      --badge-extra-bg: #1c2436; --badge-extra-fg: #8fa6e0;
+
+      --warn-bg: #332a10; --warn-border: #5c4c1e; --warn-fg: #e0c15f;
+      --error-bg: #351712; --error-border: #b3543a; --error-fg: #f0a68f; --error-detail-border: #5c352c;
+      --danger: #e2795c;
+      --urgent: #ff6b6b;
+
+      --cal-done-bg: #3f8b75; --cal-done-fg: #eee9df;
+      --cal-missed-bg: #d69a1a; --cal-missed-fg: #1c1c1c;
+      --cal-pending-bg: #3a4640; --cal-pending-fg: #b7b0a2;
+      --cal-absent-bg: #c14a1f; --cal-absent-fg: #eee9df;
+
+      --btn-yes-fg: #82c4ac; --btn-yes-hover-border: #82c4ac; --btn-yes-hover-bg: #1d2e28;
+      --btn-no-fg: #e0b656; --btn-no-hover-border: #e0b656; --btn-no-hover-bg: #332a10;
+      --btn-none-fg: #a39d8d; --btn-none-hover-border: #6b6255; --btn-none-hover-bg: #2a2f2b;
+      --btn-fail-fg: #e2795c; --btn-fail-hover-border: #e2795c; --btn-fail-hover-bg: #3a2015;
+
+      --score-divider: #33403a;
+    }
+  }
+  body { margin: 0; min-height: 100vh; background: var(--bg); font-family: Arial, Helvetica, sans-serif; color: var(--text); }
   .wrap { max-width: 720px; margin: 0 auto; padding: 0 8px 48px; }
-  .header { background: #2f5d50; color: #f8f4ea; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+  .header { background: var(--brand-bg); color: var(--brand-contrast); padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
   .header-right { text-align: right; display: flex; align-items: center; gap: 12px; }
   .header-name { font-weight: bold; font-size: 20px; }
   .header-sub { font-size: 13px; opacity: .6; }
-  .more-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); color: #f8f4ea; width: 32px; height: 32px; border-radius: 8px; font-size: 20px; font-weight: bold; cursor: pointer; line-height: 1; }
-  .card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 22px; box-shadow: 0 2px 10px rgba(47,93,80,.07); margin-top: 18px; }
-  .card h1, .card h2 { margin: 0 0 6px; color: #2f5d50; }
+  .more-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); color: var(--brand-contrast); width: 32px; height: 32px; border-radius: 8px; font-size: 20px; font-weight: bold; cursor: pointer; line-height: 1; }
+  .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 22px; box-shadow: 0 2px 10px var(--shadow); margin-top: 18px; }
+  .card h1, .card h2 { margin: 0 0 6px; color: var(--brand); }
   .card h1 { font-size: 23px; }
   .card h2 { font-size: 19px; }
-  p.muted { color: #555; font-size: 17px; line-height: 1.5; }
-  label.field-label { display: block; font-size: 16px; font-weight: bold; color: #2f5d50; margin-bottom: 5px; }
+  p.muted { color: var(--text-muted); font-size: 17px; line-height: 1.5; }
+  label.field-label { display: block; font-size: 16px; font-weight: bold; color: var(--brand); margin-bottom: 5px; }
   input[type=text], input[type=email], input[type=date], select, textarea {
-    width: 100%; padding: 11px 12px; border: 1px solid #d8cfbf; border-radius: 8px;
-    font-size: 18px; font-family: inherit; margin-bottom: 16px; background: #fff;
+    width: 100%; padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px;
+    font-size: 18px; font-family: inherit; margin-bottom: 16px; background: var(--input-bg); color: var(--text);
   }
   textarea { resize: vertical; }
-  button.primary { width: 100%; padding: 14px; border: none; border-radius: 9px; background: #2f5d50; color: #f8f4ea; font-size: 18px; font-weight: bold; cursor: pointer; font-family: inherit; }
-  button.secondary { width: 100%; margin-top: 10px; padding: 10px; border: none; border-radius: 9px; background: transparent; color: #0b5c86; font-size: 17px; cursor: pointer; font-family: inherit; }
+  button.primary { width: 100%; padding: 14px; border: none; border-radius: 9px; background: var(--brand-bg); color: var(--brand-contrast); font-size: 18px; font-weight: bold; cursor: pointer; font-family: inherit; }
+  button.secondary { width: 100%; margin-top: 10px; padding: 10px; border: none; border-radius: 9px; background: transparent; color: var(--link); font-size: 17px; cursor: pointer; font-family: inherit; }
   .checkin-row { display: flex; gap: 10px; margin-bottom: 8px; }
-  .checkin-btn { flex: 1; padding: 16px 8px; border-radius: 10px; border: 2px solid #d8cfbf; background: #fff; font-family: inherit; font-size: 17px; font-weight: bold; cursor: pointer; text-align: center; }
-  .checkin-btn.yes { color: #2f5d50; }
-  .checkin-btn.yes:hover { border-color: #2f5d50; background: #eef3f0; }
-  .checkin-btn.no { color: #f7b209; }
-  .checkin-btn.no:hover { border-color: #f7b209; background: #fdf3d9; }
-  .checkin-btn.none { color: #8a8272; }
-  .checkin-btn.none:hover { border-color: #b0a898; background: #f5f2ea; }
-  .checkin-btn.current.yes { background: #eef3f0; border-color: #2f5d50; }
-  .checkin-btn.current.no { background: #fdf3d9; border-color: #f7b209; }
-  .checkin-btn.current.none { background: #f5f2ea; border-color: #b0a898; }
-  .checkin-btn.fail { color: #b8390f; }
-  .checkin-btn.fail:hover { border-color: #b8390f; background: #fbe4db; }
-  .checkin-btn.current.fail { background: #fbe4db; border-color: #b8390f; }
+  .checkin-btn { flex: 1; padding: 16px 8px; border-radius: 10px; border: 2px solid var(--border); background: var(--input-bg); color: var(--text); font-family: inherit; font-size: 17px; font-weight: bold; cursor: pointer; text-align: center; }
+  .checkin-btn.yes { color: var(--btn-yes-fg); }
+  .checkin-btn.yes:hover { border-color: var(--btn-yes-hover-border); background: var(--btn-yes-hover-bg); }
+  .checkin-btn.no { color: var(--btn-no-fg); }
+  .checkin-btn.no:hover { border-color: var(--btn-no-hover-border); background: var(--btn-no-hover-bg); }
+  .checkin-btn.none { color: var(--btn-none-fg); }
+  .checkin-btn.none:hover { border-color: var(--btn-none-hover-border); background: var(--btn-none-hover-bg); }
+  .checkin-btn.current.yes { background: var(--btn-yes-hover-bg); border-color: var(--btn-yes-hover-border); }
+  .checkin-btn.current.no { background: var(--btn-no-hover-bg); border-color: var(--btn-no-hover-border); }
+  .checkin-btn.current.none { background: var(--btn-none-hover-bg); border-color: var(--btn-none-hover-border); }
+  .checkin-btn.fail { color: var(--btn-fail-fg); }
+  .checkin-btn.fail:hover { border-color: var(--btn-fail-hover-border); background: var(--btn-fail-hover-bg); }
+  .checkin-btn.current.fail { background: var(--btn-fail-hover-bg); border-color: var(--btn-fail-hover-border); }
   .checkin-btn:disabled { opacity: .45; cursor: not-allowed; }
-  .checkin-selected-date { font-size: 17px; font-weight: bold; color: #2f5d50; margin-bottom: 2px; }
+  .checkin-selected-date { font-size: 17px; font-weight: bold; color: var(--brand); margin-bottom: 2px; }
   .checkin-row .checkin-btn.fail { flex: 1; }
-
   /* F3Go30-th22: Advanced whole-month check-in calendar. Cell colors reuse SEGMENT_COLORS_
      verbatim (the same palette already used for the month-progress ring/day-mini-bar). */
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 10px; container-type: inline-size; }
-  .cal-dow { text-align: center; font-size: 11px; font-weight: bold; color: #8a8272; padding-bottom: 2px; }
+  .cal-dow { text-align: center; font-size: 11px; font-weight: bold; color: var(--text-faint2); padding-bottom: 2px; }
   .cal-cell { position: relative; aspect-ratio: 1; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: clamp(16px, 6.5cqw, 28px); font-weight: bold; cursor: pointer; border: 2px solid transparent; font-family: inherit; padding: 0; }
   .cal-cell.pad { visibility: hidden; cursor: default; }
-  .cal-cell.st-done { background: #3f8b75; color: #f8f4ea; }
-  .cal-cell.st-missed { background: #f7b209; color: #2b2b2b; }
-  .cal-cell.st-pending { background: #d8cfbf; color: #6b6255; }
-  .cal-cell.st-absent { background: #de521c; color: #f8f4ea; }
-  .cal-cell.today { border-color: #0b5c86; }
-  .cal-cell.selected { box-shadow: 0 0 0 2px #0b5c86; }
+  .cal-cell.st-done { background: var(--cal-done-bg); color: var(--cal-done-fg); }
+  .cal-cell.st-missed { background: var(--cal-missed-bg); color: var(--cal-missed-fg); }
+  .cal-cell.st-pending { background: var(--cal-pending-bg); color: var(--cal-pending-fg); }
+  .cal-cell.st-absent { background: var(--cal-absent-bg); color: var(--cal-absent-fg); }
+  .cal-cell.today { border-color: var(--link); }
+  .cal-cell.selected { box-shadow: 0 0 0 2px var(--link); }
   .cal-cell .day-num { position: relative; z-index: 1; }
   .cal-cell .x-mark { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
   .cal-cell .x-mark::before, .cal-cell .x-mark::after {
     content: ''; position: absolute; top: 50%; left: 8%; width: 84%; height: 3px;
-    background: rgba(43,43,43,.35); border-radius: 2px;
+    background: var(--x-mark); border-radius: 2px;
   }
   .cal-cell .x-mark::before { transform: translateY(-50%) rotate(45deg); }
   .cal-cell .x-mark::after { transform: translateY(-50%) rotate(-45deg); }
-  .checkin-status { font-size: 15px; color: #888; margin: -2px 0 8px; }
-  .checkin-section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 18px 0 8px; }
-  .goals-reminder { background: #eef3f0; border: 1px solid #cfe0d8; border-radius: 8px; padding: 10px 12px; margin-bottom: 4px; }
+  .checkin-status { font-size: 15px; color: var(--text-faint); margin: -2px 0 8px; }
+  .checkin-section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: var(--brand); margin: 18px 0 8px; }
+  .goals-reminder { background: var(--soft-bg); border: 1px solid var(--soft-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 4px; }
   .goals-reminder-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
-  .goals-reminder-title { font-size: 12px; font-weight: bold; letter-spacing: .04em; text-transform: uppercase; color: #2f5d50; }
+  .goals-reminder-title { font-size: 12px; font-weight: bold; letter-spacing: .04em; text-transform: uppercase; color: var(--brand); }
   .goals-reminder-row { font-size: 15px; line-height: 1.4; margin: 3px 0; }
-  .goals-reminder-row strong { color: #2f5d50; }
-  .error-text { font-size: 16px; color: #a3401a; margin-bottom: 8px; }
-  .warning-text { font-size: 15px; color: #8a6d00; background: #fdf6e3; border: 1px solid #e8d9a0; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
+  .goals-reminder-row strong { color: var(--brand); }
+  .error-text { font-size: 16px; color: var(--danger); margin-bottom: 8px; }
+  .warning-text { font-size: 15px; color: var(--warn-fg); background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
   .hidden { display: none; }
   .stats-row { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 12px; margin-top: 32px; align-items: stretch; }
-  .stat-card { background: #fffdf8; border: 1px solid #d8cfbf; border-radius: 12px; padding: 16px; text-align: center; display: flex; flex-direction: column; align-items: center; }
+  .stat-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px; text-align: center; display: flex; flex-direction: column; align-items: center; }
   .stat-card-clickable { cursor: pointer; }
-  .stat-card-clickable:hover, .stat-card-clickable:focus-visible { border-color: #2f5d50; background: #f5f8f6; }
-  .stat-label { font-size: 13px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin-bottom: 6px; }
+  .stat-card-clickable:hover, .stat-card-clickable:focus-visible { border-color: var(--brand); background: var(--soft-bg); }
+  .stat-label { font-size: 13px; font-weight: bold; letter-spacing: .16em; color: var(--brand); margin-bottom: 6px; }
   .stat-value { font-size: 41px; font-weight: bold; line-height: 1; }
-  .stat-sub { font-size: 13px; color: #b0a898; margin-top: 6px; letter-spacing: .06em; }
+  .stat-sub { font-size: 13px; color: var(--text-faint2); margin-top: 6px; letter-spacing: .06em; }
   .ring-svg { display: block; margin: 0 auto; }
   .day-mini-bar { display: flex; gap: 1.5px; align-items: center; justify-content: center; flex: 1; min-width: 0; }
   .day-mini-cell { width: 6px; height: 12px; border-radius: 1px; flex-shrink: 0; }
   .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
-  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #888; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text-faint); }
   .legend-swatch { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
   .score-tile-body { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
   .score-main { display: flex; flex-direction: column; align-items: center; }
-  .score-bonus-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; border-top: 1px solid #ede9df; padding-top: 8px; width: 100%; justify-items: center; }
+  .score-bonus-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; border-top: 1px solid var(--score-divider); padding-top: 8px; width: 100%; justify-items: center; }
   .bonus-type-row { display: flex; align-items: center; gap: 5px; }
   .bonus-type-code { font-family: monospace; font-weight: bold; font-size: 12px; padding: 1px 5px; border-radius: 3px; }
-  .bonus-type-code.fe { background: #eef3f0; color: #2f5d50; }
-  .bonus-type-code.q { background: #e5eff6; color: #0b5c86; }
-  .bonus-type-code.ins { background: #f1e9f6; color: #6a3d9a; }
-  .bonus-type-code.eh { background: #fdf1de; color: #9a6b00; }
-  .bonus-type-value { font-size: 14px; font-weight: bold; color: #2b2b2b; min-width: 16px; }
+  .bonus-type-code.fe { background: var(--pill-fe-bg); color: var(--pill-fe-fg); }
+  .bonus-type-code.q { background: var(--pill-q-bg); color: var(--pill-q-fg); }
+  .bonus-type-code.ins { background: var(--pill-ins-bg); color: var(--pill-ins-fg); }
+  .bonus-type-code.eh { background: var(--pill-eh-bg); color: var(--pill-eh-fg); }
+  .bonus-type-value { font-size: 14px; font-weight: bold; color: var(--text); min-width: 16px; }
   .team-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(120px,1fr)); gap: 10px; margin-top: 12px; }
-  .team-tile { position: relative; border-radius: 10px; padding: 12px 8px; text-align: center; border: 1.5px solid #d8cfbf; background: #fff; display: flex; flex-direction: column; align-items: center; }
+  .team-tile { position: relative; border-radius: 10px; padding: 12px 8px; text-align: center; border: 1.5px solid var(--border); background: var(--input-bg); display: flex; flex-direction: column; align-items: center; }
   .team-tile .checkin-status-badge { position: absolute; top: 6px; left: 7px; font-size: 14px; margin-right: 0; }
-  .team-tile.me { border-color: #2f5d50; background: #eef3f0; }
+  .team-tile.me { border-color: var(--brand); background: var(--soft-bg); }
   .team-tile .tname { font-weight: bold; font-size: 15px; margin: 4px 0 2px; }
   .team-tile .tscore { font-size: 21px; font-weight: bold; }
-  .team-tile .tstreak { font-size: 12px; color: #b0a898; margin-top: 2px; }
+  .team-tile .tstreak { font-size: 12px; color: var(--text-faint2); margin-top: 2px; }
   .team-tile .tbonuses { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; margin-top: 5px; }
   .team-tile .tbonuses .bonus-type-code { font-size: 10px; padding: 0 4px; }
-  .board-group { border: 1px solid #d8cfbf; border-radius: 12px; overflow: hidden; margin-top: 12px; }
-  .board-head { background: #2f5d50; color: #f8f4ea; padding: 9px 16px; font-size: 15px; font-weight: bold; letter-spacing: .16em; display: flex; justify-content: space-between; }
+  .board-group { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-top: 12px; }
+  .board-head { background: var(--brand-bg); color: var(--brand-contrast); padding: 9px 16px; font-size: 15px; font-weight: bold; letter-spacing: .16em; display: flex; justify-content: space-between; }
   .board-rows { padding: 6px 12px; }
   .board-row { padding: 6px 4px; border-radius: 4px; }
-  .board-row.me { background: #eef3f0; font-weight: bold; }
+  .board-row.me { background: var(--soft-bg); font-weight: bold; }
   .board-row-main { display: flex; align-items: center; gap: 8px; justify-content: space-between; font-size: 15px; }
   .board-row-main .bname { width: 117px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: bold; }
   .board-row-main .bstatus { width: 20px; flex-shrink: 0; text-align: center; }
@@ -120,34 +209,34 @@
      a plain text glyph (U+24CD, not emoji-colored by default), so needs explicit red + bold +
      ~15% larger to read as an equally strong signal next to the emoji triangle. */
   .checkin-status-badge { margin-right: 3px; display: inline-block; }
-  .checkin-status-badge.urgent { color: #c0272d; font-weight: bold; font-size: 1.15em; line-height: 1; }
+  .checkin-status-badge.urgent { color: var(--urgent); font-weight: bold; font-size: 1.15em; line-height: 1; }
   /* Only rendered when at least one bonus type is nonzero — most rows stay single-line. */
   .board-row-bonuses { display: flex; gap: 3px; margin-top: 3px; padding-left: 4px; }
   .board-row-bonuses .bonus-type-code { font-size: 10px; padding: 0 4px; }
   .chart-card { margin-top: 12px; }
-  .section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: #2f5d50; margin: 22px 0 4px; }
-  .api-error-banner { background: #fdeceb; border-bottom: 3px solid #a3401a; color: #6b1f0a; padding: 12px 18px; font-size: 17px; line-height: 1.5; }
+  .section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: var(--brand); margin: 22px 0 4px; }
+  .api-error-banner { background: var(--error-bg); border-bottom: 3px solid var(--error-border); color: var(--error-fg); padding: 12px 18px; font-size: 17px; line-height: 1.5; }
   .api-error-banner strong { display: block; margin-bottom: 2px; }
-  .api-error-detail { margin-top: 6px; font-family: monospace; font-size: 15px; background: #fff; border: 1px solid #e3b8af; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .api-error-detail { margin-top: 6px; font-family: monospace; font-size: 15px; background: var(--input-bg); border: 1px solid var(--error-detail-border); border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .date-nav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 18px; }
-  .date-nav-btn { width: 44px; height: 44px; border-radius: 8px; border: 2px solid #2f5d50; background: #fffdf8; color: #2f5d50; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
+  .date-nav-btn { width: 44px; height: 44px; border-radius: 8px; border: 2px solid var(--brand); background: var(--card-bg); color: var(--brand); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
   .date-nav-btn svg { width: 20px; height: 20px; display: block; }
-  .date-nav-btn:disabled { color: #d8cfbf; border-color: #d8cfbf; cursor: default; }
-  .date-nav-label { font-size: 16px; font-weight: bold; color: #2f5d50; min-width: 150px; text-align: center; }
-  .streak-best { font-size: 15px; font-weight: bold; color: #6b6255; margin-top: 20px; }
-  .streak-best span { display: block; color: #2f5d50; font-size: 32px; margin-top: 10px; }
-  .bonus-entry { border: 1px solid #d8cfbf; border-radius: 10px; padding: 12px 14px; margin-top: 10px; }
+  .date-nav-btn:disabled { color: var(--border); border-color: var(--border); cursor: default; }
+  .date-nav-label { font-size: 16px; font-weight: bold; color: var(--brand); min-width: 150px; text-align: center; }
+  .streak-best { font-size: 15px; font-weight: bold; color: var(--text-muted); margin-top: 20px; }
+  .streak-best span { display: block; color: var(--brand); font-size: 32px; margin-top: 10px; }
+  .bonus-entry { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-top: 10px; }
   .bonus-entry-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .bonus-entry-type { font-family: monospace; font-weight: bold; font-size: 13px; padding: 2px 7px; border-radius: 4px; background: #eef3f0; color: #2f5d50; }
-  .bonus-entry-date { font-size: 13px; color: #888; }
+  .bonus-entry-type { font-family: monospace; font-weight: bold; font-size: 13px; padding: 2px 7px; border-radius: 4px; background: var(--soft-bg); color: var(--brand); }
+  .bonus-entry-date { font-size: 13px; color: var(--text-faint); }
   .bonus-entry-message { font-size: 15px; margin: 8px 0; line-height: 1.4; }
   .bonus-entry-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .bonus-badge { font-size: 12px; font-weight: bold; padding: 2px 8px; border-radius: 10px; }
-  .bonus-badge.complete { background: #eef3f0; color: #2f5d50; }
-  .bonus-badge.pending { background: #fdf6e3; color: #8a6d00; }
-  .bonus-badge.extra { background: #eef2fa; color: #35538a; }
-  .bonus-entry-note { font-size: 12.5px; color: #35538a; margin-top: 6px; line-height: 1.35; }
-  .bonus-edit-btn { background: transparent; border: none; color: #0b5c86; font-size: 14px; cursor: pointer; font-family: inherit; text-decoration: underline; padding: 0; }
+  .bonus-badge.complete { background: var(--badge-complete-bg); color: var(--badge-complete-fg); }
+  .bonus-badge.pending { background: var(--badge-pending-bg); color: var(--badge-pending-fg); }
+  .bonus-badge.extra { background: var(--badge-extra-bg); color: var(--badge-extra-fg); }
+  .bonus-entry-note { font-size: 12.5px; color: var(--badge-extra-fg); margin-top: 6px; line-height: 1.35; }
+  .bonus-edit-btn { background: transparent; border: none; color: var(--link); font-size: 14px; cursor: pointer; font-family: inherit; text-decoration: underline; padding: 0; }
   .card-head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .card-head-row h2 { margin: 0; white-space: nowrap; }
   .btn-inline { width: auto; margin: 0; padding: 8px 14px; flex-shrink: 0; }
@@ -180,9 +269,9 @@
     .cal-cell .x-mark::before, .cal-cell .x-mark::after { height: 2px; }
     .cal-cell { border-radius: 6px; }
   }
-  .how-btn { width: 100%; padding: 14px 18px; border: none; background: transparent; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-family: inherit; font-size: 15px; font-weight: bold; color: #2f5d50; }
-  .how-section-head { margin: 14px 0 6px; font-size: 13px; font-weight: bold; color: #2f5d50; letter-spacing: .04em; }
-  .how-badge { min-width: 28px; height: 28px; border-radius: 50%; background: #2f5d50; color: #f8f4ea; font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center; }
+  .how-btn { width: 100%; padding: 14px 18px; border: none; background: transparent; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-family: inherit; font-size: 15px; font-weight: bold; color: var(--brand); }
+  .how-section-head { margin: 14px 0 6px; font-size: 13px; font-weight: bold; color: var(--brand); letter-spacing: .04em; }
+  .how-badge { min-width: 28px; height: 28px; border-radius: 50%; background: var(--brand-bg); color: var(--brand-contrast); font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center; }
 </style>
 </head>
 <body>
@@ -1412,6 +1501,48 @@
     return v === 1 ? 'done' : v === 0 ? 'missed' : v === -1 ? 'absent' : 'pending';
   }
 
+  function countOutcomesLocal_(dayValues) {
+    var done = 0, missed = 0, absent = 0;
+    (dayValues || []).forEach(function(v) {
+      if (v === 1) done++; else if (v === 0) missed++; else if (v === -1) absent++;
+    });
+    return { done: done, missed: missed, absent: absent };
+  }
+
+  // Mirrors dashboardWebapp.js's firstActiveDayIndex_ — anchors the scorePct denominator so a
+  // mid-month joiner isn't penalized for days before they were enrolled.
+  function firstActiveDayIndexLocal_(dayValues) {
+    for (var i = 0; i < (dayValues || []).length; i++) {
+      if (dayValues[i] === 1 || dayValues[i] === 0) return i;
+    }
+    return -1;
+  }
+
+  function sumBonusPillsLocal_(pills) {
+    var sum = 0;
+    Object.keys(pills || {}).forEach(function(k) { sum += pills[k] || 0; });
+    return sum;
+  }
+
+  /** Date-scoped score, re-derived client-side rather than trusted from the Tracker's own
+   * Score/RawScore cells — those sum the *entire* month row (a PAX may pre-mark future days),
+   * so they can't be used as-is for "score as of the viewed day" when scrubbing date-nav
+   * backward, nor do they reflect a manual sheet edit until the app's own roster cache expires.
+   * hits(+1)/misses(0)/fails(-1) over the (already day-sliced) dayValues, plus that same day's
+   * bonus points (d.bonusByTypeSeries[dayIndex], already date-scoped and weekly-capped). */
+  function computeScoreForDayLocal_(dayValues, bonusPills) {
+    var raw = (dayValues || []).reduce(function(acc, v) {
+      return acc + (v === 1 ? 1 : v === -1 ? -1 : 0);
+    }, 0);
+    return raw + sumBonusPillsLocal_(bonusPills);
+  }
+
+  function computeScorePctLocal_(score, dayValues) {
+    var firstActiveIdx = firstActiveDayIndexLocal_(dayValues);
+    var denom = firstActiveIdx === -1 ? 0 : ((dayValues || []).length - firstActiveIdx);
+    return denom ? Math.round((score / denom) * 100) : (score >= 0 ? 100 : 0);
+  }
+
   /** Same trailing-mean math as dashboardWebapp.js's buildRollingAverage_ — used only to average
    * the previous month's own padded-in tail values (see renderDashboard_), since the server's
    * rollingAverage array only covers the viewed month's own days. */
@@ -1447,22 +1578,25 @@
     return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   }
 
-  /** Recomputed view of a team/board member as of dayIndex — score/scorePct stay pinned to the
-   * current (real "today") totals, since those come from the Tracker's own score formula and
-   * can't be safely re-derived for an arbitrary past day client-side. bonusByType, by contrast,
-   * IS re-derived per day from the server-supplied bonusByTypeSeries (one entry per reported
-   * day, date-scoped and weekly-capped — see dashboardWebapp.js's computeBonusPillsAsOf_), so
+  /** Recomputed view of a team/board member as of dayIndex — score/scorePct are re-derived from
+   * the (already day-sliced) dayValues plus that day's bonusByTypeSeries entry, same as
+   * computeScoreForDayLocal_/computeScorePctLocal_ below, so scrubbing date-nav backward shows
+   * the total as of that day rather than the pinned-to-"today" Tracker cell. bonusByType is
+   * re-derived per day from the server-supplied bonusByTypeSeries (one entry per reported day,
+   * date-scoped and weekly-capped — see dashboardWebapp.js's computeBonusPillsAsOf_), so
    * scrubbing to a date before a bonus was logged correctly hides it. */
   function memberViewForIndex_(member, dayIndex, totalDays) {
     var sliced = (member.dayValues || []).slice(0, dayIndex + 1);
+    var bonusForDay = (member.bonusByTypeSeries && member.bonusByTypeSeries[dayIndex]) || member.bonusByType;
+    var score = computeScoreForDayLocal_(sliced, bonusForDay);
     return {
       name: member.name,
       team: member.team,
-      score: member.score,
-      scorePct: member.scorePct,
+      score: score,
+      scorePct: computeScorePctLocal_(score, sliced),
       streak: computeStreakLocal_(sliced),
       daySegments: buildDaySegmentsLocal_(sliced, totalDays),
-      bonusByType: (member.bonusByTypeSeries && member.bonusByTypeSeries[dayIndex]) || member.bonusByType,
+      bonusByType: bonusForDay,
     };
   }
 
@@ -1514,21 +1648,26 @@
     $('dStreak').textContent = streaks.current;
     $('dStreakBest30').textContent = streaks.best;
 
+    // Score is re-derived from selfValues (hits +1 / misses 0 / fails -1) plus this day's bonus
+    // points (dBonusesForDay, already date-scoped and weekly-capped — see
+    // dashboardWebapp.js's computeBonusPillsAsOf_), not read from d.score/d.scorePct directly:
+    // the Tracker's own Score/RawScore cells sum the *entire* month row (a PAX may pre-mark
+    // future days), so they don't reflect "as of the viewed day" when scrubbing date-nav
+    // backward.
+    var dBonusesForDay = (d.bonusByTypeSeries && d.bonusByTypeSeries[dayIndex]) || d.bonusByType;
+    var dayScore = computeScoreForDayLocal_(selfValues, dBonusesForDay);
+    var dayScorePct = computeScorePctLocal_(dayScore, selfValues);
+    var dayOutcomes = countOutcomesLocal_(selfValues);
+
     $('dMonthRing').innerHTML = buildRingSvg_(
-      daySegments, 140, d.scorePct + '%', (d.score >= 0 ? '+' : '') + d.score + ' pts', scoreColor_(d.scorePct)
+      daySegments, 140, dayScorePct + '%', (dayScore >= 0 ? '+' : '') + dayScore + ' pts', scoreColor_(dayScorePct)
     );
 
-    // Score reflects the current running total (as of real "today"), not the scrubbed-to day —
-    // the Tracker's Score column is a live formula we don't re-derive here. Bonus pills, by
-    // contrast, ARE scrubbed-to-day accurate: d.bonusByTypeSeries[dayIndex] is the date-scoped,
-    // weekly-capped total as of that day (see dashboardWebapp.js's computeBonusPillsAsOf_).
-    $('dScore').textContent = (d.score >= 0 ? '+' : '') + d.score;
-    $('dScore').style.color = scoreColor_(d.scorePct);
-    $('dScoreSub').innerHTML = d.done + ' hits<br>' + d.missed + ' misses<br>' + d.absent + ' no check-in';
+    $('dScore').textContent = (dayScore >= 0 ? '+' : '') + dayScore;
+    $('dScore').style.color = scoreColor_(dayScorePct);
+    $('dScoreSub').innerHTML = dayOutcomes.done + ' hits<br>' + dayOutcomes.missed + ' misses<br>' + dayOutcomes.absent + ' fails';
 
     $('dAvgChart').innerHTML = buildAvgChartSvg_(avgRollingAverage, avgDaySegments, avgWindowCount);
-
-    var dBonusesForDay = (d.bonusByTypeSeries && d.bonusByTypeSeries[dayIndex]) || d.bonusByType;
     var bonusesEl = $('dBonuses');
     bonusesEl.innerHTML = '';
     // Column-first order (FE/Q down the left, Ins/EH down the right) rendered into a row-major

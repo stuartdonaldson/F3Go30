@@ -1060,6 +1060,46 @@ function makeHandleFixture_() {
   PaxCache.resetPaxCacheFreshnessMemo_();
 })();
 
+// ── PaxCache stats folded into checkinWebapp.resolveIdentity.timing (F3Go30-440b.1) ─────────────
+// resolveLeanIdentityFromHandle_'s own GasLogger.log call must carry the same PaxCache
+// hit/miss/wipe counters every other resolveIdentity.timing call site does — verified here by
+// intercepting GasLogger.log rather than by inspecting PaxCache state directly, since the point
+// of this issue is that the fields land IN the existing per-request log line, not just that
+// PaxCache tracks them (that's test_pax_cache.js's job).
+(function testResolveIdentityTimingLogCarriesPaxCacheStats() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  PaxCache.resetPaxCacheFreshnessMemo_();
+  PaxCache.resetPaxCacheRequestStats_();
+
+  var fx = makeHandleFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
+
+  var loggedEvents = [];
+  var realLog = global.GasLogger.log;
+  global.GasLogger.log = function(name, payload) { loggedEvents.push({ name: name, payload: payload }); };
+  try {
+    var identity = resolveLeanIdentityFromHandle_(handle);
+    assert.ok(identity, 'valid handle should resolve');
+  } finally {
+    global.GasLogger.log = realLog;
+  }
+
+  var timingEvent = loggedEvents.find(function(e) { return e.name === 'checkinWebapp.resolveIdentity.timing'; });
+  assert.ok(timingEvent, 'resolveIdentity.timing must be logged');
+  assert.equal(typeof timingEvent.payload.paxCacheWiped, 'boolean');
+  assert.equal(typeof timingEvent.payload.paxRosterHit, 'number');
+  assert.equal(typeof timingEvent.payload.paxRosterMiss, 'number');
+  assert.equal(typeof timingEvent.payload.paxRowHit, 'number');
+  assert.equal(typeof timingEvent.payload.paxRowMiss, 'number');
+
+  delete global.SpreadsheetApp;
+  PaxCache.resetPaxCacheFreshnessMemo_();
+  PaxCache.resetPaxCacheRequestStats_();
+})();
+
 // Reset the module-level PropertiesService/CacheService stubs the earlier tests relied on, in case
 // any later-added assertion in this file expects the original getProperty-only stub.
 global.PropertiesService = { getScriptProperties: function() { return { getProperty: function() { return null; } }; } };
