@@ -300,6 +300,17 @@ function handleAdminPost_(e) {
       GasLogger.log('handleAdminPost_.deleteOrphanedTriggers', { removedCount: removed.length });
       return jsonOutput_({ ok: true, removedCount: removed.length, removed: removed });
     }
+    if (payload.action === 'syncTrackerTriggers') {
+      // F3Go30-440b.5: on-demand combined backfill (register the edit trigger on any active
+      // TrackerDB row missing one) + cleanup (clear both per-tracker trigger types for any row
+      // whose spreadsheet is trashed or has aged out past the previous month) sweep — see
+      // TrackerTriggerLifecycle.js's docstring and docs/staging/tracker-edit-cache-invalidation.md
+      // "Trigger lifecycle". Deliberately admin-triggered only for now, not a nightly trigger.
+      var syncSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+      var syncContextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
+      var syncResult = syncTrackerTriggers_(syncSpreadsheet, syncContextDate);
+      return jsonOutput_(syncResult);
+    }
     if (payload.action === 'invalidateAllCache') {
       // Runs inside this deployed webapp's own script project — the only PropertiesService
       // store PaxCache entries actually live in (see PaxCache.js's wipeAllPaxCache_ docstring
