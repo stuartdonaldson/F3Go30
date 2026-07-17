@@ -62,6 +62,11 @@ const {
   resolveLeanIdentityFromHandle_,
   resolveFullIdentityFromHandle_,
   buildTrackerValuesFromPaxCache_,
+  makeLazySpreadsheet_dw_,
+  responsesLayoutCacheKey_,
+  getCachedResponsesLayoutOnly_,
+  getResponsesLayout_,
+  resolveCheckinIdentityLean_,
 } = require('../script/dashboardWebapp.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
@@ -897,6 +902,227 @@ function makeHandleFixture_() {
   PaxCache.resetPaxCacheFreshnessMemo_();
 })();
 
+// ── Lazy spreadsheet open (F3Go30-440b.6) ────────────────────────────────
+// A full PaxCache/layout cache hit must never call SpreadsheetApp.openById — that's the whole
+// point of the lazy wrapper. Every test below proves it with a throw-if-opened stub, the same
+// "hostileTemplate" convention already used for TrackerDB-skip tests in this file.
+
+function installThrowingSpreadsheetApp_() {
+  global.SpreadsheetApp = {
+    openById: function() { throw new Error('SpreadsheetApp.openById must not be called — full cache hit expected'); },
+  };
+}
+
+function installCountingSpreadsheetApp_(bySheetId) {
+  var calls = [];
+  global.SpreadsheetApp = {
+    openById: function(id) {
+      calls.push(id);
+      if (!Object.prototype.hasOwnProperty.call(bySheetId, id)) throw new Error('no such spreadsheet: ' + id);
+      return bySheetId[id];
+    },
+  };
+  return calls;
+}
+
+(function testMakeLazySpreadsheetOpensOnlyOnFirstGet() {
+  var calls = installCountingSpreadsheetApp_({ 'sheet-x': { marker: 'x' } });
+  var lazy = makeLazySpreadsheet_dw_('sheet-x');
+  assert.equal(lazy.getOpenMs(), 0, 'openMs stays 0 before .get() is ever called');
+  assert.equal(calls.length, 0);
+
+  var ss1 = lazy.get();
+  assert.equal(ss1.marker, 'x');
+  assert.equal(calls.length, 1);
+  assert.ok(lazy.getOpenMs() >= 0);
+
+  var ss2 = lazy.get();
+  assert.equal(ss2, ss1, 'second .get() reuses the memoized handle');
+  assert.equal(calls.length, 1, 'openById is called exactly once regardless of how many times .get() is called');
+  delete global.SpreadsheetApp;
+})();
+
+// ── Responses header layout cache (F3Go30-440b.6) — mirrors getTrackerLayout_/
+// getCachedTrackerLayoutOnly_'s cache-only/full-read split exactly.
+var RESPONSES_HEADERS_FIXTURE_ = [
+  'Timestamp', 'Email Address', 'Are you currently participating in Go30?', 'F3 Name',
+  'Team type', 'Team', 'Goal or other team name', 'WHO do you ultimately want to become?',
+  'WHAT is your Go30 Challenge?', 'HOW are you going to be successful this month?',
+  'Cell Phone Number', 'NAG email?', 'Constructive Comments',
+];
+
+(function testGetCachedResponsesLayoutOnlyMissThenGetResponsesLayoutPopulatesIt() {
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  assert.equal(getCachedResponsesLayoutOnly_('sheet-r'), null);
+
+  var readCount = 0;
+  var fakeResponsesSheet = {
+    getLastColumn: function() { return RESPONSES_HEADERS_FIXTURE_.length; },
+    getRange: function() {
+      readCount++;
+      return { getValues: function() { return [RESPONSES_HEADERS_FIXTURE_]; } };
+    },
+  };
+  var layout = getResponsesLayout_(fakeResponsesSheet, 'sheet-r');
+  assert.equal(readCount, 1);
+  assert.equal(layout.columns.F3_NAME, 3);
+  assert.deepEqual(layout.headers, RESPONSES_HEADERS_FIXTURE_);
+
+  var cached = getCachedResponsesLayoutOnly_('sheet-r');
+  assert.deepEqual(cached, layout);
+  // A second getResponsesLayout_ call for the same sheetId must not re-read the sheet.
+  var again = getResponsesLayout_(fakeResponsesSheet, 'sheet-r');
+  assert.equal(readCount, 1, 'cache hit — no second live read');
+  assert.deepEqual(again, layout);
+})();
+
+(function testGetCachedResponsesLayoutOnlyIsSheetIdScopedAndCorruptIsTreatedAsMiss() {
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  fakeScriptCache_.put(responsesLayoutCacheKey_('sheet-a'), JSON.stringify({ headers: ['x'], columns: {} }));
+  assert.equal(getCachedResponsesLayoutOnly_('sheet-b'), null);
+  fakeScriptCache_.put(responsesLayoutCacheKey_('sheet-c'), 'not json');
+  assert.equal(getCachedResponsesLayoutOnly_('sheet-c'), null);
+})();
+
+// Fixture: a Responses sheet (one PAX, 'Anchor') + Tracker sheet (reuses makeFakeTrackerSheet_,
+// defined below in the handle-fixture section) for exercising resolveCheckinIdentityLean_
+// directly, bypassing resolveMonths_ (monthInfo is passed straight in).
+function makeLeanIdentityResponsesSheet_(rows) {
+  var readCount = { header: 0, rows: 0 };
+  return {
+    _readCount: readCount,
+    getLastColumn: function() { return RESPONSES_HEADERS_FIXTURE_.length; },
+    getLastRow: function() { return 1 + rows.length; },
+    getRange: function(row, col, numRows) {
+      if (row === 1) {
+        readCount.header++;
+        return { getValues: function() { return [RESPONSES_HEADERS_FIXTURE_]; } };
+      }
+      readCount.rows++;
+      return {
+        getValues: function() {
+          var out = [];
+          for (var i = 0; i < (numRows || 1); i++) out.push((rows[row - 2 + i] || []).slice());
+          return out;
+        },
+      };
+    },
+  };
+}
+
+// resolveCheckinIdentityLean_ — full cache hit (Responses layout + Tracker layout + roster +
+// row, both kinds) never calls SpreadsheetApp.openById at all (F3Go30-440b.6).
+(function testResolveCheckinIdentityLeanFullCacheHitNeverOpens() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  PaxCache.resetPaxCacheFreshnessMemo_();
+
+  var monthInfo = { sheetId: 'sheet-lean', trackerUrl: 'https://x/lean', label: 'July 2026', startDate: new Date(2026, 6, 1) };
+  var responsesRow = ['', 'anchor@x.com', 'Yes', 'Anchor', '', 'Crucible', '', 'Who', 'What', 'How', '', '', ''];
+
+  // Warm every cache piece via a real (counting) SpreadsheetApp first.
+  var opens = installCountingSpreadsheetApp_({
+    'sheet-lean': {
+      getSheetByName: function(n) {
+        if (n === 'Responses') return makeLeanIdentityResponsesSheet_([responsesRow]);
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 6, 1), new Date(2026, 6, 2)],
+            [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, '']]
+          );
+        }
+        return null;
+      },
+    },
+  });
+  var warmup = resolveCheckinIdentityLean_(monthInfo, 'Anchor', 'anchor@x.com', null);
+  assert.equal(warmup.matched, true);
+  assert.ok(opens.length >= 1, 'the warm-up call itself needs a live open');
+
+  // Now swap in a throwing SpreadsheetApp — every piece resolveCheckinIdentityLean_ needs
+  // (Responses layout, Tracker layout, roster index for both kinds, per-PAX row for both kinds)
+  // is now cache-warm, so a repeat call must resolve WITHOUT ever calling openById.
+  installThrowingSpreadsheetApp_();
+  var identity = resolveCheckinIdentityLean_(monthInfo, 'Anchor', 'anchor@x.com', null);
+  assert.equal(identity.matched, true);
+  assert.equal(identity.trackerRow[0], 'Anchor');
+  assert.equal(identity.targetSs.getOpenMs(), 0, 'openById was never called on the full-cache-hit path');
+
+  delete global.SpreadsheetApp;
+  PaxCache.resetPaxCacheFreshnessMemo_();
+})();
+
+// resolveCheckinIdentityLean_ — a cold cache (nothing warm) opens the spreadsheet exactly once,
+// not once per gap (Responses layout miss + Tracker layout miss + two roster misses + two row
+// misses would be 6 separate opens without memoization inside the lazy wrapper).
+(function testResolveCheckinIdentityLeanColdCacheOpensExactlyOnce() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  PaxCache.resetPaxCacheFreshnessMemo_();
+
+  var monthInfo = { sheetId: 'sheet-cold', trackerUrl: 'https://x/cold', label: 'July 2026', startDate: new Date(2026, 6, 1) };
+  var responsesRow = ['', 'slaw@x.com', 'Yes', 'Slaw', '', 'Impala', '', 'Who', 'What', 'How', '', '', ''];
+  var opens = installCountingSpreadsheetApp_({
+    'sheet-cold': {
+      getSheetByName: function(n) {
+        if (n === 'Responses') return makeLeanIdentityResponsesSheet_([responsesRow]);
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 6, 1), new Date(2026, 6, 2)],
+            [['Slaw', 'Impala', '', '', '', '', 3, 0.3, 0, 1]]
+          );
+        }
+        return null;
+      },
+    },
+  });
+
+  var identity = resolveCheckinIdentityLean_(monthInfo, 'Slaw', 'slaw@x.com', null);
+  assert.equal(identity.matched, true);
+  assert.equal(identity.trackerRow[0], 'Slaw');
+  assert.deepEqual(opens, ['sheet-cold'], 'one open reused (memoized) across the Responses AND Tracker live reads');
+
+  delete global.SpreadsheetApp;
+  PaxCache.resetPaxCacheFreshnessMemo_();
+})();
+
+// resolveFullIdentityFromHandle_ — full cache hit never calls SpreadsheetApp.openById either.
+(function testFullFromHandleFullCacheHitNeverOpens() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.DriveApp = { getFileById: function() { return { getLastUpdated: function() { return new Date(1000); } }; } };
+  PaxCache.resetPaxCacheFreshnessMemo_();
+
+  var fx = makeHandleFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 1, 'Slaw');
+
+  // Cold read warms the Tracker layout cache + PaxCache's roster/rows.
+  var cold = resolveFullIdentityFromHandle_(handle);
+  assert.ok(cold);
+
+  // Warm repeat call must never open the spreadsheet.
+  installThrowingSpreadsheetApp_();
+  PaxCache.resetPaxCacheFreshnessMemo_();
+  var warm = resolveFullIdentityFromHandle_(handle);
+  assert.ok(warm);
+  assert.equal(warm.trackerValues.length, 2);
+  assert.equal(warm.targetSs.getOpenMs(), 0, 'openById was never called on the full-cache-hit path');
+
+  delete global.DriveApp;
+  delete global.SpreadsheetApp;
+  PaxCache.resetPaxCacheFreshnessMemo_();
+})();
+
 // handleCheckinDashboard_ wiring: a valid handle whose month matches the requested date resolves
 // the dashboard WITHOUT ever consulting the TrackerDB (resolveDashboardMonth_). A hostile
 // templateSpreadsheet whose getSheetByName throws proves it: resolveDashboardMonth_ would swallow
@@ -924,6 +1150,48 @@ function makeHandleFixture_() {
   var offMonth = handleCheckinDashboard_(hostileTemplate, { f3Name: 'Anchor', email: 'a@x.com', dateISO: '2026-08-03', resolvedContext: handle });
   assert.equal(offMonth.ok, false);
   assert.equal(offMonth.error, 'no_tracker_for_date');
+  delete global.SpreadsheetApp;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// handleCheckinDashboard_ — a fully warm cache (identity + tracker roster + bonus entries all
+// cached) never calls SpreadsheetApp.openById at all, for any reason (F3Go30-440b.6). Proves the
+// Bonus Tracker lookup went cache-first too, not just the identity resolution.
+(function testHandleCheckinDashboardFullyWarmNeverOpensSpreadsheet() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.DriveApp = { getFileById: function() { return { getLastUpdated: function() { return new Date(1000); } }; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); }; // "today" = Jul 2
+
+  var row2 = ['', '', '', '', '', '', '', '', '', ''];
+  var row3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 6, 1), new Date(2026, 6, 2)];
+  var paxRows = [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, '']];
+  var trackerSheet = makeFakeTrackerSheet_(row2, row3, paxRows);
+  var emptyBonusSheet = { getLastRow: function() { return 1; }, getRange: function() { return { getValues: function() { return []; } }; } };
+  installFakeSpreadsheetById_({
+    'sheet-warm-dash': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') return trackerSheet;
+        if (n === 'Bonus Tracker') return emptyBonusSheet;
+        return null;
+      },
+    },
+  });
+  var monthInfo = { sheetId: 'sheet-warm-dash', trackerUrl: 'https://x/warm', label: 'July 2026', startDate: new Date(2026, 6, 1) };
+  var handle = buildResolvedContextHandle_(monthInfo, 0, 'Anchor');
+
+  // Warm-up call populates the Tracker layout cache, PaxCache roster/rows, and the bonus-entries cache.
+  var warmup = handleCheckinDashboard_({}, { f3Name: 'Anchor', email: 'a@x.com', dateISO: '2026-07-02', resolvedContext: handle });
+  assert.equal(warmup.ok, true);
+
+  // Now swap to a throwing SpreadsheetApp — a fully warm call must resolve without opening anything.
+  installThrowingSpreadsheetApp_();
+  var warm = handleCheckinDashboard_({}, { f3Name: 'Anchor', email: 'a@x.com', dateISO: '2026-07-02', resolvedContext: handle });
+  assert.equal(warm.ok, true);
+  assert.equal(warm.f3Name, 'Anchor');
+
+  delete global.DriveApp;
   delete global.SpreadsheetApp;
   global.resolveContextDate_ = function() { return new Date(); };
 })();

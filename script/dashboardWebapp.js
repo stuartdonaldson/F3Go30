@@ -83,6 +83,8 @@ var findBonusRowByIdentity_dw_ = (dashboardWebappBonusModule_ && dashboardWebapp
   || (typeof globalThis !== 'undefined' && globalThis.findBonusRowByIdentity_);
 var getAllBonusEntriesCached_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusModule_.getAllBonusEntriesCached_)
   || (typeof globalThis !== 'undefined' && globalThis.getAllBonusEntriesCached_);
+var getCachedBonusEntriesOnly_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusModule_.getCachedBonusEntriesOnly_)
+  || (typeof globalThis !== 'undefined' && globalThis.getCachedBonusEntriesOnly_);
 
 var dashboardWebappIdentityTokenModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./IdentityToken.js')
@@ -533,6 +535,70 @@ function trackerLayoutCacheKey_(sheetId) {
   return 'go30dash:trackerLayout:' + sheetId;
 }
 
+/**
+ * Lazily opens a tracker spreadsheet — SpreadsheetApp.openById() is the openMs cost in every
+ * identify/dashboard timing log; once every piece a caller needs (Responses/Tracker layout,
+ * roster index, per-PAX row, bonus entries) is already warm in cache, nothing about serving
+ * cached data requires a live Sheet handle. Callers reach the spreadsheet only through .get(),
+ * at the point they actually need to read (or write) something live — a fully warm cache never
+ * calls .get() at all, so openById() is never called and getOpenMs() stays 0 (F3Go30-440b.6).
+ */
+function makeLazySpreadsheet_dw_(sheetId) {
+  var ss = null;
+  var openMs = 0;
+  return {
+    get: function() {
+      if (!ss) {
+        var t = Date.now();
+        ss = SpreadsheetApp.openById(sheetId);
+        openMs = Date.now() - t;
+      }
+      return ss;
+    },
+    getOpenMs: function() { return openMs; },
+  };
+}
+
+function responsesLayoutCacheKey_(sheetId) {
+  return 'go30dash:responsesLayout:' + sheetId;
+}
+
+/**
+ * Cache-only half of getResponsesLayout_ — same split as getCachedTrackerLayoutOnly_/
+ * getTrackerLayout_, so a caller can find out whether it can skip opening the spreadsheet
+ * entirely before paying for that open.
+ * @returns {{headers:Array, columns:Object}|null} null on a miss or corrupt entry.
+ */
+function getCachedResponsesLayoutOnly_(sheetId) {
+  var cache = CacheService.getScriptCache();
+  var cached;
+  try { cached = cache.get(responsesLayoutCacheKey_(sheetId)); } catch (e) { cached = null; }
+  if (!cached) return null;
+  try { return JSON.parse(cached); } catch (e) { return null; }
+}
+
+/**
+ * Sheet-level cache of the Responses header row + its resolved column map — a cheap 1-row read,
+ * cached separately from per-PAX data because it's shared by every PAX and rarely changes (only
+ * tracker-creation/restructuring touches it, never a normal signup/check-in), so a long
+ * CacheService TTL is safe without any write-through — mirrors getTrackerLayout_ exactly
+ * (F3Go30-440b.6: previously re-read live on every single lean identify call regardless of
+ * whether the PAX's own row was already cached).
+ */
+function getResponsesLayout_(responsesSheet, sheetId) {
+  var fromCache = getCachedResponsesLayoutOnly_(sheetId);
+  if (fromCache) return fromCache;
+
+  var headers = responsesSheet.getRange(1, 1, 1, responsesSheet.getLastColumn()).getValues()[0];
+  var layout = { headers: headers, columns: resolveResponseColumns_dw_(headers) };
+
+  try {
+    CacheService.getScriptCache().put(responsesLayoutCacheKey_(sheetId), JSON.stringify(layout), TRACKER_LAYOUT_CACHE_TTL_SECONDS_);
+  } catch (e) { /* payload too large or cache unavailable — the read above still succeeded */ }
+
+  return layout;
+}
+
 /** Dates aren't JSON-safe for CacheService — round-trip row3's date cells through a plain marker object. */
 function serializeRow3ForCache_(row3) {
   return (row3 || []).map(function(v) { return v instanceof Date ? { __d: v.toISOString() } : v; });
@@ -681,26 +747,37 @@ function buildTrackerValuesFromPaxCache_(sheetId) {
  * — see file header on why email isn't a hard gate) via PaxCache's roster index, so a repeat
  * lookup for the same PAX resolves via a single-row read (or a cache hit) instead of scanning
  * every PAX's row. Never caches a name that isn't found (see PaxCache.js).
+ * Lazy about SpreadsheetApp.openById() (F3Go30-440b.6): on a full cache hit — Responses layout,
+ * Tracker layout, roster index, and per-PAX row all already warm — the spreadsheet is never
+ * opened at all. targetSs in the returned object is the lazy wrapper (call .get() to force an
+ * open), not a raw Spreadsheet, so a caller that never touches it (identify) never pays for one.
  * @returns {{matched:boolean, emailMismatch?:boolean, months:Object, monthInfo:Object,
- *   targetSs:Spreadsheet, trackerSheet:Sheet, row2:Array, row3:Array, trackerRow:Array,
- *   trackerRowIndex:number}}
+ *   targetSs:Object, row2:Array, row3:Array, trackerRow:Array, trackerRowIndex:number}}
  */
 function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
   var t0 = Date.now();
-  var targetSs = SpreadsheetApp.openById(monthInfo.sheetId);
-  var openMs = Date.now() - t0;
-
-  var responsesSheet = targetSs.getSheetByName('Responses');
-  if (!responsesSheet) return { matched: false, months: months };
+  var lazySs = makeLazySpreadsheet_dw_(monthInfo.sheetId);
 
   var t1 = Date.now();
-  var headers = responsesSheet.getRange(1, 1, 1, responsesSheet.getLastColumn()).getValues()[0];
-  var columns = resolveResponseColumns_dw_(headers);
+  var responsesLayout = getCachedResponsesLayoutOnly_(monthInfo.sheetId);
+  var responsesSheet = null;
+  function responsesSheet_() {
+    if (!responsesSheet) responsesSheet = lazySs.get().getSheetByName('Responses');
+    return responsesSheet;
+  }
+  if (!responsesLayout) {
+    var rs = responsesSheet_();
+    if (!rs) return { matched: false, months: months };
+    responsesLayout = getResponsesLayout_(rs, monthInfo.sheetId);
+  }
+  var columns = responsesLayout.columns;
 
   var responsesRowIndex = resolvePaxRowIndex_dw_('responses', monthInfo.sheetId, f3Name, function() {
-    var lastRow = responsesSheet.getLastRow();
+    var rs = responsesSheet_();
+    if (!rs) return [];
+    var lastRow = rs.getLastRow();
     if (lastRow < 2) return [];
-    var rows = responsesSheet.getRange(2, 1, lastRow - 1, responsesSheet.getLastColumn()).getValues();
+    var rows = rs.getRange(2, 1, lastRow - 1, rs.getLastColumn()).getValues();
     // DELETED rows (ADR-008 email-change convention) must never win a name match — blank out
     // their name here so PaxCache's roster-index builder skips them, same as
     // findSignupMatchByF3NameOnly_'s live scan does.
@@ -709,45 +786,56 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
     });
   });
   if (responsesRowIndex === -1) {
-    GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({ matched: false, lean: true, openMs: openMs, totalMs: Date.now() - t0 }, paxCacheStatsForLog_dw_()));
+    GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({ matched: false, lean: true, openMs: lazySs.getOpenMs(), totalMs: Date.now() - t0 }, paxCacheStatsForLog_dw_()));
     return { matched: false, months: months };
   }
 
   var responsesRow = getPaxCacheRow_dw_('responses', monthInfo.sheetId, f3Name);
   if (!responsesRow) {
-    responsesRow = responsesSheet.getRange(responsesRowIndex + 2, 1, 1, responsesSheet.getLastColumn()).getValues()[0];
+    var rs2 = responsesSheet_();
+    responsesRow = rs2.getRange(responsesRowIndex + 2, 1, 1, rs2.getLastColumn()).getValues()[0];
     setPaxCacheRow_dw_('responses', monthInfo.sheetId, f3Name, responsesRow);
   }
   var responsesMs = Date.now() - t1;
 
   var registeredEmail = String(
-    headers && typeof getResponseEmailValue_dw_ === 'function'
-      ? getResponseEmailValue_dw_(responsesRow, columns, headers)
+    responsesLayout.headers && typeof getResponseEmailValue_dw_ === 'function'
+      ? getResponseEmailValue_dw_(responsesRow, columns, responsesLayout.headers)
       : responsesRow[columns.EMAIL]
   ).trim().toLowerCase();
   var emailMismatch = registeredEmail !== String(email || '').trim().toLowerCase();
 
-  var trackerSheet = targetSs.getSheetByName('Tracker');
-  if (!trackerSheet || trackerSheet.getLastRow() < 4) return { matched: false, months: months };
-
   var t2 = Date.now();
-  var layout = getTrackerLayout_(trackerSheet, monthInfo.sheetId);
+  var trackerLayout = getCachedTrackerLayoutOnly_(monthInfo.sheetId);
+  var trackerSheet = null;
+  function trackerSheet_() {
+    if (!trackerSheet) trackerSheet = lazySs.get().getSheetByName('Tracker');
+    return trackerSheet;
+  }
+  if (!trackerLayout) {
+    var ts = trackerSheet_();
+    if (!ts || ts.getLastRow() < 4) return { matched: false, months: months };
+    trackerLayout = getTrackerLayout_(ts, monthInfo.sheetId);
+  }
   var trackerRowIndex = resolvePaxRowIndex_dw_('tracker', monthInfo.sheetId, f3Name, function() {
-    var lastRow = trackerSheet.getLastRow();
-    return trackerSheet.getRange(4, 1, lastRow - 3, 1).getValues().map(function(r) { return r[0]; });
+    var ts = trackerSheet_();
+    if (!ts || ts.getLastRow() < 4) return [];
+    var lastRow = ts.getLastRow();
+    return ts.getRange(4, 1, lastRow - 3, 1).getValues().map(function(r) { return r[0]; });
   });
   if (trackerRowIndex === -1) return { matched: false, months: months };
 
   var trackerRow = getPaxCacheRow_dw_('tracker', monthInfo.sheetId, f3Name);
   if (!trackerRow) {
-    trackerRow = trackerSheet.getRange(trackerRowIndex + 4, 1, 1, trackerSheet.getLastColumn()).getValues()[0];
+    var ts2 = trackerSheet_();
+    trackerRow = ts2.getRange(trackerRowIndex + 4, 1, 1, ts2.getLastColumn()).getValues()[0];
     setPaxCacheRow_dw_('tracker', monthInfo.sheetId, f3Name, trackerRow);
   }
   var trackerMs = Date.now() - t2;
 
   GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({
     matched: true, lean: true, emailMismatch: emailMismatch,
-    openMs: openMs, responsesMs: responsesMs, trackerMs: trackerMs, totalMs: Date.now() - t0,
+    openMs: lazySs.getOpenMs(), responsesMs: responsesMs, trackerMs: trackerMs, totalMs: Date.now() - t0,
   }, paxCacheStatsForLog_dw_()));
 
   return {
@@ -755,10 +843,9 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months) {
     emailMismatch: emailMismatch,
     months: months,
     monthInfo: monthInfo,
-    targetSs: targetSs,
-    trackerSheet: trackerSheet,
-    row2: layout.row2,
-    row3: layout.row3,
+    targetSs: lazySs,
+    row2: trackerLayout.row2,
+    row3: trackerLayout.row3,
     trackerRow: trackerRow,
     trackerRowIndex: trackerRowIndex,
     goals: {
@@ -983,7 +1070,11 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
     emailMismatch: emailMismatch,
     months: months,
     monthInfo: monthInfo,
-    targetSs: targetSs,
+    // Already opened above (this fallback path has no cache-only shortcut) — wrapped in the same
+    // lazy-wrapper shape (F3Go30-440b.6) purely so downstream consumers (resolveBonusSheet_,
+    // handleCheckinDashboard_) can call identity.targetSs.get() uniformly regardless of which
+    // resolver produced this identity.
+    targetSs: { get: function() { return targetSs; }, getOpenMs: function() { return openMs; } },
     trackerSheet: trackerSheet,
     row2: layout.row2,
     row3: layout.row3,
@@ -1089,15 +1180,22 @@ function resolveFullIdentityFromHandle_(handle) {
   var monthInfo = monthInfoFromHandle_(handle);
   if (!monthInfo || typeof handle.rowIndex !== 'number' || handle.rowIndex < 0) return null;
   var t0 = Date.now();
-  var targetSs;
-  try { targetSs = SpreadsheetApp.openById(monthInfo.sheetId); } catch (e) { return null; }
-  var openMs = Date.now() - t0;
-
-  var trackerSheet = targetSs.getSheetByName('Tracker');
-  if (!trackerSheet || trackerSheet.getLastRow() < 4) return null;
+  var lazySs = makeLazySpreadsheet_dw_(monthInfo.sheetId);
+  var trackerSheet = null;
+  function trackerSheet_() {
+    if (!trackerSheet) {
+      var ss;
+      try { ss = lazySs.get(); } catch (e) { return null; }
+      trackerSheet = ss.getSheetByName('Tracker');
+    }
+    return trackerSheet;
+  }
 
   var t2 = Date.now();
-  var layout = getTrackerLayout_(trackerSheet, monthInfo.sheetId);
+  // Lazy about SpreadsheetApp.openById() (F3Go30-440b.6): on a full cache hit — Tracker layout
+  // AND the whole roster both already warm — the spreadsheet is never opened, so the bounds
+  // check below (getLastRow() < 4) only runs when a live read is genuinely needed to fill a gap.
+  var layout = getCachedTrackerLayoutOnly_(monthInfo.sheetId);
   // Whole-roster read — required for the dashboard's team/board view: every PAX's Tracker row
   // backs allPaxRows/paxBoard/myTeamMembers (see handleCheckinDashboard_), so this read stays on
   // the critical path by necessity. Sourced from PaxCache's per-PAX rows + roster index
@@ -1113,6 +1211,11 @@ function resolveFullIdentityFromHandle_(handle) {
   var trackerValues = buildTrackerValuesFromPaxCache_(monthInfo.sheetId);
   var freshCheckMs = Date.now() - tFresh;
   var trackerFromCache = !!trackerValues;
+  if (!layout || !trackerValues) {
+    var ts = trackerSheet_();
+    if (!ts || ts.getLastRow() < 4) return null;
+    if (!layout) layout = getTrackerLayout_(ts, monthInfo.sheetId);
+  }
   if (!trackerValues) {
     var lastRow = trackerSheet.getLastRow();
     var lastCol = trackerSheet.getLastColumn();
@@ -1153,15 +1256,14 @@ function resolveFullIdentityFromHandle_(handle) {
 
   GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({
     matched: true, fromHandle: true, lean: false,
-    openMs: openMs, freshCheckMs: freshCheckMs, trackerMs: trackerMs, cacheWriteMs: cacheWriteMs, totalMs: Date.now() - t0,
+    openMs: lazySs.getOpenMs(), freshCheckMs: freshCheckMs, trackerMs: trackerMs, cacheWriteMs: cacheWriteMs, totalMs: Date.now() - t0,
   }, paxCacheStatsForLog_dw_()));
   return {
     matched: true,
     fromHandle: true,
     months: null,
     monthInfo: monthInfo,
-    targetSs: targetSs,
-    trackerSheet: trackerSheet,
+    targetSs: lazySs,
     row2: layout.row2,
     row3: layout.row3,
     trackerValues: trackerValues,
@@ -1224,8 +1326,11 @@ function resolveCheckinDayTarget_(identity, f3Name, targetDate, templateSpreadsh
   var classified = classifyTrackerColumns_(identity.row2, identity.row3);
   var col = findDateColumnIndex_(classified.dayCols, targetDate);
   if (col !== -1) {
+    // identity.trackerSheet: resolveLeanIdentityFromHandle_'s always-eager result. identity.targetSs
+    // (lazy wrapper, F3Go30-440b.6): resolveCheckinIdentityLean_'s result — forces the open here,
+    // which is correct since this is the write path and a live Sheet handle is always needed.
     return {
-      trackerSheet: identity.trackerSheet,
+      trackerSheet: identity.trackerSheet || identity.targetSs.get().getSheetByName('Tracker'),
       sheetId: identity.monthInfo.sheetId,
       rowIndex: identity.trackerRowIndex,
       col: col,
@@ -1610,7 +1715,7 @@ function resolveBonusSheet_(templateSpreadsheet, payload, dateIso) {
   if (!monthInfo) return { error: 'not_found' };
   var identity = resolveCheckinIdentityLean_(monthInfo, payload.f3Name, payload.email, null);
   if (!identity.matched) return { error: 'not_found' };
-  var bonusSheet = identity.targetSs.getSheetByName('Bonus Tracker');
+  var bonusSheet = identity.targetSs.get().getSheetByName('Bonus Tracker');
   if (!bonusSheet) return { error: 'bonus_sheet_not_found' };
   return { bonusSheet: bonusSheet, canonicalName: identity.trackerRow[TRACKER_NAME_COL_], monthStart: monthInfo.startDate };
 }
@@ -1856,8 +1961,14 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   // per-type columns, which are neither date-scoped nor capped at 1/period the way the pills
   // need to be. Bonus Tracker missing entirely (a very old tracker copy) degrades to all-zero
   // pills rather than failing the whole dashboard load.
-  var bonusSheet = identity.targetSs.getSheetByName('Bonus Tracker');
-  var bonusEntries = bonusSheet ? getAllBonusEntriesCached_dw_(bonusSheet, monthInfo.sheetId) : [];
+  // Cache-first (F3Go30-440b.6): only opens the spreadsheet to fetch the Bonus Tracker sheet on
+  // a genuine cache miss — a fully warm dashboard load (identity + tracker roster + bonus
+  // entries all cached) never calls SpreadsheetApp.openById at all.
+  var bonusEntries = getCachedBonusEntriesOnly_dw_ ? getCachedBonusEntriesOnly_dw_(monthInfo.sheetId) : null;
+  if (bonusEntries === null) {
+    var bonusSheet = identity.targetSs.get().getSheetByName('Bonus Tracker');
+    bonusEntries = bonusSheet ? getAllBonusEntriesCached_dw_(bonusSheet, monthInfo.sheetId) : [];
+  }
   var reportedDayDates = reportedDayCols.map(function(d) { return d.date; });
 
   var allPaxRows = [];
@@ -1985,6 +2096,11 @@ if (typeof module !== 'undefined' && module.exports) {
     resolveCheckinDayTarget_: resolveCheckinDayTarget_,
     getCachedTrackerLayoutOnly_: getCachedTrackerLayoutOnly_,
     trackerLayoutCacheKey_: trackerLayoutCacheKey_,
+    makeLazySpreadsheet_dw_: makeLazySpreadsheet_dw_,
+    responsesLayoutCacheKey_: responsesLayoutCacheKey_,
+    getCachedResponsesLayoutOnly_: getCachedResponsesLayoutOnly_,
+    getResponsesLayout_: getResponsesLayout_,
+    resolveCheckinIdentityLean_: resolveCheckinIdentityLean_,
     serializeRow3ForCache_: serializeRow3ForCache_,
     serializeSheetValuesForCache_: serializeSheetValuesForCache_,
     deserializeSheetValuesFromCache_: deserializeSheetValuesFromCache_,

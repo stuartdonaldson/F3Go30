@@ -65,3 +65,6 @@ test/output/
 # the GitHub Pages workflow on every publish, never hand-edited or committed.
 static-pages/dist/
 
+# Generated performance-timing runs (tools/perfTiming.js) — timestamped, not source.
+tools/perf-results/
+

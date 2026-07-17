@@ -725,6 +725,7 @@ function cleanupTrackerArtifact_(sheetId, trashSpreadsheet) {
 	try {
 		var triggerSs = SpreadsheetApp.openById(sheetId);
 		clearFormSubmitTrigger(triggerSs);
+		clearTrackerEditTrigger_(triggerSs);
 		triggerCleared = true;
 	} catch (triggerErr) {
 		GasLogger.log('cleanupTrackerArtifact_.clearFormSubmitTriggerFailed', { error: triggerErr.message });

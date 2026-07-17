@@ -35,6 +35,7 @@ const {
   readAllBonusEntries_,
   serializeBonusEntriesForCache_,
   deserializeBonusEntriesFromCache_,
+  getCachedBonusEntriesOnly_,
   getAllBonusEntriesCached_,
   getAllBonusRowsCached_,
   listBonusEntriesForPax_,
@@ -261,6 +262,24 @@ function makeMockBonusSheet_(maxRows, names, fullRows) {
   assert.equal(second.length, 1);
   assert.equal(second[0].date.getTime(), when.getTime());
   assert.equal(readCount, readsAfterFirst);
+})();
+
+// getCachedBonusEntriesOnly_ (F3Go30-440b.6) — cache-only half, so a caller (handleCheckinDashboard_)
+// can find out whether it can skip opening the spreadsheet for the Bonus Tracker sheet entirely
+// before paying for that open. Miss returns null (never a bonusSheet param needed to check).
+(function testGetCachedBonusEntriesOnlyMissThenHitAfterWarm() {
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  assert.equal(getCachedBonusEntriesOnly_('sheet-z'), null);
+
+  var when = new Date(2026, 6, 2);
+  var fullRows = [['Crazy Ivan', 1, '', 1, true, 'Fellowship', when, 'Coffee', '']];
+  var sheet = makeMockBonusSheet_(892, ['Crazy Ivan'], fullRows);
+  getAllBonusEntriesCached_(sheet, 'sheet-z');
+
+  var cached = getCachedBonusEntriesOnly_('sheet-z');
+  assert.equal(cached.length, 1);
+  assert.equal(cached[0].date.getTime(), when.getTime());
 })();
 
 (function testInvalidateBonusEntriesCacheForcesFreshReadOnNextCall() {

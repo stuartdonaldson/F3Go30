@@ -238,6 +238,34 @@ function wipeAllPaxCache_() {
 }
 
 /**
+ * Wipes both PaxCache kinds (tracker + responses) plus the CacheService-backed full-roster/
+ * bonus caches for one sheetId — the complete "this sheet's cache is no longer trustworthy"
+ * action, shared by ensurePaxCacheFresh_ (Drive-modtime poll) and handleTrackerEdit_
+ * (TrackerEditTrigger.js's onEdit-driven invalidation) so the CacheService key list only ever
+ * lives in one place.
+ */
+function wipePaxCacheAndRelatedCachesForSheet_(sheetId) {
+  wipePaxCacheForSheet_('tracker', sheetId);
+  wipePaxCacheForSheet_('responses', sheetId);
+  // Also clears dashboardWebapp.js's full-roster CacheService cache (trackerValuesCacheKey_/
+  // responsesValuesCacheKey_) for the same sheet — CacheService has no key-enumeration or
+  // prefix-delete (unlike PropertiesService.getKeys() above), so the exact key strings are
+  // duplicated here rather than referencing those functions directly, to avoid a circular
+  // dependency between PaxCache.js and dashboardWebapp.js. Keep in sync if either changes.
+  // Also clears bonusWebapp.js's per-sheet bonus entry/pill-shape caches
+  // (bonusEntriesCacheKey_/bonusRowsCacheKey_) so a manual Bonus Tracker edit is picked up
+  // without waiting for BONUS_ENTRIES_CACHE_TTL_SECONDS_ or a webapp-driven bonus write
+  // (F3Go30-nzi0). Same exact-key-string duplication convention as above.
+  try {
+    var cache = CacheService.getScriptCache();
+    cache.remove('go30dash:trackerValues:' + sheetId);
+    cache.remove('go30dash:responsesValues:' + sheetId);
+    cache.remove('go30dash:bonusEntries:' + sheetId);
+    cache.remove('go30dash:bonusRows:' + sheetId);
+  } catch (e2) { /* best-effort — write-through invalidation at the point of write is the primary path */ }
+}
+
+/**
  * Gates every PaxCache read on the Tracker/Responses spreadsheet's Drive-level modification
  * time — the replacement for the onEdit trigger that can't reach this store (see file header).
  * DriveApp.getFileById().getLastUpdated() is readable from any script project regardless of
@@ -267,24 +295,7 @@ function ensurePaxCacheFresh_(sheetId) {
     var storedAsOf = Number(props.getProperty(key)) || 0;
     if (liveModTime > storedAsOf) {
       paxCacheRequestStats_.wiped = true;
-      wipePaxCacheForSheet_('tracker', sheetId);
-      wipePaxCacheForSheet_('responses', sheetId);
-      // Also clears dashboardWebapp.js's full-roster CacheService cache (trackerValuesCacheKey_/
-      // responsesValuesCacheKey_) for the same sheet — CacheService has no key-enumeration or
-      // prefix-delete (unlike PropertiesService.getKeys() above), so the exact key strings are
-      // duplicated here rather than referencing those functions directly, to avoid a circular
-      // dependency between PaxCache.js and dashboardWebapp.js. Keep in sync if either changes.
-      // Also clears bonusWebapp.js's per-sheet bonus entry/pill-shape caches
-      // (bonusEntriesCacheKey_/bonusRowsCacheKey_) so a manual Bonus Tracker edit is picked up
-      // without waiting for BONUS_ENTRIES_CACHE_TTL_SECONDS_ or a webapp-driven bonus write
-      // (F3Go30-nzi0). Same exact-key-string duplication convention as above.
-      try {
-        var cache = CacheService.getScriptCache();
-        cache.remove('go30dash:trackerValues:' + sheetId);
-        cache.remove('go30dash:responsesValues:' + sheetId);
-        cache.remove('go30dash:bonusEntries:' + sheetId);
-        cache.remove('go30dash:bonusRows:' + sheetId);
-      } catch (e2) { /* best-effort — write-through invalidation at the point of write is the primary path */ }
+      wipePaxCacheAndRelatedCachesForSheet_(sheetId);
     }
     props.setProperty(key, String(liveModTime));
   } catch (e) { /* Drive lookup unavailable — trust existing cache rather than block the request */ }
@@ -551,6 +562,7 @@ if (typeof module !== 'undefined' && module.exports) {
     deletePaxRosterIndex_: deletePaxRosterIndex_,
     patchPaxRosterIndex_: patchPaxRosterIndex_,
     wipePaxCacheForSheet_: wipePaxCacheForSheet_,
+    wipePaxCacheAndRelatedCachesForSheet_: wipePaxCacheAndRelatedCachesForSheet_,
     wipeAllPaxCache_: wipeAllPaxCache_,
     resolvePaxRowIndex_: resolvePaxRowIndex_,
     ensurePaxCacheFresh_: ensurePaxCacheFresh_,

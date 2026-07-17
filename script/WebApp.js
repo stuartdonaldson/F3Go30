@@ -272,11 +272,12 @@ function handleAdminPost_(e) {
       return jsonOutput_({ ok: true, count: allTriggers.length, triggers: allTriggers });
     }
     if (payload.action === 'deleteOrphanedTriggers') {
-      // Removes only onFormSubmit triggers (FORM_SUBMIT_HANDLER_/LEGACY_FORM_SUBMIT_HANDLER_)
-      // whose source spreadsheet is trashed or gone — the leak cleanupTracker used to leave
-      // behind before it started calling clearFormSubmitTrigger. Never touches other trigger
+      // Removes only per-tracker installable triggers (form-submit + edit — every trigger type
+      // that's registered per-Tracker-spreadsheet, F3Go30-440b.4) whose source spreadsheet is
+      // trashed or gone — the leak cleanupTracker used to leave behind before it started
+      // calling clearFormSubmitTrigger/clearTrackerEditTrigger_. Never touches other trigger
       // types (e.g. the monthly auto-generate trigger) regardless of source state.
-      var formHandlers = [FORM_SUBMIT_HANDLER_, LEGACY_FORM_SUBMIT_HANDLER_];
+      var formHandlers = [FORM_SUBMIT_HANDLER_, LEGACY_FORM_SUBMIT_HANDLER_, TRACKER_EDIT_HANDLER_];
       var removed = [];
       ScriptApp.getProjectTriggers().forEach(function(trigger) {
         if (formHandlers.indexOf(trigger.getHandlerFunction()) === -1) return;

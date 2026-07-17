@@ -222,6 +222,20 @@ function deserializeBonusEntriesFromCache_(serialized) {
 }
 
 /**
+ * Cache-only half of getAllBonusEntriesCached_ — same split as getCachedTrackerLayoutOnly_/
+ * getTrackerLayout_ (dashboardWebapp.js), so a caller can find out whether it can skip opening
+ * the spreadsheet (and fetching bonusSheet) entirely before paying for that open (F3Go30-440b.6).
+ * @returns {Array|null} null on a miss or corrupt entry.
+ */
+function getCachedBonusEntriesOnly_(sheetId) {
+  var cache = CacheService.getScriptCache();
+  var cached;
+  try { cached = cache.get(bonusEntriesCacheKey_(sheetId)); } catch (e) { cached = null; }
+  if (!cached) return null;
+  try { return deserializeBonusEntriesFromCache_(JSON.parse(cached)); } catch (e) { return null; }
+}
+
+/**
  * Cache-aware wrapper around readAllBonusEntries_ — one CacheService entry per tracker sheet,
  * shared by every PAX's dashboard load for that month (unlike listBonusEntriesForPax_, which
  * reads live every time because it's only called once per bonus-section open by one PAX).
@@ -229,16 +243,13 @@ function deserializeBonusEntriesFromCache_(serialized) {
  * "since this PAX's last bonus edit," not by the TTL.
  */
 function getAllBonusEntriesCached_(bonusSheet, sheetId) {
-  var cache = CacheService.getScriptCache();
-  var cacheKey = bonusEntriesCacheKey_(sheetId);
-  var cached;
-  try { cached = cache.get(cacheKey); } catch (e) { cached = null; }
-  if (cached) {
-    try { return deserializeBonusEntriesFromCache_(JSON.parse(cached)); } catch (e) { /* corrupt — fall through to a fresh read */ }
-  }
+  var cached = getCachedBonusEntriesOnly_(sheetId);
+  if (cached) return cached;
 
   var entries = readAllBonusEntries_(bonusSheet);
-  try { cache.put(cacheKey, JSON.stringify(serializeBonusEntriesForCache_(entries)), BONUS_ENTRIES_CACHE_TTL_SECONDS_); } catch (e) { /* payload too large or cache unavailable — the read above still succeeded */ }
+  try {
+    CacheService.getScriptCache().put(bonusEntriesCacheKey_(sheetId), JSON.stringify(serializeBonusEntriesForCache_(entries)), BONUS_ENTRIES_CACHE_TTL_SECONDS_);
+  } catch (e) { /* payload too large or cache unavailable — the read above still succeeded */ }
   return entries;
 }
 
@@ -434,6 +445,7 @@ if (typeof module !== 'undefined' && module.exports) {
     readAllBonusEntries_: readAllBonusEntries_,
     serializeBonusEntriesForCache_: serializeBonusEntriesForCache_,
     deserializeBonusEntriesFromCache_: deserializeBonusEntriesFromCache_,
+    getCachedBonusEntriesOnly_: getCachedBonusEntriesOnly_,
     getAllBonusEntriesCached_: getAllBonusEntriesCached_,
     getAllBonusRowsCached_: getAllBonusRowsCached_,
     invalidateBonusEntriesCache_: invalidateBonusEntriesCache_,
