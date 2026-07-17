@@ -1,10 +1,12 @@
 /**
- * TrackerEditTrigger — proactive PaxCache invalidation for manual Tracker edits (F3Go30-440b.4).
+ * TrackerEditTrigger — proactive PaxCache invalidation for manual Tracker/Responses/Bonus
+ * Tracker edits (F3Go30-440b.4; extended to Responses + Bonus Tracker by F3Go30-o39s.2).
  *
  * Narrow complement to ADR-013 (which rejected onEdit for the checkin/dashboard round trip,
  * since script-driven SpreadsheetApp writes never fire onEdit): this only ever needs to catch
- * a human editing a Tracker cell directly in the Sheets UI, which is exactly the case onEdit
- * *does* fire for. Every webapp-driven write already self-invalidates via write-through
+ * a human editing a Tracker/Responses/Bonus Tracker cell directly in the Sheets UI, which is
+ * exactly the case onEdit *does* fire for. Every webapp-driven write already self-invalidates
+ * via write-through
  * (setPaxCacheRow_dw_/markPaxCacheFreshNow_, PaxCache.js), so this trigger has nothing to do
  * with any user-facing round trip's latency — see docs/staging/tracker-edit-cache-invalidation.md.
  *
@@ -28,6 +30,11 @@ var markPaxCacheFreshNow_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEdit
 
 // Named with trailing underscore so GAS does not auto-register it as a simple trigger.
 var TRACKER_EDIT_HANDLER_ = 'handleTrackerEdit_';
+
+// Sheets whose manual edits invalidate PaxCache (F3Go30-o39s.2) — Tracker, Responses, and
+// Bonus Tracker all feed PaxCache/CacheService state; other sheets (Config, Links, Activity,
+// etc.) don't, so wiping on those would just be wasted work.
+var TRACKER_EDIT_INVALIDATING_SHEETS_ = { 'Tracker': true, 'Responses': true, 'Bonus Tracker': true };
 
 /**
  * Installs the edit trigger for a specific tracker spreadsheet. Callable from any script
@@ -70,16 +77,18 @@ function resolveTrackerEditSpreadsheet_(e) {
 }
 
 /**
- * Edit-trigger entry point. Filters to the Tracker sheet only — edits to Config, Responses,
- * Bonus Tracker, etc. don't touch anything PaxCache caches, so wiping on those would just be
- * wasted work. Whole-sheet wipe (not per-row) — matches ensurePaxCacheFresh_'s existing
- * coarseness, so behavior doesn't get more or less correct, just proactive instead of polled.
+ * Edit-trigger entry point. Filters to the sheets PaxCache actually caches — Tracker,
+ * Responses, and Bonus Tracker; edits to Config, Links, Activity, etc. don't touch anything
+ * PaxCache caches, so wiping on those would just be wasted work. Whole-sheet wipe (not
+ * per-row) — matches ensurePaxCacheFresh_'s existing coarseness, so behavior doesn't get more
+ * or less correct, just proactive instead of polled.
  * @param {Object} e Edit event object.
  */
 function handleTrackerEdit_(e) {
   return GasLogger.run('handleTrackerEdit_', function() {
     var sheet = e.range.getSheet();
-    if (sheet.getName() !== 'Tracker') return;
+    var sheetName = sheet.getName();
+    if (!TRACKER_EDIT_INVALIDATING_SHEETS_[sheetName]) return;
 
     var sheetId = resolveTrackerEditSpreadsheet_(e).getId();
     // Deliberately logged here, not just inside the shared wipe helper — this is the one
@@ -88,7 +97,7 @@ function handleTrackerEdit_(e) {
     // see an updated modtime, so a wipe alone doesn't prove which path caught it). GasLogger.run
     // (not a bare GasLogger.log) is required here — log() only queues the entry in memory;
     // flush() is what actually POSTs to Axiom, and only .run() calls flush() automatically.
-    GasLogger.log('handleTrackerEdit_.invalidated', { sheetId: sheetId });
+    GasLogger.log('handleTrackerEdit_.invalidated', { sheetId: sheetId, sheetName: sheetName });
     wipePaxCacheAndRelatedCachesForSheet_te_(sheetId);
     markPaxCacheFreshNow_te_(sheetId);
   });

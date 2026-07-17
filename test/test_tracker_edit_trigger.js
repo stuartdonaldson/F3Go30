@@ -53,21 +53,20 @@ function makeFakeEditEvent_(sheetName, spreadsheetId) {
   return { range: { getSheet: function() { return sheet; } } };
 }
 
-// AC3: an edit on the Tracker sheet wipes PaxCache for that sheetId and stamps it fresh.
-resetCalls_();
-handleTrackerEdit_(makeFakeEditEvent_('Tracker', 'tracker-a'));
-assert.deepEqual(wipeCalls, ['tracker-a'], 'Tracker-sheet edit wipes PaxCache for the edited spreadsheet');
-assert.deepEqual(markFreshCalls, ['tracker-a'], 'Tracker-sheet edit stamps the asOf marker fresh');
+// AC3: an edit on the Tracker, Responses, or Bonus Tracker sheet wipes PaxCache for that
+// sheetId and stamps it fresh (F3Go30-o39s.2 extended this beyond Tracker-only).
+['Tracker', 'Responses', 'Bonus Tracker'].forEach(function(sheetName) {
+  resetCalls_();
+  handleTrackerEdit_(makeFakeEditEvent_(sheetName, 'tracker-a'));
+  assert.deepEqual(wipeCalls, ['tracker-a'], sheetName + '-sheet edit wipes PaxCache for the edited spreadsheet');
+  assert.deepEqual(markFreshCalls, ['tracker-a'], sheetName + '-sheet edit stamps the asOf marker fresh');
+});
 
 // AC4: an edit on any other sheet is a no-op.
 resetCalls_();
 handleTrackerEdit_(makeFakeEditEvent_('Config', 'tracker-a'));
-assert.deepEqual(wipeCalls, [], 'non-Tracker-sheet edit does not wipe PaxCache');
-assert.deepEqual(markFreshCalls, [], 'non-Tracker-sheet edit does not stamp asOf');
-
-resetCalls_();
-handleTrackerEdit_(makeFakeEditEvent_('Responses', 'tracker-a'));
-assert.deepEqual(wipeCalls, [], 'Responses-sheet edit does not wipe PaxCache (only Tracker sheet edits do)');
+assert.deepEqual(wipeCalls, [], 'non-PAX-sheet edit does not wipe PaxCache');
+assert.deepEqual(markFreshCalls, [], 'non-PAX-sheet edit does not stamp asOf');
 
 // resolveTrackerEditSpreadsheet_ — derives the spreadsheet id from the event's own range,
 // same ADR-010 pattern as resolveFormSubmitSpreadsheet_, never SpreadsheetApp.getActiveSpreadsheet().
