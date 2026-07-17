@@ -1644,3 +1644,10 @@ Outcome [internal]: Left docs/DESIGN.md, docs/OPERATIONS.md, docs/staging/*.md, 
 
 ### Key Learnings:
 None of the "purely subtractive" removal surfaced any lingering callers outside the exact locations F3Go30-o39s.8's description enumerated — C6 had fully emptied out the symbols' only real reader beforehand, so no reconciliation was needed.
+## 2026-07-17 00:00:00
+_session 24799bce · v3 · 07-17_
+
+### Objective 1: C9 doc cleanup — rewrite stale cache headers to match the final onEdit/write-through model (F3Go30-o39s.10)
+Rationale: Gated on C6/C7 (poll + asOf marker retirement), this closes finding F6 — self-contradicting documentation was a root cause of the epic's "hard to understand" concern. PaxCache.js's header already described the final two-mechanism model correctly (no edit needed there); the remaining stale spots were TrackerEditTrigger.js's header (still framed as a "narrow complement" to a poll-backstopped model) and docs/DESIGN.md's §Caching section (still listing the poll and `go30asof:` marker as live, 10-row cache table).
+Outcome [developer-facing]: Rewrote TrackerEditTrigger.js's header to state it's now the sole onEdit-freshness mechanism across all three PAX-data sheets, with no poll fallback. Rewrote docs/DESIGN.md §Caching to drop the retired poll/asOf marker from the caching-surface table (10 rows → 9) and describe the two-mechanism model as shipped, not pending. Also corrected docs/OPERATIONS.md's nightly-purge description, which still listed `go30asof:` as a Script Properties prefix `purgeStalePaxCache_` purges — confirmed via grep that PaxCache.js no longer references `go30asof` at all. Swept dashboardWebapp.js/bonusWebapp.js/markMinusOne.js/addResponseOnSubmit.js for stale `ensurePaxCacheFresh_`/backstop language; none found (dashboardWebapp.js's one "backstop pattern" comment refers to an unrelated cache-miss-fallback pattern, left as-is).
+Outcome [internal]: `npm test` run clean, all suites passing (doc-only change set, no code touched).

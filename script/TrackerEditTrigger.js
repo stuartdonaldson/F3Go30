@@ -1,14 +1,17 @@
 /**
- * TrackerEditTrigger — proactive PaxCache invalidation for manual Tracker/Responses/Bonus
- * Tracker edits (F3Go30-440b.4; extended to Responses + Bonus Tracker by F3Go30-o39s.2).
+ * TrackerEditTrigger — the onEdit half of PaxCache freshness (ADR-016's two-mechanism model:
+ * write-through + installable onEdit) for manual Tracker/Responses/Bonus Tracker edits
+ * (F3Go30-440b.4; extended to Responses + Bonus Tracker by F3Go30-o39s.2). This is now the
+ * *only* mechanism that catches a human editing a Tracker/Responses/Bonus Tracker cell directly
+ * in the Sheets UI across all three sheets — the Drive-modtime poll that used to backstop the
+ * window before onEdit fires (`ensurePaxCacheFresh_`) is retired entirely (F3Go30-o39s epic,
+ * C6/C7), so there is no fallback catching a missed or delayed onEdit invocation.
  *
- * Narrow complement to ADR-013 (which rejected onEdit for the checkin/dashboard round trip,
- * since script-driven SpreadsheetApp writes never fire onEdit): this only ever needs to catch
- * a human editing a Tracker/Responses/Bonus Tracker cell directly in the Sheets UI, which is
- * exactly the case onEdit *does* fire for. Every webapp-driven write already self-invalidates
- * via write-through
- * (setPaxCacheRow_dw_, PaxCache.js), so this trigger has nothing to do
- * with any user-facing round trip's latency — see docs/staging/tracker-edit-cache-invalidation.md.
+ * Complements ADR-013 (which rejected onEdit for the checkin/dashboard round trip itself, since
+ * script-driven SpreadsheetApp writes never fire onEdit): every webapp-driven write already
+ * self-invalidates via write-through (setPaxCacheRow_dw_, PaxCache.js), so this trigger has
+ * nothing to do with any user-facing round trip's latency — see
+ * docs/staging/tracker-edit-cache-invalidation.md.
  *
  * Registered centrally (ADR-010 pattern, mirrors addResponseOnSubmit.js's setupFormSubmitTrigger/
  * clearFormSubmitTrigger exactly): installable triggers run using the code of the project that

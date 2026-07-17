@@ -280,11 +280,11 @@ visible only when the spreadsheet is opened by the owner account.
 > abandoned/stale check-in bookmark sessions nightly — it does not resolve a tracker, since the
 > `CheckinSessions` sheet lives on the Template itself. A fifth trigger, `purgeStalePaxCache`
 > (`PaxCache.js`, F3Go30-440b.2), also runs nightly on the Template and purges PaxCache
-> Script Properties entries (`go30pax:`/`go30idx:`/`go30asof:`) three ways: wholesale, for any
+> Script Properties entries (`go30pax:`/`go30idx:`) three ways: wholesale, for any
 > `TrackerDB` sheet whose tracker month started more than ~60 days ago; per-PAX, on sheets too
 > recent for that wholesale wipe, for any PAX who no longer has a row in `CheckinSessions`
 > (reusing that sheet's own nightly prune as an activity signal); and an orphan sweep, for any
-> `go30pax:`/`go30idx:`/`go30asof:` entry whose sheetId has no `TrackerDB` row anywhere at
+> `go30pax:`/`go30idx:` entry whose sheetId has no `TrackerDB` row anywhere at
 > all — a single deleted tracker (`cleanupTracker`) or a whole torn-down namespace
 > (`teardownEnvironment`). PaxCache's Script Properties store is shared by the one deployed
 > script regardless of which `ns` a request targeted, but `TrackerDB` is not (each namespace
