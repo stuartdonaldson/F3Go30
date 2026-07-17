@@ -35,9 +35,8 @@
 
 var PAX_CACHE_PREFIX_ = 'go30pax:';
 var PAX_CACHE_ROSTER_PREFIX_ = 'go30idx:';
-var PAX_CACHE_ASOF_PREFIX_ = 'go30asof:';
 
-// Nightly purge threshold (F3Go30-440b.2) — go30pax:/go30idx:/go30asof: entries are keyed per
+// Nightly purge threshold (F3Go30-440b.2) — go30pax:/go30idx: entries are keyed per
 // sheetId and nothing ever deleted them once a tracker month aged out, accumulating forever
 // against PropertiesService's hard caps (500KB total store, 9KB/value, ~500 keys — the capacity
 // risk flagged and deferred in F3Go30-5nfj.3). ~2 months mirrors CheckinSessions.js's
@@ -60,18 +59,12 @@ var paxCacheCheckinSessionsModule_ = (typeof module !== 'undefined' && module.ex
 var listActiveCheckinSessionF3Names_pc_ = (paxCacheCheckinSessionsModule_ && paxCacheCheckinSessionsModule_.listActiveCheckinSessionF3Names_)
   || (typeof globalThis !== 'undefined' && globalThis.listActiveCheckinSessionF3Names_);
 
-// Per-execution memo of {kind, sheetId} pairs already freshness-checked this request, so a
-// request that looks up several PAX on the same sheet pays for one DriveApp call, not one per
-// lookup. Apps Script re-evaluates top-level script state on every execution, so this is
-// naturally empty at the start of each request — nothing to reset between requests.
-var paxCacheFreshnessMemo_ = {};
-
 // Per-execution hit/miss/wipe counters (F3Go30-440b.1) — folded into the caller's own
 // per-request GasLogger event (dashboardWebapp.js's checkinWebapp.resolveIdentity.timing /
 // checkinWebapp.dashboard) via getPaxCacheRequestStats_ rather than logged here directly, so
 // cache effectiveness becomes queryable in Axiom with zero new log volume (see file header).
-// Naturally reset every execution the same way paxCacheFreshnessMemo_ is (GAS re-evaluates
-// top-level script state fresh each time) — resetPaxCacheRequestStats_ exists for tests only.
+// Naturally reset every execution (GAS re-evaluates top-level script state fresh each time) —
+// resetPaxCacheRequestStats_ exists for tests only.
 var paxCacheRequestStats_ = { wiped: false, rosterHit: 0, rosterMiss: 0, rowHit: 0, rowMiss: 0 };
 
 function paxCacheNormalizeName_(name) {
@@ -88,10 +81,6 @@ function paxCacheRowPrefix_(kind, sheetId) {
 
 function paxCacheRosterKey_(kind, sheetId) {
   return PAX_CACHE_ROSTER_PREFIX_ + kind + ':' + sheetId;
-}
-
-function paxCacheAsOfKey_(sheetId) {
-  return PAX_CACHE_ASOF_PREFIX_ + sheetId;
 }
 
 /** Dates aren't JSON-safe — round-trip any Date cell through a plain marker object. */
@@ -135,7 +124,7 @@ function deletePaxCacheRow_(kind, sheetId, name) {
  * dashboardWebapp.js) already has every row in memory from one full-range Sheet read, so there's
  * no reason to write it back one row at a time. setProperties merges into the existing store
  * (does not delete keys outside rowsByName/rosterIndex), so unrelated properties — other sheets'
- * cache entries, the asOf marker, WEBAPP_URL, etc. — are untouched.
+ * cache entries, WEBAPP_URL, etc. — are untouched.
  * @param {string} kind
  * @param {string} sheetId
  * @param {Object<string, Array>} rowsByName Map of raw (non-normalized) name -> row values.
@@ -269,26 +258,6 @@ function wipePaxCacheAndRelatedCachesForSheet_(sheetId) {
 }
 
 /**
- * Marks {sheetId}'s cache fresh as of NOW — historically consumed by ensurePaxCacheFresh_'s
- * Drive-modtime probe (removed F3Go30-o39s.7; see git history for the full rationale this
- * docstring used to carry). Freshness is now solely write-through + onEdit (TrackerEditTrigger.js),
- * so the go30asof marker this writes has no remaining reader — dead weight kept only because its
- * removal, along with the marker itself and paxCacheFreshnessMemo_, is scoped to F3Go30-o39s.8.
- */
-function markPaxCacheFreshNow_(sheetId) {
-  paxCacheFreshnessMemo_[sheetId] = true;
-  try {
-    PropertiesService.getScriptProperties().setProperty(paxCacheAsOfKey_(sheetId), String(Date.now()));
-  } catch (e) { /* Properties unavailable — next reader just pays for one rebuild, never stale */ }
-}
-
-/** Resets the per-execution freshness memo — test-only; production never needs to since Apps
- *  Script re-evaluates top-level script state fresh on every execution. */
-function resetPaxCacheFreshnessMemo_() {
-  paxCacheFreshnessMemo_ = {};
-}
-
-/**
  * Snapshot of this execution's PaxCache hit/miss/wipe counters (F3Go30-440b.1), field-named to
  * drop straight into a caller's own per-request GasLogger event via Object.assign — see
  * dashboardWebapp.js's checkinWebapp.resolveIdentity.timing / checkinWebapp.dashboard call
@@ -304,8 +273,8 @@ function getPaxCacheRequestStats_() {
   };
 }
 
-/** Resets the per-execution request-stats counters — test-only, same rationale as
- *  resetPaxCacheFreshnessMemo_. */
+/** Resets the per-execution request-stats counters — test-only; production never needs to since
+ *  Apps Script re-evaluates top-level script state fresh on every execution. */
 function resetPaxCacheRequestStats_() {
   paxCacheRequestStats_ = { wiped: false, rosterHit: 0, rosterMiss: 0, rowHit: 0, rowMiss: 0 };
 }
@@ -373,21 +342,18 @@ function collectKnownTrackerSheetIds_(boundSpreadsheet) {
   return known;
 }
 
-/** Extracts the sheetId embedded in a go30pax:/go30idx:/go30asof: PropertiesService key, or
+/** Extracts the sheetId embedded in a go30pax:/go30idx: PropertiesService key, or
  *  null for any other key (this store also holds unrelated entries — WEBAPP_URL, etc.). */
 function extractSheetIdFromPaxCacheKey_(key) {
   if (key.indexOf(PAX_CACHE_PREFIX_) === 0 || key.indexOf(PAX_CACHE_ROSTER_PREFIX_) === 0) {
     return key.split(':')[2] || null;
-  }
-  if (key.indexOf(PAX_CACHE_ASOF_PREFIX_) === 0) {
-    return key.split(':')[1] || null;
   }
   return null;
 }
 
 /**
  * Nightly cleanup (F3Go30-440b.2; see setupPaxCachePurgeTrigger_, onOpen.js's wiring): purges
- * every PaxCache entry (both kind=tracker and kind=responses, plus the go30asof: marker) for any
+ * every PaxCache entry (both kind=tracker and kind=responses) for any
  * TrackerDB row whose tracker month started more than PAX_CACHE_PURGE_RETENTION_DAYS_ ago.
  * wipePaxCacheForSheet_ already does the actual per-sheet cleanup — this just walks TrackerDB
  * deciding which sheetIds qualify. Mirrors CheckinSessions.js's cleanupStaleCheckinSessions_
@@ -407,8 +373,8 @@ function extractSheetIdFromPaxCacheKey_(key) {
  * sheetIds TrackerDB currently knows about — a sheetId whose TrackerDB row was removed entirely
  * (cleanupTrackerArtifact_ deleting a single tracker, or teardownEnvironment removing a whole
  * namespace) is invisible to them and would otherwise keep its PaxCache entries forever. This
- * pass instead enumerates the PropertiesService store directly and wipes any go30pax:/go30idx:/
- * go30asof: entry whose sheetId isn't in collectKnownTrackerSheetIds_'s cross-namespace "still
+ * pass instead enumerates the PropertiesService store directly and wipes any go30pax:/go30idx:
+ * entry whose sheetId isn't in collectKnownTrackerSheetIds_'s cross-namespace "still
  * live somewhere" set. Skipped entirely when that set comes back empty — a TrackerDB read
  * failure/misconfiguration must never be mistaken for "nothing is live" and wipe everything.
  * @param {Date=} now Injectable for tests; defaults to the real current time.
@@ -431,7 +397,6 @@ function purgeStalePaxCache_(now, spreadsheet) {
     if (!isNaN(startDate.getTime()) && (now.getTime() - startDate.getTime()) > retentionMs) {
       wipePaxCacheForSheet_('tracker', sheetId);
       wipePaxCacheForSheet_('responses', sheetId);
-      try { PropertiesService.getScriptProperties().deleteProperty(paxCacheAsOfKey_(sheetId)); } catch (e) { /* best-effort */ }
       purged++;
       purgedSheetIds[sheetId] = true;
       return;
@@ -464,7 +429,6 @@ function purgeStalePaxCache_(now, spreadsheet) {
     Object.keys(orphanSheetIds).forEach(function(sheetId) {
       wipePaxCacheForSheet_('tracker', sheetId);
       wipePaxCacheForSheet_('responses', sheetId);
-      try { PropertiesService.getScriptProperties().deleteProperty(paxCacheAsOfKey_(sheetId)); } catch (e) { /* best-effort */ }
       orphanedSheetsPurged++;
     });
   }
@@ -520,8 +484,6 @@ if (typeof module !== 'undefined' && module.exports) {
     wipePaxCacheAndRelatedCachesForSheet_: wipePaxCacheAndRelatedCachesForSheet_,
     wipeAllPaxCache_: wipeAllPaxCache_,
     resolvePaxRowIndex_: resolvePaxRowIndex_,
-    markPaxCacheFreshNow_: markPaxCacheFreshNow_,
-    resetPaxCacheFreshnessMemo_: resetPaxCacheFreshnessMemo_,
     getPaxCacheRequestStats_: getPaxCacheRequestStats_,
     resetPaxCacheRequestStats_: resetPaxCacheRequestStats_,
     purgeStalePaxCache_: purgeStalePaxCache_,

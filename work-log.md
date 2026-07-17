@@ -1633,3 +1633,14 @@ Open: Bead's own "Verify" section calls for a live SIT smoke test (webapp check-
 
 ### Key Learnings:
 `paxCacheRequestStats_.wiped` (the `paxCacheWiped` field folded into `checkinWebapp.resolveIdentity.timing`) was set exclusively inside `ensurePaxCacheFresh_` — after its removal the flag has no remaining writer and will always report `false`; this is expected and not itself a bug, but a reader of that Axiom field should know it's now permanently inert until C7's cleanup (or a follow-up) revisits the stats plumbing.
+
+## 2026-07-17 14:30:59
+_session 3d8bd6e3 · v3 · 07-17_
+
+### Objective 1: C7 — Remove dead asOf machinery (go30asof marker, markPaxCacheFreshNow_, freshness memo) — F3Go30-o39s.8
+Rationale: C6 (F3Go30-o39s.7) retired the Drive-modtime poll that was the only reader of these symbols, so per the epic's staged plan they became dead weight kept only because their removal was explicitly scoped to this issue (per PaxCache.js's own docstrings at the time).
+Outcome [developer-facing]: Removed PAX_CACHE_ASOF_PREFIX_, paxCacheAsOfKey_, markPaxCacheFreshNow_, resetPaxCacheFreshnessMemo_, and paxCacheFreshnessMemo_ from PaxCache.js, along with their module.exports entries, the go30asof: handling in extractSheetIdFromPaxCacheKey_, and the deleteProperty(paxCacheAsOfKey_) calls in purgeStalePaxCache_. Removed the markPaxCacheFreshNow_dw_ import shim and all its call sites in dashboardWebapp.js (including the now-write-only freshRead local, which was also dropped), and the markPaxCacheFreshNow_te_ shim/call in TrackerEditTrigger.js. Updated stale comments referencing the removed symbols in both files. Updated test_pax_cache.js (dropped the markPaxCacheFreshNow_ test and go30asof: assertions), test_tracker_edit_trigger.js (dropped the markFreshCalls spy and its assertions), and test_dashboard_webapp.js (dropped 17 now-dead PaxCache.resetPaxCacheFreshnessMemo_() calls and 4 now-unused PaxCache requires). Full npm test suite passes (32 test files, exit 0).
+Outcome [internal]: Left docs/DESIGN.md, docs/OPERATIONS.md, docs/staging/*.md, ADR-015/016, and work-log.md's historical entries untouched — those still reference the removed symbols but are explicitly in scope for the blocked follow-up issue F3Go30-o39s.10 (C9: Documentation cleanup), not this one.
+
+### Key Learnings:
+None of the "purely subtractive" removal surfaced any lingering callers outside the exact locations F3Go30-o39s.8's description enumerated — C6 had fully emptied out the symbols' only real reader beforehand, so no reconciliation was needed.

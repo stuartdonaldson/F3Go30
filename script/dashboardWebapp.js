@@ -55,8 +55,6 @@ var getPaxRosterIndex_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPa
   || (typeof globalThis !== 'undefined' && globalThis.getPaxRosterIndex_);
 var paxCacheNormalizeName_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.paxCacheNormalizeName_)
   || (typeof globalThis !== 'undefined' && globalThis.paxCacheNormalizeName_);
-var markPaxCacheFreshNow_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.markPaxCacheFreshNow_)
-  || (typeof globalThis !== 'undefined' && globalThis.markPaxCacheFreshNow_);
 var getPaxCacheRequestStats_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.getPaxCacheRequestStats_)
   || (typeof globalThis !== 'undefined' && globalThis.getPaxCacheRequestStats_);
 
@@ -974,7 +972,6 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var responsesCacheKey = responsesValuesCacheKey_(monthInfo.sheetId);
   var dataRows = getCachedSheetValuesOnly_(responsesCacheKey);
   var trackerValues = buildTrackerValuesFromPaxCache_(monthInfo.sheetId);
-  var freshRead = false;
 
   var responsesSheet = targetSs.getSheetByName('Responses');
   if (!responsesSheet) return { matched: false, months: months };
@@ -987,7 +984,6 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
       ? responsesSheet.getRange(2, 1, responsesSheet.getLastRow() - 1, responsesSheet.getLastColumn()).getValues()
       : [];
     setCachedSheetValues_(responsesCacheKey, dataRows);
-    freshRead = true;
   }
   var match = findSignupMatchByF3NameOnly_dw_(dataRows, f3Name, columns);
   var responsesMs = Date.now() - t1;
@@ -1013,10 +1009,8 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
     var lastRow = trackerSheet.getLastRow();
     var lastCol = trackerSheet.getLastColumn();
     trackerValues = trackerSheet.getRange(4, 1, lastRow - 3, lastCol).getValues();
-    freshRead = true;
   }
   var trackerMs = Date.now() - t2;
-  if (freshRead && markPaxCacheFreshNow_dw_) markPaxCacheFreshNow_dw_(monthInfo.sheetId);
 
   var t3 = Date.now();
   var rosterIndex = {};
@@ -1181,9 +1175,7 @@ function resolveFullIdentityFromHandle_(handle) {
   // the critical path by necessity. Sourced from PaxCache's per-PAX rows + roster index
   // (buildTrackerValuesFromPaxCache_, F3Go30-5nfj.3) rather than a whole-sheet CacheService blob:
   // a check-in write-through patch leaves every OTHER pax's row untouched, so this stays a cache
-  // hit across writes. On a fresh (cold-cache) read we stamp the asOf marker from the read moment
-  // (markPaxCacheFreshNow_) so the rows bulk-written below stay trusted by later same-request
-  // lean lookups. Mirrors resolveLeanIdentityFromHandle_, which already trusts its single-row
+  // hit across writes. Mirrors resolveLeanIdentityFromHandle_, which already trusts its single-row
   // live read with no probe.
   var trackerValues = buildTrackerValuesFromPaxCache_(monthInfo.sheetId);
   var trackerFromCache = !!trackerValues;
@@ -1196,7 +1188,6 @@ function resolveFullIdentityFromHandle_(handle) {
     var lastRow = trackerSheet.getLastRow();
     var lastCol = trackerSheet.getLastColumn();
     trackerValues = trackerSheet.getRange(4, 1, lastRow - 3, lastCol).getValues();
-    if (markPaxCacheFreshNow_dw_) markPaxCacheFreshNow_dw_(monthInfo.sheetId);
   }
   var trackerMs = Date.now() - t2;
 

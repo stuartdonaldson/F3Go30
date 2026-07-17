@@ -7,7 +7,7 @@
  * a human editing a Tracker/Responses/Bonus Tracker cell directly in the Sheets UI, which is
  * exactly the case onEdit *does* fire for. Every webapp-driven write already self-invalidates
  * via write-through
- * (setPaxCacheRow_dw_/markPaxCacheFreshNow_, PaxCache.js), so this trigger has nothing to do
+ * (setPaxCacheRow_dw_, PaxCache.js), so this trigger has nothing to do
  * with any user-facing round trip's latency — see docs/staging/tracker-edit-cache-invalidation.md.
  *
  * Registered centrally (ADR-010 pattern, mirrors addResponseOnSubmit.js's setupFormSubmitTrigger/
@@ -25,8 +25,6 @@ var trackerEditTriggerPaxCacheModule_ = (typeof module !== 'undefined' && module
   : null;
 var wipePaxCacheAndRelatedCachesForSheet_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.wipePaxCacheAndRelatedCachesForSheet_)
   || (typeof globalThis !== 'undefined' && globalThis.wipePaxCacheAndRelatedCachesForSheet_);
-var markPaxCacheFreshNow_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.markPaxCacheFreshNow_)
-  || (typeof globalThis !== 'undefined' && globalThis.markPaxCacheFreshNow_);
 var getPaxCacheRow_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.getPaxCacheRow_)
   || (typeof globalThis !== 'undefined' && globalThis.getPaxCacheRow_);
 var setPaxCacheRow_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.setPaxCacheRow_)
@@ -244,7 +242,6 @@ function handleTrackerEdit_(e) {
     // calls flush() automatically.
     GasLogger.log('handleTrackerEdit_.invalidated', { sheetId: sheetId, sheetName: sheetName });
     wipePaxCacheAndRelatedCachesForSheet_te_(sheetId);
-    markPaxCacheFreshNow_te_(sheetId);
   });
 }
 

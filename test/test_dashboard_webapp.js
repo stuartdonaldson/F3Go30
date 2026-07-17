@@ -871,7 +871,6 @@ function makeHandleFixture_() {
 // and never touches DriveApp at all — freshness is solely write-through + onEdit-driven now
 // (the per-request Drive-modtime probe was retired, F3Go30-o39s.7).
 (function testFullFromHandleNeverProbesDriveOnColdOrWarmCache() {
-  var PaxCache = require('../script/PaxCache.js');
   installFakePropertiesStore_();
   fakeScriptCache_ = makeFakeScriptCache_();
   global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
@@ -1009,11 +1008,9 @@ function makeLeanIdentityResponsesSheet_(rows) {
 // resolveCheckinIdentityLean_ — full cache hit (Responses layout + Tracker layout + roster +
 // row, both kinds) never calls SpreadsheetApp.openById at all (F3Go30-440b.6).
 (function testResolveCheckinIdentityLeanFullCacheHitNeverOpens() {
-  var PaxCache = require('../script/PaxCache.js');
   installFakePropertiesStore_();
   fakeScriptCache_ = makeFakeScriptCache_();
   global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
-  PaxCache.resetPaxCacheFreshnessMemo_();
 
   var monthInfo = { sheetId: 'sheet-lean', trackerUrl: 'https://x/lean', label: 'July 2026', startDate: new Date(2026, 6, 1) };
   var responsesRow = ['', 'anchor@x.com', 'Yes', 'Anchor', '', 'Crucible', '', 'Who', 'What', 'How', '', '', ''];
@@ -1048,18 +1045,15 @@ function makeLeanIdentityResponsesSheet_(rows) {
   assert.equal(identity.targetSs.getOpenMs(), 0, 'openById was never called on the full-cache-hit path');
 
   delete global.SpreadsheetApp;
-  PaxCache.resetPaxCacheFreshnessMemo_();
 })();
 
 // resolveCheckinIdentityLean_ — a cold cache (nothing warm) opens the spreadsheet exactly once,
 // not once per gap (Responses layout miss + Tracker layout miss + two roster misses + two row
 // misses would be 6 separate opens without memoization inside the lazy wrapper).
 (function testResolveCheckinIdentityLeanColdCacheOpensExactlyOnce() {
-  var PaxCache = require('../script/PaxCache.js');
   installFakePropertiesStore_();
   fakeScriptCache_ = makeFakeScriptCache_();
   global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
-  PaxCache.resetPaxCacheFreshnessMemo_();
 
   var monthInfo = { sheetId: 'sheet-cold', trackerUrl: 'https://x/cold', label: 'July 2026', startDate: new Date(2026, 6, 1) };
   var responsesRow = ['', 'slaw@x.com', 'Yes', 'Slaw', '', 'Impala', '', 'Who', 'What', 'How', '', '', ''];
@@ -1085,17 +1079,14 @@ function makeLeanIdentityResponsesSheet_(rows) {
   assert.deepEqual(opens, ['sheet-cold'], 'one open reused (memoized) across the Responses AND Tracker live reads');
 
   delete global.SpreadsheetApp;
-  PaxCache.resetPaxCacheFreshnessMemo_();
 })();
 
 // resolveFullIdentityFromHandle_ — full cache hit never calls SpreadsheetApp.openById either.
 (function testFullFromHandleFullCacheHitNeverOpens() {
-  var PaxCache = require('../script/PaxCache.js');
   installFakePropertiesStore_();
   fakeScriptCache_ = makeFakeScriptCache_();
   global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
   global.DriveApp = { getFileById: function() { return { getLastUpdated: function() { return new Date(1000); } }; } };
-  PaxCache.resetPaxCacheFreshnessMemo_();
 
   var fx = makeHandleFixture_();
   var handle = buildResolvedContextHandle_(fx.monthInfo, 1, 'Slaw');
@@ -1106,7 +1097,6 @@ function makeLeanIdentityResponsesSheet_(rows) {
 
   // Warm repeat call must never open the spreadsheet.
   installThrowingSpreadsheetApp_();
-  PaxCache.resetPaxCacheFreshnessMemo_();
   var warm = resolveFullIdentityFromHandle_(handle);
   assert.ok(warm);
   assert.equal(warm.trackerValues.length, 2);
@@ -1114,7 +1104,6 @@ function makeLeanIdentityResponsesSheet_(rows) {
 
   delete global.DriveApp;
   delete global.SpreadsheetApp;
-  PaxCache.resetPaxCacheFreshnessMemo_();
 })();
 
 // handleCheckinDashboard_ wiring: a valid handle whose month matches the requested date resolves
@@ -1205,7 +1194,6 @@ function makeLeanIdentityResponsesSheet_(rows) {
   fakeScriptCache_ = makeFakeScriptCache_();
   global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
   global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); }; // "today" = Jul 2
-  PaxCache.resetPaxCacheFreshnessMemo_();
 
   var fx = makeHandleFixture_();
   var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
@@ -1224,7 +1212,6 @@ function makeLeanIdentityResponsesSheet_(rows) {
 
   delete global.SpreadsheetApp;
   global.resolveContextDate_ = function() { return new Date(); };
-  PaxCache.resetPaxCacheFreshnessMemo_();
 })();
 
 // handleCheckinSubmit_'s clearContent (value: null) path patches the cache with an empty string,
@@ -1235,7 +1222,6 @@ function makeLeanIdentityResponsesSheet_(rows) {
   fakeScriptCache_ = makeFakeScriptCache_();
   global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
   global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); };
-  PaxCache.resetPaxCacheFreshnessMemo_();
 
   var fx = makeHandleFixture_();
   var handle = buildResolvedContextHandle_(fx.monthInfo, 1, 'Slaw'); // Slaw's Jul 2 (col 9) starts at 1
@@ -1247,7 +1233,6 @@ function makeLeanIdentityResponsesSheet_(rows) {
 
   delete global.SpreadsheetApp;
   global.resolveContextDate_ = function() { return new Date(); };
-  PaxCache.resetPaxCacheFreshnessMemo_();
 })();
 
 // End-to-end: once the dashboard's full-board read has warmed PaxCache's roster index + every
@@ -1261,7 +1246,6 @@ function makeLeanIdentityResponsesSheet_(rows) {
   global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
   global.DriveApp = { getFileById: function() { return { getLastUpdated: function() { return new Date(1000); } }; } };
   global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); };
-  PaxCache.resetPaxCacheFreshnessMemo_();
 
   var fx = makeHandleFixture_();
 
@@ -1272,7 +1256,6 @@ function makeLeanIdentityResponsesSheet_(rows) {
   assert.equal(fx.trackerSheet._fullRangeReadCount, 1);
 
   // Anchor checks in for Jul 2 — write-through patches ONLY Anchor's PaxCache row.
-  PaxCache.resetPaxCacheFreshnessMemo_();
   var anchorHandle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
   var submitRes = handleCheckinSubmit_({ getSheetByName: function() { throw new Error('full resolution must not run'); } },
     { f3Name: 'Anchor', email: 'a@x.com', day: '2026-07-02', value: 1, resolvedContext: anchorHandle });
@@ -1280,7 +1263,6 @@ function makeLeanIdentityResponsesSheet_(rows) {
 
   // Slaw's dashboard read afterward assembles the board purely from PaxCache — zero additional
   // full-range Sheet reads — and sees Anchor's patched value in the assembled roster.
-  PaxCache.resetPaxCacheFreshnessMemo_();
   var slawHandle = buildResolvedContextHandle_(fx.monthInfo, 1, 'Slaw');
   var warm = resolveFullIdentityFromHandle_(slawHandle);
   assert.ok(warm);
@@ -1290,7 +1272,6 @@ function makeLeanIdentityResponsesSheet_(rows) {
   delete global.SpreadsheetApp;
   delete global.DriveApp;
   global.resolveContextDate_ = function() { return new Date(); };
-  PaxCache.resetPaxCacheFreshnessMemo_();
 })();
 
 // buildTrackerValuesFromPaxCache_ directly: null on a cold/incomplete cache (no roster index, or
@@ -1322,7 +1303,6 @@ function makeLeanIdentityResponsesSheet_(rows) {
   installFakePropertiesStore_();
   fakeScriptCache_ = makeFakeScriptCache_();
   global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
-  PaxCache.resetPaxCacheFreshnessMemo_();
   PaxCache.resetPaxCacheRequestStats_();
 
   var fx = makeHandleFixture_();
@@ -1347,7 +1327,6 @@ function makeLeanIdentityResponsesSheet_(rows) {
   assert.equal(typeof timingEvent.payload.paxRowMiss, 'number');
 
   delete global.SpreadsheetApp;
-  PaxCache.resetPaxCacheFreshnessMemo_();
   PaxCache.resetPaxCacheRequestStats_();
 })();
 

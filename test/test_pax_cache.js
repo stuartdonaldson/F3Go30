@@ -57,8 +57,6 @@ const {
   patchPaxRosterIndex_,
   wipePaxCacheForSheet_,
   resolvePaxRowIndex_,
-  markPaxCacheFreshNow_,
-  resetPaxCacheFreshnessMemo_,
   getPaxCacheRequestStats_,
   resetPaxCacheRequestStats_,
   purgeStalePaxCache_,
@@ -69,7 +67,6 @@ const {
 
 function resetProps_() {
   fakeProps = makeFakeProperties_();
-  resetPaxCacheFreshnessMemo_();
   resetPaxCacheRequestStats_();
 }
 
@@ -192,18 +189,6 @@ function resetProps_() {
   assert.equal(paxCacheNormalizeName_(null), '');
 })();
 
-// ── markPaxCacheFreshNow_ (F3Go30-qi26.4) ────────────────────────────────
-// Stamps asOf without a Drive round trip — no reader consumes this marker anymore (the
-// Drive-modtime freshness gate it used to backstop was retired, F3Go30-o39s.7), so this just
-// verifies the write itself is still side-effect-free.
-(function testMarkFreshNowStampsAsOfWithoutDriveCall() {
-  resetProps_();
-  var before = Date.now();
-  markPaxCacheFreshNow_('sheet1');
-  var storedAsOf = Number(fakeProps.getProperty('go30asof:sheet1'));
-  assert.ok(storedAsOf >= before);
-})();
-
 // ── request stats (F3Go30-440b.1) ────────────────────────────────────────
 (function testRequestStatsTrackRowHitAndMiss() {
   resetProps_();
@@ -324,7 +309,6 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   setPaxCacheRow_('tracker', 'sheet-old', 'Crazy Ivan', ['old']);
   setPaxCacheRow_('responses', 'sheet-old', 'Crazy Ivan', ['old-r']);
   setPaxRosterIndex_('tracker', 'sheet-old', { 'crazy ivan': 0 });
-  fakeProps.setProperty('go30asof:sheet-old', '123');
 
   setPaxCacheRow_('tracker', 'sheet-recent', 'Little John', ['recent']);
 
@@ -336,9 +320,6 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   var result = purgeStalePaxCache_(now, spreadsheet);
   assert.deepEqual(result, { checked: 2, purged: 1, kept: 1, paxRowsPurged: 0, orphanedSheetsPurged: 0 });
 
-  // Check the asOf marker directly rather than via a read helper that might re-stamp it as a
-  // side effect and mask whether the purge actually deleted it.
-  assert.equal(fakeProps.getProperty('go30asof:sheet-old'), null);
   assert.equal(fakeProps.getKeys().some(function(k) { return k.indexOf('go30pax:tracker:sheet-old:') === 0; }), false);
   assert.equal(fakeProps.getKeys().some(function(k) { return k.indexOf('go30pax:responses:sheet-old:') === 0; }), false);
   assert.equal(fakeProps.getProperty('go30idx:tracker:sheet-old'), null);
@@ -407,10 +388,9 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
 })();
 
 // ── orphan sweep (F3Go30-440b.2 follow-up) ───────────────────────────────
-(function testExtractSheetIdFromPaxCacheKeyParsesAllThreePrefixes() {
+(function testExtractSheetIdFromPaxCacheKeyParsesBothPrefixes() {
   assert.equal(extractSheetIdFromPaxCacheKey_('go30pax:tracker:sheet1:crazy ivan'), 'sheet1');
   assert.equal(extractSheetIdFromPaxCacheKey_('go30idx:responses:sheet2'), 'sheet2');
-  assert.equal(extractSheetIdFromPaxCacheKey_('go30asof:sheet3'), 'sheet3');
   assert.equal(extractSheetIdFromPaxCacheKey_('WEBAPP_URL'), null);
 })();
 
@@ -455,7 +435,6 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   // TrackerDB rows; only the orphan sweep can catch this.
   setPaxCacheRow_('tracker', 'sheet-deleted', 'Old Pax', ['gone']);
   setPaxRosterIndex_('tracker', 'sheet-deleted', { 'old pax': 0 });
-  fakeProps.setProperty('go30asof:sheet-deleted', '999');
 
   setPaxCacheRow_('tracker', 'sheet-recent', 'Crazy Ivan', ['active']);
   setPaxRosterIndex_('tracker', 'sheet-recent', { 'crazy ivan': 0 });
@@ -468,7 +447,6 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   var result = purgeStalePaxCache_(now, spreadsheet);
   assert.deepEqual(result, { checked: 1, purged: 0, kept: 1, paxRowsPurged: 0, orphanedSheetsPurged: 1 });
 
-  assert.equal(fakeProps.getProperty('go30asof:sheet-deleted'), null);
   assert.equal(fakeProps.getKeys().some(function(k) { return k.indexOf('go30pax:tracker:sheet-deleted:') === 0; }), false);
   assert.equal(fakeProps.getProperty('go30idx:tracker:sheet-deleted'), null);
   // The still-registered, still-active tracker is untouched.

@@ -3,8 +3,7 @@ const assert = require('node:assert/strict');
 // GAS global stubs — must be set before require. Mirrors test_form_submit_dispatch.js's
 // convention for the sibling setup/clear trigger pair, extended with the PropertiesService/
 // CacheService/DriveApp stand-ins test_pax_cache.js already uses, since C10 (F3Go30-o39s.11)
-// now exercises PaxCache.js's real per-PAX-row read/write path, not just its wipe/markFresh
-// entry points.
+// now exercises PaxCache.js's real per-PAX-row read/write path, not just its wipe entry point.
 global.Logger = { log: function() {} };
 global.GasLogger = { log: function() {}, run: function(name, fn) { return fn(); } };
 
@@ -55,18 +54,14 @@ global.CacheService = { getScriptCache: function() { return fakeCache; } };
 // PaxCache.js is required for real here (unlike the earlier stub-everything version of this
 // test) so tryPatchSinglePaxRow_te_'s use of getPaxCacheRow_/setPaxCacheRow_/getPaxRosterIndex_/
 // paxCacheNormalizeName_ exercises the real read-modify-write path. Only
-// wipePaxCacheAndRelatedCachesForSheet_/markPaxCacheFreshNow_ are wrapped with call-recording
-// spies (still backed by the real implementation) so the existing whole-sheet-wipe assertions
-// keep working unchanged.
+// wipePaxCacheAndRelatedCachesForSheet_ is wrapped with a call-recording spy (still backed by the
+// real implementation) so the existing whole-sheet-wipe assertions keep working unchanged.
 var wipeCalls = [];
-var markFreshCalls = [];
 var paxCacheModulePath = require.resolve('../script/PaxCache.js');
 var realPaxCache = require(paxCacheModulePath);
 var realWipe = realPaxCache.wipePaxCacheAndRelatedCachesForSheet_;
-var realMarkFresh = realPaxCache.markPaxCacheFreshNow_;
 require.cache[paxCacheModulePath].exports = Object.assign({}, realPaxCache, {
-  wipePaxCacheAndRelatedCachesForSheet_: function(sheetId) { wipeCalls.push(sheetId); return realWipe(sheetId); },
-  markPaxCacheFreshNow_: function(sheetId) { markFreshCalls.push(sheetId); return realMarkFresh(sheetId); }
+  wipePaxCacheAndRelatedCachesForSheet_: function(sheetId) { wipeCalls.push(sheetId); return realWipe(sheetId); }
 });
 
 const {
@@ -78,9 +73,7 @@ const {
 
 function resetCalls_() {
   wipeCalls = [];
-  markFreshCalls = [];
   openByIdCalls = [];
-  realPaxCache.resetPaxCacheFreshnessMemo_();
 }
 
 // ── handleTrackerEdit_ — whole-sheet wipe fallback (pre-existing behavior) ──────────────────
@@ -105,20 +98,18 @@ function makeFakeEditEvent_(sheetName, spreadsheetId, opts) {
 }
 
 // AC3: an edit on the Tracker, Responses, or Bonus Tracker sheet with no patchable single-PAX
-// row (no range details stubbed here) wipes PaxCache for that sheetId and stamps it fresh
+// row (no range details stubbed here) wipes PaxCache for that sheetId
 // (F3Go30-o39s.2 extended this beyond Tracker-only).
 ['Tracker', 'Responses', 'Bonus Tracker'].forEach(function(sheetName) {
   resetCalls_();
   handleTrackerEdit_(makeFakeEditEvent_(sheetName, 'tracker-a'));
   assert.deepEqual(wipeCalls, ['tracker-a'], sheetName + '-sheet edit wipes PaxCache for the edited spreadsheet');
-  assert.deepEqual(markFreshCalls, ['tracker-a'], sheetName + '-sheet edit stamps the asOf marker fresh');
 });
 
 // AC4: an edit on any other sheet is a no-op.
 resetCalls_();
 handleTrackerEdit_(makeFakeEditEvent_('Config', 'tracker-a'));
 assert.deepEqual(wipeCalls, [], 'non-PAX-sheet edit does not wipe PaxCache');
-assert.deepEqual(markFreshCalls, [], 'non-PAX-sheet edit does not stamp asOf');
 
 // ── C10 (F3Go30-o39s.11): per-row patch instead of whole-sheet wipe ─────────────────────────
 
@@ -142,7 +133,6 @@ resetCalls_();
   handleTrackerEdit_(e);
 
   assert.deepEqual(wipeCalls, [], 'a patchable single-cell Tracker edit does not wipe the whole sheet');
-  assert.deepEqual(markFreshCalls, [], 'a patchable single-cell Tracker edit does not need a fresh-stamp (nothing was wiped)');
   var patched = realPaxCache.getPaxCacheRow_('tracker', sheetId, 'Dredd');
   assert.equal(patched[8], 1, 'the touched column (0-based index 8, sheet col 9) reflects the new value');
   assert.equal(patched[0], 'Dredd', 'every other column is untouched');
