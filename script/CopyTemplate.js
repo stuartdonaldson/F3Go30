@@ -5,9 +5,13 @@
  * recent real monthly tracker spreadsheets into a new Drive folder, then rebuilds that copy's
  * TrackerDB/PaxDB sheets from scratch using only the copied trackers' (new) SheetIds.
  *
- * Deliberately does NOT touch triggers, HC Forms, TinyURL short links, or deploy anything —
- * this only gets the files in place. Manually initializing/deploying the new environment is
- * left to the operator (see docs/OPERATIONS.md §CopyTemplate).
+ * Installs an edit trigger (setupTrackerEditTrigger_, F3Go30-o39s.5/C4) on each copied tracker
+ * so a human editing one directly keeps PaxCache coherent — otherwise copied trackers would have
+ * no trigger at all, since Drive file copies don't carry installable triggers with them (those
+ * live in the script project that created them, not on the spreadsheet file). Deliberately does
+ * NOT set up form-submit triggers, HC Forms, TinyURL short links, or deploy anything else — this
+ * only gets the files (+ edit-trigger coverage) in place. Manually initializing/deploying the
+ * rest of the new environment is left to the operator (see docs/OPERATIONS.md §CopyTemplate).
  *
  * ENV-STANDUP VISION: this module is the precursor step for spinning up a realistic-prod-data
  * test/SIT environment — real Template + real recent trackers, but running as an independent
@@ -28,6 +32,11 @@ var copyTemplateGo30ToolsModule_ = (typeof module !== 'undefined' && module.expo
 var copyTemplateUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
 	? require('./Utilities.js')
 	: null;
+var copyTemplateTrackerEditTriggerModule_ = (typeof module !== 'undefined' && module.exports)
+	? require('./TrackerEditTrigger.js')
+	: null;
+var ct_setupTrackerEditTrigger_ = (copyTemplateTrackerEditTriggerModule_ && copyTemplateTrackerEditTriggerModule_.setupTrackerEditTrigger_) ||
+	(typeof globalThis !== 'undefined' && globalThis.setupTrackerEditTrigger_);
 var ct_upsertConfigSheetRow_ = (copyTemplateUtilitiesModule_ && copyTemplateUtilitiesModule_.upsertConfigSheetRow_) ||
 	(typeof globalThis !== 'undefined' && globalThis.upsertConfigSheetRow_);
 var ct_readTrackerDbRowsBySheetId_ = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_._readTrackerDbRowsBySheetId_) ||
@@ -238,6 +247,15 @@ function copyTemplateToNewEnvironment_(folderName, sourceTemplateId, trackerCoun
 		var trackerValues = trackerSheet.getDataRange().getValues();
 		var metrics = ct_computeTrackerMetrics_(trackerValues);
 		var metadata = ct_buildTrackerMetadata_(copiedSpreadsheet, trackerSheet, trackerValues, null);
+
+		// C4 (F3Go30-o39s.5): copied trackers get no triggers of their own from Drive's file
+		// copy (installable triggers live in the script project that created them, not on the
+		// spreadsheet file), so without this a human editing a namespace/smoke tracker directly
+		// would silently get no PaxCache invalidation at all. No setupFormSubmitTrigger call here
+		// deliberately — copied trackers carry no HC Form (formId is left blank; see
+		// buildCopiedTrackerDbRow_ below), so there is nothing that could ever submit into one.
+		ct_setupTrackerEditTrigger_(copiedSpreadsheet);
+		logFn('  Installed edit trigger for ' + copiedFile.getName());
 
 		var copiedFileInfo = { sheetId: newSheetId, spreadsheetName: copiedFile.getName() };
 		newTrackerDbRows.push(buildCopiedTrackerDbRow_(copiedFileInfo, metadata, metrics));
