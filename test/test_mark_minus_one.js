@@ -110,4 +110,163 @@ const fakeSheet2 = makeFakeTrackerSheet(dateRow, trackerRows);
 applyMinusOneToTrackerSheet_(makeFakeSpreadsheet({ Tracker: fakeSheet2 }), FUTURE_CONTEXT_DATE);
 assert.equal(fakeSheet2._setValuesCalls.length, 1);
 
+// --- F3Go30-o39s.3: nightly sweep keeps PaxCache coherent for BOTH current + prior month ---
+
+// A fake Tracker sheet that also supports a full-range (row4:lastRow, all cols) read, needed
+// by refreshPaxCacheForSheet_'s repopulate path — `rows` is an array of { cells: [...] }
+// (one entry per data row, one value per column, column A = F3 Name).
+function makeFakeFullTrackerSheet(dateRow, rows) {
+  var lastColumn = dateRow.length;
+  var grid = rows.map(function(r) { return r.cells.slice(); });
+  var setValuesCalls = [];
+
+  return {
+    getParent: function() { return { getSpreadsheetTimeZone: function() { return 'America/Los_Angeles'; } }; },
+    getLastColumn: function() { return lastColumn; },
+    getLastRow: function() { return grid.length + 3; },
+    getRange: function(row, col, numRows, numCols) {
+      if (row === 3 && col === 1 && numCols === lastColumn) {
+        return { getValues: function() { return [dateRow]; } };
+      }
+      if (row === 4 && numCols === 1 && numRows === grid.length) {
+        var colIdx = col - 1;
+        return {
+          getValues: function() { return grid.map(function(r) { return [r[colIdx]]; }); },
+          getFormulas: function() { return grid.map(function() { return ['']; }); },
+          setValues: function(values) {
+            setValuesCalls.push(values);
+            values.forEach(function(v, i) { grid[i][colIdx] = v[0]; });
+          }
+        };
+      }
+      if (row === 4 && col === 1 && numCols === lastColumn && numRows === grid.length) {
+        return { getValues: function() { return grid.map(function(r) { return r.slice(); }); } };
+      }
+      throw new Error('Unexpected getRange(' + row + ', ' + col + ', ' + numRows + ', ' + numCols + ')');
+    },
+    _setValuesCalls: setValuesCalls
+  };
+}
+
+{
+  const CURRENT_SHEET_ID = 'current-month-sheet';
+  const PRIOR_SHEET_ID = 'prior-month-sheet';
+  const TODAY = new Date(2029, 2, 2);      // March 2, 2029
+  const THRESHOLD = new Date(2029, 1, 28); // Feb 28, 2029 == today - 2 days == day-0-of-March
+
+  const priorSheet = makeFakeFullTrackerSheet(
+    ['', '', '', '', THRESHOLD],
+    [
+      { cells: ['Anchor', 'x', 'y', 'z', ''] }, // blank at threshold col -> marked -1
+      { cells: ['Torch', 'a', 'b', 'c', 1] }
+    ]
+  );
+  const priorSpreadsheet = { getId: function() { return PRIOR_SHEET_ID; }, getSheetByName: function(name) { return name === 'Tracker' ? priorSheet : null; } };
+
+  const currentSheet = makeFakeFullTrackerSheet(
+    ['', '', '', '', ''],
+    [{ cells: ['Bandit', 'p', 'q', 'r', 5] }]
+  );
+  const currentSpreadsheet = { getId: function() { return CURRENT_SHEET_ID; }, getSheetByName: function(name) { return name === 'Tracker' ? currentSheet : null; } };
+
+  global.resolveTrackerForContextDate = function(targetDate) {
+    if (targetDate.getTime() === THRESHOLD.getTime()) return { sheetId: PRIOR_SHEET_ID, startDate: '2029-02-01' };
+    if (targetDate.getTime() === TODAY.getTime()) return { sheetId: CURRENT_SHEET_ID, startDate: '2029-03-01' };
+    throw new Error('resolveTrackerForContextDate: unexpected date ' + targetDate.toISOString());
+  };
+  global.SpreadsheetApp = {
+    openById: function(sheetId) {
+      if (sheetId === PRIOR_SHEET_ID) return priorSpreadsheet;
+      if (sheetId === CURRENT_SHEET_ID) return currentSpreadsheet;
+      throw new Error('openById: unexpected sheetId ' + sheetId);
+    },
+    getActiveSpreadsheet: function() { throw new Error('markEmptyCellsAsMinusOne_ must not use the active spreadsheet (ADR-010)'); }
+  };
+
+  const bulkWriteCalls = [];
+  const cacheWriteCalls = [];
+  const wipeCalls = [];
+  global.setPaxCacheRowsBulk_ = function(kind, sheetId, rowsByName, rosterIndex) {
+    bulkWriteCalls.push({ kind: kind, sheetId: sheetId, rowsByName: rowsByName, rosterIndex: rosterIndex });
+  };
+  global.setCachedSheetValues_ = function(cacheKey, values) {
+    cacheWriteCalls.push({ cacheKey: cacheKey, values: values });
+  };
+  global.trackerValuesCacheKey_ = function(sheetId) { return 'go30dash:trackerValues:' + sheetId; };
+  global.paxCacheNormalizeName_ = function(name) { return String(name || '').trim().toLowerCase(); };
+  global.wipePaxCacheAndRelatedCachesForSheet_ = function(sheetId) { wipeCalls.push(sheetId); };
+
+  markEmptyCellsAsMinusOne_(TODAY);
+
+  assert.equal(priorSheet._setValuesCalls.length, 1, 'the prior-month tracker (active for threshold day) gets marked');
+  assert.equal(bulkWriteCalls.length, 2, 'both current-month and prior-month PaxCache get repopulated, not only the marked tracker');
+
+  const bulkBySheet = {};
+  bulkWriteCalls.forEach(function(c) { bulkBySheet[c.sheetId] = c; });
+
+  assert.ok(bulkBySheet[PRIOR_SHEET_ID], 'prior-month tracker repopulated');
+  assert.equal(bulkBySheet[PRIOR_SHEET_ID].rowsByName['Anchor'][4], -1,
+    'repopulated prior-month PaxCache row reflects the just-marked -1 value, not the stale blank');
+  assert.deepEqual(bulkBySheet[PRIOR_SHEET_ID].rosterIndex, { anchor: 0, torch: 1 });
+
+  assert.ok(bulkBySheet[CURRENT_SHEET_ID], 'current-month tracker also repopulated even though markMinusOne only marked the prior month');
+  assert.deepEqual(bulkBySheet[CURRENT_SHEET_ID].rosterIndex, { bandit: 0 });
+
+  assert.equal(cacheWriteCalls.length, 2, 'the CacheService full-roster blob is refreshed for both months too');
+  assert.equal(wipeCalls.length, 0, 'the repopulate path is used, not the wipe fallback, when the bulk-write helpers are available');
+
+  console.log('test_mark_minus_one.js: F3Go30-o39s.3 repopulate-both-months PASS');
+}
+
+// --- Fallback: when the PaxCache bulk-write helpers aren't loaded, both months are fully
+// wiped instead (ACCEPTABLE fallback per the AC) rather than left stale. ---
+{
+  const CURRENT_SHEET_ID = 'current-month-sheet-2';
+  const PRIOR_SHEET_ID = 'prior-month-sheet-2';
+  const TODAY = new Date(2029, 2, 2);
+  const THRESHOLD = new Date(2029, 1, 28);
+
+  const priorSheet = makeFakeFullTrackerSheet(
+    ['', '', '', '', THRESHOLD],
+    [{ cells: ['Ranger', '', '', '', ''] }]
+  );
+  const priorSpreadsheet = { getId: function() { return PRIOR_SHEET_ID; }, getSheetByName: function(name) { return name === 'Tracker' ? priorSheet : null; } };
+
+  const currentSheet = makeFakeFullTrackerSheet(
+    ['', '', '', '', ''],
+    [{ cells: ['Digger', 'a', 'b', 'c', 2] }]
+  );
+  const currentSpreadsheet = { getId: function() { return CURRENT_SHEET_ID; }, getSheetByName: function(name) { return name === 'Tracker' ? currentSheet : null; } };
+
+  global.resolveTrackerForContextDate = function(targetDate) {
+    if (targetDate.getTime() === THRESHOLD.getTime()) return { sheetId: PRIOR_SHEET_ID, startDate: '2029-02-01' };
+    if (targetDate.getTime() === TODAY.getTime()) return { sheetId: CURRENT_SHEET_ID, startDate: '2029-03-01' };
+    throw new Error('resolveTrackerForContextDate: unexpected date ' + targetDate.toISOString());
+  };
+  global.SpreadsheetApp = {
+    openById: function(sheetId) {
+      if (sheetId === PRIOR_SHEET_ID) return priorSpreadsheet;
+      if (sheetId === CURRENT_SHEET_ID) return currentSpreadsheet;
+      throw new Error('openById: unexpected sheetId ' + sheetId);
+    },
+    getActiveSpreadsheet: function() { throw new Error('markEmptyCellsAsMinusOne_ must not use the active spreadsheet (ADR-010)'); }
+  };
+
+  // Simulate the bulk-write helpers not being loaded (this file's own unit tests, or a script
+  // project state where dashboardWebapp.js/PaxCache.js weren't wired) — the fallback wipe path
+  // must be used instead of silently leaving the cache stale.
+  delete global.setPaxCacheRowsBulk_;
+  delete global.paxCacheNormalizeName_;
+  const wipeCalls = [];
+  global.wipePaxCacheAndRelatedCachesForSheet_ = function(sheetId) { wipeCalls.push(sheetId); };
+
+  markEmptyCellsAsMinusOne_(TODAY);
+
+  assert.equal(priorSheet._setValuesCalls.length, 1, 'marking still happens regardless of PaxCache wiring');
+  assert.deepEqual(wipeCalls.slice().sort(), [CURRENT_SHEET_ID, PRIOR_SHEET_ID].sort(),
+    'falls back to a full wipe for both months when the repopulate helpers are unavailable');
+
+  console.log('test_mark_minus_one.js: F3Go30-o39s.3 fallback-wipe-both-months PASS');
+}
+
 console.log('test_mark_minus_one.js: PASS');

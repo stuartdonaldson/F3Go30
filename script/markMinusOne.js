@@ -49,7 +49,90 @@ function markEmptyCellsAsMinusOne_(contextDate) {
   var spreadsheet = SpreadsheetApp.openById(trackerRow.sheetId);
   var markedCount = applyMinusOneToTrackerSheet_(spreadsheet, today);
   refreshPaxDbForTracker_(spreadsheet, trackerRow.sheetId, trackerRow.startDate);
+  // The check-in webapp can hold BOTH the current-month and prior-month tracker cached at
+  // once (getPriorMonthTailValues_, dashboardWebapp.js), so a nightly refresh must cover both
+  // regardless of which single tracker markEmptyCellsAsMinusOne_ actually marked — on a month
+  // boundary the marked tracker IS the prior month, and reloading both still covers the
+  // current-month cache the webapp is actively serving.
+  refreshPaxCacheForCurrentAndPriorMonths_(today);
   return markedCount;
+}
+
+/**
+ * Repopulates PaxCache's per-PAX tracker rows + roster index, plus the CacheService full-roster
+ * blob (trackerValuesCacheKey_), for one tracker sheet from a fresh full-range read — the same
+ * bulk-write shape resolveCheckinIdentityFull_ uses on a cold-cache live read
+ * (dashboardWebapp.js), so the cache is left warm and verified rather than merely cleared.
+ * Falls back to a full wipe (wipePaxCacheAndRelatedCachesForSheet_, PaxCache.js) when the
+ * bulk-write helpers aren't loaded (this file's own unit tests) or anything about the read/write
+ * fails, so correctness never depends on the repopulate path being wired.
+ * @param {string} sheetId
+ */
+function refreshPaxCacheForSheet_(sheetId) {
+  try {
+    var spreadsheet = SpreadsheetApp.openById(sheetId);
+    var trackerSheet = spreadsheet.getSheetByName('Tracker');
+    if (!trackerSheet || trackerSheet.getLastRow() < 4) return;
+
+    var lastRow = trackerSheet.getLastRow();
+    var lastCol = trackerSheet.getLastColumn();
+    var trackerValues = trackerSheet.getRange(4, 1, lastRow - 3, lastCol).getValues();
+
+    if (typeof setPaxCacheRowsBulk_ === 'function' && typeof paxCacheNormalizeName_ === 'function') {
+      var rosterIndex = {};
+      var rowsByName = {};
+      trackerValues.forEach(function(row, idx) {
+        var name = row[0]; // column A — same TRACKER_NAME_COL_ convention as dashboardWebapp.js
+        var norm = paxCacheNormalizeName_(name);
+        if (!norm) return;
+        if (!Object.prototype.hasOwnProperty.call(rosterIndex, norm)) rosterIndex[norm] = idx;
+        rowsByName[name] = row;
+      });
+      setPaxCacheRowsBulk_('tracker', sheetId, rowsByName, rosterIndex);
+      if (typeof setCachedSheetValues_ === 'function' && typeof trackerValuesCacheKey_ === 'function') {
+        setCachedSheetValues_(trackerValuesCacheKey_(sheetId), trackerValues);
+      }
+    } else if (typeof wipePaxCacheAndRelatedCachesForSheet_ === 'function') {
+      wipePaxCacheAndRelatedCachesForSheet_(sheetId);
+    }
+  } catch (e) {
+    GasLogger.log('markEmptyCellsAsMinusOne.paxCacheRefreshFailed', { sheetId: sheetId, error: e.message });
+    if (typeof wipePaxCacheAndRelatedCachesForSheet_ === 'function') wipePaxCacheAndRelatedCachesForSheet_(sheetId);
+  }
+}
+
+/**
+ * Resolves the current-month and prior-month TrackerDB rows relative to `today` and refreshes
+ * PaxCache for each (F3Go30-o39s.3) — both, not just whichever single tracker
+ * markEmptyCellsAsMinusOne_ marked, since the webapp can be serving either from cache at any
+ * time. A month with no tracker yet (e.g. early in a new month before auto-generate) is skipped
+ * cleanly — resolveTrackerForContextDate's "no row matches" throw is caught per-month rather
+ * than aborting the whole refresh.
+ * @param {Date} today
+ */
+function refreshPaxCacheForCurrentAndPriorMonths_(today) {
+  var sheetIds = {};
+
+  try {
+    var currentTracker = resolveTrackerForContextDate(today);
+    if (currentTracker && currentTracker.sheetId) sheetIds[currentTracker.sheetId] = true;
+  } catch (e) {
+    GasLogger.log('markEmptyCellsAsMinusOne.currentMonthTrackerNotFound', { error: e.message });
+  }
+
+  try {
+    // Day 0 of today's month == the last day of the PRIOR month, regardless of today's
+    // day-of-month — a reliable way to land resolveTrackerForContextDate in the prior tracker.
+    var priorMonthDate = new Date(today.getFullYear(), today.getMonth(), 0);
+    var priorTracker = resolveTrackerForContextDate(priorMonthDate);
+    if (priorTracker && priorTracker.sheetId) sheetIds[priorTracker.sheetId] = true;
+  } catch (e) {
+    GasLogger.log('markEmptyCellsAsMinusOne.priorMonthTrackerNotFound', { error: e.message });
+  }
+
+  Object.keys(sheetIds).forEach(function(sheetId) {
+    refreshPaxCacheForSheet_(sheetId);
+  });
 }
 
 /**
@@ -109,12 +192,11 @@ function applyMinusOneToTrackerSheet_(spreadsheet, contextDate) {
 
     if (markedCount > 0) {
       dataRange.setValues(values);
-      // dashboardWebapp.js's full-roster dashboard/board cache has no per-PAX granularity and
-      // this write touches many PAX at once — invalidate it so the next dashboard load doesn't
-      // serve pre-marking data for up to FULL_ROSTER_CACHE_TTL_SECONDS_. Guarded: this function
-      // only exists when dashboardWebapp.js is loaded in the same script project (always true in
-      // production GAS's single global namespace; not true in this file's own unit tests).
-      if (typeof invalidateFullRosterCache_ === 'function') invalidateFullRosterCache_(spreadsheet.getId());
+      // PaxCache (per-PAX rows + roster index) and the CacheService full-roster blob for this
+      // sheet — plus the prior month's, since the webapp can be serving either from cache — are
+      // refreshed by the dispatcher (markEmptyCellsAsMinusOne_'s refreshPaxCacheForCurrentAndPriorMonths_
+      // call, F3Go30-o39s.3), not here: that needs a full-range read this function doesn't hold
+      // in memory (only column A + the single threshold-day column).
     }
 
     GasLogger.log('markEmptyCellsAsMinusOne.complete', { spreadsheetId: spreadsheet.getId(), thresholdDay: thresholddayString, cellsMarked: markedCount });
@@ -126,6 +208,8 @@ function applyMinusOneToTrackerSheet_(spreadsheet, contextDate) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     markEmptyCellsAsMinusOne_: markEmptyCellsAsMinusOne_,
-    applyMinusOneToTrackerSheet_: applyMinusOneToTrackerSheet_
+    applyMinusOneToTrackerSheet_: applyMinusOneToTrackerSheet_,
+    refreshPaxCacheForSheet_: refreshPaxCacheForSheet_,
+    refreshPaxCacheForCurrentAndPriorMonths_: refreshPaxCacheForCurrentAndPriorMonths_
   };
 }
