@@ -13,6 +13,14 @@ there is nothing to push or initialize on them. A push to the Template's script 
 immediately for every past, current, and future tracker. **This also means the Template is live
 production, not a safe test environment** — see §Testing for the dev/test spreadsheet plan.
 
+**Mid-month patch procedure:** there is no separate "month" deploy target or workflow — a fix
+needed partway through a live month is delivered the same way as any other change: validate on
+SIT (`npm run deploy:sit`), then `npm run deploy:prod` (or `npm run release:patch`) to the
+Template. It takes effect immediately for the in-progress month tracker (and every other tracker)
+with no extra step. (A separate `monthScriptId`/`deploy:month` target existed before ADR-010,
+when the monthly copy still ran its own bound script; it was retired in F3Go30-shsx and no longer
+applies — see `docs/deployment-model.md` for the historical context.)
+
 ### Prerequisites
 
 - Template spreadsheet is created and owned by the operator (this is the Go30 Template spreadsheet used by `copyAndInit`).

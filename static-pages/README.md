@@ -90,6 +90,23 @@ to pay for before anything reaches the screen — the identify/dashboard data ca
 same server-side round trip either way and load progressively after the shell is already visible,
 same principle as the GAS page's own `prefetchDashboard_`.
 
+## How it Works page (F3Go30-e3co)
+
+`static-pages/src/how-it-works.html` is generated, not hand-edited — its canonical source is
+`docs/Go30-Intro.md` (the HTML fragment between its `HOW-IT-WORKS:START`/`END` marker comments).
+`tools/sync-how-it-works.js` extracts that fragment and writes this file, and also injects the
+same fragment into `script/SignupApp.html`'s and `script/CheckinApp.html`'s `#howBody` panels
+(between matching markers) so all three surfaces stay in sync from one edit point. Run manually
+via `npm run sync:how-it-works`, or automatically as part of every `npm run deploy:sit` /
+`deploy:prod` (wired into `tools/manage-deployments.js`'s `deploy()`, before `clasp push`).
+
+Unlike `index.html`, this page has no server calls and no `STATIC_BUILD_VERSION_` stamping —
+`tools/build-static-pages.js` copies it into each env's `dist/` folder unchanged, so
+`dist/sit/how-it-works.html` and `dist/prod/how-it-works.html` are byte-identical:
+
+- SIT:  `https://f3go30.github.io/static-pages/dist/sit/how-it-works.html`
+- PROD: `https://f3go30.github.io/static-pages/dist/prod/how-it-works.html`
+
 ## Open decisions (not resolved by this issue)
 
 - **Static host.** Provisioned on GitHub Pages (2026-07-15) via the `f3go30/static-pages` repo

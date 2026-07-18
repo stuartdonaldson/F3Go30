@@ -265,6 +265,10 @@ function deploy(targetKey, options = {}) {
 
   stampVersion(label, { versionOverride: version });
 
+  // Regenerate the "How it Works" panels/static page from docs/Go30-Intro.md (F3Go30-e3co) so
+  // any edit to the canonical source lands on every deploy without a manual sync step.
+  execSync('node tools/sync-how-it-works.js', { stdio: 'inherit', cwd: ROOT });
+
   console.log(`\n🚀 Running: clasp push -f  (clasp_config_auth=${claspAuthPath})\n`);
   execSync('clasp push -f', {
     stdio: 'inherit',
