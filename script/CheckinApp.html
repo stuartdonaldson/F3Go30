@@ -577,6 +577,7 @@
     // the server re-validates and falls back to full resolution when it's stale.
     resolvedContext: null,
     monthCache: {}, // monthKey ("YYYY-MM") -> full-month dashboard payload, see loadDashboard_
+    pendingSelfWrites: {}, // dateIso -> value, held only while its month isn't cached yet (F3Go30-5nfj.5)
     viewDate: null, // Date currently shown on the dashboard (date-nav arrows move this)
     dashboardLoading: false, // true while a loadDashboard_ fetch is in flight — blocks duplicate date-nav clicks
     // F3Go30-qi26.2: the background prefetch fired right after identify resolves — non-null
@@ -926,6 +927,8 @@
   function submitCheckin_(btn, day, value) {
     hideApiError_();
     setButtonLoading_(btn, true, 'Saving…');
+    var dateIso = day === 'today' ? state.todayIso : state.yesterdayIso;
+    applyOwnDayWrite_(dateIso, value);
     callApi('checkin', { f3Name: state.f3Name, email: state.email, day: day, value: value, resolvedContext: state.resolvedContext })
       .then(function() {
         // Deliberately does NOT navigate to the dashboard — a PAX often wants to set both
@@ -936,17 +939,16 @@
         renderCheckinStatus_(day, status);
         // Keep the Advanced calendar's own copy of this same day in sync, so opening it right
         // after doesn't show a stale value (F3Go30-th22).
-        var dateIso = day === 'today' ? state.todayIso : state.yesterdayIso;
         state.lastEditedDayIso = dateIso;
         if (day === 'today') state.todayStatus = status; else state.yesterdayStatus = status;
         updateMonthGridEntry_(dateIso, status);
-        invalidateMonthCacheFor_(dateIso);
         if (state.advancedOpen) {
           updateCalCellStatus_(dateIso, status);
           if (state.selectedDateIso === dateIso) renderSelectionPanel_(dateIso);
         }
       })
       .catch(function(err) {
+        revertOwnDayWrite_(dateIso);
         showApiError_('checkin', err);
       })
       .finally(function() {
@@ -995,6 +997,49 @@
    * across other already-visited months is still safe to serve from cache. */
   function invalidateMonthCacheFor_(dateIso) {
     delete state.monthCache[monthKeyOf_(parseIsoDate_(dateIso))];
+  }
+
+  /** F3Go30-5nfj.5: patches a just-written (or about-to-be-written) value straight into every
+   * place a cached month payload stores this PAX's own day (top-level dayValues, the myTeam
+   * member, the matching paxBoard member) instead of invalidating the whole cached payload —
+   * write-through, same principle already used server-side (PaxCache, bonus cache). value is the
+   * same 1/0/null/-1 vocabulary loadDashboard_'s payload already uses. */
+  function patchOwnDayIntoPayload_(payload, dateIso, value) {
+    if (!payload || !payload.dayDates) return;
+    var idx = payload.dayDates.indexOf(dateIso);
+    if (idx === -1) return;
+    if (payload.dayValues) payload.dayValues[idx] = value;
+    function patchMember(list) {
+      (list || []).forEach(function(m) {
+        if (m.name === payload.f3Name && m.dayValues) m.dayValues[idx] = value;
+      });
+    }
+    patchMember(payload.myTeam);
+    (payload.paxBoard || []).forEach(function(group) { patchMember(group.members); });
+  }
+
+  /** Applies a check-in write to whatever the client currently knows: patches the cached payload
+   * directly if this month is already cached, or — when a prefetch for it is still in flight —
+   * records the write so loadDashboard_ can apply it to that payload the moment it lands, before
+   * it's stored/rendered (F3Go30-5nfj.5). Closes the race regardless of arrival order. Called
+   * synchronously (optimistically, before the write's own network round trip settles) so the
+   * dashboard reflects it even if the PAX navigates there before the write finishes. */
+  function applyOwnDayWrite_(dateIso, value) {
+    var monthKey = monthKeyOf_(parseIsoDate_(dateIso));
+    var cached = state.monthCache[monthKey];
+    if (cached) {
+      patchOwnDayIntoPayload_(cached, dateIso, value);
+    } else {
+      state.pendingSelfWrites[dateIso] = value;
+    }
+  }
+
+  /** Drops any trace of a write that turned out to have failed server-side, so a stale optimistic
+   * patch doesn't keep rendering as if it succeeded — the affected month is dropped from cache
+   * entirely (not selectively un-patched) so the next read is a real, fresh fetch. */
+  function revertOwnDayWrite_(dateIso) {
+    delete state.pendingSelfWrites[dateIso];
+    invalidateMonthCacheFor_(dateIso);
   }
 
   /** Builds one calendar cell as a real <button> (Decision 5: keyboard-reachable, never
@@ -1118,11 +1163,11 @@
     hideApiError_();
     setButtonLoading_(btn, true, 'Saving…');
     var dateIso = state.selectedDateIso;
+    applyOwnDayWrite_(dateIso, value);
     callApi('checkin', { f3Name: state.f3Name, email: state.email, day: dateIso, value: value, resolvedContext: state.resolvedContext })
       .then(function() {
         var status = valueToMonthGridStatus_(value);
         updateMonthGridEntry_(dateIso, status);
-        invalidateMonthCacheFor_(dateIso);
         updateCalCellStatus_(dateIso, status);
         renderSelectionPanel_(dateIso);
         state.lastEditedDayIso = dateIso;
@@ -1131,7 +1176,7 @@
         if (dateIso === state.todayIso) { state.todayStatus = status; renderCheckinStatus_('today', status); }
         else if (dateIso === state.yesterdayIso) { state.yesterdayStatus = status; renderCheckinStatus_('yesterday', status); }
       })
-      .catch(function(err) { showApiError_('checkin', err); })
+      .catch(function(err) { revertOwnDayWrite_(dateIso); showApiError_('checkin', err); })
       .finally(function() { setButtonLoading_(btn, false); });
   }
 
@@ -1777,6 +1822,12 @@
     }
     return callApi('dashboard', { f3Name: state.f3Name, email: state.email, dateISO: dateISO, resolvedContext: state.resolvedContext })
       .then(function(payload) {
+        (payload.dayDates || []).forEach(function(dateIso) {
+          if (Object.prototype.hasOwnProperty.call(state.pendingSelfWrites, dateIso)) {
+            patchOwnDayIntoPayload_(payload, dateIso, state.pendingSelfWrites[dateIso]);
+            delete state.pendingSelfWrites[dateIso];
+          }
+        });
         state.monthCache[payload.monthKey] = payload;
         if (!silent) renderDashboard_(payload, payload.viewDayIndex); // re-enables/relabels the nav buttons via renderDateNav_
         return payload;

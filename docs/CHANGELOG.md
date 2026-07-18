@@ -34,6 +34,13 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   it could run ahead of "today" if you'd pre-marked a future day, and the Fail count in the
   breakdown was mislabeled "no check-in" instead of "fails". Scrubbing the date-nav arrows back
   to a prior day now shows your score as of that day, not always today's running total. (v2.4.1)
+- Fixed "Continue to Dashboard" occasionally showing your dashboard without a Hit/Miss you'd just
+  tapped on the check-in step — clicking right after a background refresh could race it and show
+  a snapshot from just before your tap. On the plain-web-page check-in, a returning visit on your
+  saved link now paints your check-in status instantly from your last visit (a small "Syncing…"
+  indicator shows in the header while it double-checks with the server) instead of waiting on a
+  network round trip before showing anything; if that saved link had gone stale or been revoked,
+  it now correctly falls back to the sign-in form instead of continuing to show old data. (v2.4.2)
 
 ---
 

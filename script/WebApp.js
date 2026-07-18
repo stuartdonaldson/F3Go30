@@ -479,6 +479,19 @@ function handleAdminPost_(e) {
       var purgeResult = purgeStalePaxCache_(purgeContextDate);
       return jsonOutput_({ ok: true, result: purgeResult });
     }
+    if (payload.action === 'benchmarkPropertiesService') {
+      // One-off diagnostic (F3Go30 script-properties perf question, 2026-07) — times the
+      // per-key getProperty() loop buildTrackerValuesFromPaxCache_ actually runs today against
+      // a single whole-store getProperties() call and a single-blob write/read, for a real
+      // cached roster. Requires payload.sheetId to already have a cached PaxCache roster index
+      // (a tracker that's had at least one dashboard/identify load). Not part of any hot path.
+      if (!payload.sheetId) {
+        return jsonOutput_({ ok: false, error: 'sheetId is required' });
+      }
+      var benchResult = benchmarkPaxCacheReads_(payload.sheetId, payload.iterations);
+      GasLogger.log('handleAdminPost_.benchmarkPropertiesService', { sheetId: payload.sheetId });
+      return jsonOutput_({ ok: true, result: benchResult });
+    }
     if (payload.action === 'copyTemplate') {
       // Stands up a new environment's files: copies a source Template (+ bound script,
       // typically PROD's) and the N most recent real trackers into a new sibling Drive

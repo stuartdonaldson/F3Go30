@@ -45,6 +45,8 @@ var dashboardWebappPaxCacheModule_ = (typeof module !== 'undefined' && module.ex
   : null;
 var getPaxCacheRow_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.getPaxCacheRow_)
   || (typeof globalThis !== 'undefined' && globalThis.getPaxCacheRow_);
+var getPaxCacheRowsBulk_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.getPaxCacheRowsBulk_)
+  || (typeof globalThis !== 'undefined' && globalThis.getPaxCacheRowsBulk_);
 var setPaxCacheRow_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.setPaxCacheRow_)
   || (typeof globalThis !== 'undefined' && globalThis.setPaxCacheRow_);
 var setPaxCacheRowsBulk_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.setPaxCacheRowsBulk_)
@@ -709,10 +711,17 @@ function invalidateFullRosterCache_(sheetId) {
  * wholesale. Returns null on any incompleteness (no roster index cached, or any indexed pax
  * missing its own row) so the caller falls back to its existing live Sheet range read + bulk
  * repopulate — same backstop pattern PaxCache already uses elsewhere.
+ *
+ * Reads via getPaxCacheRowsBulk_'s single getProperties() call rather than one getProperty() per
+ * PAX (F3Go30 perf finding, 2026-07: measured ~13x faster for a ~24-PAX roster — per-call RPC
+ * overhead dominates over payload size, so batching the reads wins even though it fetches the
+ * whole shared PropertiesService store). Write-through stays untouched — still one setProperty
+ * per PAX's own key (setPaxCacheRow_dw_/handleCheckinSubmit_) — so concurrent check-ins from
+ * different PAX never contend on a shared key/lock the way a single combined blob would.
  * @returns {Array<Array>|null}
  */
 function buildTrackerValuesFromPaxCache_(sheetId) {
-  if (!getPaxRosterIndex_dw_ || !getPaxCacheRow_dw_) return null;
+  if (!getPaxRosterIndex_dw_ || !getPaxCacheRowsBulk_dw_) return null;
   var rosterIndex = getPaxRosterIndex_dw_('tracker', sheetId);
   if (!rosterIndex) return null;
   var names = Object.keys(rosterIndex);
@@ -722,9 +731,10 @@ function buildTrackerValuesFromPaxCache_(sheetId) {
   for (var i = 0; i < names.length; i++) {
     if (rosterIndex[names[i]] > maxIndex) maxIndex = rosterIndex[names[i]];
   }
+  var rowsByName = getPaxCacheRowsBulk_dw_('tracker', sheetId, names);
   var values = new Array(maxIndex + 1);
   for (var j = 0; j < names.length; j++) {
-    var row = getPaxCacheRow_dw_('tracker', sheetId, names[j]);
+    var row = rowsByName[names[j]];
     if (!row) return null; // incomplete cache — caller falls back to a live read
     values[rosterIndex[names[j]]] = row;
   }

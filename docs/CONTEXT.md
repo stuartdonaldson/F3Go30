@@ -73,6 +73,14 @@ month's tracker in minutes without manual sheet or trigger configuration in the 
   F3 Name + Email (same pair as HC sign-up), prompts for today's (and, if missed, yesterday's)
   check-in, then shows streak, score, weekly bonus points, and a team-grouped PAX leaderboard
   read live from the current month's Tracker sheet
+- The check-in page also ships as a static front end (GitHub Pages, calling the same JSON
+  identify/checkin/dashboard endpoint) for a faster first paint than the GAS `HtmlService` sandbox
+  allows (see `docs/StaticHTMLonGas.md`). For a saved-link (token) visit, it caches the PAX's
+  last-known identify response in the browser (`localStorage`, key `go30CheckinSnapshot:v1`,
+  14-day TTL, excluding one-shot/security fields) so a returning visit paints the check-in step
+  instantly instead of blocking on the identify round trip; the live response then reconciles on
+  arrival, with any check-in the PAX made this same pageview winning over it, and a revoked/stale
+  token clearing the stale snapshot and falling back to the blank identify form (F3Go30-5nfj.5)
 - From that same check-in page, let the identified PAX list, add, and edit their own Bonus
   Tracker entries (EHing FNG, Fellowship, Q Point, Inspire) without opening the spreadsheet — a
   Slack link is required before EHing FNG, Q Point, or Inspire entries count toward score, same

@@ -105,6 +105,41 @@ function getPaxCacheRow_(kind, sheetId, name) {
   }
 }
 
+/**
+ * Bulk read counterpart to getPaxCacheRow_ — fetches the whole PropertiesService store in one
+ * getProperties() call rather than one getProperty() RPC per name (F3Go30 perf finding, 2026-07:
+ * a per-key loop over a ~24-PAX roster measured ~13x slower than a single getProperties() call,
+ * since per-call RPC overhead dominates over payload size — see buildTrackerValuesFromPaxCache_,
+ * dashboardWebapp.js, the only caller). Same hit/miss stats + deserialize behavior as
+ * getPaxCacheRow_ so switching a caller over preserves existing cache-effectiveness telemetry.
+ * @param {string} kind
+ * @param {string} sheetId
+ * @param {Array<string>} names Already-normalized names (e.g. from a roster index's own keys).
+ * @returns {Object<string, Array>} name -> deserialized row, present only for names actually
+ *   found — a missing name is simply absent, mirroring getPaxCacheRow_'s null-on-miss.
+ */
+function getPaxCacheRowsBulk_(kind, sheetId, names) {
+  var result = {};
+  var store;
+  try {
+    store = PropertiesService.getScriptProperties().getProperties();
+  } catch (e) {
+    (names || []).forEach(function() { paxCacheRequestStats_.rowMiss++; });
+    return result;
+  }
+  (names || []).forEach(function(name) {
+    var raw = store[paxCacheRowKey_(kind, sheetId, name)];
+    if (!raw) { paxCacheRequestStats_.rowMiss++; return; }
+    try {
+      result[name] = paxCacheDeserializeRow_(JSON.parse(raw));
+      paxCacheRequestStats_.rowHit++;
+    } catch (e) {
+      paxCacheRequestStats_.rowMiss++;
+    }
+  });
+  return result;
+}
+
 function setPaxCacheRow_(kind, sheetId, name, rowValues) {
   try {
     PropertiesService.getScriptProperties().setProperty(
@@ -469,10 +504,77 @@ function setupPaxCachePurgeTrigger_() {
     .create();
 }
 
+/**
+ * One-off diagnostic (F3Go30 script-properties perf question, 2026-07) — not part of any hot
+ * read/write path. Compares the per-key getProperty() loop buildTrackerValuesFromPaxCache_
+ * (dashboardWebapp.js) actually runs today against a single whole-store getProperties() call, and
+ * against writing/reading this sheet's whole roster as one JSON blob — to see whether it's the
+ * per-call RPC overhead (favors fewer calls) or the payload size (favors many small values) that
+ * dominates. Read-only for the real cache; the blob variant uses its own temporary key and always
+ * deletes it, even on error. Only ever invoked via handleAdminPost_'s benchmarkPropertiesService
+ * admin action — never called from application code.
+ * @returns {Object} timing arrays (ms per iteration) for each strategy, plus store/blob sizing.
+ */
+function benchmarkPaxCacheReads_(sheetId, iterations) {
+  iterations = iterations || 5;
+  var props = PropertiesService.getScriptProperties();
+  var rosterIndex = getPaxRosterIndex_('tracker', sheetId);
+  if (!rosterIndex) return { error: 'no cached roster index for sheetId ' + sheetId };
+  var names = Object.keys(rosterIndex);
+  if (!names.length) return { error: 'roster index for sheetId ' + sheetId + ' is empty' };
+  var keys = names.map(function(n) { return paxCacheRowKey_('tracker', sheetId, n); });
+
+  var perKeyLoopMs = [];
+  var bulkGetPropertiesMs = [];
+  var lastSnapshot = null;
+  for (var i = 0; i < iterations; i++) {
+    var t0 = Date.now();
+    keys.forEach(function(k) { props.getProperty(k); });
+    perKeyLoopMs.push(Date.now() - t0);
+
+    var t1 = Date.now();
+    lastSnapshot = props.getProperties();
+    bulkGetPropertiesMs.push(Date.now() - t1);
+  }
+
+  var storeKeyCount = Object.keys(lastSnapshot).length;
+  var storeBytesApprox = 0;
+  Object.keys(lastSnapshot).forEach(function(k) { storeBytesApprox += (lastSnapshot[k] || '').length; });
+
+  // Single-blob variant: this sheet's N rows combined into one JSON value under a throwaway key.
+  var blobObj = {};
+  keys.forEach(function(k) { blobObj[k] = lastSnapshot[k]; });
+  var blobStr = JSON.stringify(blobObj);
+  var blobBytes = blobStr.length;
+  var blobKey = 'go30bench:blob:' + sheetId;
+  var blobWriteMs = [];
+  var blobReadMs = [];
+  try {
+    for (var j = 0; j < iterations; j++) {
+      var tw = Date.now();
+      props.setProperty(blobKey, blobStr);
+      blobWriteMs.push(Date.now() - tw);
+      var tr = Date.now();
+      props.getProperty(blobKey);
+      blobReadMs.push(Date.now() - tr);
+    }
+  } finally {
+    props.deleteProperty(blobKey);
+  }
+
+  return {
+    sheetId: sheetId, keyCount: keys.length, iterations: iterations,
+    perKeyLoopMs: perKeyLoopMs, bulkGetPropertiesMs: bulkGetPropertiesMs,
+    blobWriteMs: blobWriteMs, blobReadMs: blobReadMs, blobBytes: blobBytes,
+    storeKeyCount: storeKeyCount, storeBytesApprox: storeBytesApprox,
+  };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     paxCacheNormalizeName_: paxCacheNormalizeName_,
     getPaxCacheRow_: getPaxCacheRow_,
+    getPaxCacheRowsBulk_: getPaxCacheRowsBulk_,
     setPaxCacheRow_: setPaxCacheRow_,
     setPaxCacheRowsBulk_: setPaxCacheRowsBulk_,
     deletePaxCacheRow_: deletePaxCacheRow_,
@@ -490,5 +592,6 @@ if (typeof module !== 'undefined' && module.exports) {
     PAX_CACHE_PURGE_RETENTION_DAYS_: PAX_CACHE_PURGE_RETENTION_DAYS_,
     collectKnownTrackerSheetIds_: collectKnownTrackerSheetIds_,
     extractSheetIdFromPaxCacheKey_: extractSheetIdFromPaxCacheKey_,
+    benchmarkPaxCacheReads_: benchmarkPaxCacheReads_,
   };
 }

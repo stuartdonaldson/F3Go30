@@ -267,6 +267,10 @@
       <div class="header-sub" id="headerSub"></div>
     </div>
     <div class="header-right">
+      <!-- F3Go30-5nfj.5: lives in the persistent header (never hidden by showStep()) so it
+           stays visible even if the PAX navigates to another step while the background
+           identify call is still in flight. -->
+      <span id="checkinSyncingNote" class="hidden" style="font-size:13px;color:var(--brand-contrast);opacity:.75;">⟳ Syncing…</span>
       <button id="bonusBtn" class="more-btn hidden" title="Manage Bonus Points">&#127942;</button>
       <button id="moreBtn" class="more-btn hidden" title="Open tracker spreadsheet">&#128202;</button>
     </div>
@@ -536,12 +540,68 @@
     }
   }
 
+  // F3Go30-5nfj.5: last-known identify response for a saved-link token, so this static entry
+  // point (no server-pre-rendered identity the way script/CheckinApp.html's doGet has) can paint
+  // immediately instead of blocking on the identify round trip. Deliberately excludes
+  // firstUse/emailMismatch — one-shot/security fields that must only ever come from a live
+  // response, never replayed from a stale local copy.
+  var CHECKIN_SNAPSHOT_KEY_ = 'go30CheckinSnapshot:v1';
+  var CHECKIN_SNAPSHOT_TTL_MS_ = 14 * 24 * 60 * 60 * 1000;
+
+  function saveCheckinSnapshot_(token, res) {
+    if (!token) return;
+    try {
+      localStorage.setItem(CHECKIN_SNAPSHOT_KEY_, JSON.stringify({
+        token: token,
+        savedAt: Date.now(),
+        f3Name: res.f3Name, email: res.email, team: res.team, monthLabel: res.monthLabel,
+        goals: res.goals, resolvedContext: res.resolvedContext,
+        nextMonthRegistered: res.nextMonthRegistered, nextMonthLabel: res.nextMonthLabel,
+        monthGrid: res.monthGrid, todayStatus: res.todayStatus, yesterdayStatus: res.yesterdayStatus,
+        yesterdayAvailable: res.yesterdayAvailable, config: res.config,
+      }));
+    } catch (e) { /* localStorage unavailable — not fatal, just no instant paint next visit */ }
+  }
+
+  // isoDate_ is defined further down (dashboard section) but this is a plain function
+  // declaration, hoisted to the top of the shared top-level scope — safe to call here.
+  function loadCheckinSnapshot_(token) {
+    try {
+      var raw = localStorage.getItem(CHECKIN_SNAPSHOT_KEY_);
+      if (!raw) return null;
+      var snap = JSON.parse(raw);
+      if (!snap || snap.token !== token) return null;
+      if (!snap.savedAt || (Date.now() - snap.savedAt) > CHECKIN_SNAPSHOT_TTL_MS_) return null;
+      var todayIso = isoDate_(new Date());
+      if (!(snap.monthGrid || []).some(function(e) { return e.dateIso === todayIso; })) return null;
+      return snap;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function clearCheckinSnapshot_() {
+    try { localStorage.removeItem(CHECKIN_SNAPSHOT_KEY_); } catch (e) { /* not fatal */ }
+  }
+
+  // F3Go30-5nfj.5: reference-counted, not a boolean — more than one request can be in flight at
+  // once (e.g. the PAX clicking multiple checkin buttons before earlier ones settle), so the
+  // indicator must stay visible until the LAST outstanding request settles, not just the first.
+  var pendingRequestCount_ = 0;
+
+  function updateSyncingIndicator_() {
+    var el = $('checkinSyncingNote');
+    if (el) el.classList.toggle('hidden', pendingRequestCount_ <= 0);
+  }
+
   function callApi(action, payload) {
     var body = Object.assign({}, payload, {
       action: action,
       ns: (typeof NS_ !== 'undefined' ? NS_ : ''),
       contextDate: (typeof CONTEXT_DATE_ !== 'undefined' ? CONTEXT_DATE_ : '')
     });
+    pendingRequestCount_++;
+    updateSyncingIndicator_();
     return fetch(WEBAPP_URL + '?cmd=' + CMD_, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -552,6 +612,9 @@
     }).then(function(json) {
       if (!json.ok) throw new Error(json.error || 'Server reported an error with no detail');
       return json;
+    }).finally(function() {
+      pendingRequestCount_--;
+      updateSyncingIndicator_();
     });
   }
 
@@ -609,6 +672,8 @@
     trackerUrl: '',
     resolvedContext: null,
     monthCache: {},
+    pendingSelfWrites: {}, // dateIso -> value, held only while its month isn't cached yet (F3Go30-5nfj.5)
+    locallyWrittenIso: {}, // dateIso -> status string ('done'/'missed'/'pending'/'absent'), tracks writes made this pageview so a live identify response can't clobber them with stale data (F3Go30-5nfj.5)
     viewDate: null,
     dashboardLoading: false,
     dashboardPrefetchPromise: null,
@@ -720,7 +785,30 @@
     $('bookmarkHereNote').classList.add('hidden');
   });
 
-  function applyIdentifySuccess_(res) {
+  /** F3Go30-5nfj.5: any date the PAX wrote locally this pageview (state.locallyWrittenIso) wins
+   * over a live identify response that may predate it — mutates res in place before it's handed
+   * to applyIdentifySuccess_. */
+  function reconcileWithLocalWrites_(res) {
+    var local = state.locallyWrittenIso;
+    if (!local || !Object.keys(local).length) return;
+    (res.monthGrid || []).forEach(function(entry) {
+      if (Object.prototype.hasOwnProperty.call(local, entry.dateIso)) entry.status = local[entry.dateIso];
+    });
+    var todayIso = state.todayIso || isoDate_(new Date());
+    if (Object.prototype.hasOwnProperty.call(local, todayIso)) res.todayStatus = local[todayIso];
+    if (state.yesterdayIso && Object.prototype.hasOwnProperty.call(local, state.yesterdayIso)) {
+      res.yesterdayStatus = local[state.yesterdayIso];
+    }
+  }
+
+  /** F3Go30-5nfj.5: opts.preserveView (set true only when reconciling the live identify response
+   * that lands after an already-painted localStorage snapshot) skips the parts of this function
+   * that reset the view back to a fresh check-in landing (closing an open month calendar,
+   * clearing the day selection) — without it, a PAX who opened the calendar during the brief
+   * window before the live response landed would see it silently slammed shut out from under
+   * them the instant reconciliation completed. */
+  function applyIdentifySuccess_(res, opts) {
+    opts = opts || {};
     state.f3Name = res.f3Name;
     state.email = res.email;
     state.resolvedContext = res.resolvedContext || null;
@@ -739,8 +827,10 @@
     }
     $('idSignupBtn').classList.add('hidden');
     saveIdentityToStorage_(res.f3Name, res.email);
-    state.monthCache = {};
-    state.viewDate = null;
+    if (!opts.preserveView) {
+      state.monthCache = {};
+      state.viewDate = null;
+    }
     updateHeaderIdentity_(res.f3Name, res.team, res.monthLabel);
     $('checkinHeading').textContent = (res.firstUse ? 'Welcome, ' : 'Welcome back, ') + res.f3Name + '!';
     $('checkinSub').textContent = res.monthLabel + ' — How did you do on your commitment for today?';
@@ -753,24 +843,33 @@
     state.todayStatus = res.todayStatus;
     state.yesterdayStatus = res.yesterdayStatus;
     state.yesterdayAvailable = !!res.yesterdayAvailable;
-    state.selectedDateIso = null;
-    state.lastEditedDayIso = null;
     var todayD = new Date();
     state.todayIso = isoDate_(todayD);
     var yesterdayD = new Date(todayD);
     yesterdayD.setDate(yesterdayD.getDate() - 1);
     state.yesterdayIso = isoDate_(yesterdayD);
-    state.advancedOpen = false;
-    $('checkinTodayBlock').classList.remove('hidden');
-    $('advancedGrid').classList.add('hidden');
-    $('advancedToggleBtn').textContent = 'Show month calendar ▾';
+    if (!opts.preserveView) {
+      state.selectedDateIso = null;
+      state.lastEditedDayIso = null;
+      state.advancedOpen = false;
+      $('checkinTodayBlock').classList.remove('hidden');
+      $('advancedGrid').classList.add('hidden');
+      $('advancedToggleBtn').textContent = 'Show month calendar ▾';
+    } else if (state.advancedOpen) {
+      // The month calendar was already open (painted from the snapshot) when this live response
+      // landed — re-render it in place with the reconciled data instead of closing it.
+      renderCalendar_();
+      if (state.selectedDateIso) renderSelectionPanel_(state.selectedDateIso);
+    }
     $('emailMismatchNote').textContent = "Note: this email doesn't match what we have on file for " + res.f3Name + ', but we found your check-in.';
     $('emailMismatchNote').classList.toggle('hidden', !res.emailMismatch);
     $('nextMonthNoteText').textContent = "You're not signed up for " + res.nextMonthLabel + ' yet — verify or update your goals before the month starts.';
     $('nextMonthNote').classList.toggle('hidden', res.nextMonthRegistered !== false);
     $('bookmarkHereNote').classList.toggle('hidden', !res.firstUse);
-    showStep('checkin');
-    prefetchDashboard_();
+    if (!opts.preserveView) {
+      showStep('checkin');
+      prefetchDashboard_();
+    }
   }
 
   /** Applies a resolved typed-identify result (matched / knownPaxNotRegistered / miss) — this
@@ -824,31 +923,70 @@
       });
   });
 
+  // F3Go30-5nfj.5: called at the very bottom of this script block (see the runIdentityBootstrap_()
+  // call at the end of the file), not inline here — applyIdentifySuccess_/applyServerConfig_/
+  // renderCheckinStatus_ all reach top-level `var` config/lookup tables (BONUS_GRID_ORDER_KEYS_,
+  // CHECKIN_STATUS_TEXT_, etc.) that are declared further down this same script block. Those are
+  // `var`s hoisted-but-unassigned until their own declaration line actually executes, so running
+  // this bootstrap inline (at its original position, ahead of those declarations) intermittently
+  // threw on the snapshot-instant-paint path, which — unlike the old blocking-spinner path — calls
+  // applyIdentifySuccess_ synchronously during initial script execution instead of later from an
+  // async .then() (by which point the whole script had already finished running once).
+  function runIdentityBootstrap_() {
   if (!TOKEN_IDENTIFY_RESULT && SAVED_IDENTITY_TOKEN) {
-    $('step-identify').classList.add('hidden');
-    $('step-tokenLoading').classList.remove('hidden');
+    var checkinSnapshot_ = loadCheckinSnapshot_(SAVED_IDENTITY_TOKEN);
+    var paintedFromSnapshot_ = false;
+    if (checkinSnapshot_) {
+      // F3Go30-5nfj.5: instant paint from the last-known identify response for this token — skips
+      // the blocking "Signing you in..." spinner. firstUse/emailMismatch are one-shot/security
+      // fields that must only ever come from a live response, so they're forced false here.
+      paintedFromSnapshot_ = true;
+      if (checkinSnapshot_.config) applyServerConfig_(checkinSnapshot_.config);
+      applyIdentifySuccess_(Object.assign({}, checkinSnapshot_, { firstUse: false, emailMismatch: false }));
+    } else {
+      $('step-identify').classList.add('hidden');
+      $('step-tokenLoading').classList.remove('hidden');
+    }
     callApi('identify', { token: SAVED_IDENTITY_TOKEN })
       .then(function(res) {
         if (res.config) applyServerConfig_(res.config);
         if (res.matched) {
-          applyIdentifySuccess_(res);
+          reconcileWithLocalWrites_(res);
+          applyIdentifySuccess_(res, { preserveView: paintedFromSnapshot_ });
+          saveCheckinSnapshot_(SAVED_IDENTITY_TOKEN, res);
         } else if (res.knownPaxNotRegistered) {
+          clearCheckinSnapshot_();
           saveIdentityToStorage_(res.f3Name, res.email);
           var signupCurrentMonthUrl = signupDeepLinkUrl_('current');
+          // showStep('identify') here isn't about showing identify — it's the only way to hide
+          // whatever step is currently up (possibly #step-checkin, if a snapshot got painted)
+          // since showStep only knows about the identify/checkin/dashboard/bonus set. The next
+          // line then swaps identify back out for tokenLoading, matching this branch's pre-F3Go30-
+          // 5nfj.5 behavior of showing the loading spinner during the redirect attempt below.
+          showStep('identify');
+          $('step-identify').classList.add('hidden');
+          $('step-tokenLoading').classList.remove('hidden');
           attemptTopRedirect_(signupCurrentMonthUrl, function() {
+            $('step-tokenLoading').classList.add('hidden');
             $('step-identify').classList.remove('hidden');
             $('idSignupBtn').classList.remove('hidden');
           });
         } else {
-          $('step-identify').classList.remove('hidden');
+          // matched:false (revoked/stale token) or a plain miss: clear any stale snapshot and fall
+          // back to the blank identify form, even if a snapshot had just been painted.
+          clearCheckinSnapshot_();
+          showStep('identify');
         }
       })
       .catch(function() {
-        $('step-identify').classList.remove('hidden'); // fall through to the blank identify form
+        // A transient network failure: if we already painted known-good (if possibly stale) data
+        // from the snapshot, keep showing it rather than yanking the PAX back to a blank form.
+        if (!paintedFromSnapshot_) $('step-identify').classList.remove('hidden');
       })
-      .then(function() {
+      .finally(function() {
         $('step-tokenLoading').classList.add('hidden');
       });
+  }
   }
 
   // ── Step: checkin ──────────────────────────────────────────────────────
@@ -905,21 +1043,24 @@
   function submitCheckin_(btn, day, value) {
     hideApiError_();
     setButtonLoading_(btn, true, 'Saving…');
+    var dateIso = day === 'today' ? state.todayIso : state.yesterdayIso;
+    var status = valueToCheckinStatus_(value);
+    applyOwnDayWrite_(dateIso, value);
+    state.locallyWrittenIso[dateIso] = status;
     callApi('checkin', { f3Name: state.f3Name, email: state.email, day: day, value: value, resolvedContext: state.resolvedContext })
       .then(function() {
-        var status = valueToCheckinStatus_(value);
         renderCheckinStatus_(day, status);
-        var dateIso = day === 'today' ? state.todayIso : state.yesterdayIso;
         state.lastEditedDayIso = dateIso;
         if (day === 'today') state.todayStatus = status; else state.yesterdayStatus = status;
         updateMonthGridEntry_(dateIso, status);
-        invalidateMonthCacheFor_(dateIso);
         if (state.advancedOpen) {
           updateCalCellStatus_(dateIso, status);
           if (state.selectedDateIso === dateIso) renderSelectionPanel_(dateIso);
         }
       })
       .catch(function(err) {
+        revertOwnDayWrite_(dateIso);
+        delete state.locallyWrittenIso[dateIso];
         showApiError_('checkin', err);
       })
       .finally(function() {
@@ -959,6 +1100,49 @@
 
   function invalidateMonthCacheFor_(dateIso) {
     delete state.monthCache[monthKeyOf_(parseIsoDate_(dateIso))];
+  }
+
+  /** F3Go30-5nfj.5: patches a just-written (or about-to-be-written) value straight into every
+   * place a cached month payload stores this PAX's own day (top-level dayValues, the myTeam
+   * member, the matching paxBoard member) instead of invalidating the whole cached payload —
+   * write-through, same principle already used server-side (PaxCache, bonus cache). value is the
+   * same 1/0/null/-1 vocabulary loadDashboard_'s payload already uses. */
+  function patchOwnDayIntoPayload_(payload, dateIso, value) {
+    if (!payload || !payload.dayDates) return;
+    var idx = payload.dayDates.indexOf(dateIso);
+    if (idx === -1) return;
+    if (payload.dayValues) payload.dayValues[idx] = value;
+    function patchMember(list) {
+      (list || []).forEach(function(m) {
+        if (m.name === payload.f3Name && m.dayValues) m.dayValues[idx] = value;
+      });
+    }
+    patchMember(payload.myTeam);
+    (payload.paxBoard || []).forEach(function(group) { patchMember(group.members); });
+  }
+
+  /** Applies a check-in write to whatever the client currently knows: patches the cached payload
+   * directly if this month is already cached, or — when a prefetch for it is still in flight —
+   * records the write so loadDashboard_ can apply it to that payload the moment it lands, before
+   * it's stored/rendered (F3Go30-5nfj.5). Closes the race regardless of arrival order. Called
+   * synchronously (optimistically, before the write's own network round trip settles) so the
+   * dashboard reflects it even if the PAX navigates there before the write finishes. */
+  function applyOwnDayWrite_(dateIso, value) {
+    var monthKey = monthKeyOf_(parseIsoDate_(dateIso));
+    var cached = state.monthCache[monthKey];
+    if (cached) {
+      patchOwnDayIntoPayload_(cached, dateIso, value);
+    } else {
+      state.pendingSelfWrites[dateIso] = value;
+    }
+  }
+
+  /** Drops any trace of a write that turned out to have failed server-side, so a stale optimistic
+   * patch doesn't keep rendering as if it succeeded — the affected month is dropped from cache
+   * entirely (not selectively un-patched) so the next read is a real, fresh fetch. */
+  function revertOwnDayWrite_(dateIso) {
+    delete state.pendingSelfWrites[dateIso];
+    invalidateMonthCacheFor_(dateIso);
   }
 
   function buildCalCell_(entry) {
@@ -1063,18 +1247,19 @@
     hideApiError_();
     setButtonLoading_(btn, true, 'Saving…');
     var dateIso = state.selectedDateIso;
+    var status = valueToMonthGridStatus_(value);
+    applyOwnDayWrite_(dateIso, value);
+    state.locallyWrittenIso[dateIso] = status;
     callApi('checkin', { f3Name: state.f3Name, email: state.email, day: dateIso, value: value, resolvedContext: state.resolvedContext })
       .then(function() {
-        var status = valueToMonthGridStatus_(value);
         updateMonthGridEntry_(dateIso, status);
-        invalidateMonthCacheFor_(dateIso);
         updateCalCellStatus_(dateIso, status);
         renderSelectionPanel_(dateIso);
         state.lastEditedDayIso = dateIso;
         if (dateIso === state.todayIso) { state.todayStatus = status; renderCheckinStatus_('today', status); }
         else if (dateIso === state.yesterdayIso) { state.yesterdayStatus = status; renderCheckinStatus_('yesterday', status); }
       })
-      .catch(function(err) { showApiError_('checkin', err); })
+      .catch(function(err) { revertOwnDayWrite_(dateIso); delete state.locallyWrittenIso[dateIso]; showApiError_('checkin', err); })
       .finally(function() { setButtonLoading_(btn, false); });
   }
 
@@ -1581,6 +1766,12 @@
     }
     return callApi('dashboard', { f3Name: state.f3Name, email: state.email, dateISO: dateISO, resolvedContext: state.resolvedContext })
       .then(function(payload) {
+        (payload.dayDates || []).forEach(function(dateIso) {
+          if (Object.prototype.hasOwnProperty.call(state.pendingSelfWrites, dateIso)) {
+            patchOwnDayIntoPayload_(payload, dateIso, state.pendingSelfWrites[dateIso]);
+            delete state.pendingSelfWrites[dateIso];
+          }
+        });
         state.monthCache[payload.monthKey] = payload;
         if (!silent) renderDashboard_(payload, payload.viewDayIndex);
         return payload;
@@ -1807,6 +1998,10 @@
         setButtonLoading_(btn, false);
       });
   });
+
+  // F3Go30-5nfj.5: run last — see runIdentityBootstrap_'s own docstring for why this can't run
+  // at its original inline position any more.
+  runIdentityBootstrap_();
 </script>
 </body>
 </html>

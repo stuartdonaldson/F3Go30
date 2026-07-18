@@ -317,6 +317,20 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
     while the PAX is still reading the check-in step. The `dashboardBtn` click handler renders
     from `state.monthCache` (or rides the in-flight prefetch promise) instead of blocking on a
     fresh round trip, so "Continue to Dashboard" is effectively instant on the common path.
+    - **Client-side write-through (F3Go30-5nfj.5):** the prefetch above raced a same-session
+      check-in write: if the PAX clicked Hit/Miss before the background prefetch resolved,
+      `invalidateMonthCacheFor_`'s delete was a no-op (nothing cached yet), and the prefetch then
+      resolved afterward and unconditionally overwrote `state.monthCache` with a payload that
+      predated the write — the dashboard rendered stale until an unrelated nav forced a real
+      refetch. Fixed by mirroring the server-side write-through pattern (PaxCache, bonus cache)
+      client-side: `applyOwnDayWrite_` patches the PAX's own day directly into an already-cached
+      payload (`patchOwnDayIntoPayload_`, touching top-level `dayValues`, the `myTeam` entry, and
+      the matching `paxBoard` entry), or — if the month isn't cached yet — records the write in
+      `state.pendingSelfWrites` for `loadDashboard_` to apply the moment its in-flight fetch
+      lands, before it's stored/rendered. Closes the race regardless of arrival order. A failed
+      write reverts via `revertOwnDayWrite_`, which falls back to the old invalidate-and-refetch
+      (safest after an unknown-state failure). Implemented identically in both `CheckinApp.html`
+      and its `static-pages/src/index.html` mirror.
   - **doGet title deferral (qi26.3):** the check-in page's first-paint `doGet` no longer opens the
     `CheckinSessions` sheet to resolve a bookmarked link's personalized `<title>`.
     `createOrTouchCheckinSession_` write-through-caches the guid→F3 Name pair
