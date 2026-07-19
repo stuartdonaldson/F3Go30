@@ -77,8 +77,12 @@ function main() {
     console.log(`🔢 build number bumped to ${build}`);
   }
 
+  // Build only the env(s) being published — not always `--env all`. Since build-static-pages.js
+  // now bakes each env's webapp /exec URL from its deployment ID (F3Go30-6bl6), building `all`
+  // during a single-env publish (e.g. npm run deploy:sit) would require the *other* env's
+  // deployment ID to be configured too, and fail the deploy if it isn't.
   console.log('🔨 Building static pages...');
-  execSync(`node ${path.join(__dirname, 'build-static-pages.js')} --env all`, { cwd: ROOT, stdio: 'inherit' });
+  execSync(`node ${path.join(__dirname, 'build-static-pages.js')} --env ${env}`, { cwd: ROOT, stdio: 'inherit' });
 
   const pkg = JSON.parse(fs.readFileSync(PKG_PATH, 'utf8'));
 

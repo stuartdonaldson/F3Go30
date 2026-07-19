@@ -81,9 +81,16 @@ function stampSource_(src, { versionString, webAppUrl }) {
     .replace(WEBAPP_PLACEHOLDER, `var STATIC_WEBAPP_URL_ = ${JSON.stringify(webAppUrl)};`);
 }
 
+function loadSettings_() {
+  if (!fs.existsSync(SETTINGS_PATH)) {
+    throw new Error('local.settings.json not found at project root — copy local.settings.json.example and populate the deployment IDs.');
+  }
+  return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
+}
+
 function buildOne(env) {
   const pkg = JSON.parse(fs.readFileSync(PKG_PATH, 'utf8'));
-  const settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
+  const settings = loadSettings_();
   const versionString = versionStringFor(env, pkg);
   const webAppUrl = execUrlForEnv_(env, settings);
   const src = fs.readFileSync(SRC_PATH, 'utf8');
