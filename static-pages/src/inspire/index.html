@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Go30 — Inspire Playground</title>
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --bg: #f4f1ea; --card-bg: #fffdf8; --border: #d8cfbf;
+    --text: #2b2b2b; --text-muted: #555; --text-faint: #888;
+    --brand: #2f5d50; --brand-bg: #2f5d50; --brand-contrast: #f8f4ea;
+    --soft-bg: #eef3f0; --soft-border: #cfe0d8; --shadow: rgba(47,93,80,.10);
+    --gold: #f7b209; --orange: #de521c; --ring-track: #e4ddcf;
+    --miss-top: #2b3a52; --miss-mid: #7a5c3e; --miss-bot: #f7b209;
+  }
+  :root[data-theme="dark"], html[data-theme="dark"] {
+    --bg: #171b19; --card-bg: #20241f; --border: #3a4640;
+    --text: #ece7dc; --text-muted: #b7b0a2; --text-faint: #93a49b;
+    --brand: #7fc4ac; --brand-bg: #234036; --brand-contrast: #eee9df;
+    --soft-bg: #1d2e28; --soft-border: #2e463d; --shadow: rgba(0,0,0,.5);
+    --gold: #e0b656; --orange: #e2795c; --ring-track: #333c37;
+    --miss-top: #14202f; --miss-mid: #3a2c1c; --miss-bot: #d69a1a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #171b19; --card-bg: #20241f; --border: #3a4640;
+      --text: #ece7dc; --text-muted: #b7b0a2; --text-faint: #93a49b;
+      --brand: #7fc4ac; --brand-bg: #234036; --brand-contrast: #eee9df;
+      --soft-bg: #1d2e28; --soft-border: #2e463d; --shadow: rgba(0,0,0,.5);
+      --gold: #e0b656; --orange: #e2795c; --ring-track: #333c37;
+      --miss-top: #14202f; --miss-mid: #3a2c1c; --miss-bot: #d69a1a;
+    }
+  }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--text);
+    font-family: Arial, Helvetica, sans-serif; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 12px 64px; }
+  header.top { background:var(--brand-bg); color:var(--brand-contrast); padding:14px 20px;
+    display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:20; }
+  header.top .title { font-weight:bold; font-size:19px; }
+  header.top .subtitle { font-size:12px; opacity:.65; }
+  .toggles { display:flex; gap:8px; }
+  .toggles button { background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.28);
+    color:var(--brand-contrast); border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer; font-family:inherit; }
+
+  /* ---- Stage: the demo "card" a PAX would see ---- */
+  .stage { background:var(--card-bg); border:1px solid var(--border); border-radius:16px;
+    padding:26px 22px; box-shadow:0 4px 18px var(--shadow); margin-top:22px; position:relative;
+    overflow:hidden; min-height:340px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+
+  /* progress ring */
+  .ring-wrap { position:relative; width:180px; height:180px; }
+  svg.ring { width:180px; height:180px; transform:rotate(-90deg); }
+  .ring-track { fill:none; stroke:var(--ring-track); stroke-width:14; }
+  .ring-fill { fill:none; stroke:var(--brand); stroke-width:14; stroke-linecap:round;
+    stroke-dasharray: var(--circ); stroke-dashoffset: var(--circ);
+    transition: stroke-dashoffset 1.1s cubic-bezier(.22,1,.36,1); }
+  .ring-center { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .ring-num { font-size:44px; font-weight:bold; color:var(--brand); line-height:1; transform:rotate(0); }
+  .ring-label { font-size:13px; color:var(--text-faint); margin-top:4px; letter-spacing:.5px; text-transform:uppercase; }
+
+  /* affirmation line */
+  .affirm { margin-top:22px; font-size:20px; font-weight:bold; color:var(--brand); min-height:52px;
+    display:flex; align-items:center; justify-content:center; padding:0 10px; }
+  .affirm.pop { animation: affirmIn .5s cubic-bezier(.22,1.4,.4,1) both; }
+  @keyframes affirmIn { from { opacity:0; transform: translateY(10px) scale(.96); } to { opacity:1; transform:none; } }
+
+  /* emoji pop */
+  .emoji-pop { position:absolute; top:18px; right:22px; font-size:38px; opacity:0; pointer-events:none; }
+  .emoji-pop.go { animation: emojiPop 1.1s ease both; }
+  @keyframes emojiPop { 0%{opacity:0; transform:scale(.2) rotate(-12deg);} 25%{opacity:1; transform:scale(1.25) rotate(6deg);} 45%{transform:scale(1) rotate(0);} 80%{opacity:1;} 100%{opacity:0; transform:scale(1) translateY(-8px);} }
+
+  /* flame streak */
+  .flame { font-size:56px; line-height:1; filter:drop-shadow(0 0 0 transparent); transition: font-size .4s cubic-bezier(.22,1.4,.4,1), filter .4s ease; }
+  .flame.lit { animation: flameFlicker 1.4s ease-in-out infinite alternate; }
+  @keyframes flameFlicker { from { transform: translateY(0) scale(1); } to { transform: translateY(-2px) scale(1.05); } }
+  .streak-num { font-size:40px; font-weight:bold; color:var(--orange); margin-top:8px; }
+  .streak-cap { font-size:14px; color:var(--text-muted); margin-top:2px; }
+
+  /* badge stamp */
+  .badge { display:inline-flex; flex-direction:column; align-items:center; justify-content:center;
+    width:150px; height:150px; border-radius:50%; border:5px solid var(--brand); color:var(--brand);
+    background:var(--soft-bg); }
+  .badge.stamp { animation: stampIn .6s cubic-bezier(.2,1.3,.3,1) both; }
+  @keyframes stampIn { 0%{opacity:0; transform:scale(2.2) rotate(-14deg);} 60%{opacity:1; transform:scale(.92) rotate(3deg);} 100%{transform:scale(1) rotate(-4deg);} }
+  .badge .b-top { font-size:13px; letter-spacing:1px; }
+  .badge .b-big { font-size:34px; font-weight:bold; letter-spacing:1px; }
+  .badge .b-bot { font-size:12px; opacity:.8; }
+
+  /* miss state */
+  .miss { position:absolute; inset:0; border-radius:16px; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; padding:28px; text-align:center;
+    background: linear-gradient(180deg, var(--miss-top) 0%, var(--miss-mid) 62%, var(--miss-bot) 100%);
+    color:#f4ede0; opacity:0; pointer-events:none; transition:opacity .6s ease; }
+  .miss.show { opacity:1; pointer-events:auto; }
+  .miss .sun { width:70px; height:70px; border-radius:50%; background:radial-gradient(circle, #ffe9a8, #f7b209 70%);
+    box-shadow:0 0 40px 10px rgba(247,178,9,.45); margin-bottom:18px; animation: rise 1.1s ease both; }
+  @keyframes rise { from { transform: translateY(40px); opacity:0; } to { transform:none; opacity:1; } }
+  .miss h3 { margin:0 0 8px; font-size:22px; }
+  .miss p { margin:0 0 20px; font-size:16px; opacity:.9; max-width:340px; line-height:1.45; }
+  .miss button { background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.4); color:#fff;
+    padding:12px 20px; border-radius:10px; font-size:15px; font-weight:bold; cursor:pointer; font-family:inherit; }
+
+  /* ---- control panel ---- */
+  .panel { margin-top:26px; }
+  .panel h2 { font-size:15px; color:var(--text-faint); text-transform:uppercase; letter-spacing:1px; margin:0 0 12px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:10px; }
+  .grid button { padding:14px 12px; border:1px solid var(--border); border-radius:11px; background:var(--card-bg);
+    color:var(--text); font-size:15px; font-weight:bold; cursor:pointer; font-family:inherit; text-align:left;
+    box-shadow:0 1px 4px var(--shadow); transition:transform .1s ease, border-color .15s ease; }
+  .grid button:hover { transform:translateY(-2px); border-color:var(--brand); }
+  .grid button small { display:block; font-weight:normal; color:var(--text-faint); font-size:12px; margin-top:3px; }
+  .note { margin-top:22px; font-size:13px; color:var(--text-faint); line-height:1.6; }
+  .note code { background:var(--soft-bg); padding:1px 5px; border-radius:4px; }
+
+  canvas.confetti { position:fixed; inset:0; width:100%; height:100%; pointer-events:none; z-index:50; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration:.001s !important; transition-duration:.001s !important; }
+  }
+  body.reduce-motion * { animation-duration:.001s !important; transition-duration:.001s !important; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div>
+    <div class="title">Go30 · Inspire Playground</div>
+    <div class="subtitle">Celebration & encouragement moments — design preview</div>
+  </div>
+  <div class="toggles">
+    <button id="themeBtn">◐ Theme</button>
+    <button id="motionBtn">Motion: on</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="stage" id="stage">
+    <span class="emoji-pop" id="emojiPop">💪</span>
+
+    <!-- default view: progress ring -->
+    <div id="view-ring" class="view">
+      <div class="ring-wrap">
+        <svg class="ring" viewBox="0 0 180 180">
+          <circle class="ring-track" cx="90" cy="90" r="78"></circle>
+          <circle class="ring-fill" id="ringFill" cx="90" cy="90" r="78"></circle>
+        </svg>
+        <div class="ring-center">
+          <div class="ring-num" id="ringNum">0</div>
+          <div class="ring-label">of 30 posts</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="affirm" id="affirm">Tap a moment below to preview it.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Celebrate</h2>
+    <div class="grid">
+      <button data-act="checkin">Daily check-in<small>Ring fills +1, emoji pop</small></button>
+      <button data-act="streak">Streak tier<small>Flame grows, count-up</small></button>
+      <button data-act="half">Halfway (15/30)<small>Badge stamp</small></button>
+      <button data-act="goal">Go30 complete<small>Confetti cannon 🎉</small></button>
+      <button data-act="bonus">Bonus post<small>Double-dip wink</small></button>
+      <button data-act="beat">Beat last month<small>Competitive nudge</small></button>
+    </div>
+    <h2 style="margin-top:22px;">Encourage</h2>
+    <div class="grid">
+      <button data-act="miss">Missed a day<small>Gentle gloom screen — no shame</small></button>
+      <button data-act="broke">Streak broke<small>Reset & re-attack</small></button>
+    </div>
+    <h2 style="margin-top:22px;">Reset</h2>
+    <div class="grid">
+      <button data-act="reset">↺ Reset ring to 0</button>
+    </div>
+
+    <div class="note">
+      Self-contained: no external libraries, no CDN calls — the confetti is hand-rolled canvas, CSP-safe for GAS delivery.
+      All motion respects <code>prefers-reduced-motion</code> (and the Motion toggle). Palette is pulled from
+      <code>index.html</code> so it reads in both light and dark. This folder is a playground — the build script does not ship it.
+    </div>
+  </div>
+</div>
+
+<canvas class="confetti" id="confetti"></canvas>
+
+<script>
+(function(){
+  var R = 78, CIRC = 2 * Math.PI * R;
+  var ringFill = document.getElementById('ringFill');
+  var ringNum = document.getElementById('ringNum');
+  ringFill.style.setProperty('--circ', CIRC);
+
+  var affirm = document.getElementById('affirm');
+  var stage = document.getElementById('stage');
+  var emojiPop = document.getElementById('emojiPop');
+  var viewRing = document.getElementById('view-ring');
+
+  var posts = 0, streak = 0;
+
+  var LINES = {
+    checkin: ['Posted. Banked it. ✅','One more for the Six.','That rep counts. Keep posting.','Showed up. That’s the whole game.'],
+    streak:  ['The habit’s forming. Don’t break the chain.','You’re a regular in the gloom now.','Momentum > motivation. Keep it lit.','Streak’s holding. Iron sharpens iron.'],
+    half:    ['Halfway. You’re over the hump.','15 down. The back nine is yours.','Halftime in the gloom — keep grinding.'],
+    goal:    ['You Went 30. The gloom bows. 🔥','HC honored. Every rep banked. Go30: complete.','SkyQ couldn’t stop you. Neither could the fartsack.','Freed to lead — and you led yourself.'],
+    bonus:   ['Double-dip. The Six thanks you.','Extra credit in the gloom. Respect.','Overachiever. Splashing merlot optional.'],
+    beat:    ['You beat last month. The bar just moved up.','New personal best. Don’t look down.','Last-you would be proud. Now pass him.'],
+    miss:    ['Missed one? The Six always catches up. Post tomorrow.','One fartsack doesn’t define the month. Back in the gloom.','Leave no man behind — including yourself.'],
+    broke:   ['The streak resets. The brotherhood doesn’t. See you at the AO.','Reset. Re-attack. The gloom is patient.','Chain broke, not the man. Rebuild it tomorrow.']
+  };
+  var pick = function(k){ var a = LINES[k]; return a[Math.floor(Math.random()*a.length)]; };
+
+  function setAffirm(k, color){
+    affirm.textContent = pick(k);
+    affirm.style.color = color || 'var(--brand)';
+    affirm.classList.remove('pop'); void affirm.offsetWidth; affirm.classList.add('pop');
+  }
+  function popEmoji(e){ emojiPop.textContent = e; emojiPop.classList.remove('go'); void emojiPop.offsetWidth; emojiPop.classList.add('go'); }
+
+  function renderRing(){
+    viewRing.innerHTML = '<div class="ring-wrap"><svg class="ring" viewBox="0 0 180 180">'
+      + '<circle class="ring-track" cx="90" cy="90" r="78"></circle>'
+      + '<circle class="ring-fill" id="ringFill" cx="90" cy="90" r="78"></circle></svg>'
+      + '<div class="ring-center"><div class="ring-num" id="ringNum">0</div>'
+      + '<div class="ring-label">of 30 posts</div></div></div>';
+    ringFill = document.getElementById('ringFill');
+    ringNum = document.getElementById('ringNum');
+    ringFill.style.setProperty('--circ', CIRC);
+    updateRing(true);
+  }
+  function updateRing(instant){
+    var pct = Math.min(posts/30, 1);
+    if (instant){ ringFill.style.transition = 'none'; }
+    ringFill.style.strokeDashoffset = CIRC * (1 - pct);
+    if (instant){ void ringFill.offsetWidth; ringFill.style.transition = ''; }
+    countUp(ringNum, posts);
+    ringFill.style.stroke = pct >= 1 ? 'var(--gold)' : 'var(--brand)';
+  }
+  function countUp(el, to){
+    var from = parseInt(el.textContent,10) || 0, start = null, dur = 700;
+    if (document.body.classList.contains('reduce-motion')){ el.textContent = to; return; }
+    function step(ts){ if(!start) start=ts; var p=Math.min((ts-start)/dur,1);
+      el.textContent = Math.round(from + (to-from)*p); if(p<1) requestAnimationFrame(step); }
+    requestAnimationFrame(step);
+  }
+
+  function showStage(html){ viewRing.innerHTML = html; }
+  function backToRing(){ renderRing(); }
+
+  var acts = {
+    checkin: function(){ if(!document.getElementById('ringFill')) renderRing();
+      posts = Math.min(posts+1, 30); streak++; updateRing(); popEmoji('💪'); setAffirm('checkin'); },
+    reset: function(){ posts=0; streak=0; renderRing(); affirm.textContent='Ring reset. Tap a moment.'; },
+    streak: function(){ streak = streak < 3 ? 3 : streak+2;
+      var tier = streak>=10?'🔥🔥':streak>=5?'🔥':'🔥';
+      showStage('<div class="flame lit" style="font-size:'+(48+Math.min(streak,15)*3)+'px">'+tier+'</div>'
+        + '<div class="streak-num" id="sn">0</div><div class="streak-cap">day streak</div>');
+      countUp(document.getElementById('sn'), streak); setAffirm('streak','var(--orange)'); },
+    half: function(){ showStage('<div class="badge stamp"><span class="b-top">GO30</span><span class="b-big">15</span><span class="b-bot">HALFWAY</span></div>');
+      setAffirm('half'); popEmoji('⚡'); },
+    goal: function(){ posts=30; showStage('<div class="badge stamp" style="border-color:var(--gold);color:var(--gold)"><span class="b-top">★ GO30 ★</span><span class="b-big">30</span><span class="b-bot">COMPLETE</span></div>');
+      setAffirm('goal','var(--gold)'); popEmoji('🏆'); confetti(); },
+    bonus: function(){ showStage('<div class="badge stamp" style="border-color:var(--orange);color:var(--orange)"><span class="b-top">BONUS</span><span class="b-big">+1</span><span class="b-bot">DOUBLE-DIP</span></div>');
+      setAffirm('bonus','var(--orange)'); popEmoji('🔁'); confetti(0.5); },
+    beat: function(){ showStage('<div class="badge stamp"><span class="b-top">NEW PB</span><span class="b-big">▲</span><span class="b-bot">BEAT LAST MONTH</span></div>');
+      setAffirm('beat'); popEmoji('📈'); confetti(0.5); },
+    miss: function(){ showMiss('You missed a day.', 'The Six always catches up. One post tomorrow puts you right back in it.', 'Back in the gloom tomorrow'); setAffirm('miss','var(--text-muted)'); },
+    broke: function(){ showMiss('Streak reset to 0.', 'The chain broke — not the man. The brotherhood doesn’t reset. Rebuild it at the next AO.', 'Re-attack tomorrow'); streak=0; setAffirm('broke','var(--text-muted)'); }
+  };
+
+  function showMiss(h, p, btn){
+    var m = document.createElement('div'); m.className='miss';
+    m.innerHTML = '<div class="sun"></div><h3>'+h+'</h3><p>'+p+'</p><button>'+btn+'</button>';
+    stage.appendChild(m); void m.offsetWidth; m.classList.add('show');
+    m.querySelector('button').onclick = function(){ m.classList.remove('show'); setTimeout(function(){ m.remove(); }, 500); };
+  }
+
+  document.querySelectorAll('[data-act]').forEach(function(b){
+    b.addEventListener('click', function(){ (acts[b.dataset.act]||function(){})(); });
+  });
+
+  // ---- hand-rolled confetti (no deps) ----
+  var cv = document.getElementById('confetti'), cx = cv.getContext('2d'), parts = [], raf = null;
+  function sizeCanvas(){ cv.width = innerWidth; cv.height = innerHeight; }
+  sizeCanvas(); addEventListener('resize', sizeCanvas);
+  var COLORS = ['#2f5d50','#f7b209','#de521c','#7fc4ac','#eef3f0','#0b5c86'];
+  function confetti(scale){
+    if (document.body.classList.contains('reduce-motion')) return;
+    scale = scale || 1; var n = Math.round(120*scale);
+    for (var i=0;i<n;i++){
+      parts.push({ x: innerWidth/2 + (Math.random()-.5)*140, y: innerHeight*0.42,
+        vx: (Math.random()-.5)*11, vy: -(Math.random()*13+6),
+        g: .28+Math.random()*.12, s: 5+Math.random()*7, rot: Math.random()*6.28,
+        vr: (Math.random()-.5)*.4, col: COLORS[(Math.random()*COLORS.length)|0], life: 90+Math.random()*40 });
+    }
+    if (!raf) raf = requestAnimationFrame(tick);
+  }
+  function tick(){
+    cx.clearRect(0,0,cv.width,cv.height);
+    for (var i=parts.length-1;i>=0;i--){ var p=parts[i];
+      p.vy += p.g; p.x += p.vx; p.y += p.vy; p.rot += p.vr; p.life--;
+      cx.save(); cx.translate(p.x,p.y); cx.rotate(p.rot); cx.fillStyle=p.col;
+      cx.fillRect(-p.s/2,-p.s/2,p.s,p.s*0.6); cx.restore();
+      if (p.life<=0 || p.y>cv.height+30) parts.splice(i,1);
+    }
+    if (parts.length){ raf = requestAnimationFrame(tick); } else { cx.clearRect(0,0,cv.width,cv.height); raf=null; }
+  }
+
+  // ---- theme + motion toggles ----
+  var themeBtn = document.getElementById('themeBtn');
+  themeBtn.onclick = function(){
+    var cur = document.documentElement.getAttribute('data-theme');
+    var next = cur === 'dark' ? 'light' : cur === 'light' ? 'dark' :
+      (matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark');
+    document.documentElement.setAttribute('data-theme', next);
+  };
+  var motionBtn = document.getElementById('motionBtn');
+  motionBtn.onclick = function(){
+    var off = document.body.classList.toggle('reduce-motion');
+    motionBtn.textContent = 'Motion: ' + (off ? 'off' : 'on');
+  };
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches){
+    document.body.classList.add('reduce-motion'); motionBtn.textContent='Motion: off';
+  }
+
+  renderRing();
+})();
+</script>
+</body>
+</html>
