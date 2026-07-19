@@ -502,7 +502,13 @@
   // field (checkinClientConfig_dw_, script/dashboardWebapp.js) — same values, same shapes, so
   // this page's rendering logic below is otherwise identical to CheckinApp.html's.
   var STATIC_PARAMS_ = new URLSearchParams(location.search);
-  var WEBAPP_URL = STATIC_PARAMS_.get('webapp') || '';
+  // Baked per-env GAS webapp /exec URL, stamped at build time by tools/build-static-pages.js
+  // (F3Go30-6bl6) so a bare or bookmarked page URL still has a backend to call. null when this
+  // file is served unbuilt (local/Playwright) — those pass ?webapp= explicitly. A ?webapp= param
+  // still overrides the baked default when present, keeping older bookmarked links (which carry
+  // the now-redundant param) working unchanged.
+  var STATIC_WEBAPP_URL_ = null;
+  var WEBAPP_URL = STATIC_PARAMS_.get('webapp') || STATIC_WEBAPP_URL_ || '';
   var APP_VERSION = null; // filled in by applyServerConfig_ once an identify response lands
   var CMD_ = 'checkin'; // read by IdentityCore's callApi() to post to ?cmd=checkin
   var NS_ = STATIC_PARAMS_.get('ns') || '';
