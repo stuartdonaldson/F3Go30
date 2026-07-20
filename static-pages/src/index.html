@@ -212,6 +212,12 @@
   .api-error-banner { background: var(--error-bg); border-bottom: 3px solid var(--error-border); color: var(--error-fg); padding: 12px 18px; font-size: 17px; line-height: 1.5; }
   .api-error-banner strong { display: block; margin-bottom: 2px; }
   .api-error-detail { margin-top: 6px; font-family: monospace; font-size: 15px; background: var(--input-bg); border: 1px solid var(--error-detail-border); border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* F3Go30-ubwl.3: reuses the shared warn-* theme vars (F3Go30-dtr2) — no banner-specific colors.
+     display lives on the -inner wrapper, not this class itself, so toggling .hidden on the outer
+     element isn't fighting an equal-specificity `display` declared on the same element/class. */
+  .gas-moved-banner { background: var(--warn-bg); border-bottom: 3px solid var(--warn-border); color: var(--warn-fg); padding: 12px 18px; font-size: 15px; line-height: 1.5; }
+  .gas-moved-banner-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .gas-moved-banner button { background: none; border: none; color: var(--warn-fg); text-decoration: underline; cursor: pointer; font-size: 14px; padding: 0; font-family: inherit; flex-shrink: 0; }
   .date-nav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 18px; }
   .date-nav-btn { width: 44px; height: 44px; border-radius: 8px; border: 2px solid var(--brand); background: var(--card-bg); color: var(--brand); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
   .date-nav-btn svg { width: 20px; height: 20px; display: block; }
@@ -304,6 +310,16 @@
     <span>Please try again, or refresh the browser and try again. If the problem persists,
       notify <span id="apiErrorSiteQName">your Site Q</span><a id="apiErrorContactLink" class="hidden" href="#">(email)</a>.</span>
     <div id="apiErrorDetail" class="api-error-detail"></div>
+  </div>
+
+  <!-- F3Go30-ubwl.3: shown on arrival from a GAS redirect (?from=gas — F3Go30-ubwl §Marker
+       param, script/Utilities.js buildStaticRedirectUrl_). Page-level, above .wrap, so it never
+       blocks or delays the check-in grid rendered beneath it. -->
+  <div id="gasMovedBanner" class="gas-moved-banner hidden">
+    <div class="gas-moved-banner-inner">
+      <span>This link has moved — please update your bookmark to the address now shown in your browser's address bar.</span>
+      <button id="gasMovedDismissBtn" type="button">Got it</button>
+    </div>
   </div>
 
   <div class="wrap">
@@ -675,6 +691,9 @@
   var NS_ = STATIC_PARAMS_.get('ns') || '';
   var CONTEXT_DATE_ = STATIC_PARAMS_.get('contextDate') || '';
   var STATIC_TOKEN_ = STATIC_PARAMS_.get('id') || '';
+  // F3Go30-ubwl.3: set by every GAS-side redirect into this page (buildStaticRedirectUrl_,
+  // script/Utilities.js) — never set by a link this page itself produces.
+  var FROM_GAS_ = STATIC_PARAMS_.get('from') === 'gas';
   // A fresh guid for a typed-identify (name+email) submission on this page — mirrors GAS's
   // renderCheckinPage_ formGuid, which binds a CheckinSessions row on first successful match.
   // No server-render step here to bake one in, so it's minted client-side instead.
@@ -918,6 +937,29 @@
   // with the live GAS-reported version once the first identify response's `config.appVersion`
   // lands (applyServerConfig_ below overwrites this with the authoritative value).
   if (STATIC_BUILD_VERSION_) $('versionFooter').textContent = 'v' + STATIC_BUILD_VERSION_ + ' (build)';
+
+  // F3Go30-ubwl.3: "this link moved" advisory for arrivals via a GAS redirect. Independent of
+  // showStep()/the identify bootstrap below — runs once, immediately, regardless of which step
+  // ends up shown, so it never gates or delays the rest of page init.
+  var GAS_MOVED_DISMISSED_KEY_ = 'go30GasMovedDismissed';
+  function isGasMovedDismissed_() {
+    try { return localStorage.getItem(GAS_MOVED_DISMISSED_KEY_) === '1'; } catch (e) { return false; }
+  }
+  $('gasMovedDismissBtn').addEventListener('click', function() {
+    $('gasMovedBanner').classList.add('hidden');
+    try { localStorage.setItem(GAS_MOVED_DISMISSED_KEY_, '1'); } catch (e) { /* not fatal */ }
+  });
+  if (FROM_GAS_ && !isGasMovedDismissed_()) {
+    $('gasMovedBanner').classList.remove('hidden');
+    // Strip the marker once the advisory has rendered — otherwise a PAX who bookmarks straight
+    // from the address bar carries `from=gas` forward and gets nagged forever on a URL that
+    // never moved. replaceState (not pushState/reload) keeps this invisible to the back button.
+    try {
+      var gasMovedUrl_ = new URL(location.href);
+      gasMovedUrl_.searchParams.delete('from');
+      history.replaceState(null, '', gasMovedUrl_);
+    } catch (e) { /* not fatal — worst case the marker just lingers in the address bar */ }
+  }
 
   function showStep(name) {
     ['identify', 'checkin', 'dashboard', 'bonus', 'signup'].forEach(function(s) {
