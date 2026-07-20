@@ -67,6 +67,8 @@ const {
   getCachedResponsesLayoutOnly_,
   getResponsesLayout_,
   resolveCheckinIdentityLean_,
+  handleMonthGrid_,
+  buildMonthNavigationPayload_dw_,
 } = require('../script/dashboardWebapp.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
@@ -1469,5 +1471,205 @@ global.PropertiesService = { getScriptProperties: function() { return { getPrope
 delete global.SpreadsheetApp;
 
 console.log('test_dashboard_webapp.js: resolved-context handle assertions passed');
+
+// ── availableMonths / registeredMonthKeys + monthGrid action (F3Go30-k5fn.1) ──────────────
+
+var TRACKER_DB_HEADERS_TEST_ = [
+  'Date Modified', 'StartDate', 'SpreadsheetName', 'ShortTracker', 'TrackerURL', 'ShortHC', 'HC URL',
+  'SheetId', 'FormId', 'TotalPAX', 'TotalTeams', 'AverageScore',
+  'LastSignupAt', 'TriggersInitializedAt', 'LastMinusOneRunAt', 'LastNagRunAt',
+];
+
+function trackerDbRow_(sheetId, startDate) {
+  var row = new Array(TRACKER_DB_HEADERS_TEST_.length).fill('');
+  row[TRACKER_DB_HEADERS_TEST_.indexOf('SheetId')] = sheetId;
+  row[TRACKER_DB_HEADERS_TEST_.indexOf('StartDate')] = startDate;
+  row[TRACKER_DB_HEADERS_TEST_.indexOf('TrackerURL')] = 'https://x/' + sheetId;
+  return row;
+}
+
+var PAX_DB_HEADERS_TEST_ = [
+  'SheetId', 'Date', 'F3 Name', 'Team', 'WHO', 'WHAT', 'HOW', 'Comments',
+  'Hit', 'Miss', 'NoCheckin', 'Fellowship', 'Q Point', 'Inspire', 'EHing FNG',
+  'Email', 'Team Type', 'Other Team', 'Phone', 'NAG Email',
+];
+
+function paxDbRow_(sheetId, f3Name) {
+  var row = new Array(PAX_DB_HEADERS_TEST_.length).fill('');
+  row[PAX_DB_HEADERS_TEST_.indexOf('SheetId')] = sheetId;
+  row[PAX_DB_HEADERS_TEST_.indexOf('F3 Name')] = f3Name;
+  return row;
+}
+
+function makeFakeDataRangeSheet_(rows) {
+  return { getDataRange: function() { return { getValues: function() { return rows; } }; } };
+}
+
+(function testBuildMonthNavigationPayloadOrdersAvailableMonthsChronologically() {
+  global.formatRegistrationMonth_ = function(d) {
+    return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][d.getMonth()] + ' ' + d.getFullYear();
+  };
+  var fakeSpreadsheet = {
+    getSheetByName: function(name) {
+      if (name === 'TrackerDB') {
+        return makeFakeDataRangeSheet_([
+          TRACKER_DB_HEADERS_TEST_,
+          trackerDbRow_('sheet-aug', new Date(2026, 7, 1)),
+          trackerDbRow_('sheet-jun', new Date(2026, 5, 1)),
+          trackerDbRow_('sheet-jul', new Date(2026, 6, 1)),
+        ]);
+      }
+      if (name === 'PaxDB') {
+        return makeFakeDataRangeSheet_([
+          PAX_DB_HEADERS_TEST_,
+          paxDbRow_('sheet-jun', 'Anchor'),
+          paxDbRow_('sheet-jul', 'Anchor'),
+          paxDbRow_('sheet-aug', 'Someone Else'),
+        ]);
+      }
+      return null;
+    },
+  };
+
+  // AC1: availableMonths covers every TrackerDB month, ascending chronological order.
+  var nav = buildMonthNavigationPayload_dw_(fakeSpreadsheet, 'Anchor');
+  assert.deepEqual(nav.availableMonths.map(function(m) { return m.monthKey; }), ['2026-06', '2026-07', '2026-08']);
+  assert.equal(nav.availableMonths[0].label, 'June 2026');
+  assert.equal(nav.availableMonths[0].startDateIso, '2026-06-01');
+  // AC2: registeredMonthKeys lists only months where this PAX (Anchor) has a PaxDB row.
+  assert.deepEqual(nav.registeredMonthKeys.sort(), ['2026-06', '2026-07']);
+
+  delete global.formatRegistrationMonth_;
+})();
+
+(function testBuildMonthNavigationPayloadReadsPaxDbOnceNotPerMonth() {
+  var paxDbReadCount = 0;
+  global.formatRegistrationMonth_ = function() { return 'x'; };
+  var fakeSpreadsheet = {
+    getSheetByName: function(name) {
+      if (name === 'TrackerDB') {
+        return makeFakeDataRangeSheet_([
+          TRACKER_DB_HEADERS_TEST_,
+          trackerDbRow_('sheet-a', new Date(2026, 0, 1)),
+          trackerDbRow_('sheet-b', new Date(2026, 1, 1)),
+          trackerDbRow_('sheet-c', new Date(2026, 2, 1)),
+        ]);
+      }
+      if (name === 'PaxDB') {
+        paxDbReadCount++;
+        return makeFakeDataRangeSheet_([PAX_DB_HEADERS_TEST_, paxDbRow_('sheet-b', 'Anchor')]);
+      }
+      return null;
+    },
+  };
+
+  // AC3: a single Template-resident PaxDB read backs registeredMonthKeys, not a per-month loop —
+  // three TrackerDB months above must still only cost one PaxDB getSheetByName/getDataRange call.
+  buildMonthNavigationPayload_dw_(fakeSpreadsheet, 'Anchor');
+  assert.equal(paxDbReadCount, 1);
+
+  delete global.formatRegistrationMonth_;
+})();
+
+(function testBuildMonthNavigationPayloadNoNameNeverConsultsPaxDb() {
+  var paxDbCalled = false;
+  global.formatRegistrationMonth_ = function() { return 'x'; };
+  var fakeSpreadsheet = {
+    getSheetByName: function(name) {
+      if (name === 'TrackerDB') return makeFakeDataRangeSheet_([TRACKER_DB_HEADERS_TEST_, trackerDbRow_('sheet-jul', new Date(2026, 6, 1))]);
+      if (name === 'PaxDB') { paxDbCalled = true; return makeFakeDataRangeSheet_([PAX_DB_HEADERS_TEST_]); }
+      return null;
+    },
+  };
+  var nav = buildMonthNavigationPayload_dw_(fakeSpreadsheet, '');
+  assert.deepEqual(nav.registeredMonthKeys, []);
+  assert.equal(paxDbCalled, false, 'no PaxDB read when f3Name is unknown (anti-enumeration)');
+
+  delete global.formatRegistrationMonth_;
+})();
+
+// handleMonthGrid_ — AC4-AC7: accepts {date|monthKey, f3Name, email}, delegates to
+// resolveDashboardMonth_ / resolvePaxRowIndex_ / buildMonthGridEntries_, and returns
+// registered:false (not an error) when the PAX has no row in an existing tracker.
+(function testHandleMonthGridNoTrackerForDateReturnsError() {
+  // No resolveTrackerForContextDate stub installed -> resolveDashboardMonth_'s try/catch swallows
+  // the miss and returns null, exactly like a genuine "no TrackerDB row for this date" (AC5).
+  var res = handleMonthGrid_({}, { monthKey: '2026-11', f3Name: 'Anchor', email: 'anchor@x.com' });
+  assert.equal(res.ok, false);
+  assert.equal(res.error, 'no_tracker_for_date');
+})();
+
+(function testHandleMonthGridRegisteredPaxReturnsMonthGridViaHelpers() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.formatRegistrationMonth_ = function() { return 'September 2026'; };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-sep', trackerUrl: 'https://x/sep', startDate: new Date(2026, 8, 1) };
+  };
+  installFakeSpreadsheetById_({
+    'sheet-sep': {
+      getSheetByName: function(n) {
+        if (n !== 'Tracker') return null;
+        return makeFakeTrackerSheet_(
+          ['', '', '', '', '', '', '', '', '', ''],
+          ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1), new Date(2026, 8, 2)],
+          [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 0]]
+        );
+      },
+    },
+  });
+
+  var res = handleMonthGrid_({}, { monthKey: '2026-09', f3Name: 'Anchor', email: 'anchor@x.com' });
+  assert.equal(res.ok, true);
+  assert.equal(res.registered, true);
+  assert.equal(res.monthKey, '2026-09');
+  assert.equal(res.monthLabel, 'September 2026');
+  assert.equal(res.trackerUrl, 'https://x/sep');
+  assert.deepEqual(res.monthGrid, [
+    { dateIso: '2026-09-01', status: 'done' },
+    { dateIso: '2026-09-02', status: 'missed' },
+  ]);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+(function testHandleMonthGridUnregisteredPaxReturnsOkNotError() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.formatRegistrationMonth_ = function() { return 'October 2026'; };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-oct', trackerUrl: 'https://x/oct', startDate: new Date(2026, 9, 1) };
+  };
+  installFakeSpreadsheetById_({
+    'sheet-oct': {
+      getSheetByName: function(n) {
+        if (n !== 'Tracker') return null;
+        return makeFakeTrackerSheet_(
+          ['', '', '', '', '', '', '', '', ''],
+          ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 9, 1)],
+          [['SomeoneElse', 'Crucible', '', '', '', '', 5, 0.5, 1]]
+        );
+      },
+    },
+  });
+
+  // AC6: a tracker exists for this month, but the requesting PAX has no row in it -> ok:true,
+  // registered:false — never an error response.
+  var res = handleMonthGrid_({}, { monthKey: '2026-10', f3Name: 'Anchor', email: 'anchor@x.com' });
+  assert.equal(res.ok, true);
+  assert.equal(res.registered, false);
+  assert.deepEqual(res.monthGrid, []);
+  assert.equal(res.error, undefined);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+console.log('test_dashboard_webapp.js: month navigation / monthGrid assertions passed');
 
 console.log('test_dashboard_webapp.js: all assertions passed');

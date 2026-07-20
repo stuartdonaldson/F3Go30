@@ -116,6 +116,20 @@ var getAllBonusEntriesCached_dw_ = (dashboardWebappBonusModule_ && dashboardWeba
 var getCachedBonusEntriesOnly_dw_ = (dashboardWebappBonusModule_ && dashboardWebappBonusModule_.getCachedBonusEntriesOnly_)
   || (typeof globalThis !== 'undefined' && globalThis.getCachedBonusEntriesOnly_);
 
+var dashboardWebappGo30ToolsModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./go30tools.js')
+  : null;
+var readTrackerDbRowsBySheetId_dw_ = (dashboardWebappGo30ToolsModule_ && dashboardWebappGo30ToolsModule_._readTrackerDbRowsBySheetId_)
+  || (typeof globalThis !== 'undefined' && globalThis._readTrackerDbRowsBySheetId_);
+var readPaxDbRowsBySheetId_dw_ = (dashboardWebappGo30ToolsModule_ && dashboardWebappGo30ToolsModule_._readPaxDbRowsBySheetId_)
+  || (typeof globalThis !== 'undefined' && globalThis._readPaxDbRowsBySheetId_);
+
+var dashboardWebappAddResponseModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./addResponseOnSubmit.js')
+  : null;
+var formatRegistrationMonth_dw_ = (dashboardWebappAddResponseModule_ && dashboardWebappAddResponseModule_.formatRegistrationMonth_)
+  || (typeof globalThis !== 'undefined' && globalThis.formatRegistrationMonth_);
+
 var dashboardWebappIdentityTokenModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./IdentityToken.js')
   : null;
@@ -558,6 +572,7 @@ function handleCheckinPost_(e) {
     if (payload.action === 'identify') return jsonOutput_(handleCheckinIdentify_(spreadsheet, payload));
     if (payload.action === 'checkin') return jsonOutput_(handleCheckinSubmit_(spreadsheet, payload));
     if (payload.action === 'dashboard') return jsonOutput_(handleCheckinDashboard_(spreadsheet, payload));
+    if (payload.action === 'monthGrid') return jsonOutput_(handleMonthGrid_(spreadsheet, payload));
     if (payload.action === 'bonusList') return jsonOutput_(handleBonusList_(spreadsheet, payload));
     if (payload.action === 'bonusAdd') return jsonOutput_(handleBonusAdd_(spreadsheet, payload));
     if (payload.action === 'bonusEdit') return jsonOutput_(handleBonusEdit_(spreadsheet, payload));
@@ -982,6 +997,48 @@ function resolveDashboardMonth_(targetDate, spreadsheet) {
   } catch (e) {
     return null;
   }
+}
+
+/**
+ * Every TrackerDB month as {monthKey, label, startDateIso} (ascending chronological order), plus
+ * — when f3Name is given — which of those monthKeys this PAX has a PaxDB row for. Backs the
+ * static check-in calendar's month picker (F3Go30-k5fn epic): identify reads this once instead
+ * of the client re-deriving month resolution itself.
+ *
+ * One TrackerDB read (_readTrackerDbRowsBySheetId_) always; one Template-resident PaxDB read
+ * (_readPaxDbRowsBySheetId_) only when f3Name is given, never a per-month read loop (AC3).
+ * Only pass f3Name from branches where it's already a confirmed identity (a full identify match,
+ * or an exact-both-fields PaxDB match) — never unverified client-supplied input, which would turn
+ * this into a name-enumeration oracle the same way findPaxDbMatch_'s exact-match rule already
+ * guards against.
+ * @returns {{availableMonths:Array, registeredMonthKeys:Array<string>}}
+ */
+function buildMonthNavigationPayload_dw_(spreadsheet, f3Name) {
+  var bySheetId = (readTrackerDbRowsBySheetId_dw_ ? readTrackerDbRowsBySheetId_dw_(spreadsheet) : { bySheetId: {} }).bySheetId || {};
+  var monthKeyBySheetId = {};
+  var availableMonths = Object.keys(bySheetId).map(function(sheetId) {
+    var row = bySheetId[sheetId];
+    var startDate = row.startDate instanceof Date ? row.startDate : new Date(row.startDate);
+    var monthKey = _dashboardIsoDate_(startDate).slice(0, 7);
+    monthKeyBySheetId[sheetId] = monthKey;
+    return { monthKey: monthKey, label: formatRegistrationMonth_dw_(startDate), startDateIso: _dashboardIsoDate_(startDate) };
+  }).sort(function(a, b) { return a.startDateIso < b.startDateIso ? -1 : a.startDateIso > b.startDateIso ? 1 : 0; });
+
+  var norm = f3Name ? paxCacheNormalizeName_dw_(f3Name) : '';
+  var registeredMonthKeys = [];
+  if (norm) {
+    var paxRowsBySheetId = (readPaxDbRowsBySheetId_dw_ ? readPaxDbRowsBySheetId_dw_(spreadsheet) : { bySheetId: {} }).bySheetId || {};
+    var registered = {};
+    Object.keys(paxRowsBySheetId).forEach(function(sheetId) {
+      var monthKey = monthKeyBySheetId[sheetId];
+      if (!monthKey) return;
+      var hasRow = paxRowsBySheetId[sheetId].some(function(r) { return paxCacheNormalizeName_dw_(r.f3Name) === norm; });
+      if (hasRow) registered[monthKey] = true;
+    });
+    registeredMonthKeys = Object.keys(registered);
+  }
+
+  return { availableMonths: availableMonths, registeredMonthKeys: registeredMonthKeys };
 }
 
 /**
@@ -1566,7 +1623,14 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
   GasLogger.log('checkinWebapp.identify', { f3Name: f3Name, viaToken: !!payload.token });
   if (tokenInvalid) {
     GasLogger.log('checkinWebapp.identify.result', { matched: false, tokenInvalid: true, durationMs: Date.now() - t0 });
-    return { ok: true, matched: false, tokenInvalid: true, config: checkinClientConfig_dw_(templateSpreadsheet) };
+    // f3Name/email are unverified here (the token itself failed to resolve), so registeredMonthKeys
+    // must stay empty rather than risk a PaxDB lookup on untrusted input (see the PaxDB-fallback
+    // comment below) — availableMonths is PAX-agnostic (every TrackerDB month) so it's safe either way.
+    return {
+      ok: true, matched: false, tokenInvalid: true, config: checkinClientConfig_dw_(templateSpreadsheet),
+      availableMonths: buildMonthNavigationPayload_dw_(templateSpreadsheet).availableMonths,
+      registeredMonthKeys: [],
+    };
   }
   var identity = resolveCheckinIdentity_(templateSpreadsheet, f3Name, email, payload.targetMonth, payload.targetSheetId, payload.contextDate);
   if (!identity.matched) {
@@ -1582,14 +1646,24 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
       GasLogger.log('checkinWebapp.identify.result', {
         matched: false, knownPaxNotRegistered: true, tokenInvalid: !!payload.token, durationMs: Date.now() - t0,
       });
+      var knownPaxNav = buildMonthNavigationPayload_dw_(templateSpreadsheet, paxDbMatch.f3Name);
       return {
         ok: true, matched: false, tokenInvalid: !!payload.token,
         knownPaxNotRegistered: true, f3Name: paxDbMatch.f3Name, email: paxDbMatch.email,
         config: checkinClientConfig_dw_(templateSpreadsheet),
+        availableMonths: knownPaxNav.availableMonths,
+        registeredMonthKeys: knownPaxNav.registeredMonthKeys,
       };
     }
     GasLogger.log('checkinWebapp.identify.result', { matched: false, durationMs: Date.now() - t0 });
-    return { ok: true, matched: false, tokenInvalid: !!payload.token, config: checkinClientConfig_dw_(templateSpreadsheet) };
+    // No PaxDB match either — this f3Name isn't a confirmed identity, so registeredMonthKeys stays
+    // empty rather than running an unverified-name PaxDB lookup (same anti-enumeration boundary
+    // as the branch above).
+    return {
+      ok: true, matched: false, tokenInvalid: !!payload.token, config: checkinClientConfig_dw_(templateSpreadsheet),
+      availableMonths: buildMonthNavigationPayload_dw_(templateSpreadsheet).availableMonths,
+      registeredMonthKeys: [],
+    };
   }
 
   var classified = classifyTrackerColumns_(identity.row2, identity.row3);
@@ -1610,6 +1684,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
   var yesterdayStatus = yesterdayAvailable ? dayValueStatus_(yesterdayTarget.value) : null;
 
   var nextMonth = checkNextMonthRegistration_(identity.months, f3Name);
+  var monthNav = buildMonthNavigationPayload_dw_(templateSpreadsheet, trackerRow[TRACKER_NAME_COL_]);
 
   // Binds sessionGuid to the canonical Tracker name (not whatever variant was typed, so a
   // corrected/re-typed name still round-trips through the saved link consistently) the first
@@ -1651,6 +1726,11 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     monthGrid: buildMonthGridEntries_(classified.dayCols, trackerRow),
     nextMonthLabel: nextMonth ? nextMonth.monthLabel : null,
     nextMonthRegistered: nextMonth ? nextMonth.registered : null,
+    // Month-to-month navigation (F3Go30-k5fn.1): every TrackerDB month, and which of them this
+    // PAX is registered for — the client's calendar month-picker + monthGrid follow-up requests
+    // are seeded from this instead of a second round trip.
+    availableMonths: monthNav.availableMonths,
+    registeredMonthKeys: monthNav.registeredMonthKeys,
     // True exactly when this session has never been resolved before this request (a precise
     // createdAt-vs-lastUsedAt comparison, not a time-window guess — see
     // resolveCheckinToken_dw_) — the "Welcome" vs "Welcome back" heading and the "go bookmark
@@ -2160,6 +2240,85 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   };
 }
 
+/**
+ * cmd=checkin `monthGrid` action (F3Go30-k5fn.1): the whole-month calendar for an arbitrary
+ * month, keyed by either an explicit monthKey ("YYYY-MM") or a date falling within it — the
+ * static calendar's month-to-month navigation arrows use this to fetch a month identify's own
+ * monthGrid didn't already cover, without re-running full identify.
+ *
+ * Delegates month resolution to resolveDashboardMonth_ (TrackerDB scan for whatever month the
+ * target date/monthKey falls in), the PAX's row offset to resolvePaxRowIndex_ (PaxCache.js —
+ * same roster-index cache every other Tracker row lookup in this file uses), and the day-by-day
+ * payload to buildMonthGridEntries_ (F3Go30-th22) — no reimplementation of any of the three.
+ *
+ * A month with no TrackerDB entry is a hard error (no_tracker_for_date); a month that DOES have a
+ * tracker but where this PAX has no row is not — it's a normal, expected state for date-nav into
+ * a month before this PAX signed up (registered:false, empty monthGrid), not an error response.
+ */
+function handleMonthGrid_(templateSpreadsheet, payload) {
+  var t0 = Date.now();
+  var f3Name = payload.f3Name;
+  var targetDate;
+  if (payload.monthKey) {
+    targetDate = parseIsoDateLocal_(payload.monthKey + '-01');
+  } else if (payload.date) {
+    targetDate = parseIsoDateLocal_(payload.date);
+  } else {
+    targetDate = resolveContextDate_(templateSpreadsheet, payload.contextDate);
+  }
+  if (isNaN(targetDate.getTime())) return { ok: false, error: 'invalid_date' };
+
+  var monthInfo = resolveDashboardMonth_(targetDate, templateSpreadsheet);
+  if (!monthInfo) return { ok: false, error: 'no_tracker_for_date' };
+
+  var monthKey = _dashboardIsoDate_(monthInfo.startDate).slice(0, 7);
+  var monthLabel = monthInfo.label;
+
+  var trackerSheet = SpreadsheetApp.openById(monthInfo.sheetId).getSheetByName('Tracker');
+  if (!trackerSheet || trackerSheet.getLastRow() < 4) return { ok: false, error: 'no_tracker_for_date' };
+
+  var layout = getTrackerLayout_(trackerSheet, monthInfo.sheetId);
+  var classified = classifyTrackerColumns_(layout.row2, layout.row3);
+
+  var rowIndex = resolvePaxRowIndex_dw_('tracker', monthInfo.sheetId, f3Name, function() {
+    var lastRow = trackerSheet.getLastRow();
+    return trackerSheet.getRange(4, 1, lastRow - 3, 1).getValues().map(function(r) { return r[0]; });
+  });
+
+  var notRegistered = {
+    ok: true, monthKey: monthKey, monthLabel: monthLabel,
+    monthGrid: [], registered: false, trackerUrl: monthInfo.trackerUrl,
+  };
+  if (rowIndex === -1) {
+    GasLogger.log('checkinWebapp.monthGrid.result', { registered: false, monthKey: monthKey, durationMs: Date.now() - t0 });
+    return notRegistered;
+  }
+
+  var trackerRow = getPaxCacheRow_dw_('tracker', monthInfo.sheetId, f3Name);
+  if (!trackerRow) {
+    trackerRow = trackerSheet.getRange(rowIndex + 4, 1, 1, trackerSheet.getLastColumn()).getValues()[0];
+    setPaxCacheRow_dw_('tracker', monthInfo.sheetId, f3Name, trackerRow);
+  }
+  // Same stale-roster-index guard as every other rowIndex-derived Tracker read in this file
+  // (F3Go30-a2hq) — a mismatch here means the cached index no longer agrees with the sheet, so
+  // treat it exactly like "no row" rather than risk handing back a different PAX's month.
+  if (!trackerRowBelongsToPax_dw_(trackerRow, f3Name)) {
+    purgeStaleTrackerBind_dw_(monthInfo.sheetId, f3Name);
+    GasLogger.log('checkinWebapp.monthGrid.staleBind', { sheetId: monthInfo.sheetId, requested: f3Name });
+    return notRegistered;
+  }
+
+  GasLogger.log('checkinWebapp.monthGrid.result', { registered: true, monthKey: monthKey, durationMs: Date.now() - t0 });
+  return {
+    ok: true,
+    monthKey: monthKey,
+    monthLabel: monthLabel,
+    monthGrid: buildMonthGridEntries_(classified.dayCols, trackerRow),
+    registered: true,
+    trackerUrl: monthInfo.trackerUrl,
+  };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     classifyTrackerColumns_: classifyTrackerColumns_,
@@ -2200,6 +2359,8 @@ if (typeof module !== 'undefined' && module.exports) {
     validateCheckinSubmitDayValue_: validateCheckinSubmitDayValue_,
     handleCheckinSubmit_: handleCheckinSubmit_,
     handleCheckinDashboard_: handleCheckinDashboard_,
+    handleMonthGrid_: handleMonthGrid_,
+    buildMonthNavigationPayload_dw_: buildMonthNavigationPayload_dw_,
     buildResolvedContextHandle_: buildResolvedContextHandle_,
     monthInfoFromHandle_: monthInfoFromHandle_,
     resolveLeanIdentityFromHandle_: resolveLeanIdentityFromHandle_,
