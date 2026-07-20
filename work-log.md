@@ -1903,3 +1903,11 @@ Open: whether the four identity resolvers (lean/full x cold/from-handle) should 
 ### Key Learnings:
 A cache keyed on one property (name) storing a value derived from another (position) fails silently when the second changes without notifying the first — the stored answer stays syntactically valid and confidently wrong. The cheap structural defense is not better invalidation but a self-check at the point of use: the row must bear the name it was looked up by. The data is already in hand, so the check is near-free, and it converts a silent wrong answer into a logged, self-repairing one.
 Axiom queries via tools/query_axiom.py that use --where with a `data.` field prefix fail with a 400 (invalid field) — the flattened event shape does not expose `data` as a queryable root. Piping such a query into `grep -c` swallows the error and returns 0, which reads exactly like a clean negative result. This nearly produced a false "no PROD events" finding in this session; filter with grep over the default output instead.
+
+## 2026-07-20 01:40:00
+_session 098f803e · v3 · 07-20_
+
+### Objective 1: Verify F3Go30-xxy4 (activity_log: distinguish new signup from returning-PAX form lookup)
+Rationale: Bead was already claimed and in_progress from a prior session; investigation found all 5 acceptance criteria already implemented and committed on this branch (commit 8e5a0e3, "Distinguish new signup from returning-PAX lookup in activity log (F3Go30-xxy4)") — `tools/activity_log.py` renders `[SIGNUP NEW]`/`[SIGNUP UPDATE]` from `signupWebapp.save` mode, names the PAX, states prior-month history from `findMostRecentPaxRecordForName_.done.found`, reports `signupWebapp.identify` as `[SIGNUP LOOKUP]` for both matched true/false, and `script/signupWebapp.js` stamps `f3Name`/`mode` on both save log calls. No further code change was needed this session.
+Outcome [internal]: Confirmed all AC met against current code; ran full `npm test` suite — all tests pass.
+
