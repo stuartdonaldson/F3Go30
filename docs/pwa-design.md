@@ -276,9 +276,15 @@ Cost is concentrated in the service worker; benefit is concentrated in the icon.
 
 | Phase | Contents | Risk |
 |---|---|---|
-| **1 — Installable** | Token persistence, static signup (§7), manifest, icons, iOS meta tags | Low. No service worker, so no stale-shell failure mode. Static signup is the largest single piece and the only one that touches a live flow. |
-| **2 — Resilient** | Service worker with version-pinned precache, offline outbox | Real. Introduces a client artifact you cannot reach remotely. |
-| **3 — Re-engagement** | Web push replacing or augmenting nag email | High cost, own ADR. |
+| **1 — Installable** | Token persistence (§5), static signup (§7), manifest, icons, iOS meta, sign-out (§10.1), standalone reporting, signup-link migration | Low. No service worker, so no stale-shell failure mode. Static signup is the largest single piece and the only one that touches a live flow. |
+| **GATE** | One month of adoption data, then an explicit proceed-or-stop decision | — |
+| **2 — Resilient + hardening** | Service worker with version-pinned precache, offline outbox, token rotation (§10.2) | Real. Introduces a client artifact you cannot reach remotely. Rotation is gated on Q6, not on the worker. |
+| **3 — Re-engagement** | Web push replacing or augmenting nag email | High cost, own ADR. Unscoped and unbeaded on purpose. |
+
+Phase membership is carried in the tracker too: children of `F3Go30-833s` are title-prefixed
+`Ph1:` / `Ph2:` / `GATE:` and labelled `phase-1` / `phase-2` / `gate`, so
+`bd list --label phase-1` returns the current working set. `bd show F3Go30-833s` holds the
+same map.
 
 **Gate between 1 and 2:** ship Phase 1, then measure standalone launches in Axiom over one full
 month. If PAX are not installing, Phase 2 is pure cost and the work stops there. This requires a
