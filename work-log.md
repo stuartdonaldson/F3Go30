@@ -1958,3 +1958,10 @@ Open: Test coverage for AC1's client-side navigation model uses a hand-built DOM
 
 ### Key Learnings:
 `vm.createContext` runs extracted browser JS in a separate V8 realm with its own Array/Object constructors — `assert/strict`'s deepEqual then fails on arrays the sandboxed code builds (e.g. `state.monthGrid = []`) even when their contents are identical, because deepStrictEqual also compares prototypes. Using `new Function(...)` instead keeps the same realm as the test file and avoids this entirely.
+
+## 2026-07-20 (unattended session)
+_session f8932217 · v3 · 07-20_
+
+### Objective 1: Record ADR-019 (static origin primary for all front ends, GAS redirect-only)
+Rationale: F3Go30-ys15 resolved (2026-07-20) that unreachable-host availability fallback is not a requirement, retiring the premise behind ADR-018's claim that the GAS signup page serves as an availability fallback. ADR-019 records the narrower decision this leaves in place — static origin primary for every PAX-facing front end, GAS reduced to redirect-only — without editing the Accepted, immutable ADR-018.
+Outcome [developer-facing]: Added `adr/019-static-origin-primary-all-front-ends-gas-redirect-only.md` (Status: Accepted), scoped-superseding ADR-018's availability-fallback claim only, documenting `?static=0` as a developer/legacy escape hatch (not an availability guarantee) and noting the consequence for `F3Go30-wjpu` (loses one of two blocking justifications for removing `SignupApp.html`). Verified against the adr-quality-check skill (all 5 checks pass) and `npm test` (full suite green).
