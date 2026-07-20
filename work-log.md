@@ -1836,3 +1836,11 @@ so a green run there is not evidence the static signup works. Verified instead w
 Playwright harness serving `static-pages/src` against a stubbed cmd=signup/cmd=checkin API: 21
 checks across all four entry paths, each asserting the main frame never leaves the local origin.
 Left in /tmp deliberately — the durable E2E twin is F3Go30-833s.12's scope, which this bead blocks.
+
+## 2026-07-19 21:32:26
+_session 46a3a570 · v3 · 07-19_
+
+### Objective 1: Client-level test coverage for static-pages/src/index.html (F3Go30-giqm)
+Rationale: Four node tests already assert client-side invariants (NS_/CONTEXT_DATE_ declaration order, callApi echo, month-cache write-through) against the GAS HTML sources (CheckinApp.html/SignupApp.html/IdentityCore.html), but none read static-pages/src/index.html — the static check-in page's "faithful port" of the same client logic — so a regression there only surfaces in the live-browser Playwright spec, which doesn't run in npm test. Issue was deliberately sequenced after F3Go30-833s.9 (which restructured the same file) to avoid building the harness twice.
+Outcome [developer-facing]: Added test/test_static_page_client_invariants.js, wired into `npm test`. Asserts NS_/CONTEXT_DATE_ are declared before callApi is defined and are echoed in its body; invalidateMonthCacheFor_/applyOwnDayWrite_/submitCheckin_/submitSelectionCheckin_ write-through-before-callApi and revert-on-failure behavior (mirrors test_checkin_monthcache_invalidation.js); and two documented client-vs-GAS divergences per AC 3 — the static page's callApi takes a per-call `cmd` override (one page drives both check-in and signup dispatchers) where IdentityCore.html's callApi does not, and the static page omits attemptTopRedirect_ entirely (already the top-level document, unlike the GAS sandboxed iframe) while IdentityCore.html still defines and uses it.
+Outcome [internal]: Full `npm test` suite passes (36 test files including the new one).
