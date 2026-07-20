@@ -44,8 +44,19 @@ function include_(filename) {
  * current month's tracker spreadsheet. Replaces the old bare {"status":"ok"} JSON response.
  */
 function renderHomePage_(e) {
-  var spreadsheet = resolveTemplateSpreadsheet_(e);
   var webAppUrl = ScriptApp.getService().getUrl();
+  // The home page arrival redirect (F3Go30-ubwl.2) shares buildStaticCheckinRedirectUrl_ with
+  // cmd=checkin: the static page's default view with no `cmd` param IS check-in, so home carries
+  // an arrival to the exact same static URL a check-in arrival would get, identity params intact.
+  var staticHomeUrl = (typeof buildStaticCheckinRedirectUrl_ === 'function')
+    ? buildStaticCheckinRedirectUrl_(webAppUrl, (e && e.parameter) || {})
+    : '';
+  if (staticHomeUrl) {
+    GasLogger.log('renderHomePage_.staticRedirect', { hasQuery: !!(e && e.queryString) });
+    return renderStaticRedirect_(staticHomeUrl, { bodyLabel: 'Go30', title: 'Go30' });
+  }
+
+  var spreadsheet = resolveTemplateSpreadsheet_(e);
   var months = getCurrentAndNextMonths_(spreadsheet, undefined, e && e.parameter && e.parameter.contextDate);
 
   var template = HtmlService.createTemplateFromFile('HomeApp');
@@ -76,14 +87,18 @@ function renderHomePage_(e) {
  *   server-side, and templated in explicitly, exactly like CheckinApp.html's saved-link token.
  */
 /**
- * The page a legacy `?cmd=signup` arrival actually gets: a client-side hop to the static
- * signup, carrying the original query string (buildStaticSignupRedirectUrl_).
+ * The page a legacy GAS arrival (signup, check-in, or home) actually gets: a client-side hop to
+ * the static front end, carrying the original query string (buildStaticSignupRedirectUrl_ /
+ * buildStaticCheckinRedirectUrl_). Generalized from the signup-only renderStaticSignupRedirect_
+ * (F3Go30-833s.11) so all three arrival routes share exactly one window.top redirect renderer
+ * (F3Go30-ubwl.2) — the `label` param is the only per-route difference (what the "Taking you
+ * to..." copy names).
  *
  * REDIRECT, NOT BANNER (F3Go30-833s.11 AC3). A banner would leave every old link landing on a
- * second, diverging signup implementation that ADR-018 intends to retire — two UIs to keep in
- * step, and PAX split across them by which link they happened to have saved. A redirect makes
- * the old links equivalent to the new ones, which is the whole point. What makes it safe is
- * that it is conditional, not destructive:
+ * second, diverging implementation that ADR-018 intends to retire — two UIs to keep in step, and
+ * PAX split across them by which link they happened to have saved. A redirect makes the old
+ * links equivalent to the new ones, which is the whole point. What makes it safe is that it is
+ * conditional, not destructive:
  *   - it only fires when a static URL can actually be built, so an unconfigured/unreachable
  *     static host renders the GAS page exactly as before;
  *   - `?static=0` opts out explicitly, keeping ADR-018's availability fallback one query
@@ -94,33 +109,38 @@ function renderHomePage_(e) {
  * sandbox iframe, and navigating the iframe alone would leave the PAX on script.google.com
  * with the static page trapped inside it.
  * @param {string} staticUrl
+ * @param {{bodyLabel: string=, title: string=}=} opts bodyLabel is the "Taking you to <bodyLabel>"
+ *   copy (default 'Go30'); title is the page's setTitle (default 'Go30').
  */
-function renderStaticSignupRedirect_(staticUrl) {
+function renderStaticRedirect_(staticUrl, opts) {
+  opts = opts || {};
+  var bodyLabel = opts.bodyLabel || 'Go30';
+  var title = opts.title || 'Go30';
   var escaped = staticUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   var html =
     '<!DOCTYPE html><html><head><meta charset="utf-8">' +
     '<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;text-align:center;' +
     'padding:32px 16px;color:#333}a{color:#0b5cad}</style></head><body>' +
-    '<p>Taking you to Go30 signup&hellip;</p>' +
+    '<p>Taking you to ' + bodyLabel + '&hellip;</p>' +
     '<p><a id="go" href="' + escaped + '" target="_top">Tap here if nothing happens</a></p>' +
     '<script>window.top.location.replace(' + JSON.stringify(staticUrl) + ');<\/script>' +
     '</body></html>';
   return HtmlService.createHtmlOutput(html)
-    .setTitle('Go30 Hard Commit Signup')
+    .setTitle(title)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 function renderSignupPage_(e) {
   // Old, already-distributed ?cmd=signup links (TinyURL short links, PAX bookmarks, Slack and
   // email history) can't be rewritten where they sit, so this page carries their arrivals
-  // across to the static signup instead — see renderStaticSignupRedirect_ for why a redirect
+  // across to the static signup instead — see renderStaticRedirect_ for why a redirect
   // and not a banner, and for the conditions under which it declines to fire.
   var staticSignupUrl = (typeof buildStaticSignupRedirectUrl_ === 'function')
     ? buildStaticSignupRedirectUrl_(ScriptApp.getService().getUrl(), (e && e.parameter) || {})
     : '';
   if (staticSignupUrl) {
     GasLogger.log('renderSignupPage_.staticRedirect', { hasQuery: !!(e && e.queryString) });
-    return renderStaticSignupRedirect_(staticSignupUrl);
+    return renderStaticRedirect_(staticSignupUrl, { bodyLabel: 'Go30 signup', title: 'Go30 Hard Commit Signup' });
   }
 
   var spreadsheet = resolveTemplateSpreadsheet_(e);
@@ -638,7 +658,7 @@ function doPost(e) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderSignupPage_: renderSignupPage_,
-    renderStaticSignupRedirect_: renderStaticSignupRedirect_,
+    renderStaticRedirect_: renderStaticRedirect_,
     renderHomePage_: renderHomePage_,
     handleAdminPost_: handleAdminPost_,
   };

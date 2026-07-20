@@ -94,14 +94,14 @@ const { extractShortUrlAlias_ } = require('../script/urlShortener.js');
   assert.equal(
     url,
     STATIC_BASE + 'sit/?webapp=' + encodeURIComponent(WEBAPP) +
-      '&cmd=signup&id=sess-123&ns=sit-smoke&contextDate=2026-07-01&targetMonth=next&autoStart=1'
+      '&cmd=signup&id=sess-123&ns=sit-smoke&contextDate=2026-07-01&targetMonth=next&autoStart=1&from=gas'
   );
 })();
 
 (function testRedirectUrlHandlesABareLegacyLink() {
   // The commonest already-distributed shape: a TinyURL or bookmark with nothing but cmd=signup.
   var url = buildStaticSignupRedirectUrl_(WEBAPP, { cmd: 'signup' });
-  assert.equal(url, STATIC_BASE + 'sit/?webapp=' + encodeURIComponent(WEBAPP) + '&cmd=signup');
+  assert.equal(url, STATIC_BASE + 'sit/?webapp=' + encodeURIComponent(WEBAPP) + '&cmd=signup&from=gas');
 })();
 
 (function testAutoStartOnlyCarriesWhenExplicitlyOne() {

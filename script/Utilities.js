@@ -457,31 +457,63 @@ function buildStaticSignupUrl_(webAppBaseUrl, opts) {
 }
 
 /**
- * Maps a doGet request's own query parameters onto buildStaticSignupUrl_, so an arrival on the
- * GAS `?cmd=signup` page can be carried across to the static signup with its query string
- * intact (F3Go30-833s.11) — targetMonth/autoStart/id/ns/contextDate all change what the signup
- * flow does, so a redirect that dropped them would be a different request, not the same one.
+ * Shared doGet-params-to-static-url forwarding path (F3Go30-ubwl.2, generalized from the
+ * signup-only buildStaticSignupRedirectUrl_ so signup, check-in, and home all carry an arrival's
+ * query string across to the static front end through one implementation, not three). Maps a
+ * doGet request's own query parameters onto whichever static-url builder the caller passes
+ * (buildStaticSignupUrl_ or buildStaticCheckinUrl_) — targetMonth/autoStart/id/ns/contextDate all
+ * change what the static page does, so a redirect that dropped them would be a different request,
+ * not the same one. buildStaticCheckinUrl_ simply ignores the signup-only targetMonth/autoStart
+ * fields it doesn't read.
  *
  * Returns '' — meaning "render the GAS page, don't redirect" — in exactly two cases:
- *   1. buildStaticSignupUrl_ can't build a URL (static host unconfigured, or no webapp URL);
+ *   1. staticUrlBuilder can't build a URL (static host unconfigured, or no webapp URL);
  *   2. the request opted out with `?static=0`.
- * (2) is what keeps ADR-018's availability fallback reachable: the GAS signup page is never
- * deleted or made unreachable by this redirect, only bypassed by default.
+ * (2) is what keeps ADR-018's availability fallback reachable: the GAS page is never deleted or
+ * made unreachable by this redirect, only bypassed by default.
+ *
+ * Every non-empty result carries `from=gas` (F3Go30-ubwl §Marker param) so the static page can
+ * render the bookmark advisory (F3Go30-ubwl.3).
+ * @param {function(string, Object=): string} staticUrlBuilder buildStaticSignupUrl_ or buildStaticCheckinUrl_
  * @param {string} webAppBaseUrl
  * @param {Object=} parameter A doGet event's `e.parameter` bag.
- * @returns {string} The static signup URL to send the arrival to, or '' to stay on GAS.
+ * @returns {string} The static URL to send the arrival to, or '' to stay on GAS.
  */
-function buildStaticSignupRedirectUrl_(webAppBaseUrl, parameter) {
+function buildStaticRedirectUrl_(staticUrlBuilder, webAppBaseUrl, parameter) {
   parameter = parameter || {};
   if (parameter.static === '0') return '';
-  if (typeof buildStaticSignupUrl_ !== 'function') return '';
-  return buildStaticSignupUrl_(webAppBaseUrl, {
+  if (typeof staticUrlBuilder !== 'function') return '';
+  var url = staticUrlBuilder(webAppBaseUrl, {
     id: parameter.id || undefined,
     ns: parameter.ns || undefined,
     contextDate: parameter.contextDate || undefined,
     targetMonth: parameter.targetMonth || undefined,
     autoStart: parameter.autoStart === '1',
   });
+  if (!url) return '';
+  return url + (url.indexOf('?') === -1 ? '?' : '&') + 'from=gas';
+}
+
+/**
+ * Signup arrival counterpart — see buildStaticRedirectUrl_ for the shared mechanics.
+ * @param {string} webAppBaseUrl
+ * @param {Object=} parameter A doGet event's `e.parameter` bag.
+ */
+function buildStaticSignupRedirectUrl_(webAppBaseUrl, parameter) {
+  if (typeof buildStaticSignupUrl_ !== 'function') return '';
+  return buildStaticRedirectUrl_(buildStaticSignupUrl_, webAppBaseUrl, parameter);
+}
+
+/**
+ * Check-in/home arrival counterpart — see buildStaticRedirectUrl_ for the shared mechanics.
+ * Used by both cmd=checkin (explicit) and the home page (the static page's default view with no
+ * `cmd` is check-in, so home shares this exact builder rather than a third implementation).
+ * @param {string} webAppBaseUrl
+ * @param {Object=} parameter A doGet event's `e.parameter` bag.
+ */
+function buildStaticCheckinRedirectUrl_(webAppBaseUrl, parameter) {
+  if (typeof buildStaticCheckinUrl_ !== 'function') return '';
+  return buildStaticRedirectUrl_(buildStaticCheckinUrl_, webAppBaseUrl, parameter);
 }
 
 function getLockedRowA1Notation(sheet, row, column) {
@@ -515,7 +547,9 @@ if (typeof module !== 'undefined' && module.exports) {
     resolveStaticCheckinBaseUrl_: resolveStaticCheckinBaseUrl_,
     buildStaticCheckinUrl_: buildStaticCheckinUrl_,
     buildStaticSignupUrl_: buildStaticSignupUrl_,
+    buildStaticRedirectUrl_: buildStaticRedirectUrl_,
     buildStaticSignupRedirectUrl_: buildStaticSignupRedirectUrl_,
+    buildStaticCheckinRedirectUrl_: buildStaticCheckinRedirectUrl_,
     buildSlackMessage_: buildSlackMessage_,
     buildSignupSlackMessage_: buildSignupSlackMessage_
   };

@@ -1976,3 +1976,13 @@ Outcome [internal]: Discovered and fixed a second, pre-existing latent bug while
 
 ### Key Learnings:
 signupDeepLinkUrl_ (CheckinApp.html) and buildCheckinUrl_ (SignupApp.html) both prefer their static counterpart unconditionally once STATIC_PAGES_BASE_URL_ resolves, with no per-request `static=0`-style opt-out of their own — only the bare `?cmd=signup` GAS entry point has that opt-out (buildStaticSignupRedirectUrl_, Utilities.js). Any future spec driving those two in-app hops needs to expect a cross-origin landing on SIT, not a GAS-relative one.
+
+## 2026-07-20 14:29:32
+_session d284be6b · v3 · 07-20_
+
+### Objective 1: Extend GAS-to-static redirect to cmd=checkin and the home page (F3Go30-ubwl.2)
+Rationale: The signup arrival redirect (F3Go30-833s.11) already carried old links to the static front end; the bead's explicit "reuse mandate" required generalizing that mechanism for check-in and home rather than copying it, so the tree ends up with exactly one window.top redirect renderer and one doGet-params-to-static-url forwarding implementation, per AC1/AC2.
+Outcome [developer-facing]: Generalized `renderStaticSignupRedirect_` into `renderStaticRedirect_(staticUrl, {bodyLabel, title})` (script/WebApp.js) and factored `buildStaticSignupRedirectUrl_` into a shared `buildStaticRedirectUrl_(staticUrlBuilder, webAppBaseUrl, parameter)` (script/Utilities.js), with `buildStaticCheckinRedirectUrl_` as the check-in/home counterpart. Both `renderCheckinPage_` (script/dashboardWebapp.js) and `renderHomePage_` (script/WebApp.js) now redirect through these shared functions; home reuses the check-in builder since the static page's default (no-`cmd`) view is check-in.
+Outcome [user-facing]: `?cmd=checkin` and the home route now hop PAX arriving on old GAS links to the static front end, carrying webapp/id/ns/contextDate; every redirect route appends `from=gas` (for the bookmark advisory, F3Go30-ubwl.3); `?static=0` still serves the GAS page on every route (inferred as unchanged fallback contract per ADR-018, verified via existing tests).
+Outcome [developer-facing]: Updated test/test_signup_link_migration.js's literal expected-URL assertions to include the new `from=gas` suffix; full `npm test` suite passes (36 test files).
+Open: AC8 (test coverage for the check-in identity path) is explicitly deferred to F3Go30-ubwl.4, which is blocked on this issue — no new Playwright coverage was added here since ubwl.4 owns it.

@@ -504,6 +504,17 @@ function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spre
  * over a second /exec round trip.
  */
 function renderCheckinPage_(e) {
+  // Legacy ?cmd=checkin arrivals (saved links, bookmarks, PWA shortcuts) carry across to the
+  // static check-in front end instead — same shared mechanics as renderSignupPage_'s redirect
+  // (buildStaticRedirectUrl_, Utilities.js; renderStaticRedirect_, WebApp.js), F3Go30-ubwl.2.
+  var staticCheckinUrl = (typeof buildStaticCheckinRedirectUrl_ === 'function')
+    ? buildStaticCheckinRedirectUrl_(ScriptApp.getService().getUrl(), (e && e.parameter) || {})
+    : '';
+  if (staticCheckinUrl) {
+    GasLogger.log('renderCheckinPage_.staticRedirect', { hasQuery: !!(e && e.queryString) });
+    return renderStaticRedirect_(staticCheckinUrl, { bodyLabel: 'Go30 check-in', title: 'Go30 Check-In' });
+  }
+
   var savedToken = (e && e.parameter && e.parameter.id) || null;
   // A fresh visit (no incoming id) still needs a guid to bake into the identify form's action
   // URL — see CheckinSessions.js's file header. Reusing an incoming-but-unresolvable id here
