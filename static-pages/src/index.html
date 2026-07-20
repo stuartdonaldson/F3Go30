@@ -588,6 +588,36 @@
 
   function clearCheckinSnapshot_() {
     try { localStorage.removeItem(CHECKIN_SNAPSHOT_KEY_); } catch (e) { /* not fatal */ }
+    clearTokenFromStorage_();
+  }
+
+  // F3Go30-833s.1: the check-in token itself, persisted so an installed home-screen launch
+  // (start_url = "./", no ?id — see docs/pwa-design.md §5) can resolve identity without a typed
+  // re-identify every cold start. SIT and PROD are different *paths* on the same GitHub Pages
+  // origin (docs/pwa-design.md §5.1), and localStorage is keyed by origin not path, so the key
+  // is namespaced by a hash of this build's baked WEBAPP_URL — SIT and PROD installs then land
+  // on different keys and can never read each other's token.
+  var TOKEN_STORAGE_KEY_ = 'go30CheckinToken:v1:' + hashString_(WEBAPP_URL);
+
+  function hashString_(str) {
+    var hash = 0;
+    for (var i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+    }
+    return (hash >>> 0).toString(36);
+  }
+
+  function saveTokenToStorage_(token) {
+    if (!token) return;
+    try { localStorage.setItem(TOKEN_STORAGE_KEY_, token); } catch (e) { /* not fatal */ }
+  }
+
+  function loadTokenFromStorage_() {
+    try { return localStorage.getItem(TOKEN_STORAGE_KEY_) || null; } catch (e) { return null; }
+  }
+
+  function clearTokenFromStorage_() {
+    try { localStorage.removeItem(TOKEN_STORAGE_KEY_); } catch (e) { /* not fatal */ }
   }
 
   // F3Go30-5nfj.5: reference-counted, not a boolean — more than one request can be in flight at
@@ -654,7 +684,10 @@
   });
 </script>
 <script>
-  var SAVED_IDENTITY_TOKEN = STATIC_TOKEN_ || null;
+  // F3Go30-833s.1: ?id in the URL always wins when present; otherwise fall back to a token
+  // persisted from a prior identify (see TOKEN_STORAGE_KEY_ above) so a token-less cold launch
+  // from an installed home-screen icon can still resolve identity.
+  var SAVED_IDENTITY_TOKEN = STATIC_TOKEN_ || loadTokenFromStorage_();
   // No server-render step exists for this static page, so neither of these is ever
   // pre-resolved the way GAS's renderCheckinPage_/renderCheckinPageForTypedIdentify_ do —
   // both async paths below (SAVED_IDENTITY_TOKEN's callApi('identify') and identifyForm's
@@ -785,6 +818,7 @@
     (NS_ ? '&ns=' + encodeURIComponent(NS_) : '') + (CONTEXT_DATE_ ? '&contextDate=' + encodeURIComponent(CONTEXT_DATE_) : '');
   $('notYouLink').addEventListener('click', function() {
     try { localStorage.removeItem(IDENTITY_STORAGE_KEY); } catch (e) { /* not fatal */ }
+    clearCheckinSnapshot_();
   });
 
   $('bookmarkHereDismiss').addEventListener('click', function() {
@@ -833,6 +867,7 @@
     }
     $('idSignupBtn').classList.add('hidden');
     saveIdentityToStorage_(res.f3Name, res.email);
+    saveTokenToStorage_(res.identityToken);
     if (!opts.preserveView) {
       state.monthCache = {};
       state.viewDate = null;

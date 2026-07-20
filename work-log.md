@@ -1780,3 +1780,12 @@ Outcome [developer-facing]: Issues F3Go30-833s.9 (static signup UI), .10 (emails
 ### Key Learnings:
 Mermaid could not be rendered locally (no CLI in repo or on the box), so all four diagrams are unverified until GitHub renders them.
 An installed PWA is exempt from Safari's 7-day ITP storage eviction — that eviction is currently acting as an accidental security control on abandoned browsers, so installing lengthens credential lifetime rather than shortening it.
+
+## 2026-07-19 12:00:00
+_session d6e972f4 · v3 · 07-19_
+
+### Objective 1: Persist the check-in token to localStorage with ?id fallback (F3Go30-833s.1)
+Rationale: Per docs/pwa-design.md sections 5/5.1, an installed PWA icon launches start_url = "./" with no ?id token, so without a persisted token an installed app forces a typed re-identify on every cold start -- worse than the bookmark it replaces. This was the blocking prerequisite issue for the PWA epic (F3Go30-833s), gating manifest/icon work (F3Go30-833s.2) and sign-out (F3Go30-833s.7).
+Outcome [user-facing]: static-pages/src/index.html now persists identityToken to localStorage on every successful identify (applyIdentifySuccess_), namespaced per deployment via a hash of the baked WEBAPP_URL (TOKEN_STORAGE_KEY_) so SIT and PROD installs -- same origin, different paths -- cannot read each other's token. On boot, ?id in the URL still wins when present; otherwise the persisted token is used to reach the existing snapshot fast-paint path. clearCheckinSnapshot_ (already called on a server-rejected/stale token) now also clears the stored token, falling back cleanly to the typed identify form. The "Not you?" link (sign-out) clears the token too.
+Outcome [developer-facing]: Added hashString_/saveTokenToStorage_/loadTokenFromStorage_/clearTokenFromStorage_ helpers alongside the existing IdentityCore snapshot helpers in index.html.
+Open: The playwright spec tests/playwright/static-checkin.spec.js was not run to completion in this session (timed out locally, likely a browser-launch/env issue unrelated to this change) -- npm test (the required gate) passes; live-browser verification of the new token persistence path is still worth doing before this is treated as fully verified.
