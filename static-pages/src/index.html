@@ -490,16 +490,27 @@
       </div>
 
       <div id="advancedGrid" class="hidden">
-        <div class="checkin-section-label">STATUS FOR</div>
-        <div class="checkin-selected-date" id="checkinSelectedDate"></div>
-        <div class="checkin-status" id="checkinStatusNote"></div>
-        <div class="checkin-row">
-          <button class="checkin-btn yes" id="selYesBtn">&#10003; Hit it</button>
-          <button class="checkin-btn no" id="selNoBtn">&#10007; Missed it</button>
-          <button class="checkin-btn none" id="selNoneBtn">No check-in</button>
-          <button class="checkin-btn fail" id="selFailBtn">&#10008; Failed</button>
+        <div class="date-nav" id="calMonthNav">
+          <button id="calPrevMonthBtn" class="date-nav-btn" title="Previous month"><svg viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <div class="date-nav-label" id="calMonthNavLabel">&nbsp;</div>
+          <button id="calNextMonthBtn" class="date-nav-btn" title="Next month"><svg viewBox="0 0 24 24" fill="none"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
-        <div class="cal-grid" id="calGrid"></div>
+        <div id="calEditableArea">
+          <div class="checkin-section-label">STATUS FOR</div>
+          <div class="checkin-selected-date" id="checkinSelectedDate"></div>
+          <div class="checkin-status" id="checkinStatusNote"></div>
+          <div class="checkin-row">
+            <button class="checkin-btn yes" id="selYesBtn">&#10003; Hit it</button>
+            <button class="checkin-btn no" id="selNoBtn">&#10007; Missed it</button>
+            <button class="checkin-btn none" id="selNoneBtn">No check-in</button>
+            <button class="checkin-btn fail" id="selFailBtn">&#10008; Failed</button>
+          </div>
+          <div class="cal-grid" id="calGrid"></div>
+        </div>
+        <div id="calSignupPrompt" class="warning-text hidden">
+          <span id="calSignupPromptText"></span>
+          <button class="secondary" id="calSignupPromptBtn" style="margin-top:8px;padding:8px;">Sign up for this month &rarr;</button>
+        </div>
       </div>
 
       <div id="nextMonthNote" class="warning-text hidden">
@@ -885,6 +896,15 @@
     advancedOpen: false,
     selectedDateIso: null,
     lastEditedDayIso: null,
+    // Month-to-month navigation (F3Go30-k5fn.2): every TrackerDB month + which of them this PAX
+    // is registered for (seeded from identify's availableMonths/registeredMonthKeys,
+    // F3Go30-k5fn.1), which monthKey the advanced calendar is currently showing, and a
+    // monthKey -> monthGrid-response cache so paging back to an already-visited month is free.
+    availableMonths: [],
+    registeredMonthKeys: [],
+    calMonthKey: null,
+    calGridCache: {},
+    calLoading: false,
     // F3Go30-833s.9: true once an identify has actually painted the check-in step this
     // pageview. The signup step reads it to decide whether there is a check-in to offer a way
     // back to — notably false on the month-boundary path, where identity resolves but the
@@ -1048,6 +1068,17 @@
     var yesterdayD = new Date(todayD);
     yesterdayD.setDate(yesterdayD.getDate() - 1);
     state.yesterdayIso = isoDate_(yesterdayD);
+    // Month-to-month navigation (F3Go30-k5fn.2): always take the freshest available/registered
+    // lists from the server, but only reset which month the calendar is parked on (and its cache)
+    // on a genuine fresh identify — not on a preserveView reconciliation, which must not yank a
+    // PAX back to their anchored month if they had already paged elsewhere.
+    state.availableMonths = res.availableMonths || [];
+    state.registeredMonthKeys = res.registeredMonthKeys || [];
+    if (!opts.preserveView || !state.calMonthKey) {
+      state.calMonthKey = (state.monthGrid[0] && state.monthGrid[0].dateIso.slice(0, 7)) || monthKeyOf_(todayD);
+      state.calGridCache = {};
+      state.calGridCache[state.calMonthKey] = { monthKey: state.calMonthKey, monthGrid: state.monthGrid, registered: true };
+    }
     if (!opts.preserveView) {
       state.selectedDateIso = null;
       state.lastEditedDayIso = null;
@@ -1060,6 +1091,7 @@
       // landed — re-render it in place with the reconciled data instead of closing it.
       renderCalendar_();
       if (state.selectedDateIso) renderSelectionPanel_(state.selectedDateIso);
+      renderCalMonthNav_();
     }
     $('emailMismatchNote').textContent = "Note: this email doesn't match what we have on file for " + res.f3Name + ', but we found your check-in.';
     $('emailMismatchNote').classList.toggle('hidden', !res.emailMismatch);
@@ -1396,6 +1428,118 @@
     grid.appendChild(frag);
   }
 
+  // ── Step: checkin — Month-to-month navigation (F3Go30-k5fn.2) ──────────
+  function calMonthIndex_(monthKey) {
+    var months = state.availableMonths || [];
+    for (var i = 0; i < months.length; i++) {
+      if (months[i].monthKey === monthKey) return i;
+    }
+    return -1;
+  }
+
+  function calMonthLabel_(monthKey) {
+    var months = state.availableMonths || [];
+    for (var i = 0; i < months.length; i++) {
+      if (months[i].monthKey === monthKey) return months[i].label;
+    }
+    return monthKey;
+  }
+
+  /** AC2/AC3: BACKWARD stops at the PAX's earliest registered month (arrows only ever step among
+   * months the PAX is registered in when going back); FORWARD reaches the latest EXISTING
+   * tracker month, registered or not — an unregistered forward month renders the signup gate
+   * rather than being unreachable. */
+  function renderCalMonthNav_() {
+    var months = state.availableMonths || [];
+    var idx = calMonthIndex_(state.calMonthKey);
+    $('calMonthNavLabel').textContent = state.calLoading ? 'Loading…' : calMonthLabel_(state.calMonthKey);
+    var earliestRegisteredIdx = -1;
+    for (var i = 0; i < months.length; i++) {
+      if ((state.registeredMonthKeys || []).indexOf(months[i].monthKey) !== -1) { earliestRegisteredIdx = i; break; }
+    }
+    var canGoBack = idx > 0 && earliestRegisteredIdx !== -1 && idx > earliestRegisteredIdx;
+    var canGoForward = idx > -1 && idx < months.length - 1;
+    $('calPrevMonthBtn').disabled = state.calLoading || !canGoBack;
+    $('calNextMonthBtn').disabled = state.calLoading || !canGoForward;
+  }
+
+  function applyCalGridPayload_(res) {
+    state.monthGrid = res.monthGrid || [];
+    $('calSignupPrompt').classList.add('hidden');
+    $('calEditableArea').classList.remove('hidden');
+    renderCalendar_();
+    var entries = state.monthGrid;
+    var pick = entries.some(function(e) { return e.dateIso === state.todayIso; })
+      ? state.todayIso
+      : (entries[0] && entries[0].dateIso) || null;
+    state.selectedDateIso = pick;
+    if (pick) renderSelectionPanel_(pick);
+  }
+
+  function renderCalSignupPrompt_(monthKey) {
+    state.monthGrid = [];
+    state.selectedDateIso = null;
+    $('calEditableArea').classList.add('hidden');
+    $('calGrid').innerHTML = '';
+    $('calSignupPrompt').classList.remove('hidden');
+    $('calSignupPromptText').textContent = "You're not signed up for " + calMonthLabel_(monthKey) + ' yet.';
+  }
+
+  /** Single seam for putting any month (identify's own, or a paged-to one) on screen: consults
+   * state.registeredMonthKeys for the signup-gate decision (AC5), then either serves
+   * state.calGridCache or fetches via the monthGrid action (F3Go30-k5fn.1) — never a second
+   * calendar renderer (AC9): both the registered and just-loaded paths funnel into
+   * applyCalGridPayload_, which calls the same renderCalendar_ the initial month uses. */
+  function loadCalMonth_(monthKey) {
+    state.calMonthKey = monthKey;
+    if ((state.registeredMonthKeys || []).indexOf(monthKey) === -1) {
+      renderCalSignupPrompt_(monthKey);
+      renderCalMonthNav_();
+      return Promise.resolve();
+    }
+    var cached = state.calGridCache[monthKey];
+    if (cached) {
+      applyCalGridPayload_(cached);
+      renderCalMonthNav_();
+      return Promise.resolve();
+    }
+    hideApiError_();
+    state.calLoading = true;
+    renderCalMonthNav_();
+    return callApi('monthGrid', { f3Name: state.f3Name, email: state.email, monthKey: monthKey, resolvedContext: state.resolvedContext })
+      .then(function(res) {
+        state.calGridCache[monthKey] = res;
+        if (res.registered) applyCalGridPayload_(res);
+        else renderCalSignupPrompt_(monthKey);
+      })
+      .catch(function(err) { showApiError_('monthGrid', err); })
+      .finally(function() {
+        state.calLoading = false;
+        renderCalMonthNav_();
+      });
+  }
+
+  function navigateCalMonth_(delta) {
+    if (state.calLoading) return;
+    var months = state.availableMonths || [];
+    var idx = calMonthIndex_(state.calMonthKey);
+    var newIdx = idx + delta;
+    if (newIdx < 0 || newIdx >= months.length) return;
+    loadCalMonth_(months[newIdx].monthKey);
+  }
+
+  $('calPrevMonthBtn').addEventListener('click', function() { navigateCalMonth_(-1); });
+  $('calNextMonthBtn').addEventListener('click', function() { navigateCalMonth_(1); });
+
+  // Set by calSignupPromptBtn's click just below, spent the moment a signup save completes
+  // (performSignupSave_) for exactly that gated month — AC6: the grid becomes editable in place,
+  // without a full page reload, the instant registration succeeds.
+  var calSignupGateMonthKey_ = null;
+  $('calSignupPromptBtn').addEventListener('click', function() {
+    calSignupGateMonthKey_ = state.calMonthKey;
+    openSignup_('next');
+  });
+
   function updateCalCellStatus_(dateIso, status) {
     var cell = $('calGrid').querySelector('.cal-cell[data-date="' + dateIso + '"]');
     if (!cell) return;
@@ -1492,9 +1636,14 @@
     $('advancedGrid').classList.toggle('hidden', !state.advancedOpen);
     this.textContent = state.advancedOpen ? 'Hide month calendar ▴' : 'Show month calendar ▾';
     if (state.advancedOpen) {
-      state.selectedDateIso = state.selectedDateIso || state.lastEditedDayIso || state.todayIso;
-      renderCalendar_();
-      renderSelectionPanel_(state.selectedDateIso);
+      if ((state.registeredMonthKeys || []).indexOf(state.calMonthKey) === -1) {
+        renderCalSignupPrompt_(state.calMonthKey);
+      } else {
+        state.selectedDateIso = state.selectedDateIso || state.lastEditedDayIso || state.todayIso;
+        renderCalendar_();
+        renderSelectionPanel_(state.selectedDateIso);
+      }
+      renderCalMonthNav_();
     }
   });
 
@@ -1737,6 +1886,17 @@
       // to go back to — i.e. a next-month signup by someone not registered for this month.
       $('suDoneCheckinBtn').classList.toggle('hidden', !signupState.savedToken && !state.checkinReady);
       showSignupStep_('done');
+      // AC6 (F3Go30-k5fn.2): this save just registered the PAX for the month the calendar's
+      // forward-nav signup gate was showing — mark it registered and drop its stale
+      // registered:false cache entry so the next time this month is viewed it renders the
+      // editable grid, no page reload needed.
+      if (calSignupGateMonthKey_) {
+        var gatedMonthKey = calSignupGateMonthKey_;
+        calSignupGateMonthKey_ = null;
+        if ((state.registeredMonthKeys || []).indexOf(gatedMonthKey) === -1) state.registeredMonthKeys.push(gatedMonthKey);
+        delete state.calGridCache[gatedMonthKey];
+        if (state.calMonthKey === gatedMonthKey) loadCalMonth_(gatedMonthKey);
+      }
     }).catch(function(err) {
       showApiError_('save', err);
     }).finally(function() { setButtonLoading_(triggerBtn, false); });
