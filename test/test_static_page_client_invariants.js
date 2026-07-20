@@ -51,6 +51,28 @@ function readScript_(name) {
   assert.match(fnMatch[0], /CONTEXT_DATE_/, 'callApi body must reference CONTEXT_DATE_ so contextDate round-trips on every POST');
 })();
 
+// ── NS_ / CONTEXT_DATE_ coverage extends to the signup step, not only SignupApp.html ──────────
+//    (F3Go30-833s.12 AC 3). callApi always echoes NS_/CONTEXT_DATE_ regardless of which cmd is
+//    passed (asserted above), so it's enough to confirm the signup step's own call sites route
+//    through callApi at all — unlike SignupApp.html, this page has no second, separate client
+//    plumbing file for the signup step to bypass that echo through.
+
+(function testStaticPageSignupIdentifyRoutesThroughCallApi() {
+  var src = readStaticPage_();
+  var fnMatch = src.match(/function runSignupIdentify_\([\s\S]*?\n  \}/);
+  assert.ok(fnMatch, 'runSignupIdentify_ not found in index.html');
+  assert.match(fnMatch[0], /callApi\('identify', \{ f3Name: f3Name, email: email \}, 'signup'\)/,
+    "runSignupIdentify_ must call callApi(...,'signup') so NS_/CONTEXT_DATE_ echo onto the signup step's identify request");
+})();
+
+(function testStaticPageSignupSaveRoutesThroughCallApi() {
+  var src = readStaticPage_();
+  var fnMatch = src.match(/function performSignupSave_\([\s\S]*?\n  \}/);
+  assert.ok(fnMatch, 'performSignupSave_ not found in index.html');
+  assert.match(fnMatch[0], /\}, 'signup'\)\.then\(/,
+    "performSignupSave_ must call callApi(...,'signup') so NS_/CONTEXT_DATE_ echo onto the signup step's save request");
+})();
+
 // ── Documented divergence: callApi takes a per-call `cmd` override on this page (one page, two ─
 //    server dispatchers — handleCheckinPost_ vs handleSignupPost_), where the GAS callApi always
 //    posts to the page-level CMD_ constant. Asserted rather than assumed (AC 3).
