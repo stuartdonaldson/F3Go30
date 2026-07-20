@@ -16,22 +16,29 @@
  * two specs don't clobber each other's SIT rows. Re-running either test here re-fills the
  * existing row rather than duplicating it, same as demo-screenshots.spec.js.
  *
- * SCOPE (F3Go30-bkxg), after F3Go30-833s.11 made bare `?cmd=signup` redirect to the static
- * signup by default: this spec's job is split into two describes below —
+ * SCOPE, after F3Go30-833s.11 (bare `?cmd=signup` → static signup) and F3Go30-ubwl.2 (bare
+ * `?cmd=checkin` AND the home route → static check-in, all three routes via one shared
+ * redirect mechanism, buildStaticRedirectUrl_/renderStaticRedirect_): this spec's job is split
+ * into two describes below —
  *   1. 'GAS signup fallback (?static=0)' — the two tests that navigate straight to
  *      `?cmd=signup` force the `&static=0` opt-out (buildStaticSignupRedirectUrl_,
  *      Utilities.js) so they keep driving the GAS-hosted SignupApp.html end to end. This is
  *      deliberate availability-fallback coverage (ADR-018), not incidental — the opt-out is
  *      what makes it possible to still test the fallback UI at all now that it's no longer
  *      what a real PAX's bare link lands on by default.
- *   2. 'Check-in flow + GAS→static signup handoff' — everything that stays inside
- *      `?cmd=checkin` (no `static=0` needed; these never touch signup), plus the one test
- *      that follows check-in's own signupDeepLinkUrl_ hop (CheckinApp.html) into the static
- *      signup. That hop has no `static=0` opt-out of its own, so it always lands on the
- *      static origin on SIT — this spec asserts only that the handoff URL and landing are
- *      correct; the resulting signup UI's own behavior is static-signup.spec.js's job (see
- *      its "month-boundary: known-but-unregistered PAX..." test, which drives that same UI
- *      from a direct static-origin entry).
+ *   2. 'Check-in flow + GAS→static signup handoff' — every navigation straight to `?cmd=checkin`
+ *      in this describe ALSO forces `&static=0` (F3Go30-ubwl.2 made that route redirect by
+ *      default too, same as signup) so these tests keep driving the GAS-hosted CheckinApp.html
+ *      end to end — this describe's whole point is the GAS-side identify/token/PaxDB-fallback
+ *      mechanics, which only the GAS fallback UI still exercises now that a bare arrival departs
+ *      immediately. The one exception is the "not you?" reset link (CheckinApp.html's
+ *      notYouLink): its href is built as a bare `?cmd=checkin` with no `static=0` of its own
+ *      (unlike this describe's own page.goto calls), so clicking it now hands off to the static
+ *      front end exactly like check-in's signupDeepLinkUrl_ hop already does for signup — see
+ *      that test's own comment. Also unaffected: the token-round-trip form POST itself
+ *      (renderCheckinPageForTypedIdentify_, dashboardWebapp.js's doPost path) is never subject to
+ *      the doGet-only redirect check, so the POST's own resulting page is always real GAS
+ *      content regardless of `static`.
  *
  * Usage:
  *   npx playwright test tests/playwright/identity-token-flow.spec.js
@@ -273,7 +280,7 @@ test.describe('GAS signup fallback (?static=0) — availability path, SIT', () =
 
 test.describe('Check-in flow + GAS→static signup handoff, SIT', () => {
   test('typed identify lands directly on the check-in screen with the bookmark note — no intermediate redirect step', async ({ page }) => {
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
+    await page.goto(checkinUrl + '&static=0', { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     const app = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
 
@@ -288,7 +295,7 @@ test.describe('Check-in flow + GAS→static signup handoff, SIT', () => {
   });
 
   test('reopening the bookmarked token link signs in directly, with no identify form', async ({ page }) => {
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
+    await page.goto(checkinUrl + '&static=0', { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     const app0 = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
     await expect(app0.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
@@ -296,7 +303,7 @@ test.describe('Check-in flow + GAS→static signup handoff, SIT', () => {
     expect(tokenUrl).toContain('cmd=checkin&id=');
 
     // Simulate a real bookmark reopen: a brand-new navigation straight to the saved URL.
-    await page.goto(tokenUrl, { waitUntil: 'networkidle' });
+    await page.goto(tokenUrl + '&static=0', { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     const app = page.frameLocator('iframe').frameLocator('iframe');
 
@@ -307,19 +314,29 @@ test.describe('Check-in flow + GAS→static signup handoff, SIT', () => {
     await expect(app.locator('#checkinHeading')).toContainText(CURRENT_MONTH_PAX.f3Name);
   });
 
-  test('"Not you?" returns to a blank identify form at the bare URL', async ({ page }) => {
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
+  // F3Go30-ubwl.4: notYouLink's href is a bare `?cmd=checkin` (CheckinApp.html sets it without
+  // `static=0` — see this spec's header comment), so since F3Go30-ubwl.2 the click now hands
+  // off to the static check-in front end instead of reloading the GAS identify form in place.
+  // This test's job is therefore the handoff itself — the static landing opens with no saved
+  // token/identity carried across (fresh identify step), same reasoning as the known-but-
+  // unregistered signup handoff test below.
+  test('"Not you?" hands off into the static check-in front end with no saved identity', async ({ page }) => {
+    await page.goto(checkinUrl + '&static=0', { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     let app = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
     await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
 
-    await app.locator('#notYouLink').click();
-    await page.waitForURL((url) => url.href.includes('cmd=checkin') && !url.href.includes('id='), { timeout: 15000 });
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle' }),
+      app.locator('#notYouLink').click(),
+    ]);
 
-    app = page.frameLocator('iframe').frameLocator('iframe');
-    await expect(app.locator('#step-identify')).toBeVisible({ timeout: 15000 });
-    await expect(app.locator('#idF3Name')).toHaveValue('');
-    await expect(app.locator('#idEmail')).toHaveValue('');
+    const url = new URL(page.url());
+    expect(url.origin).not.toBe('https://script.google.com');
+    expect(url.searchParams.has('id')).toBe(false);
+    await expect(page.locator('#step-identify')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#idF3Name')).toHaveValue('');
+    await expect(page.locator('#idEmail')).toHaveValue('');
   });
 
   // ── Known-but-not-registered-this-month fallthrough (F3Go30-xj1q.1) ──────────────────────
@@ -339,7 +356,7 @@ test.describe('Check-in flow + GAS→static signup handoff, SIT', () => {
   const KNOWN_NOT_REGISTERED_FIXTURE_READY = true;
 
   test('typed identify for a truly-unknown name+email shows the sign-up prompt without auto-redirecting', async ({ page }) => {
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
+    await page.goto(checkinUrl + '&static=0', { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     const app = await submitCheckinIdentify(page, 'TrulyUnknownPax', 'trulyunknownpax@example.com');
 
@@ -375,7 +392,7 @@ test.describe('Check-in flow + GAS→static signup handoff, SIT', () => {
   // which drives that same static UI from a direct static-origin entry instead.
   test('typed identify for a known-but-unregistered PAX hands off into the static signup', async ({ page }) => {
     test.skip(!KNOWN_NOT_REGISTERED_FIXTURE_READY, 'known-but-unregistered SIT fixture not yet established — see Stage 4');
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
+    await page.goto(checkinUrl + '&static=0', { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     const app = page.frameLocator('iframe').frameLocator('iframe');
     await app.locator('#idF3Name').fill(LATE_SIGNUP_PAX.f3Name);

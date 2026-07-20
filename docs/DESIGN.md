@@ -393,6 +393,37 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
   light/dark where the GAS page is hardcoded light). Retiring the GAS signup page is a separate
   decision, deferred until the static path has a month of real use.
 
+- **GAS reduced to redirect-only, all three routes (F3Go30-ubwl) — DECIDED:** ADR-019 (superseding
+  ADR-018's availability-fallback claim only, per `F3Go30-ys15`'s "unreachable-host fallback is
+  not a requirement" finding) makes the static origin primary for **every** PAX-facing front
+  end — not just signup. A plain `doGet` arrival at `?cmd=signup`, `?cmd=checkin`, or the bare
+  home route (no `cmd`) now redirects to the equivalent static URL by default; `?static=0` is the
+  one opt-out, rendering the GAS page as before (developer/legacy escape hatch, not a PAX-facing
+  availability guarantee — see docs/OPERATIONS.md's `?static=0` section).
+
+  One shared mechanism serves all three routes rather than three (`buildStaticRedirectUrl_`,
+  `script/Utilities.js`, generalized from signup's original `buildStaticSignupRedirectUrl_`):
+  given a doGet's own `e.parameter` bag and whichever static-URL builder applies
+  (`buildStaticSignupUrl_` or `buildStaticCheckinUrl_`), it forwards `id`/`ns`/`contextDate`/
+  `targetMonth`/`autoStart` onto the static URL, appends `from=gas` (below), and returns `''` —
+  meaning "render the GAS page" — when either the static host can't be resolved or `static=0` was
+  requested. `renderSignupPage_`/`renderCheckinPage_`/`renderHomePage_` (`WebApp.js` /
+  `dashboardWebapp.js`) each call this once and, on a non-empty result, hand off to one shared
+  renderer, `renderStaticRedirect_` (`WebApp.js`, generalized from the original
+  `renderStaticSignupRedirect_`) — the same `window.top.location.replace(...)` + tappable-fallback-
+  link page signup already used, parameterized only by the "Taking you to &lt;label&gt;…" copy.
+  Home reuses the check-in builder/URL rather than a third implementation: the static page's
+  default (no-`cmd`) view already *is* check-in.
+
+  **Bookmark advisory (F3Go30-ubwl.3):** every redirect appends `from=gas` to the destination URL
+  so the static page (`static-pages/src/index.html`) can tell a PAX their old GAS link moved — a
+  dismissible banner (`#gasMovedBanner`), shown only when `from=gas` is present and not previously
+  dismissed (`localStorage['go30GasMovedDismissed']`). The marker is stripped from the address bar
+  via `history.replaceState` immediately after the banner renders, so a PAX who bookmarks straight
+  from the address bar doesn't carry `from=gas` forward and get nagged on a URL that never moved.
+  The advisory necessarily lives on the static page, not the GAS interstitial — a PAX cannot
+  bookmark a page they're not on.
+
 ---
 
 ## Data Model

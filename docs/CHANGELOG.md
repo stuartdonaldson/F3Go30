@@ -48,6 +48,10 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   done — previously that bounced you out to another site (and, on a phone with the page saved to
   your home screen, out of the app entirely and into your browser). The old sign-up page still
   works for anyone using a link to it.
+- An old bookmarked or saved check-in link (and the plain Go30 home link) now takes you straight
+  to the new plain-web-page check-in instead of the old Google-hosted one, the same way sign-up
+  links already did. The first time you land there from an old link, a banner reminds you the
+  link has moved and to update your bookmark — dismiss it once and it won't show again.
 
 ---
 

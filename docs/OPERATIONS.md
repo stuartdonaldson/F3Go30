@@ -433,6 +433,23 @@ curl -s -L "https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec?cmd=signup" 
   -H "Content-Type: text/plain"
 ```
 
+### `?static=0` — GAS-side redirect opt-out (F3Go30-ubwl)
+
+Since ADR-019, a plain GET at the GAS origin — `?cmd=signup`, `?cmd=checkin`, or the bare home
+route (no `cmd`) — redirects by default to the equivalent static-page URL
+(`buildStaticRedirectUrl_`/`renderStaticRedirect_`, one shared implementation behind all three
+routes, script/Utilities.js + script/WebApp.js). `?static=0` on the request suppresses that
+redirect and renders the GAS-hosted page directly instead — useful when developing/debugging the
+GAS page itself, or when driving a Playwright spec against the GAS-hosted UI on purpose (see
+`tests/playwright/identity-token-flow.spec.js`'s two describes, one of which forces `static=0` on
+every navigation for exactly this reason).
+
+**What `?static=0` does NOT provide:** an unreachable-static-host fallback for a real PAX. Per
+`F3Go30-ys15`'s resolved decision (ADR-019), no PAX-facing guarantee depends on the GAS front end
+being reachable if the static origin (GitHub Pages) is down — `?static=0` is a developer/legacy
+escape hatch, not an availability contract. A PAX whose bookmarked GAS link redirects into an
+unreachable static host has no GAS-side fallback to fall back to.
+
 ### Testing month-boundary fallback (contextDate override, F3Go30-31w5.1)
 
 Every webapp entry point resolves "today" via `resolveContextDate_()` (go30tools.js), which lets

@@ -20,13 +20,18 @@ global.APP_DEPLOY_TARGET = 'TEST';
 const {
   buildStaticSignupUrl_,
   buildStaticSignupRedirectUrl_,
+  buildStaticCheckinUrl_,
+  buildStaticCheckinRedirectUrl_,
+  buildStaticRedirectUrl_,
 } = require('../script/Utilities.js');
 
 // WebApp.js/dashboardWebapp.js reach these as GAS-runtime globals (one flat script scope);
 // under Node they're module exports, so bind them onto global exactly as the runtime would.
 global.buildStaticSignupUrl_ = buildStaticSignupUrl_;
 global.buildStaticSignupRedirectUrl_ = buildStaticSignupRedirectUrl_;
-global.buildStaticCheckinUrl_ = require('../script/Utilities.js').buildStaticCheckinUrl_;
+global.buildStaticCheckinUrl_ = buildStaticCheckinUrl_;
+global.buildStaticCheckinRedirectUrl_ = buildStaticCheckinRedirectUrl_;
+global.buildStaticRedirectUrl_ = buildStaticRedirectUrl_;
 
 function fakeTemplate_() {
   var captured = {};
@@ -74,8 +79,12 @@ global.Utilities = { getUuid: function() { return 'fake-uuid'; } };
 global.GasLogger = { log: function() {}, logError: function() {}, run: function(name, fn) { return fn(); } };
 global.PropertiesService = { getScriptProperties: function() { return { getProperty: function() { return null; } }; } };
 
-const { renderSignupPage_, renderHomePage_ } = require('../script/WebApp.js');
-const { buildCheckinPageOutput_ } = require('../script/dashboardWebapp.js');
+const { renderSignupPage_, renderHomePage_, renderStaticRedirect_ } = require('../script/WebApp.js');
+// dashboardWebapp.js's renderCheckinPage_ calls renderStaticRedirect_ as a bare GAS-runtime
+// global (one flat script scope in production) — bind it before requiring dashboardWebapp.js,
+// mirroring the buildStatic*_ globals above.
+global.renderStaticRedirect_ = renderStaticRedirect_;
+const { buildCheckinPageOutput_, renderCheckinPage_ } = require('../script/dashboardWebapp.js');
 const { extractShortUrlAlias_ } = require('../script/urlShortener.js');
 
 // ── buildStaticSignupRedirectUrl_: a legacy arrival's query string survives the hop ──────────
@@ -116,6 +125,99 @@ const { extractShortUrlAlias_ } = require('../script/urlShortener.js');
 
 (function testNoWebappUrlDeclinesToRedirect() {
   assert.equal(buildStaticSignupRedirectUrl_('', { cmd: 'signup' }), '');
+})();
+
+// ── F3Go30-ubwl.4 AC1: buildStaticCheckinRedirectUrl_ — the check-in/home counterpart of ─────
+//    buildStaticSignupRedirectUrl_ above, exercising the same generalized buildStaticRedirectUrl_
+//    forwarding path (F3Go30-ubwl.2) with buildStaticCheckinUrl_ as its builder instead.
+
+(function testCheckinRedirectUrlPreservesEveryMeaningfulParameter() {
+  var url = buildStaticCheckinRedirectUrl_(WEBAPP, {
+    id: 'sess-123',
+    ns: 'sit-smoke',
+    contextDate: '2026-07-01',
+  });
+  assert.equal(
+    url,
+    STATIC_BASE + 'sit/?webapp=' + encodeURIComponent(WEBAPP) +
+      '&id=sess-123&ns=sit-smoke&contextDate=2026-07-01&from=gas'
+  );
+})();
+
+(function testCheckinRedirectUrlHandlesABareLegacyLink() {
+  var url = buildStaticCheckinRedirectUrl_(WEBAPP, { cmd: 'checkin' });
+  assert.equal(url, STATIC_BASE + 'sit/?webapp=' + encodeURIComponent(WEBAPP) + '&from=gas');
+})();
+
+(function testCheckinRedirectUrlStaticZeroOptsOut() {
+  // Same ADR-018 availability fallback as the signup route: the GAS page stays reachable.
+  assert.equal(buildStaticCheckinRedirectUrl_(WEBAPP, { id: 'sess-123', static: '0' }), '');
+})();
+
+(function testCheckinRedirectUrlNoWebappUrlDeclinesToRedirect() {
+  assert.equal(buildStaticCheckinRedirectUrl_('', { id: 'sess-123' }), '');
+})();
+
+// ── F3Go30-ubwl.4 AC2: exactly one shared redirect renderer and one shared param-forwarding ──
+//    path back all three routes (signup, check-in, home) — guards the ubwl.2 reuse mandate
+//    against a later regression that reintroduces a second, diverging implementation.
+
+(function testAllThreeRedirectBuildersRouteThroughTheSameForwardingPath() {
+  var utilSrc = fs.readFileSync(path.join(__dirname, '..', 'script', 'Utilities.js'), 'utf8');
+  var defs = utilSrc.match(/^function buildStaticRedirectUrl_\(/gm) || [];
+  assert.equal(defs.length, 1, 'exactly one buildStaticRedirectUrl_ definition must exist');
+
+  var signupFn = utilSrc.match(/function buildStaticSignupRedirectUrl_\([\s\S]*?\n\}/)[0];
+  var checkinFn = utilSrc.match(/function buildStaticCheckinRedirectUrl_\([\s\S]*?\n\}/)[0];
+  assert.match(signupFn, /return buildStaticRedirectUrl_\(/, 'signup redirect must delegate to the shared forwarding path');
+  assert.match(checkinFn, /return buildStaticRedirectUrl_\(/, 'check-in redirect must delegate to the shared forwarding path');
+})();
+
+(function testAllThreeRoutesRenderThroughTheSameRedirectRenderer() {
+  var webAppSrc = fs.readFileSync(path.join(__dirname, '..', 'script', 'WebApp.js'), 'utf8');
+  var dashboardSrc = fs.readFileSync(path.join(__dirname, '..', 'script', 'dashboardWebapp.js'), 'utf8');
+
+  var defs = webAppSrc.match(/^function renderStaticRedirect_\(/gm) || [];
+  assert.equal(defs.length, 1, 'exactly one renderStaticRedirect_ definition must exist');
+
+  var signupFn = webAppSrc.match(/function renderSignupPage_\([\s\S]*?\n\}/)[0];
+  var homeFn = webAppSrc.match(/function renderHomePage_\([\s\S]*?\n\}/)[0];
+  var checkinFn = dashboardSrc.match(/function renderCheckinPage_\([\s\S]*?\n\}/)[0];
+  assert.match(signupFn, /return renderStaticRedirect_\(/, 'signup route must render through the shared renderer');
+  assert.match(homeFn, /return renderStaticRedirect_\(/, 'home route must render through the shared renderer');
+  assert.match(checkinFn, /return renderStaticRedirect_\(/, 'check-in route must render through the shared renderer');
+})();
+
+(function testHomeRouteRedirectsToStaticCheckinUrlCarryingIdentityParams() {
+  var output = renderHomePage_({ parameter: { id: 'sess-123', ns: 'sit-smoke', contextDate: '2026-07-01' } });
+  var expected = buildStaticCheckinRedirectUrl_(WEBAPP, { id: 'sess-123', ns: 'sit-smoke', contextDate: '2026-07-01' });
+  assert.ok(output.__html, 'renders the redirect page, not the GAS home template');
+  assert.ok(
+    output.__html.indexOf('window.top.location.replace(' + JSON.stringify(expected) + ')') !== -1,
+    'home route redirect must target the same static URL check-in would, with identity params intact'
+  );
+})();
+
+(function testHomeRouteStaticZeroStillRendersTheGasHomePage() {
+  var output = renderHomePage_({ parameter: { static: '0' } });
+  assert.equal(output.__html, undefined, 'no redirect page');
+  assert.ok(output.__captured && 'signupUrl' in output.__captured, 'the real GAS home template rendered');
+})();
+
+(function testCheckinRouteRedirectsToStaticCheckinUrlCarryingIdentityParams() {
+  var output = renderCheckinPage_({ parameter: { id: 'sess-123', ns: 'sit-smoke', contextDate: '2026-07-01' } });
+  var expected = buildStaticCheckinRedirectUrl_(WEBAPP, { id: 'sess-123', ns: 'sit-smoke', contextDate: '2026-07-01' });
+  assert.ok(output.__html, 'renders the redirect page, not the GAS check-in template');
+  assert.ok(
+    output.__html.indexOf('window.top.location.replace(' + JSON.stringify(expected) + ')') !== -1,
+    'check-in route redirect must carry id/ns/contextDate across to the static front end'
+  );
+})();
+
+(function testCheckinRouteStaticZeroStillRendersTheGasCheckinPage() {
+  var output = renderCheckinPage_({ parameter: { static: '0' } });
+  assert.equal(output.__html, undefined, 'no redirect page');
+  assert.ok(output.__captured && 'urlNsJson' in output.__captured, 'the real GAS check-in template rendered');
 })();
 
 // ── AC5: an old ?cmd=signup arrival reaches the static signup, and is never a dead end ───────
@@ -164,7 +266,10 @@ const { extractShortUrlAlias_ } = require('../script/urlShortener.js');
 // ── AC2: emitters mint static signup links, not bare ?cmd=signup ─────────────────────────────
 
 (function testHomePageSignupLinkIsStatic() {
-  var output = renderHomePage_({ parameter: {} });
+  // static=0 reaches the real GAS home template (F3Go30-ubwl.2 now redirects a bare arrival by
+  // default — see testHomeRouteRedirectsToStaticCheckinUrlCarryingIdentityParams above) — this
+  // test's own job is the emitted signup link's shape, not the redirect.
+  var output = renderHomePage_({ parameter: { static: '0' } });
   assert.equal(output.__captured.signupUrl, buildStaticSignupUrl_(WEBAPP));
   assert.ok(output.__captured.signupUrl.indexOf(STATIC_BASE) === 0, 'points at the static host');
 })();

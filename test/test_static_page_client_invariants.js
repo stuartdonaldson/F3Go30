@@ -292,4 +292,91 @@ function baseNavState_() {
   });
 })();
 
+// ── F3Go30-ubwl.4 AC3: the "this link moved" bookmark advisory (F3Go30-ubwl.3) — extracted and ──
+//    executed the same way the cal-nav block above is (real source, minimal DOM/storage stand-
+//    ins), so these prove the actual init-time behavior rather than just pattern-matching tokens.
+
+function extractGasMovedBlock_() {
+  var src = readStaticPage_();
+  var startMarker = '// F3Go30-ubwl.3: "this link moved" advisory';
+  var endMarker = '\n\n  function showStep(name)';
+  var startIdx = src.indexOf(startMarker);
+  var endIdx = src.indexOf(endMarker);
+  assert.ok(startIdx !== -1 && endIdx !== -1, 'gas-moved-banner block markers not found in index.html — extraction markers may have drifted');
+  return src.slice(startIdx, endIdx);
+}
+
+// Runs the extracted block as a same-realm function (see makeCalNavHarness_'s comment on why
+// `Function`, not `vm`, is used) against a fake `$`/localStorage/history/location — none of
+// which are under test here (AC3 is the banner's show/strip/dismiss behavior itself).
+function makeGasMovedHarness_(fromGas, opts) {
+  opts = opts || {};
+  var elements = {};
+  function fakeEl_(id) {
+    if (!elements[id]) {
+      var classes = {};
+      var listeners = {};
+      elements[id] = {
+        classList: {
+          add: function(c) { classes[c] = true; },
+          remove: function(c) { delete classes[c]; },
+          has: function(c) { return !!classes[c]; },
+        },
+        addEventListener: function(evt, fn) { listeners[evt] = fn; },
+        click: function() { if (listeners.click) listeners.click(); },
+      };
+    }
+    return elements[id];
+  }
+  var storage = Object.assign({}, opts.storage || {});
+  var fakeLocalStorage = {
+    getItem: function(k) { return Object.prototype.hasOwnProperty.call(storage, k) ? storage[k] : null; },
+    setItem: function(k, v) { storage[k] = v; },
+  };
+  var replaceStateCalls = [];
+  var fakeHistory = { replaceState: function(state, title, url) { replaceStateCalls.push(String(url)); } };
+  var fakeLocation = { href: opts.href || 'https://pax.example.github.io/f3go30/sit/?from=gas&id=sess-1' };
+
+  var factory = new Function('FROM_GAS_', '$', 'localStorage', 'history', 'location', 'URL',
+    extractGasMovedBlock_() + '\nreturn { isGasMovedDismissed_: isGasMovedDismissed_ };'
+  );
+  var fns = factory(fromGas, fakeEl_, fakeLocalStorage, fakeHistory, fakeLocation, URL);
+  return { fns: fns, elements: elements, storage: storage, replaceStateCalls: replaceStateCalls };
+}
+
+(function testGasMovedBannerShowsWhenFromGasAndNotDismissed() {
+  var h = makeGasMovedHarness_(true);
+  assert.equal(h.elements.gasMovedBanner.classList.has('hidden'), false, 'banner must be shown on a from=gas arrival');
+})();
+
+(function testGasMovedBannerStaysHiddenWhenFromGasAbsent() {
+  var h = makeGasMovedHarness_(false);
+  assert.equal(h.elements.gasMovedBanner === undefined || h.elements.gasMovedBanner.classList.has('hidden') !== false, true,
+    'banner must not be shown when the arrival did not come from a GAS redirect');
+  assert.equal(h.replaceStateCalls.length, 0, 'no address-bar rewrite when there is nothing to strip');
+})();
+
+(function testGasMovedBannerStaysHiddenWhenPreviouslyDismissed() {
+  var h = makeGasMovedHarness_(true, { storage: { go30GasMovedDismissed: '1' } });
+  assert.equal(h.elements.gasMovedBanner === undefined || h.elements.gasMovedBanner.classList.has('hidden') !== false, true,
+    'a PAX who already dismissed the advisory must not see it again');
+  assert.equal(h.replaceStateCalls.length, 0, 'no address-bar rewrite when the banner never rendered');
+})();
+
+(function testGasMovedMarkerIsStrippedFromTheAddressBarAfterRendering() {
+  var h = makeGasMovedHarness_(true, { href: 'https://pax.example.github.io/f3go30/sit/?from=gas&id=sess-1' });
+  assert.equal(h.replaceStateCalls.length, 1, 'history.replaceState must be called exactly once');
+  var strippedUrl = new URL(h.replaceStateCalls[0]);
+  assert.equal(strippedUrl.searchParams.has('from'), false, 'from=gas must be stripped once the advisory has rendered');
+  assert.equal(strippedUrl.searchParams.get('id'), 'sess-1', 'stripping from must not disturb other query params');
+})();
+
+(function testGasMovedDismissalHidesTheBannerAndPersists() {
+  var h = makeGasMovedHarness_(true);
+  assert.equal(h.elements.gasMovedBanner.classList.has('hidden'), false, 'sanity: banner shown before dismissal');
+  h.elements.gasMovedDismissBtn.click();
+  assert.equal(h.elements.gasMovedBanner.classList.has('hidden'), true, 'dismiss button must hide the banner');
+  assert.equal(h.storage.go30GasMovedDismissed, '1', 'dismissal must persist to localStorage so it is not shown again');
+})();
+
 console.log('test_static_page_client_invariants.js: all assertions passed');
