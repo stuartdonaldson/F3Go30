@@ -439,7 +439,10 @@ function buildStaticCheckinUrl_(webAppBaseUrl, opts) {
  * resolveStaticCheckinBaseUrl_ (signup is a step within that one page, not a second static
  * page), just opened with `cmd=signup` instead of defaulting to check-in. Returns '' under the
  * same conditions buildStaticCheckinUrl_ does (static host or webAppBaseUrl unavailable), so
- * callers can fall back to the GAS ?cmd=signup page — the availability fallback ADR-018 keeps.
+ * callers can fall back to emitting the GAS ?cmd=signup URL. Note that is a build-time fallback
+ * for an unconfigured static host, NOT a PAX-facing availability guarantee — per ADR-019 the GAS
+ * page exists for the legacy-link redirect route, not to keep signup reachable if the static
+ * origin is down.
  * @param {string} webAppBaseUrl
  * @param {{id: string=, ns: string=, contextDate: string=, targetMonth: string=, autoStart: boolean=}=} opts
  */
@@ -469,8 +472,9 @@ function buildStaticSignupUrl_(webAppBaseUrl, opts) {
  * Returns '' — meaning "render the GAS page, don't redirect" — in exactly two cases:
  *   1. staticUrlBuilder can't build a URL (static host unconfigured, or no webapp URL);
  *   2. the request opted out with `?static=0`.
- * (2) is what keeps ADR-018's availability fallback reachable: the GAS page is never deleted or
- * made unreachable by this redirect, only bypassed by default.
+ * (2) keeps the GAS-rendered page reachable for developers and legacy links: it is never deleted
+ * or made unreachable by this redirect, only bypassed by default. Per ADR-019 that is an escape
+ * hatch, not a PAX-facing availability guarantee.
  *
  * Every non-empty result carries `from=gas` (F3Go30-ubwl §Marker param) so the static page can
  * render the bookmark advisory (F3Go30-ubwl.3).

@@ -40,9 +40,11 @@ Two secondary problems ride along:
 
 ## 3. Non-goals
 
-- Making the GAS pages installable. `CheckinApp.html` and `SignupApp.html` both stay as the
-  availability fallback; retiring either is decided in `F3Go30-90l5` (posture: scheduled for
-  removal) and executed in `F3Go30-wjpu`. See §7.
+- Making the GAS pages installable. `CheckinApp.html` and `SignupApp.html` both stay, but since
+  ADR-019 only to serve the legacy-link redirect route and `?static=0`; they are not an
+  availability fallback (`F3Go30-ys15`: unreachable-host fallback is not a requirement).
+  Retiring either is decided in `F3Go30-90l5` (posture: scheduled for removal) and executed in
+  `F3Go30-wjpu`. See §7.
 - Offline **bonus** edits. The cross-month row-relocation path has a known stale-`rowIndex` bug
   class (`F3Go30-4j4o.2`) and is not safe to queue. Offline scope is day-cell check-ins only.
 - Web push in Phase 1 or 2. See §8 phasing and §10.4.
@@ -75,7 +77,7 @@ flowchart TB
 
     subgraph gas["Google Apps Script — /exec"]
         api["doPost cmd=checkin + cmd=signup<br/>JSON API"]
-        gashtml["CheckinApp + SignupApp HTML<br/>availability fallback"]
+        gashtml["CheckinApp + SignupApp HTML<br/>legacy-link redirect route"]
     end
 
     subgraph data["Storage"]
@@ -217,9 +219,10 @@ The one server-injected value with no JSON equivalent is `urlIdentityJson` (`Web
 exists purely to carry identity across the redirect from check-in to signup. In-page, that
 handoff has nothing to carry: the problem is deleted rather than ported.
 
-**The GAS `SignupApp.html` stays as the availability fallback**, exactly as `CheckinApp.html`
-does. Both front ends keep sharing the same JSON handlers, so this adds no divergence — it moves
-the *primary* signup path onto the static origin.
+**The GAS `SignupApp.html` stays**, exactly as `CheckinApp.html` does — but since ADR-019 it
+stays to serve the legacy-link redirect route, not as an availability fallback. Both front ends
+keep sharing the same JSON handlers, so this adds no divergence — it moves the *primary* signup
+path onto the static origin.
 
 It is **not** an install-free path. The static page already is that: an ordinary web page on
 GitHub Pages, where installing only adds a home-screen icon. What the GAS page still provides is

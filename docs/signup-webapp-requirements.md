@@ -4,6 +4,12 @@
 > (`test_signup_webapp.js`); it is now an accepted capability documented in `docs/CONTEXT.md`
 > and `docs/DESIGN.md`. Kept for the original domain/UX rationale behind the design; the actual
 > `doPost` JSON contract is the code in `signupWebapp.js`, not this document.
+>
+> **Origin has since moved (ADR-018, ADR-019).** Where this document says the advertised signup
+> entry point is the GAS webapp's `?cmd=signup` URL, that is no longer true: signup is a step of
+> the static page (`static-pages/src/index.html`), and the GAS route redirects to it. The
+> `doPost` `cmd=signup` JSON contract described here is unchanged — only the front end serving
+> it moved. See `docs/DESIGN.md` and `docs/OPERATIONS.md` §Producing a sign-up or check-in link.
 
 ---
 

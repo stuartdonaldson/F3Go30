@@ -73,7 +73,8 @@ class BG1,BG3 lightgreen
 | Entry Points | `onOpen.js` | Custom menu |
 | Tracker Lifecycle | `CreateNewTracker.js`, `CopyTemplate.js`, `addResponseOnSubmit.js`, `markMinusOne.js`, `nag.js` | Copy-and-init workflow, template-copy mechanics, form-submit handler, nightly miss marking, daily reminder email workflow — all triggers installed once on the Template and dispatching by `TrackerDB` lookup (ADR-010) |
 | Dispatch / TrackerDB | `go30tools.js` | `TrackerDB`/`PaxDB` schema, cross-tracker aggregation, and (per ADR-010) the context-date → target-spreadsheet resolution used by every centrally-dispatched function |
-| Web Apps | `WebApp.js`, `signupWebapp.js`, `SignupApp.html`, `dashboardWebapp.js`, `CheckinApp.html`, `IdentityCore.html`, `HomeApp.html`, `bonusWebapp.js` | `doGet`/`doPost` dispatcher by `cmd` query param (`signup`, `checkin`, `admin`); each `cmd` renders its own `HtmlService` template and handles its own `action`-keyed POST body. `signupWebapp.js`/`SignupApp.html` = HC sign-up; `dashboardWebapp.js`/`CheckinApp.html` = daily check-in + PAX dashboard, reading/writing the current month's Tracker sheet directly (no separate data store); `bonusWebapp.js` = bonus-list/add/edit actions under the same `checkin` cmd; `IdentityCore.html` = client-side identity/HTTP plumbing shared by both `SignupApp.html` and `CheckinApp.html` (see `include_()` below); no `cmd` (or an unrecognized one) renders `HomeApp.html`, a landing page linking to sign-up, check-in/dashboard, and the current month's tracker spreadsheet |
+| Static Front End (PRIMARY) | `static-pages/src/index.html` | The PAX-facing front end since ADR-019: one GitHub Pages document carrying every PAX flow — sign-up, daily check-in, dashboard, bonus entries, and the month calendar — as in-page steps, over the same `cmd=signup`/`cmd=checkin` JSON API the GAS pages post to. Reached directly by its own URL (`buildStaticSignupUrl_`/`buildStaticCheckinUrl_`, `Utilities.js`), which carries the GAS deployment URL in `?webapp=` so the page knows which API to call |
+| Web Apps (JSON API + redirect) | `WebApp.js`, `signupWebapp.js`, `SignupApp.html`, `dashboardWebapp.js`, `CheckinApp.html`, `IdentityCore.html`, `HomeApp.html`, `bonusWebapp.js` | `doGet`/`doPost` dispatcher by `cmd` query param (`signup`, `checkin`, `admin`). **`doPost` is the JSON API for both origins** — `signupWebapp.js` = HC sign-up; `dashboardWebapp.js` = daily check-in + PAX dashboard, reading/writing the current month's Tracker sheet directly (no separate data store); `bonusWebapp.js` = bonus-list/add/edit actions under the same `checkin` cmd. **`doGet` is redirect-only** since ADR-019: `?cmd=signup`, `?cmd=checkin`, and the bare home route answer with a query-preserving redirect to the equivalent static URL. The `HtmlService` pages behind them (`SignupApp.html`, `CheckinApp.html`, `HomeApp.html`, plus the `IdentityCore.html` identity/HTTP partial they share via `include_()`) still render, but only under `?static=0` or when the static host can't be resolved — they are a not-yet-deleted capability, not a live requirement (`F3Go30-90l5`/`F3Go30-wjpu`) |
 | Identity / Check-in | `CheckinSessions.js`, `IdentityToken.js` | Bookmarkable check-in link — `CheckinSessions.js` mints/resolves a server-stored GUID session so a returning PAX can reload the check-in/dashboard page without re-entering F3 Name + Email each visit; `IdentityToken.js`'s signed-token verify path is kept only to honor links minted before the rollout (see the decision below) |
 | Bonus Rules | `BonusTypes.js` | Centralized bonus-type registry (rule definitions: points, link requirement, cap) consumed by `dashboardWebapp.js`/`bonusWebapp.js` chip rendering and validation |
 | Email | `onboardingEmail.js`, `responseSettingsEmail.js`, `signupEmail.js`, `signupReuse.js` + matching `*Template.html` files | Site-Q onboarding email, response-settings confirmation email, sign-up confirmation email, and repeat-signup detection/reuse |
@@ -386,12 +387,18 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
     the static page is already the top-level document, so from there it could only navigate the
     installed app away.
 
-  `SignupApp.html` is unchanged and stays live as the availability fallback, exactly as
-  `CheckinApp.html` does — both front ends keep sharing one set of JSON handlers, so this adds no
-  server-side divergence. Trade-off: the signup UI now exists twice, and the two copies can drift
-  (the static one is re-expressed against this page's CSS custom properties, so it renders in
-  light/dark where the GAS page is hardcoded light). Retiring the GAS signup page is a separate
-  decision, deferred until the static path has a month of real use.
+  `SignupApp.html` is unchanged and stays live, exactly as `CheckinApp.html` does — both front
+  ends keep sharing one set of JSON handlers, so this adds no server-side divergence. Trade-off:
+  the signup UI now exists twice, and the two copies can drift (the static one is re-expressed
+  against this page's CSS custom properties, so it renders in light/dark where the GAS page is
+  hardcoded light). Retiring the GAS signup page is a separate decision (`F3Go30-90l5` decides
+  the posture, `F3Go30-wjpu` executes), deferred until the static path has a month of real use.
+
+  > **Superseded in part (ADR-019, 2026-07-20).** As originally written this paragraph called
+  > `SignupApp.html` the *availability fallback*. `F3Go30-ys15` resolved that unreachable-host
+  > availability fallback is not a requirement, so the GAS pages are no longer kept for that
+  > reason — see the next decision. What survives here is the placement decision (static origin
+  > primary, in-page signup step, unchanged JSON API) and the duplicate-UI trade-off.
 
 - **GAS reduced to redirect-only, all three routes (F3Go30-ubwl) — DECIDED:** ADR-019 (superseding
   ADR-018's availability-fallback claim only, per `F3Go30-ys15`'s "unreachable-host fallback is

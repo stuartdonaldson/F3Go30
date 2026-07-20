@@ -101,8 +101,9 @@ function renderHomePage_(e) {
  * conditional, not destructive:
  *   - it only fires when a static URL can actually be built, so an unconfigured/unreachable
  *     static host renders the GAS page exactly as before;
- *   - `?static=0` opts out explicitly, keeping ADR-018's availability fallback one query
- *     parameter away rather than deleted;
+ *   - `?static=0` opts out explicitly, keeping the GAS-rendered page one query parameter away
+ *     rather than deleted (a developer/legacy escape hatch, not an availability guarantee —
+ *     ADR-019);
  *   - the hop is a visible link as well as a script navigation, so a PAX whose browser blocks
  *     the scripted top-level navigation still gets there by tapping, never a dead end.
  * `window.top` is required rather than `window.location`: HtmlService serves this inside a

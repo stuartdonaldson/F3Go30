@@ -1720,8 +1720,8 @@
   // script/WebApp.js) that page already uses — no server change. What is NOT ported is the
   // identity handoff: SignupApp.html needs urlIdentityJson/localStorage to learn who the PAX
   // is because it is a different document reached by navigation, whereas here signup is a step
-  // of the document that already knows. The GAS page stays live as the availability fallback
-  // (ADR-018), so both front ends keep sharing one set of JSON handlers.
+  // of the document that already knows. The GAS page stays live to serve the legacy-link
+  // redirect route (ADR-019), so both front ends keep sharing one set of JSON handlers.
   //
   // Nothing is baked in at render time the way SignupApp.html's aoListJson/goalListJson/
   // monthsJson are: every one of those values comes back on the identify response (both the

@@ -119,7 +119,7 @@ const { extractShortUrlAlias_ } = require('../script/urlShortener.js');
 })();
 
 (function testStaticZeroOptsOutOfTheRedirect() {
-  // ADR-018's availability fallback: the GAS page stays reachable, one parameter away.
+  // Developer/legacy escape hatch (ADR-019): the GAS page stays reachable, one parameter away.
   assert.equal(buildStaticSignupRedirectUrl_(WEBAPP, { cmd: 'signup', static: '0' }), '');
 })();
 
@@ -150,7 +150,7 @@ const { extractShortUrlAlias_ } = require('../script/urlShortener.js');
 })();
 
 (function testCheckinRedirectUrlStaticZeroOptsOut() {
-  // Same ADR-018 availability fallback as the signup route: the GAS page stays reachable.
+  // Same escape hatch as the signup route (ADR-019): the GAS page stays reachable.
   assert.equal(buildStaticCheckinRedirectUrl_(WEBAPP, { id: 'sess-123', static: '0' }), '');
 })();
 
