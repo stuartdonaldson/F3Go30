@@ -358,6 +358,41 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
   fast/slow pair has different inputs available and different Axiom timing needs (see
   `resolveFullIdentityFromHandle_`'s header comment). See ADR-015 for the full rationale.
 
+- **Signup as a step of the static front end (F3Go30-833s.9) — DECIDED:** `static-pages/src/index.html`
+  now carries the whole signup flow itself, over the same `cmd=signup` JSON API (`handleSignupPost_`,
+  `WebApp.js`) `SignupApp.html` posts to. No server change: `handleSignupIdentify_` already returns
+  `months`/`aoList`/`goalList` on both the matched and unmatched paths, which is everything
+  `SignupApp.html` receives as server-injected template variables. See ADR-018 and
+  docs/pwa-design.md §7 for the rationale.
+
+  It replaces three paths that navigated the **top-level document** cross-origin to
+  `?cmd=signup` — the goals "Edit" link, the "Sign up" buttons, and the auto-redirect on a
+  `knownPaxNotRegistered` identify. On an installed home-screen app those handed the PAX off to
+  Safari mid-flow; the third fired at a month boundary, ejecting a returning PAX before they ever
+  reached the dashboard. In-page there is no navigation and therefore no identity handoff either:
+  `SignupApp.html`'s `urlIdentityJson` (`WebApp.js`) exists solely to carry identity across that
+  redirect, and has no static counterpart because the identity is already in memory.
+
+  Two consequences worth naming:
+  - **`cmd` carries two meanings on the static origin.** `?cmd=signup` on the *page* URL is page
+    routing (open on the signup step, alongside `targetMonth`/`autoStart`) — the static half of the
+    param contract `buildStaticCheckinUrl_` (`Utilities.js`) documents, which is what lets a signup
+    link migrate between origins as a base-URL swap with the query string preserved. `CMD_` is the
+    *API dispatcher* selector. Because one page now drives both dispatchers, `callApi()` takes a
+    per-call `cmd` argument (defaulting to `CMD_`); left a page constant, signup actions would land
+    in the check-in dispatcher and fail as `unknown_action`.
+  - **`attemptTopRedirect_` is deliberately not carried over** into the static page's inlined copy
+    of `IdentityCore.html`. It exists to break a GAS page out of its `HtmlService` sandbox iframe;
+    the static page is already the top-level document, so from there it could only navigate the
+    installed app away.
+
+  `SignupApp.html` is unchanged and stays live as the zero-install fallback, exactly as
+  `CheckinApp.html` does — both front ends keep sharing one set of JSON handlers, so this adds no
+  server-side divergence. Trade-off: the signup UI now exists twice, and the two copies can drift
+  (the static one is re-expressed against this page's CSS custom properties, so it renders in
+  light/dark where the GAS page is hardcoded light). Retiring the GAS signup page is a separate
+  decision, deferred until the static path has a month of real use.
+
 ---
 
 ## Data Model

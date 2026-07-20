@@ -1789,3 +1789,50 @@ Rationale: Per docs/pwa-design.md sections 5/5.1, an installed PWA icon launches
 Outcome [user-facing]: static-pages/src/index.html now persists identityToken to localStorage on every successful identify (applyIdentifySuccess_), namespaced per deployment via a hash of the baked WEBAPP_URL (TOKEN_STORAGE_KEY_) so SIT and PROD installs -- same origin, different paths -- cannot read each other's token. On boot, ?id in the URL still wins when present; otherwise the persisted token is used to reach the existing snapshot fast-paint path. clearCheckinSnapshot_ (already called on a server-rejected/stale token) now also clears the stored token, falling back cleanly to the typed identify form. The "Not you?" link (sign-out) clears the token too.
 Outcome [developer-facing]: Added hashString_/saveTokenToStorage_/loadTokenFromStorage_/clearTokenFromStorage_ helpers alongside the existing IdentityCore snapshot helpers in index.html.
 Open: The playwright spec tests/playwright/static-checkin.spec.js was not run to completion in this session (timed out locally, likely a browser-launch/env issue unrelated to this change) -- npm test (the required gate) passes; live-browser verification of the new token persistence path is still worth doing before this is treated as fully verified.
+
+## 2026-07-19 00:00:00
+_session 64baa272 · v3 · 07-19_
+
+### Objective 1: Ph1 — bring signup into the static page over the cmd=signup JSON API (F3Go30-833s.9)
+Rationale: Three flow-critical paths in `static-pages/src/index.html` navigated the TOP-LEVEL
+document cross-origin to the GAS signup page — the goals "Edit" anchor, the "Sign up" buttons
+(`openSignup_` via `window.top.location.href`), and the auto-redirect on a `knownPaxNotRegistered`
+identify. On an installed iOS home-screen app each hands the PAX off to Safari; the third is the
+worst, firing on identify at a month boundary so a returning PAX is ejected before ever reaching
+the dashboard. Decided in ADR-018 / docs/pwa-design.md §7: signup becomes a **step of the page
+that already knows who the PAX is**, not a second static page — in-page there is no navigation
+and therefore no identity handoff to build. Server work was genuinely zero: `handleSignupPost_`
+already dispatches identify/save/feedback as JSON, and `handleSignupIdentify_` already returns
+`months`/`aoList`/`goalList` on both matched and unmatched paths, which is everything
+`SignupApp.html` gets as server-injected template variables.
+Rejected: porting `SignupApp.html`'s `attemptTopRedirect_` along with the rest of the inlined
+`IdentityCore.html` plumbing. It exists to break a GAS page out of its HtmlService sandbox iframe;
+the static page IS the top-level document, so the only thing it could do there is navigate the
+installed app away. Omitted deliberately, with an in-file note saying why, so it isn't
+reintroduced as "shared plumbing".
+Rejected: leaving `CMD_` a page constant. `?cmd=signup` and `?cmd=checkin` reach different server
+dispatchers, and one page now drives both — signup actions would have landed in the check-in
+dispatcher and failed as `unknown_action`. `callApi()` took an optional per-call `cmd` instead,
+defaulting to `CMD_`, so every pre-existing check-in call site is untouched.
+Outcome [user-facing]: Signup, goal editing, and the month-boundary "not registered yet" path all
+complete without leaving the static page. `?cmd=signup` on the static URL now opens directly on
+the signup step, honouring `targetMonth` and `autoStart` — the same param vocabulary GAS takes, so
+a signup link migrates between origins as a base-URL swap. The GAS `SignupApp.html` path is
+byte-for-byte unchanged and stays live as the zero-install fallback.
+Outcome [developer-facing]: `cmd` now carries two distinct meanings on the static origin (page
+routing via `PAGE_CMD_` vs API dispatcher via `CMD_`/`callApi`'s third arg); both are documented at
+their declarations and in the new DESIGN.md decision entry. Added `state.checkinReady` so the
+signup step can tell whether there is a resolved check-in to offer a way back to — notably false
+on exactly the month-boundary path.
+Outcome [internal]: DESIGN.md decision entry and a CHANGELOG §Unreleased bullet added; `npm test`
+green (34 suites, unchanged — the suite is front-end-neutral and reads `script/*`, not the static
+page).
+
+### Key Learnings:
+Verifying this needed a browser, and `npm test` cannot provide it: no node test reads
+`static-pages/src/index.html` at all (pre-existing gap, tracked as F3Go30-giqm), and the existing
+Playwright signup specs drive the GAS origin — after this change they exercise the FALLBACK path,
+so a green run there is not evidence the static signup works. Verified instead with a throwaway
+Playwright harness serving `static-pages/src` against a stubbed cmd=signup/cmd=checkin API: 21
+checks across all four entry paths, each asserting the main frame never leaves the local origin.
+Left in /tmp deliberately — the durable E2E twin is F3Go30-833s.12's scope, which this bead blocks.

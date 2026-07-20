@@ -258,6 +258,29 @@
   .how-btn { width: 100%; padding: 14px 18px; border: none; background: transparent; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-family: inherit; font-size: 15px; font-weight: bold; color: var(--brand); }
   .how-section-head { margin: 14px 0 6px; font-size: 13px; font-weight: bold; color: var(--brand); letter-spacing: .04em; }
   .how-badge { min-width: 28px; height: 28px; border-radius: 50%; background: var(--brand-bg); color: var(--brand-contrast); font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center; }
+
+  /* ── Signup step (F3Go30-833s.9) ────────────────────────────────────────────
+     Ported from script/SignupApp.html, whose palette is hardcoded light-mode
+     hex. Re-expressed against this page's CSS custom properties so the signup
+     step inherits the same light/dark treatment as every other step here. */
+  .signup-dots { display: flex; justify-content: center; gap: 7px; margin: 16px 0 -4px; }
+  .signup-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+  .signup-dot.on { background: var(--brand); }
+  .readonly-box { padding: 9px 11px; background: var(--soft-bg); border: 1px solid var(--soft-border); border-radius: 7px; font-size: 16px; color: var(--text-muted); overflow-wrap: anywhere; word-break: break-word; }
+  .identity-row { display: flex; gap: 12px; margin-bottom: 18px; }
+  .identity-row > div { flex: 1; min-width: 0; }
+  .callout { background: var(--warn-bg); border-left: 3px solid var(--warn-border); padding: 10px 12px; border-radius: 4px; font-size: 15px; line-height: 1.5; margin-bottom: 18px; color: var(--warn-fg); }
+  .team-type-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .team-type-option { flex: 1; display: flex; align-items: center; gap: 7px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 15px; background: var(--input-bg); color: var(--text); }
+  .team-type-option.selected { border-color: var(--brand); background: var(--soft-bg); }
+  .month-option { display: flex; align-items: center; gap: 11px; padding: 15px 16px; border: 2px solid var(--border); border-radius: 10px; cursor: pointer; font-size: 17px; margin-bottom: 12px; background: var(--input-bg); }
+  .month-option.selected { border-color: var(--brand); background: var(--soft-bg); }
+  .month-option span { font-weight: bold; color: var(--brand); }
+  .checkmark { width: 56px; height: 56px; border-radius: 50%; background: var(--brand-bg); color: var(--brand-contrast); font-size: 30px; line-height: 56px; margin: 0 auto 16px; text-align: center; }
+  .stars { display: flex; gap: 6px; justify-content: center; margin-bottom: 18px; }
+  .stars button { font-size: 28px; background: none; border: none; cursor: pointer; padding: 2px 4px; line-height: 1; color: var(--brand); }
+  .center { text-align: center; }
+  .signup-link { display: inline-block; color: var(--link); font-weight: bold; font-size: 16px; text-decoration: none; border-bottom: 1px solid var(--link); padding-bottom: 1px; }
 </style>
 </head>
 <body>
@@ -289,13 +312,128 @@
       <div class="card"><p class="muted">Signing you in…</p></div>
     </div>
 
-    <div id="step-signupRedirect" class="hidden">
-      <div class="card">
-        <p class="muted">
-          Looks like you haven't signed up for this month yet. Tap below to verify your goals and
-          get checked in.
-        </p>
-        <a id="signupRedirectAnchor" class="primary" style="display:block;text-align:center;padding:14px;border-radius:9px;background:#2f5d50;color:#f8f4ea;text-decoration:none;font-weight:bold;" href="#" target="_top">Continue to sign up &rarr;</a>
+    <!-- F3Go30-833s.9: the signup flow, ported from script/SignupApp.html so it runs as a step
+         of THIS document rather than a cross-origin top-level navigation to script.google.com.
+         Sub-steps are driven by showSignupStep_(), not showStep() — showStep('signup') shows
+         this whole container and showSignupStep_ picks which card inside it is up. Ids are
+         prefixed `su` throughout to stay clear of the check-in step's own ids. -->
+    <div id="step-signup" class="hidden">
+      <div class="signup-dots" id="suDots"></div>
+
+      <div id="su-step-intro" class="card hidden">
+        <h1>Accelerate Your Life</h1>
+        <p class="muted">A monthly habit system for F3 Puget Sound PAX. Pick one small daily
+          challenge, track it, and let accountability do the rest. Small and consistent beats big
+          and sporadic every time.</p>
+        <button class="primary" id="suIntroNextBtn">Sign Up / Update My Commit</button>
+        <button class="secondary hidden" id="suIntroBackBtn">&larr; Back to check-in</button>
+        <p class="muted" style="font-size:14px;text-align:center;margin-bottom:0;">Already signed
+          up? We'll load your info when you enter your F3 name and email.
+          <a href="how-it-works.html" target="_blank" rel="noopener">How it works</a></p>
+      </div>
+
+      <!-- Shown only while an autoStart identify() call is in flight (deep link, or an entry
+           point inside this app where the identity is already known) — flashing the real,
+           empty-looking identify card for a moment before it is immediately replaced by the
+           info card was confusing, same finding as SignupApp.html's step-autoStartLoading. -->
+      <div id="su-step-loading" class="card hidden">
+        <p class="muted">Loading…</p>
+      </div>
+
+      <div id="su-step-identify" class="card hidden">
+        <h2>Identify yourself</h2>
+        <p class="muted">Enter your F3 name and email so we can find any existing signup.</p>
+        <label class="field-label">F3 Name</label>
+        <input type="text" id="suF3Name" placeholder="e.g. Splinter">
+        <label class="field-label">Email</label>
+        <input type="email" id="suEmail" placeholder="you@example.com">
+        <div id="suIdError" class="error-text hidden"></div>
+        <button class="primary" id="suIdentifyBtn">Continue</button>
+        <button class="secondary" id="suIdentifyBackBtn">Back</button>
+      </div>
+
+      <div id="su-step-info" class="card hidden">
+        <h2 id="suInfoHeading">Welcome! Let's get your info</h2>
+        <div id="suMatchedCallout" class="callout hidden">We found your previous registration.</div>
+
+        <div class="identity-row">
+          <div>
+            <label class="field-label">F3 Name</label>
+            <div class="readonly-box" id="suInfoF3Name"></div>
+          </div>
+          <div>
+            <label class="field-label">Email</label>
+            <div class="readonly-box" id="suInfoEmail"></div>
+          </div>
+        </div>
+
+        <label class="field-label">Team type</label>
+        <div class="team-type-row">
+          <label class="team-type-option" id="suTtAoOption"><input type="radio" name="suTt" value="ao"> AO-based</label>
+          <label class="team-type-option" id="suTtGoalOption"><input type="radio" name="suTt" value="goal"> Goal-based</label>
+          <label class="team-type-option" id="suTtOtherOption"><input type="radio" name="suTt" value="other"> Other</label>
+        </div>
+
+        <div id="suTtAoBlock" class="hidden">
+          <label class="field-label">AO Team</label>
+          <select id="suTeamAoSelect"></select>
+        </div>
+        <div id="suTtGoalBlock" class="hidden">
+          <label class="field-label">Goal-based Team</label>
+          <select id="suTeamGoalSelect"></select>
+        </div>
+        <div id="suTtOtherBlock" class="hidden">
+          <label class="field-label">Team name</label>
+          <input type="text" id="suTeamOtherInput" placeholder="Type your team name">
+        </div>
+
+        <label class="field-label">WHO do you ultimately want to become?</label>
+        <textarea id="suWhoInput" rows="2"></textarea>
+        <label class="field-label">WHAT is your Go30 Challenge?</label>
+        <textarea id="suWhatInput" rows="2"></textarea>
+        <label class="field-label">HOW are you going to be successful this month?</label>
+        <textarea id="suHowInput" rows="2"></textarea>
+        <label class="field-label">Cell Phone Number</label>
+        <input type="tel" id="suPhoneInput" placeholder="(555) 555-5555">
+        <label style="display:flex;align-items:flex-start;gap:9px;font-size:16px;line-height:1.45;cursor:pointer;margin-bottom:22px;color:var(--text-muted);">
+          <input type="checkbox" id="suNagInput" style="margin-top:2px;">
+          Ok to send me reminder emails when it looks like I'm late.
+        </label>
+
+        <button class="primary" id="suInfoNextBtn">Continue</button>
+        <button class="secondary" id="suInfoBackBtn">Back</button>
+      </div>
+
+      <div id="su-step-choose" class="card hidden">
+        <h2>Which month?</h2>
+        <p class="muted">Choose which Go30 tracker to save your Hard Commit into.</p>
+        <div id="suMonthChoices"></div>
+        <button class="primary" id="suSaveBtn">Save Signup</button>
+        <button class="secondary" id="suChooseBackBtn">Back</button>
+      </div>
+
+      <div id="su-step-done" class="card hidden center">
+        <div class="checkmark">&#10003;</div>
+        <h2>You're committed!</h2>
+        <p>Your Hard Commit is saved for <strong id="suSavedMonthLabel"></strong>.</p>
+        <p class="muted">A confirmation email is on its way to <span id="suSavedEmailLabel"></span>.</p>
+        <a id="suSavedTrackerLink" href="#" target="_blank" rel="noopener" class="signup-link">Open the tracker &rarr;</a>
+        <div style="margin-top:26px;">
+          <button class="secondary" id="suDoneCheckinBtn">Continue to check in &rarr;</button>
+        </div>
+      </div>
+
+      <div id="su-step-feedback" class="card hidden">
+        <div id="suFeedbackNotSent">
+          <h2 style="font-size:18px;">Quick feedback</h2>
+          <p class="muted" style="font-size:15px;color:var(--text-faint);">Optional — takes 10 seconds.</p>
+          <label class="field-label">How is Go30 working for you?</label>
+          <div class="stars" id="suFeedbackStars"></div>
+          <label class="field-label">Is there anything we can improve?</label>
+          <textarea id="suFeedbackComment" rows="3" placeholder="About the signup process, the program, anything... (optional)"></textarea>
+          <button class="primary" id="suSendFeedbackBtn">Send Feedback</button>
+        </div>
+        <div id="suFeedbackSent" class="hidden center" style="padding:8px 0;color:var(--brand);font-weight:bold;font-size:16px;">Thanks for the feedback!</div>
       </div>
     </div>
 
@@ -510,7 +648,19 @@
   var STATIC_WEBAPP_URL_ = null;
   var WEBAPP_URL = STATIC_PARAMS_.get('webapp') || STATIC_WEBAPP_URL_ || '';
   var APP_VERSION = null; // filled in by applyServerConfig_ once an identify response lands
-  var CMD_ = 'checkin'; // read by IdentityCore's callApi() to post to ?cmd=checkin
+  // Default API dispatcher for callApi() — check-in actions post to ?cmd=checkin. NOT page
+  // routing: F3Go30-833s.9 gives `cmd` two meanings on this origin, and they are different
+  // things. This one selects the SERVER dispatcher (handleCheckinPost_ vs handleSignupPost_),
+  // and since one page now drives both, callApi takes a per-call override (see below) — the
+  // signup step passes 'signup'. PAGE_CMD_ below is the other meaning: which step to open on.
+  var CMD_ = 'checkin';
+  // F3Go30-833s.9: page routing. ?cmd=signup on THIS page's URL opens directly on the signup
+  // step, the same param vocabulary the GAS webapp honours (buildStaticCheckinUrl_ documents
+  // the convention, script/Utilities.js) — so a signup link migrates between the two origins
+  // as a base-URL swap with the query string preserved.
+  var PAGE_CMD_ = STATIC_PARAMS_.get('cmd') || '';
+  var URL_TARGET_MONTH_ = STATIC_PARAMS_.get('targetMonth') || '';
+  var URL_AUTO_START_ = STATIC_PARAMS_.get('autoStart') === '1';
   var NS_ = STATIC_PARAMS_.get('ns') || '';
   var CONTEXT_DATE_ = STATIC_PARAMS_.get('contextDate') || '';
   var STATIC_TOKEN_ = STATIC_PARAMS_.get('id') || '';
@@ -526,8 +676,10 @@
 </script>
 <script>
   // ── Inlined from script/IdentityCore.html (shared identity/HTTP client plumbing) ──────────
-  // Kept byte-for-byte identical to the GAS include so callApi()/setButtonLoading_()/
-  // attemptTopRedirect_() etc. never drift between the two front ends.
+  // Kept in step with the GAS include so callApi()/setButtonLoading_() etc. never drift between
+  // the two front ends. Two deliberate divergences, both because this page is the top-level
+  // document rather than a sandboxed GAS iframe: callApi takes a per-call `cmd` (one page, two
+  // server dispatchers) and attemptTopRedirect_ is omitted entirely — see the notes at each.
 
   var IDENTITY_STORAGE_KEY = 'go30SignupIdentity';
 
@@ -630,7 +782,13 @@
     if (el) el.classList.toggle('hidden', pendingRequestCount_ <= 0);
   }
 
-  function callApi(action, payload) {
+  // `cmd` (F3Go30-833s.9) selects the server dispatcher per call rather than per page: this one
+  // page drives both check-in and signup, and ?cmd=checkin and ?cmd=signup reach different
+  // handlers (handleCheckinPost_ vs handleSignupPost_, script/WebApp.js). Omitted, it falls
+  // back to CMD_ — so every pre-existing check-in call site is unchanged; only the signup step
+  // passes 'signup'. Leaving it a page constant would route signup actions into the check-in
+  // dispatcher, which would reject them as unknown_action.
+  function callApi(action, payload, cmd) {
     var body = Object.assign({}, payload, {
       action: action,
       ns: (typeof NS_ !== 'undefined' ? NS_ : ''),
@@ -638,7 +796,7 @@
     });
     pendingRequestCount_++;
     updateSyncingIndicator_();
-    return fetch(WEBAPP_URL + '?cmd=' + CMD_, {
+    return fetch(WEBAPP_URL + '?cmd=' + (cmd || CMD_), {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(body),
@@ -669,15 +827,11 @@
     }
   }
 
-  function attemptTopRedirect_(url, fallback) {
-    var fallbackTimer = setTimeout(fallback, 400);
-    try {
-      window.top.location.href = url;
-    } catch (e) {
-      clearTimeout(fallbackTimer);
-      fallback();
-    }
-  }
+  // NOTE: IdentityCore.html's attemptTopRedirect_() is deliberately NOT carried over here
+  // (F3Go30-833s.9). It exists to break a GAS page out of its HtmlService sandbox iframe; this
+  // document is already the top-level one, so the only thing it could do from here is navigate
+  // the installed app away to script.google.com — which on iOS hands off to Safari and strands
+  // the PAX outside the app. Every path that used it now stays in-page (see the signup step).
 
   window.addEventListener('pageshow', function(e) {
     if (e.persisted) location.reload();
@@ -731,6 +885,11 @@
     advancedOpen: false,
     selectedDateIso: null,
     lastEditedDayIso: null,
+    // F3Go30-833s.9: true once an identify has actually painted the check-in step this
+    // pageview. The signup step reads it to decide whether there is a check-in to offer a way
+    // back to — notably false on the month-boundary path, where identity resolves but the
+    // month has no registration.
+    checkinReady: false,
   };
 
   function $(id) { return document.getElementById(id); }
@@ -741,11 +900,11 @@
   if (STATIC_BUILD_VERSION_) $('versionFooter').textContent = 'v' + STATIC_BUILD_VERSION_ + ' (build)';
 
   function showStep(name) {
-    ['identify', 'checkin', 'dashboard', 'bonus'].forEach(function(s) {
+    ['identify', 'checkin', 'dashboard', 'bonus', 'signup'].forEach(function(s) {
       $('step-' + s).classList.toggle('hidden', s !== name);
     });
     $('moreBtn').classList.toggle('hidden', name !== 'dashboard');
-    $('bonusBtn').classList.toggle('hidden', name === 'identify' || name === 'bonus');
+    $('bonusBtn').classList.toggle('hidden', name === 'identify' || name === 'bonus' || name === 'signup');
     if (name === 'checkin' || name === 'dashboard') state.bonusReturnStep = name;
   }
 
@@ -907,6 +1066,7 @@
     $('nextMonthNoteText').textContent = "You're not signed up for " + res.nextMonthLabel + ' yet — verify or update your goals before the month starts.';
     $('nextMonthNote').classList.toggle('hidden', res.nextMonthRegistered !== false);
     $('bookmarkHereNote').classList.toggle('hidden', !res.firstUse);
+    state.checkinReady = true;
     if (!opts.preserveView) {
       showStep('checkin');
       prefetchDashboard_();
@@ -922,15 +1082,13 @@
     if (result.matched) {
       applyIdentifySuccess_(result);
     } else if (result.knownPaxNotRegistered) {
+      // F3Go30-833s.9: this PAX is known but has no registration for the current month — open
+      // the signup step in place. Previously a top-level cross-origin navigation to the GAS
+      // signup page, which on an installed iOS app handed the PAX off to Safari mid-flow.
       saveIdentityToStorage_(result.f3Name, result.email);
-      var signupUrl = signupDeepLinkUrl_('current');
-      $('signupRedirectAnchor').href = signupUrl;
-      $('step-identify').classList.add('hidden');
-      $('step-tokenLoading').classList.remove('hidden');
-      attemptTopRedirect_(signupUrl, function() {
-        $('step-tokenLoading').classList.add('hidden');
-        $('step-signupRedirect').classList.remove('hidden');
-      });
+      state.f3Name = result.f3Name;
+      state.email = result.email;
+      openSignup_('current');
     } else {
       $('idF3Name').value = result.submittedF3Name || '';
       $('idEmail').value = result.submittedEmail || '';
@@ -974,6 +1132,15 @@
   // applyIdentifySuccess_ synchronously during initial script execution instead of later from an
   // async .then() (by which point the whole script had already finished running once).
   function runIdentityBootstrap_() {
+  // F3Go30-833s.9: ?cmd=signup routes this page straight to the signup step instead of the
+  // check-in bootstrap — the static half of the URL contract the GAS webapp already honours,
+  // which is what lets a signup link move between the two origins as a base-URL swap.
+  // ?autoStart=1 skips intro/identify when localStorage already knows the PAX, matching
+  // SignupApp.html; without it the flow starts at intro even for a known PAX.
+  if (PAGE_CMD_ === 'signup') {
+    openSignup_(URL_TARGET_MONTH_, { autoStart: URL_AUTO_START_ });
+    return;
+  }
   if (!TOKEN_IDENTIFY_RESULT && SAVED_IDENTITY_TOKEN) {
     var checkinSnapshot_ = loadCheckinSnapshot_(SAVED_IDENTITY_TOKEN);
     var paintedFromSnapshot_ = false;
@@ -996,22 +1163,17 @@
           applyIdentifySuccess_(res, { preserveView: paintedFromSnapshot_ });
           saveCheckinSnapshot_(SAVED_IDENTITY_TOKEN, res);
         } else if (res.knownPaxNotRegistered) {
+          // F3Go30-833s.9: the month-boundary case — a returning PAX whose saved token still
+          // resolves, but who hasn't registered for the month that just started. This used to
+          // eject them cross-origin before they ever reached the dashboard; now it opens the
+          // signup step in place, with their identity already in memory. openSignup_ calls
+          // showStep('signup'), which also hides whatever step was up (possibly #step-checkin,
+          // painted a moment earlier from the snapshot).
           clearCheckinSnapshot_();
           saveIdentityToStorage_(res.f3Name, res.email);
-          var signupCurrentMonthUrl = signupDeepLinkUrl_('current');
-          // showStep('identify') here isn't about showing identify — it's the only way to hide
-          // whatever step is currently up (possibly #step-checkin, if a snapshot got painted)
-          // since showStep only knows about the identify/checkin/dashboard/bonus set. The next
-          // line then swaps identify back out for tokenLoading, matching this branch's pre-F3Go30-
-          // 5nfj.5 behavior of showing the loading spinner during the redirect attempt below.
-          showStep('identify');
-          $('step-identify').classList.add('hidden');
-          $('step-tokenLoading').classList.remove('hidden');
-          attemptTopRedirect_(signupCurrentMonthUrl, function() {
-            $('step-tokenLoading').classList.add('hidden');
-            $('step-identify').classList.remove('hidden');
-            $('idSignupBtn').classList.remove('hidden');
-          });
+          state.f3Name = res.f3Name;
+          state.email = res.email;
+          openSignup_('current');
         } else {
           // matched:false (revoked/stale token) or a plain miss: clear any stale snapshot and fall
           // back to the blank identify form, even if a snapshot had just been painted.
@@ -1055,16 +1217,19 @@
       el.innerHTML = '';
       return;
     }
-    var editUrl = signupDeepLinkUrl_('current');
+    // F3Go30-833s.9: a button, not an anchor — editing goals opens the in-page signup step
+    // instead of navigating this document to the GAS signup page.
     el.innerHTML = '<div class="goals-reminder">' +
       '<div class="goals-reminder-head">' +
         '<span class="goals-reminder-title">Your goals</span>' +
-        '<a href="' + editUrl + '" target="_top" class="bonus-edit-btn">Edit</a>' +
+        '<button type="button" id="goalsEditBtn" class="bonus-edit-btn">Edit</button>' +
       '</div>' +
       rows.map(function(r) {
         return '<div class="goals-reminder-row"><strong>' + r.label + ':</strong> ' + escapeHtml_(r.value) + '</div>';
       }).join('') + '</div>';
     el.classList.remove('hidden');
+    // Re-bound on every render — innerHTML above replaces the button element each time.
+    $('goalsEditBtn').addEventListener('click', function() { openSignup_('current'); });
   }
 
   function renderCheckinStatus_(prefix, status) {
@@ -1359,13 +1524,326 @@
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showStep('checkin'); }
   });
 
-  function signupDeepLinkUrl_(targetMonth) {
-    return WEBAPP_URL + '?cmd=signup&targetMonth=' + targetMonth + '&autoStart=1';
+  // ── Step: signup (F3Go30-833s.9) ────────────────────────────────────────
+  // Ported from script/SignupApp.html over the same cmd=signup JSON API (handleSignupPost_,
+  // script/WebApp.js) that page already uses — no server change. What is NOT ported is the
+  // identity handoff: SignupApp.html needs urlIdentityJson/localStorage to learn who the PAX
+  // is because it is a different document reached by navigation, whereas here signup is a step
+  // of the document that already knows. The GAS page stays live as the zero-install fallback
+  // (ADR-018), so both front ends keep sharing one set of JSON handlers.
+  //
+  // Nothing is baked in at render time the way SignupApp.html's aoListJson/goalListJson/
+  // monthsJson are: every one of those values comes back on the identify response (both the
+  // matched and unmatched paths — handleSignupIdentify_, script/signupWebapp.js), so this flow
+  // always resolves identify before it can paint the info or month step.
+  var signupState = {
+    step: 'intro',
+    wasMatched: false,
+    months: null, aoList: [], goalList: [],
+    teamType: '', team: '', who: '', what: '', how: '', phone: '', nag: false,
+    targetMonth: 'current',
+    feedbackRating: 0,
+    savedToken: null,
+  };
+
+  var SIGNUP_STEP_ORDER_ = ['intro', 'identify', 'info', 'choose', 'done'];
+
+  function showSignupStep_(name) {
+    signupState.step = name;
+    ['intro', 'loading', 'identify', 'info', 'choose', 'done'].forEach(function(s) {
+      $('su-step-' + s).classList.toggle('hidden', s !== name);
+    });
+    $('su-step-feedback').classList.toggle('hidden', name !== 'done');
+    renderSignupDots_();
   }
 
-  function openSignup_(targetMonth) {
-    window.top.location.href = signupDeepLinkUrl_(targetMonth);
+  function renderSignupDots_() {
+    var idx = SIGNUP_STEP_ORDER_.indexOf(signupState.step);
+    var html = '';
+    for (var i = 0; i < 4; i++) html += '<span class="signup-dot' + (i <= idx ? ' on' : '') + '"></span>';
+    $('suDots').innerHTML = html;
   }
+
+  /**
+   * The single entry point into signup, replacing the old top-level navigation to
+   * signupDeepLinkUrl_. targetMonth ('current'|'next') is the in-page equivalent of the GAS
+   * page's ?targetMonth deep-link param; opts.autoStart is the equivalent of ?autoStart=1 —
+   * when the identity is already known, skip the intro/identify cards and resolve straight to
+   * the goal step rather than making the PAX retype what this page already has in memory.
+   */
+  function openSignup_(targetMonth, opts) {
+    opts = opts || {};
+    hideApiError_();
+    signupState.targetMonth = (targetMonth === 'next') ? 'next' : 'current';
+    signupState.savedToken = null;
+    $('suIdError').classList.add('hidden');
+    $('suF3Name').value = state.f3Name || '';
+    $('suEmail').value = state.email || '';
+    // Only offered when there is a resolved check-in to go back TO — not, for instance, on the
+    // month-boundary path, where the whole point is that this month has no registration yet.
+    $('suIntroBackBtn').classList.toggle('hidden', !state.checkinReady);
+    showStep('signup');
+
+    var autoStart = opts.autoStart !== false && !!(state.f3Name && state.email);
+    if (autoStart) {
+      showSignupStep_('loading');
+      runSignupIdentify_(state.f3Name, state.email, null);
+    } else {
+      showSignupStep_('intro');
+    }
+  }
+
+  /** Resolves identity against cmd=signup's identify action and paints the goal step with the
+   * response — the prefill data when matched, blanks when not, plus the months/AO/goal lists
+   * this page has no server-render step to bake in. */
+  function runSignupIdentify_(f3Name, email, btn) {
+    hideApiError_();
+    if (btn) setButtonLoading_(btn, true, 'Checking…');
+    return callApi('identify', { f3Name: f3Name, email: email }, 'signup')
+      .then(function(res) {
+        state.f3Name = f3Name;
+        state.email = email;
+        saveIdentityToStorage_(f3Name, email);
+        if (res.months) signupState.months = res.months;
+        if (res.aoList) signupState.aoList = res.aoList;
+        if (res.goalList) signupState.goalList = res.goalList;
+
+        signupState.wasMatched = !!res.matched;
+        var d = (res.matched && res.data) ? res.data : {};
+        signupState.teamType = d.teamType || '';
+        signupState.team = d.team || '';
+        signupState.who = d.who || '';
+        signupState.what = d.what || '';
+        signupState.how = d.how || '';
+        signupState.phone = d.phone || '';
+        signupState.nag = !!d.nag;
+
+        fillSignupInfoStep_();
+        showSignupStep_('info');
+      })
+      .catch(function(err) {
+        // An autoStart identify has no visible form behind it to fall back to, so drop to the
+        // identify card (prefilled) rather than leaving the loading placeholder up forever.
+        if (!btn && signupState.step === 'loading') showSignupStep_('identify');
+        showApiError_('identify', err);
+      })
+      .finally(function() {
+        if (btn) setButtonLoading_(btn, false);
+      });
+  }
+
+  function populateSignupTeamSelect_(selectEl, list) {
+    selectEl.innerHTML = '<option value=""></option>';
+    (list || []).forEach(function(t) {
+      var opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = t;
+      selectEl.appendChild(opt);
+    });
+  }
+
+  function renderSignupTeamTypeUI_() {
+    ['ao', 'goal', 'other'].forEach(function(t) {
+      var optionEl = $('suTt' + t.charAt(0).toUpperCase() + t.slice(1) + 'Option');
+      optionEl.classList.toggle('selected', signupState.teamType === t);
+      optionEl.querySelector('input').checked = signupState.teamType === t;
+    });
+    $('suTtAoBlock').classList.toggle('hidden', signupState.teamType !== 'ao');
+    $('suTtGoalBlock').classList.toggle('hidden', signupState.teamType !== 'goal');
+    $('suTtOtherBlock').classList.toggle('hidden', signupState.teamType !== 'other');
+  }
+
+  function fillSignupInfoStep_() {
+    $('suInfoHeading').textContent = signupState.wasMatched ? 'Review your registration' : "Welcome! Let's get your info";
+    $('suMatchedCallout').classList.toggle('hidden', !signupState.wasMatched);
+    $('suInfoF3Name').textContent = state.f3Name;
+    $('suInfoEmail').textContent = state.email;
+    populateSignupTeamSelect_($('suTeamAoSelect'), signupState.aoList);
+    populateSignupTeamSelect_($('suTeamGoalSelect'), signupState.goalList);
+    $('suTeamAoSelect').value = signupState.teamType === 'ao' ? signupState.team : '';
+    $('suTeamGoalSelect').value = signupState.teamType === 'goal' ? signupState.team : '';
+    $('suTeamOtherInput').value = signupState.teamType === 'other' ? signupState.team : '';
+    $('suWhoInput').value = signupState.who;
+    $('suWhatInput').value = signupState.what;
+    $('suHowInput').value = signupState.how;
+    $('suPhoneInput').value = signupState.phone;
+    $('suNagInput').checked = signupState.nag;
+    renderSignupTeamTypeUI_();
+  }
+
+  function renderSignupMonthChoices_() {
+    var months = signupState.months || {};
+    var choices = [{ key: 'current', label: months.current && months.current.label }];
+    if (months.next) choices.push({ key: 'next', label: months.next.label });
+    if (!choices.some(function(m) { return m.key === signupState.targetMonth; })) signupState.targetMonth = 'current';
+
+    $('suMonthChoices').innerHTML = choices.map(function(m) {
+      var selected = signupState.targetMonth === m.key;
+      return '<label class="month-option' + (selected ? ' selected' : '') + '" data-key="' + m.key + '">' +
+        '<input type="radio" name="suMonth" value="' + m.key + '"' + (selected ? ' checked' : '') + '>' +
+        '<span>Save for ' + escapeHtml_(m.label) + '</span></label>';
+    }).join('');
+
+    Array.prototype.forEach.call($('suMonthChoices').querySelectorAll('.month-option'), function(el) {
+      el.addEventListener('click', function() {
+        signupState.targetMonth = el.getAttribute('data-key');
+        renderSignupMonthChoices_();
+      });
+    });
+  }
+
+  function renderSignupFeedbackStars_() {
+    var html = '';
+    for (var n = 1; n <= 5; n++) {
+      html += '<button type="button" data-n="' + n + '">' + (n <= signupState.feedbackRating ? '★' : '☆') + '</button>';
+    }
+    $('suFeedbackStars').innerHTML = html;
+    Array.prototype.forEach.call($('suFeedbackStars').querySelectorAll('button'), function(btn) {
+      btn.addEventListener('click', function() {
+        signupState.feedbackRating = parseInt(btn.getAttribute('data-n'), 10);
+        renderSignupFeedbackStars_();
+      });
+    });
+  }
+
+  function performSignupSave_(triggerBtn) {
+    hideApiError_();
+    setButtonLoading_(triggerBtn, true, 'Saving…');
+    callApi('save', {
+      f3Name: state.f3Name, email: state.email,
+      targetMonth: signupState.targetMonth,
+      teamType: signupState.teamType, team: signupState.team,
+      who: signupState.who, what: signupState.what, how: signupState.how,
+      phone: signupState.phone, nag: signupState.nag,
+    }, 'signup').then(function(res) {
+      $('suSavedMonthLabel').textContent = res.savedMonth;
+      $('suSavedEmailLabel').textContent = state.email;
+      $('suSavedTrackerLink').href = res.trackerUrl || '#';
+      $('suSavedTrackerLink').textContent = 'Open the ' + res.savedMonth + ' tracker →';
+      $('suFeedbackNotSent').classList.remove('hidden');
+      $('suFeedbackSent').classList.add('hidden');
+      signupState.feedbackRating = 0;
+      renderSignupFeedbackStars_();
+      // A current-month save returns a session token (handleSignupSave_): the PAX can check in
+      // today. SignupApp.html spends that token on a top-level redirect into the check-in app;
+      // here it is simply stored, and "Continue to check in" resolves it in place. Storing it
+      // also means an installed cold launch resolves identity without a retype (F3Go30-833s.1).
+      signupState.savedToken = res.identityToken || null;
+      if (res.identityToken) {
+        saveTokenToStorage_(res.identityToken);
+        SAVED_IDENTITY_TOKEN = res.identityToken;
+      }
+      // Hidden only when there is neither a new token to spend nor an already-resolved check-in
+      // to go back to — i.e. a next-month signup by someone not registered for this month.
+      $('suDoneCheckinBtn').classList.toggle('hidden', !signupState.savedToken && !state.checkinReady);
+      showSignupStep_('done');
+    }).catch(function(err) {
+      showApiError_('save', err);
+    }).finally(function() { setButtonLoading_(triggerBtn, false); });
+  }
+
+  /** The in-page replacement for SignupApp.html's post-save redirect into the check-in app:
+   * resolve the freshly-minted token through cmd=checkin's identify and paint the check-in
+   * step, without this document ever navigating. */
+  function resolveTokenIntoCheckin_(token) {
+    showStep('identify');
+    $('step-identify').classList.add('hidden');
+    $('step-tokenLoading').classList.remove('hidden');
+    callApi('identify', { token: token })
+      .then(function(res) {
+        if (res.config) applyServerConfig_(res.config);
+        if (res.matched) {
+          applyIdentifySuccess_(res);
+          saveCheckinSnapshot_(token, res);
+        } else {
+          showStep('identify');
+        }
+      })
+      .catch(function(err) {
+        showStep('signup');
+        showSignupStep_('done');
+        showApiError_('identify', err);
+      })
+      .finally(function() {
+        $('step-tokenLoading').classList.add('hidden');
+      });
+  }
+
+  $('suIntroNextBtn').addEventListener('click', function() { showSignupStep_('identify'); });
+  $('suIntroBackBtn').addEventListener('click', function() { showStep('checkin'); });
+  $('suIdentifyBackBtn').addEventListener('click', function() { showSignupStep_('intro'); });
+  $('suInfoBackBtn').addEventListener('click', function() { showSignupStep_('identify'); });
+  $('suChooseBackBtn').addEventListener('click', function() { showSignupStep_('info'); });
+
+  $('suIdentifyBtn').addEventListener('click', function() {
+    var f3Name = $('suF3Name').value.trim();
+    var email = $('suEmail').value.trim();
+    if (!f3Name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      $('suIdError').textContent = 'Enter your F3 name and a valid email.';
+      $('suIdError').classList.remove('hidden');
+      return;
+    }
+    $('suIdError').classList.add('hidden');
+    runSignupIdentify_(f3Name, email, $('suIdentifyBtn'));
+  });
+
+  ['ao', 'goal', 'other'].forEach(function(t) {
+    $('suTt' + t.charAt(0).toUpperCase() + t.slice(1) + 'Option').addEventListener('click', function() {
+      signupState.teamType = t;
+      signupState.team = '';
+      renderSignupTeamTypeUI_();
+    });
+  });
+  $('suTeamAoSelect').addEventListener('change', function() { signupState.team = this.value; });
+  $('suTeamGoalSelect').addEventListener('change', function() { signupState.team = this.value; });
+  $('suTeamOtherInput').addEventListener('input', function() { signupState.team = this.value; });
+  $('suWhoInput').addEventListener('input', function() { signupState.who = this.value; });
+  $('suWhatInput').addEventListener('input', function() { signupState.what = this.value; });
+  $('suHowInput').addEventListener('input', function() { signupState.how = this.value; });
+  $('suPhoneInput').addEventListener('input', function() { signupState.phone = this.value; });
+  $('suNagInput').addEventListener('change', function() { signupState.nag = this.checked; });
+
+  $('suInfoNextBtn').addEventListener('click', function() {
+    if (!signupState.months || !signupState.months.next) {
+      signupState.targetMonth = 'current';
+      performSignupSave_($('suInfoNextBtn'));
+    } else {
+      renderSignupMonthChoices_();
+      showSignupStep_('choose');
+    }
+  });
+
+  $('suSaveBtn').addEventListener('click', function() { performSignupSave_($('suSaveBtn')); });
+
+  $('suDoneCheckinBtn').addEventListener('click', function() {
+    if (signupState.savedToken) resolveTokenIntoCheckin_(signupState.savedToken);
+    else showStep('checkin');
+  });
+
+  $('suSendFeedbackBtn').addEventListener('click', function() {
+    hideApiError_();
+    var comment = $('suFeedbackComment').value.trim();
+    if (!signupState.feedbackRating && !comment) {
+      // Nothing provided — skip the call entirely rather than sending a blank rating/comment
+      // that could overwrite feedback already on file for this PAX.
+      $('suFeedbackNotSent').classList.add('hidden');
+      $('suFeedbackSent').classList.remove('hidden');
+      return;
+    }
+    // Only include fields the PAX actually provided — omitting an unprovided one (rather than
+    // sending 0 / '') means the server leaves any existing rating/comment untouched.
+    var payload = { f3Name: state.f3Name, email: state.email, targetMonth: signupState.targetMonth };
+    if (signupState.feedbackRating) payload.feedbackRating = signupState.feedbackRating;
+    if (comment) payload.feedbackComment = comment;
+
+    setButtonLoading_($('suSendFeedbackBtn'), true, 'Sending…');
+    callApi('feedback', payload, 'signup').then(function() {
+      $('suFeedbackNotSent').classList.add('hidden');
+      $('suFeedbackSent').classList.remove('hidden');
+    }).catch(function(err) {
+      showApiError_('feedback', err);
+    }).finally(function() { setButtonLoading_($('suSendFeedbackBtn'), false); });
+  });
 
   $('idSignupBtn').addEventListener('click', function() { openSignup_('current'); });
   $('nextMonthSignupBtn').addEventListener('click', function() { openSignup_('next'); });

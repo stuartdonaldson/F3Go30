@@ -41,6 +41,13 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   indicator shows in the header while it double-checks with the server) instead of waiting on a
   network round trip before showing anything; if that saved link had gone stale or been revoked,
   it now correctly falls back to the sign-in form instead of continuing to show old data. (v2.4.2)
+- Signing up and editing your goals now happen right on the check-in page instead of sending you
+  off to a separate Google-hosted page and back. This matters most at the start of a month: if
+  you open check-in before you've signed up for the new month, you now go straight to your goals
+  with your name and previous answers already filled in, and land back on check-in when you're
+  done — previously that bounced you out to another site (and, on a phone with the page saved to
+  your home screen, out of the app entirely and into your browser). The old sign-up page still
+  works for anyone using a link to it.
 
 ---
 
