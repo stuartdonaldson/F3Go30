@@ -47,9 +47,14 @@
   .api-error-banner { background: #fdeceb; border-bottom: 3px solid #a3401a; color: #6b1f0a; padding: 12px 18px; font-size: 14px; line-height: 1.5; }
   .api-error-banner strong { display: block; margin-bottom: 2px; }
   .api-error-detail { margin-top: 6px; font-family: monospace; font-size: 12px; background: #fff; border: 1px solid #e3b8af; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .how-btn { width: 100%; padding: 14px 18px; border: none; background: transparent; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-family: inherit; font-size: 15px; font-weight: bold; color: #2f5d50; }
-  .how-section-head { margin: 14px 0 6px; font-size: 13px; font-weight: bold; color: #2f5d50; letter-spacing: .04em; }
-  .how-badge { min-width: 28px; height: 28px; border-radius: 50%; background: #2f5d50; color: #f8f4ea; font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center; }
+  :root { --how-text: #333; --how-border: #e8e0d0; --how-brand: #2f5d50; --how-brand-bg: #2f5d50; --how-brand-contrast: #f8f4ea; --how-card-bg: #fffdf8; --how-card-border: #d8cfbf; }
+  @media (prefers-color-scheme: dark) {
+    :root { --how-text: #ece7dc; --how-border: #3a4640; --how-brand: #7fc4ac; --how-brand-bg: #234036; --how-brand-contrast: #eee9df; --how-card-bg: #20241f; --how-card-border: #3a4640; }
+  }
+  .how-btn { width: 100%; padding: 14px 18px; border: none; background: transparent; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-family: inherit; font-size: 15px; font-weight: bold; color: var(--how-brand); }
+  .how-section-head { margin: 14px 0 6px; font-size: 13px; font-weight: bold; color: var(--how-brand); letter-spacing: .04em; }
+  .how-badge { min-width: 28px; height: 28px; border-radius: 50%; background: var(--how-brand-bg); color: var(--how-brand-contrast); font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center; }
+  #howCard { background: var(--how-card-bg); border-color: var(--how-card-border); }
 </style>
 </head>
 <body>
@@ -84,7 +89,7 @@
         <span>How it Works</span>
         <span id="howChevron">&#9660;</span>
       </button>
-      <div id="howBody" class="hidden" style="padding:0 18px 20px;font-size:14px;line-height:1.6;color:#333;border-top:1px solid #e8e0d0;">
+      <div id="howBody" class="hidden" style="padding:0 18px 20px;font-size:14px;line-height:1.6;color:var(--how-text);border-top:1px solid var(--how-border);">
         <!-- HOW-IT-WORKS:START -->
 <p class="how-section-head">THE CORE MISSION</p>
 <p style="margin:0 0 14px;">Execute a Daily Challenge that aligns with your Ultimate Goals, supported by the accountability of your fellow HIMs.</p>
