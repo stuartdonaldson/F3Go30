@@ -614,7 +614,10 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     // Write-through: row position is unchanged, only its contents — drop the cached copy so the
     // dashboard/check-in's next lean read (dashboardWebapp.js) picks up the update.
     deletePaxCacheRow_sw_('responses', targetMonth.sheetId, payload.f3Name);
-    GasLogger.log('signupWebapp.save', { mode: 'update', row: match.rowIndex + 2 });
+    // f3Name is stamped here (and on the insert/emailChanged branches) because the save runs in
+    // its own execution — reporting (tools/activity_log.py) cannot join it back to the identify
+    // execution that named the PAX.
+    GasLogger.log('signupWebapp.save', { mode: 'update', row: match.rowIndex + 2, f3Name: payload.f3Name });
   } else {
     // No exact (name+email) match — check whether this is the same PAX under a different
     // email (ADR-008). If so, retire the old row (DELETED) rather than leaving it sitting
@@ -626,7 +629,7 @@ function handleSignupSave_(templateSpreadsheet, payload) {
       // The old row's cached copy (if any) would now serve stale/DELETED content under this
       // same name key — drop it so a lean lookup falls through to a live re-scan.
       deletePaxCacheRow_sw_('responses', targetMonth.sheetId, payload.f3Name);
-      GasLogger.log('signupWebapp.save.emailChanged', { oldRow: nameOnlyMatch.rowIndex + 2 });
+      GasLogger.log('signupWebapp.save.emailChanged', { oldRow: nameOnlyMatch.rowIndex + 2, f3Name: payload.f3Name });
     }
 
     var newRow = buildResponseRowWithSelfHeal_(state.sheet, state.columns, null, formData);
@@ -635,7 +638,7 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     // Write-through: this PAX's row is new — patch it straight into an already-cached roster
     // index (no-op if nothing's cached yet, since the next miss will rebuild from the sheet).
     patchPaxRosterIndex_sw_('responses', targetMonth.sheetId, payload.f3Name, state.dataRows.length);
-    GasLogger.log('signupWebapp.save', { mode: 'insert' });
+    GasLogger.log('signupWebapp.save', { mode: 'insert', f3Name: payload.f3Name });
   }
 
   // Keep PaxDB (Template-resident) current incrementally, rather than depending on a manual

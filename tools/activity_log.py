@@ -29,6 +29,15 @@ Notes:
       per-team-per-run, not per individual PAX.
     - --env maps to the `target` field stamped by GasLogger on every event: TEMPLATE (prod)
       or TEST (sit) — see tools/manage-deployments.js.
+    - Check-in entry path (which front end / which credential) is NOT on the
+      checkinWebapp.identify event itself — it is reconstructed by joining that event to the
+      doGet/doPost request event from the same execution via `execId`. See _entry_path_ below.
+    - Registering is two separate executions: the signup form's PaxDB prefill LOOKUP
+      (signupWebapp.identify, handleSignupIdentify_) and the WRITE that follows it
+      (signupWebapp.save, handleSignupSave_). Only the write says whether the PAX was new;
+      a lookup happens whether or not anything is ever saved. They are reported as
+      [SIGNUP LOOKUP] and [SIGNUP NEW] / [SIGNUP UPDATE] accordingly — see
+      _signup_exec_index_ and _attribute_signup_saves_ below.
 """
 import argparse
 import pathlib
@@ -47,6 +56,102 @@ SESSION_GAP_SECONDS = 300
 _SESSION = 'session'
 _STANDALONE = 'standalone'
 
+# signupWebapp.save `mode` (handleSignupSave_, script/signupWebapp.js) -> report label. This is
+# the only event that distinguishes a first-time registration from a returning PAX re-saving one.
+_SIGNUP_SAVE_LABELS = {'insert': 'SIGNUP NEW', 'update': 'SIGNUP UPDATE'}
+
+
+def _entry_front_end_(data: dict) -> str | None:
+    """Which front end issued this doGet/doPost request, or None if it isn't a check-in request.
+
+    Four paths reach handleCheckinIdentify_ (script/dashboardWebapp.js), and the identify event
+    alone can only tell token-vs-typed (`viaToken`). The front end is only visible on the request
+    event that opened the same execution:
+
+      doGet  cmd=checkin (+id=<guid>)     -> GAS-hosted CheckinApp.html, saved-link doGet
+                                            (renderCheckinPage_, script/dashboardWebapp.js)
+      doPost cmd=checkin, formIdentify=1  -> GAS-hosted page's typed-identify <form target="_top">
+                                            (renderCheckinPageForTypedIdentify_)
+      doPost cmd=checkin, no formIdentify -> static check-in page's JSON callApi('identify')
+                                            (handleCheckinPost_; static-pages/src/index.html)
+
+    A doGet with no `id` renders the GAS page's blank identify form and never calls identify at
+    all, so it has no identify event to join to — it is deliberately not reported as an entry.
+    """
+    parameter = data.get('parameter') or {}
+    if parameter.get('cmd') != 'checkin':
+        return None
+    if data.get('name') == 'doGet':
+        return 'GAS page' if parameter.get('id') else None
+    if data.get('name') == 'doPost':
+        return 'GAS page' if parameter.get('formIdentify') == '1' else 'static page'
+    return None
+
+
+def _build_entry_index_(matches: list) -> dict:
+    """Maps execId -> front-end label, from the doGet/doPost request events in the same result
+    set. A check-in execution logs its request event before its identify event, so the pair is
+    normally both present; near the query's oldest edge the request event can fall outside the
+    window, in which case the identify event just reports an unknown front end.
+    """
+    index = {}
+    for event in matches:
+        data = event.get('data', {})
+        exec_id = data.get('execId')
+        if not exec_id:
+            continue
+        front_end = _entry_front_end_(data)
+        if front_end:
+            index[exec_id] = front_end
+    return index
+
+
+def _signup_exec_index_(matches: list) -> dict:
+    """Maps execId -> the signup facts scattered across other events in the same execution.
+
+    handleSignupSave_ (script/signupWebapp.js) logs the insert/update decision on its own event,
+    but the two things that make that decision readable are logged separately within the same
+    execution:
+
+      findMostRecentPaxRecordForName_.done  `found`   -> has this PAX any PRIOR month's PaxDB
+                                                        record (target month excluded)? This is
+                                                        the "currently participating" answer
+                                                        written to the Responses sheet.
+      upsertPaxDbRow_                       `created` -> was the PaxDB row new, or patched?
+
+    `f3Name` is picked up from any event in the execution that carries it; on the save execution
+    that is only true once the GAS side stamps it (see _attribute_signup_saves_ for the fallback
+    used on executions logged before that).
+    """
+    index = {}
+    for event in matches:
+        data = event.get('data', {})
+        exec_id = data.get('execId')
+        if not exec_id:
+            continue
+        name = data.get('name')
+        entry = index.setdefault(exec_id, {})
+        if data.get('f3Name'):
+            entry['f3Name'] = data['f3Name']
+        if name == 'findMostRecentPaxRecordForName_.done':
+            entry['priorMonth'] = data.get('found')
+        elif name == 'upsertPaxDbRow_':
+            entry['paxDbCreated'] = data.get('created')
+    return index
+
+
+def _legacy_token_exec_ids_(matches: list) -> set:
+    """execIds whose identify resolved via a pre-rollout signed IdentityToken.js token rather
+    than a CheckinSessions guid (checkinWebapp.identify.legacyTokenUsed, resolveCheckinToken_dw_).
+    Called out per-entry so the taper-off this event exists to monitor is visible in the report.
+    """
+    return {
+        event.get('data', {}).get('execId')
+        for event in matches
+        if event.get('data', {}).get('name') == 'checkinWebapp.identify.legacyTokenUsed'
+        and event.get('data', {}).get('execId')
+    }
+
 
 def _fmt_time(iso_str: str) -> str:
     try:
@@ -64,31 +169,76 @@ def _parse_epoch(iso_str: str):
         return None
 
 
-def _classify(event: dict) -> dict | None:
+def _classify(event: dict, entry_index: dict = None, legacy_exec_ids: set = None,
+              signup_index: dict = None) -> dict | None:
     """Normalize one raw Axiom event into a trackable activity, or None if not a tracked type.
 
     `group` marks whether this activity can be merged into a same-PAX session line (_SESSION)
     or must always stand alone (_STANDALONE). `f3Name` is the session grouping key for _SESSION
-    activities; it's meaningless for _STANDALONE ones.
+    activities; for _STANDALONE ones it is informational (the signup lines use it to attribute
+    a save to a PAX — see _attribute_signup_saves_).
+
+    `entry_index` / `legacy_exec_ids` come from _build_entry_index_ / _legacy_token_exec_ids_ and
+    only affect the VIEW CHECKIN line's entry-path detail. `signup_index` comes from
+    _signup_exec_index_ and only affects the signup lines.
+
+    A returned activity carries either a finished `detail`, or a `detail_fmt` with a `{who}`
+    placeholder that _attribute_signup_saves_ fills in a later chronological pass.
     """
+    entry_index = entry_index or {}
+    legacy_exec_ids = legacy_exec_ids or set()
+    signup_index = signup_index or {}
     data = event.get('data', {})
     name = data.get('name', '')
     ts_iso = event.get('_time', '')
     ts_str = _fmt_time(ts_iso)
     epoch = _parse_epoch(ts_iso)
 
-    if name == 'signupWebapp.identify' and data.get('matched') is True:
-        f3_name = data.get('f3Name', '?')
-        team = data.get('team', '?')
-        team_type = data.get('teamType', '')
-        return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': None,
-                'label': 'SIGNUP', 'detail': f"{f3_name} → team {team} ({team_type})"}
+    # The signup form's PaxDB prefill lookup (handleSignupIdentify_) — reported for both outcomes,
+    # and deliberately NOT called a signup: it is a read, and nothing may ever be saved after it.
+    if name == 'signupWebapp.identify' and data.get('matched') is not None:
+        facts = signup_index.get(data.get('execId'), {})
+        f3_name = data.get('f3Name') or facts.get('f3Name') or '?'
+        if data.get('matched') is True:
+            team = data.get('team', '?')
+            team_type = data.get('teamType', '')
+            outcome = f"existing record found, prefilled → team {team} ({team_type})"
+        else:
+            outcome = "no existing record — form starts blank"
+        return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': f3_name,
+                'label': 'SIGNUP LOOKUP', 'detail': f"{f3_name}: signup form lookup, {outcome}"}
+
+    # The write that follows the lookup (handleSignupSave_). `mode` is absent on this event's
+    # other uses (trackerRowAdded), which are not registration outcomes and are skipped.
+    if name == 'signupWebapp.save' and data.get('mode') in _SIGNUP_SAVE_LABELS:
+        facts = signup_index.get(data.get('execId'), {})
+        mode = data['mode']
+        what = ("new registration for this month" if mode == 'insert'
+                else "existing registration for this month re-saved")
+        prior = facts.get('priorMonth')
+        history = ("first Go30 month" if prior is False else
+                   "returning from a prior month" if prior is True else
+                   "prior participation unknown")
+        return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE,
+                'f3Name': data.get('f3Name') or facts.get('f3Name'),
+                'label': _SIGNUP_SAVE_LABELS[mode], 'detail': None,
+                'detail_fmt': "{who}: " + f"{what} ({history})"}
+
+    if name == 'signupWebapp.save.emailChanged':
+        facts = signup_index.get(data.get('execId'), {})
+        return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE,
+                'f3Name': data.get('f3Name') or facts.get('f3Name'),
+                'label': 'SIGNUP EMAIL', 'detail': None,
+                'detail_fmt': "{who}: signed up under a new email; prior row retired (DELETED)"}
 
     if name == 'checkinWebapp.identify':
         f3_name = data.get('f3Name', '?')
-        via = "token" if data.get('viaToken') else "identity form"
+        front_end = entry_index.get(data.get('execId'), 'unknown front end')
+        credential = "saved link" if data.get('viaToken') else "typed name+email"
+        if data.get('execId') in legacy_exec_ids:
+            credential += ", legacy token"
         return {'ts': epoch, 'ts_str': ts_str, 'group': _SESSION, 'f3Name': f3_name,
-                'label': 'VIEW CHECKIN', 'detail': f"check-in page (via {via})"}
+                'label': 'VIEW CHECKIN', 'detail': f"check-in page ({front_end}, {credential})"}
 
     if name == 'checkinWebapp.checkin':
         f3_name = data.get('f3Name', '?')
@@ -125,8 +275,31 @@ def _classify(event: dict) -> dict | None:
     return None
 
 
+def _attribute_signup_saves_(activities: list) -> list:
+    """Fill the `{who}` placeholder on signup-write lines. `activities` must be chronological.
+
+    The save runs in its own execution (a fresh doPost), so it cannot be joined to the lookup by
+    execId the way the check-in entry path is. Where the GAS side stamps f3Name on the save event
+    the name is exact; on executions logged before that it is inferred from the most recent
+    signup-form lookup within SESSION_GAP_SECONDS and prefixed '~' to mark it as inferred. Two
+    PAX signing up concurrently can defeat that inference, which is why the '~' is there.
+    """
+    last_lookup = None  # (epoch, f3Name)
+    for act in activities:
+        if act['label'] == 'SIGNUP LOOKUP' and act.get('f3Name') and act.get('ts'):
+            last_lookup = (act['ts'], act['f3Name'])
+        fmt = act.pop('detail_fmt', None)
+        if not fmt:
+            continue
+        who = act.get('f3Name')
+        if not who and last_lookup and act.get('ts') and act['ts'] - last_lookup[0] <= SESSION_GAP_SECONDS:
+            who = '~' + last_lookup[1]
+        act['detail'] = fmt.format(who=who or '?')
+    return activities
+
+
 def _format_tag(label: str) -> str:
-    return f"[{label}]".ljust(14)
+    return f"[{label}]".ljust(16)
 
 
 def _group_sessions(activities: list) -> list:
@@ -200,9 +373,15 @@ def main() -> int:
     )
     matches = result.get("matches", [])
 
-    activities = [c for c in (_classify(e) for e in matches) if c]
+    # Built over the whole raw result set (not just the classified activities) — the doGet/doPost
+    # request events these join against are never themselves reported as activities.
+    entry_index = _build_entry_index_(matches)
+    legacy_exec_ids = _legacy_token_exec_ids_(matches)
+    signup_index = _signup_exec_index_(matches)
+
+    activities = [c for c in (_classify(e, entry_index, legacy_exec_ids, signup_index) for e in matches) if c]
     activities.reverse()  # chronological, oldest first
-    summaries = _group_sessions(activities)
+    summaries = _group_sessions(_attribute_signup_saves_(activities))
     summaries = summaries[:args.limit]
 
     print(f"\n{len(summaries)} activities, {args.since} lookback")
