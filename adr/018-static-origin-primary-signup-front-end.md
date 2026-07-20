@@ -13,7 +13,7 @@ Signup has two possible front ends over one backend. `handleSignupPost_`
 actions behind `?cmd=signup`; `SignupApp.html` is a GAS-rendered HTML page that
 calls those same actions. Check-in already went through this split and resolved
 it: the static page on GitHub Pages calls the JSON API directly, and
-`CheckinApp.html` remains as the zero-install fallback.
+`CheckinApp.html` remains as the availability fallback.
 
 Signup did not follow, and the seam shows. The static check-in page cannot
 render signup, so three flow-critical paths navigate the **top-level document**
@@ -74,9 +74,10 @@ JSON actions.
   deleted, not redirected. Identity carries in memory rather than through a URL.
 - **`urlIdentityJson` has nothing to carry** in this model. The cross-origin
   identity handoff is removed rather than ported.
-- **`SignupApp.html` remains as the zero-install fallback**, mirroring
+- **`SignupApp.html` remains as the availability fallback**, mirroring
   `CheckinApp.html` under the check-in split. Both front ends keep calling the
-  same JSON handlers, so this adds no backend divergence.
+  same JSON handlers, so this adds no backend divergence. It is *not* an
+  "install-free" path — see Errata below.
 - **The JSON API is unchanged.** This is a front-end placement decision.
 
 Whether to retire `SignupApp.html` entirely is **not decided here** — it needs a
@@ -130,3 +131,32 @@ at the static origin with a GAS fallback; signup needs its counterpart.
   shrink its GAS-side coverage to the redirect path rather than delete it outright.
 - Signup is a flow every PAX uses monthly; this touches it. Ship SIT-then-PROD
   with the GAS page still standing.
+
+## Errata
+
+**2026-07-19 — "zero-install fallback" corrected to "availability fallback"**
+(Context, Decision). Terminology only; the decision is unchanged.
+
+The original wording implied the GAS pages are what serves a PAX who does not
+install the app. They are not. The static page **is** the install-free path — it
+is an ordinary web page on GitHub Pages, and installing it only adds a home-screen
+icon. Declining to install requires nothing from `SignupApp.html`.
+
+What the GAS front end actually provides after this ADR is narrower:
+
+1. **Availability** — a second origin serving signup if the static host is
+   unreachable.
+2. **Legacy links** — honouring already-distributed `?cmd=signup` URLs on the GAS
+   origin, which `F3Go30-833s.11` resolves into a query-preserving *redirect*. That
+   needs the route, not the rendered page.
+
+This matters because the mislabel overstates the fallback's value and would have
+justified maintaining a duplicate signup UI indefinitely. Corrected in place rather
+than by superseding record: this ADR was accepted the same day, and no work had yet
+been built against the wrong term.
+
+**Forward reference:** this record states that retiring `SignupApp.html` is "not
+decided here" and needs a month of real static-signup use first. The *posture* was
+subsequently decided — scheduled for removal, not permanent — in `F3Go30-90l5`, with
+the month-of-use precondition retained as part of the trigger. Execution:
+`F3Go30-wjpu`.

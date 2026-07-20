@@ -433,6 +433,29 @@ function buildStaticCheckinUrl_(webAppBaseUrl, opts) {
   return url;
 }
 
+/**
+ * Signup counterpart to buildStaticCheckinUrl_ (ADR-018 §7) — same static front end
+ * (static-pages/src/index.html), same GitHub Pages host resolved by
+ * resolveStaticCheckinBaseUrl_ (signup is a step within that one page, not a second static
+ * page), just opened with `cmd=signup` instead of defaulting to check-in. Returns '' under the
+ * same conditions buildStaticCheckinUrl_ does (static host or webAppBaseUrl unavailable), so
+ * callers can fall back to the GAS ?cmd=signup page — the zero-install fallback ADR-018 keeps.
+ * @param {string} webAppBaseUrl
+ * @param {{id: string=, ns: string=, contextDate: string=, targetMonth: string=, autoStart: boolean=}=} opts
+ */
+function buildStaticSignupUrl_(webAppBaseUrl, opts) {
+  var staticBase = resolveStaticCheckinBaseUrl_();
+  if (!staticBase || !webAppBaseUrl) return '';
+  opts = opts || {};
+  var url = staticBase + '?webapp=' + encodeURIComponent(webAppBaseUrl) + '&cmd=signup';
+  if (opts.id) url += '&id=' + encodeURIComponent(opts.id);
+  if (opts.ns) url += '&ns=' + encodeURIComponent(opts.ns);
+  if (opts.contextDate) url += '&contextDate=' + encodeURIComponent(opts.contextDate);
+  if (opts.targetMonth) url += '&targetMonth=' + encodeURIComponent(opts.targetMonth);
+  if (opts.autoStart) url += '&autoStart=1';
+  return url;
+}
+
 function getLockedRowA1Notation(sheet, row, column) {
   var cellNotation = sheet.getRange(row, column).getA1Notation();
   
@@ -463,6 +486,7 @@ if (typeof module !== 'undefined' && module.exports) {
     resolveWebAppBaseUrl_: resolveWebAppBaseUrl_,
     resolveStaticCheckinBaseUrl_: resolveStaticCheckinBaseUrl_,
     buildStaticCheckinUrl_: buildStaticCheckinUrl_,
+    buildStaticSignupUrl_: buildStaticSignupUrl_,
     buildSlackMessage_: buildSlackMessage_,
     buildSignupSlackMessage_: buildSignupSlackMessage_
   };

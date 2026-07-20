@@ -8,6 +8,8 @@ var resolveWebAppBaseUrl_ = (signupEmailUtilitiesModule_ && signupEmailUtilities
   || (typeof globalThis !== 'undefined' && globalThis.resolveWebAppBaseUrl_);
 var buildStaticCheckinUrl_ = (signupEmailUtilitiesModule_ && signupEmailUtilitiesModule_.buildStaticCheckinUrl_)
   || (typeof globalThis !== 'undefined' && globalThis.buildStaticCheckinUrl_);
+var buildStaticSignupUrl_ = (signupEmailUtilitiesModule_ && signupEmailUtilitiesModule_.buildStaticSignupUrl_)
+  || (typeof globalThis !== 'undefined' && globalThis.buildStaticSignupUrl_);
 
 function resolveSignupEmailMode_(options) {
   if (options && options.mode) return options.mode;
@@ -79,18 +81,20 @@ var CHECKIN_EMAIL_COPY_ = {
   trackerLabel: 'Open the Tracker sheet'
 };
 
-// The check-in link opens the static check-in front end (GitHub Pages) wrapping this webapp as
-// its API backend, rather than the GAS ?cmd=checkin page directly (see buildStaticCheckinUrl_,
-// Utilities.js). The edit-goals link has no static counterpart, so it stays a plain GAS
-// ?cmd=signup link. Both carry the PAX's session guid pre-installed (when known), so the very
-// first tap lands them straight in the app already identified — see CheckinSessions.js.
+// Both links open the static front end (GitHub Pages) wrapping this webapp as its API backend
+// (buildStaticCheckinUrl_ / buildStaticSignupUrl_, Utilities.js — ADR-018 §7), falling back to
+// the GAS ?cmd=checkin / ?cmd=signup pages directly when the static host isn't configured (e.g.
+// Node tests, or before STATIC_PAGES_BASE_URL_ is set), which keeps old-style GAS links working
+// for anyone still holding one. Both carry the PAX's session guid pre-installed (when known), so
+// the very first tap lands them straight in the app already identified — see CheckinSessions.js.
 function buildCheckinEmailLinks_(webAppBaseUrl, checkinSessionGuid) {
   if (!webAppBaseUrl) return { checkinUrl: '', editGoalsUrl: '' };
   var idSuffix = checkinSessionGuid ? ('&id=' + encodeURIComponent(checkinSessionGuid)) : '';
   var staticCheckinUrl = buildStaticCheckinUrl_ ? buildStaticCheckinUrl_(webAppBaseUrl, { id: checkinSessionGuid }) : '';
+  var staticSignupUrl = buildStaticSignupUrl_ ? buildStaticSignupUrl_(webAppBaseUrl, { id: checkinSessionGuid }) : '';
   return {
     checkinUrl: staticCheckinUrl || (webAppBaseUrl + '?cmd=checkin' + idSuffix),
-    editGoalsUrl: webAppBaseUrl + '?cmd=signup' + idSuffix
+    editGoalsUrl: staticSignupUrl || (webAppBaseUrl + '?cmd=signup' + idSuffix)
   };
 }
 
