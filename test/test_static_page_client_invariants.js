@@ -151,4 +151,145 @@ function readScript_(name) {
   assert.match(body, /revertOwnDayWrite_\(dateIso\);/, 'submitSelectionCheckin_ failure handler must call revertOwnDayWrite_(dateIso)');
 })();
 
+// ── F3Go30-k5fn.3 AC1: the month-to-month navigation model, executed (not just pattern-matched) ─
+// The static shape checks above (regex over function bodies) can't prove renderCalMonthNav_'s
+// backward/forward stop arithmetic or loadCalMonth_'s signup-gate routing are actually correct —
+// only that certain tokens appear. This extracts the real F3Go30-k5fn.2 nav block out of
+// index.html and runs it in a vm sandbox with a minimal `$`/state/callApi stand-in, so these
+// three tests execute the SAME source the browser does.
+
+function extractCalNavBlock_() {
+  var src = readStaticPage_();
+  var startMarker = '// ── Step: checkin — Month-to-month navigation (F3Go30-k5fn.2) ──────────';
+  var endMarker = "$('calPrevMonthBtn').addEventListener";
+  var startIdx = src.indexOf(startMarker);
+  var endIdx = src.indexOf(endMarker);
+  assert.ok(startIdx !== -1 && endIdx !== -1, 'cal-nav block markers not found in index.html — extraction markers may have drifted');
+  return src.slice(startIdx, endIdx);
+}
+
+// Builds the extracted block as a same-realm function (via `Function`, not `vm` — vm.createContext
+// runs in a SEPARATE realm with its own Array/Object constructors, which breaks assert/strict's
+// deepEqual on any array the block builds, e.g. `state.monthGrid = []`) against a caller-supplied
+// `state`, plus bare stand-ins for the DOM/network seams the block touches ($ elements, callApi,
+// renderCalendar_, hideApiError_) — none of which are under test here (AC1 is the navigation
+// model itself).
+function makeCalNavHarness_(state, callApiImpl) {
+  var elements = {};
+  function fakeEl_(id) {
+    if (!elements[id]) {
+      var classes = {};
+      elements[id] = {
+        disabled: false, textContent: '', innerHTML: '',
+        classList: {
+          add: function(c) { classes[c] = true; },
+          remove: function(c) { delete classes[c]; },
+          has: function(c) { return !!classes[c]; },
+        },
+        querySelector: function() { return null; },
+      };
+    }
+    return elements[id];
+  }
+  var factory = new Function('state', '$', 'callApi', 'hideApiError_', 'renderCalendar_', 'renderSelectionPanel_', 'showApiError_',
+    extractCalNavBlock_() + '\nreturn { renderCalMonthNav_: renderCalMonthNav_, loadCalMonth_: loadCalMonth_, navigateCalMonth_: navigateCalMonth_ };'
+  );
+  var fns = factory(
+    state, fakeEl_,
+    callApiImpl || function() { throw new Error('callApi should not have been called'); },
+    function() {}, function() {}, function() {},
+    function(action, err) { throw err; } // surface a real API-call failure as a test failure, not a silent UI toast
+  );
+  return { fns: fns, elements: elements };
+}
+
+function baseNavState_() {
+  return {
+    calLoading: false,
+    calMonthKey: null,
+    availableMonths: [
+      { monthKey: '2026-05', label: 'May 2026' },
+      { monthKey: '2026-06', label: 'June 2026' },
+      { monthKey: '2026-07', label: 'July 2026' },
+      { monthKey: '2026-08', label: 'August 2026' },
+    ],
+    registeredMonthKeys: ['2026-06', '2026-07'],
+    calGridCache: {},
+    monthGrid: [],
+    selectedDateIso: null,
+    todayIso: '2026-07-15',
+  };
+}
+
+// AC1a: BACKWARD is disabled exactly at the PAX's earliest registered month, even though earlier
+// (unregistered) months still exist in availableMonths.
+(function testCalNavBackwardStopsAtEarliestRegisteredMonth() {
+  var state = baseNavState_();
+  state.calMonthKey = '2026-06'; // earliest registered month
+  var h = makeCalNavHarness_(state);
+  h.fns.renderCalMonthNav_();
+  assert.equal(h.elements.calPrevMonthBtn.disabled, true, 'backward must be disabled at the earliest registered month');
+  assert.equal(h.elements.calNextMonthBtn.disabled, false, 'forward must still be available (more months exist ahead)');
+
+  // One month later (still registered) — backward becomes available again.
+  state.calMonthKey = '2026-07';
+  h.fns.renderCalMonthNav_();
+  assert.equal(h.elements.calPrevMonthBtn.disabled, false, 'backward must be available once past the earliest registered month');
+})();
+
+// AC1b: FORWARD is disabled exactly at the latest EXISTING tracker month (availableMonths' last
+// entry), regardless of registration — forward never runs out of months to page through, it just
+// stops existing.
+(function testCalNavForwardStopsAtLatestExistingMonth() {
+  var state = baseNavState_();
+  state.calMonthKey = '2026-08'; // latest existing month (index 3, last)
+  // callApi throws if invoked at all — proves navigateCalMonth_(1) from the last month is a
+  // true no-op (never reaches loadCalMonth_'s fetch branch), not merely a UI-disabled affordance.
+  var h = makeCalNavHarness_(state, function() { throw new Error('navigateCalMonth_ must not page past the last existing month'); });
+  h.fns.renderCalMonthNav_();
+  assert.equal(h.elements.calNextMonthBtn.disabled, true, 'forward must be disabled at the latest existing tracker month');
+
+  h.fns.navigateCalMonth_(1);
+  assert.equal(state.calMonthKey, '2026-08', 'calMonthKey must not change — there is no month beyond the last existing one');
+})();
+
+// AC1c: navigating FORWARD into an existing month the PAX is NOT registered in renders the
+// signup prompt (never calls callApi/monthGrid — no network round trip needed to know this).
+(function testCalNavForwardIntoUnregisteredMonthYieldsSignupPrompt() {
+  var state = baseNavState_();
+  state.calMonthKey = '2026-07'; // registered; '2026-08' (next) is existing but NOT registered
+  var h = makeCalNavHarness_(state, function() { throw new Error('monthGrid must not be fetched for an unregistered month — the signup gate short-circuits it'); });
+
+  h.fns.navigateCalMonth_(1);
+
+  assert.equal(state.calMonthKey, '2026-08', 'navigation still advances calMonthKey to the target month');
+  assert.equal(h.elements.calEditableArea.classList.has('hidden'), true, 'signup-gated month must hide the editable grid area');
+  assert.equal(h.elements.calSignupPrompt.classList.has('hidden'), false, 'signup-gated month must reveal the signup prompt');
+  assert.deepEqual(state.monthGrid, [], 'signup-gated month must not populate an editable grid');
+  assert.equal(h.elements.calSignupPromptText.textContent, "You're not signed up for August 2026 yet.");
+})();
+
+// AC1d: navigating FORWARD into an existing REGISTERED month with no cache fetches via the
+// monthGrid action (F3Go30-k5fn.1) — proves the registered branch is reachable and distinct from
+// AC1c's signup-gated branch (same navigateCalMonth_ call site, different outcome by registration).
+(function testCalNavForwardIntoRegisteredMonthFetchesMonthGrid() {
+  var state = baseNavState_();
+  state.calMonthKey = '2026-05';
+  state.registeredMonthKeys = ['2026-05', '2026-06'];
+  var calledWith = null;
+  var h = makeCalNavHarness_(state, function(action, payload) {
+    calledWith = { action: action, payload: payload };
+    return Promise.resolve({ ok: true, monthGrid: [{ dateIso: '2026-06-01', status: 'done' }], registered: true });
+  });
+
+  // navigateCalMonth_ doesn't propagate loadCalMonth_'s promise to its own caller (fire-and-forget,
+  // matching the real click-handler usage) — call loadCalMonth_ directly so this test can await it.
+  return h.fns.loadCalMonth_('2026-06').then(function() {
+    assert.ok(calledWith, 'callApi must be invoked for a registered month with no cache');
+    assert.equal(calledWith.action, 'monthGrid');
+    assert.equal(calledWith.payload.monthKey, '2026-06');
+    assert.deepEqual(state.monthGrid, [{ dateIso: '2026-06-01', status: 'done' }]);
+  });
+})();
+
 console.log('test_static_page_client_invariants.js: all assertions passed');

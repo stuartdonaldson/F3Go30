@@ -306,6 +306,14 @@ function resetFakes_() {
   // No client-side identify round trip needed — savedToken must stay null.
   assert.equal(output.__captured.savedIdentityTokenJson, JSON.stringify(null));
 
+  // F3Go30-k5fn.3 AC6: availableMonths/registeredMonthKeys (F3Go30-k5fn.1) are ADDITIVE onto this
+  // pre-existing matched-identify shape — every field this test already asserted above is still
+  // present and correct, and the new fields show up alongside them without displacing anything.
+  assert.deepEqual(baked.availableMonths.map(function(m) { return m.monthKey; }), ['2026-07'],
+    'availableMonths reflects the fixture\'s one TrackerDB month');
+  assert.deepEqual(baked.registeredMonthKeys, [],
+    'this fixture\'s PaxDB has no rows, so Anchor is registered nowhere per registeredMonthKeys\' own PaxDB-sourced definition');
+
   delete global.SpreadsheetApp;
   global.resolveContextDate_ = function() { return new Date(); };
 })();

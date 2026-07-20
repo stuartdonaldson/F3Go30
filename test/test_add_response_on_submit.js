@@ -79,6 +79,7 @@ const {
   resolvePaxRowIndex_,
   getPaxCacheRow_,
   setPaxCacheRow_,
+  patchPaxRosterIndex_,
 } = require('../script/PaxCache.js');
 
 // Minimal grid-backed Sheet stand-in: 1-based getRange(row, col, numRows, numCols) over a plain
@@ -120,7 +121,24 @@ function makeGridSheet_(initialRows) {
       },
       getA1Notation: function() { return 'R' + row + 'C' + col; },
       copyTo: function(target) { target.setValues(this.getValues()); },
-      sort: function() { /* row order doesn't matter for these tests */ },
+      // A REAL sort (F3Go30-k5fn.3 TEST TRAP) — earlier versions of this mock had a no-op sort,
+      // which meant no test could ever observe a roster-index offset going stale after a sort
+      // (F3Go30-a2hq). Mirrors Range.sort()'s column spec: 1-based, absolute sheet columns.
+      sort: function(sortSpecs) {
+        var slice = [];
+        for (var r = 0; r < numRows; r++) slice.push(data[row - 1 + r]);
+        slice.sort(function(a, b) {
+          for (var i = 0; i < sortSpecs.length; i++) {
+            var spec = sortSpecs[i];
+            var colIdx = spec.column - 1;
+            var av = a[colIdx], bv = b[colIdx];
+            if (av < bv) return spec.ascending === false ? 1 : -1;
+            if (av > bv) return spec.ascending === false ? -1 : 1;
+          }
+          return 0;
+        });
+        for (var r2 = 0; r2 < numRows; r2++) data[row - 1 + r2] = slice[r2];
+      },
     };
   }
   return {
@@ -465,6 +483,67 @@ function col(values) {
     getPaxCacheRow_('tracker', sortSheetId, 'Zeta'), null,
     'per-PAX row cache is name-keyed and stays valid across a sort'
   );
+}
+
+// ── F3Go30-k5fn.3 / F3Go30-a2hq REGRESSION: signup append -> sort -> resolve must not bind a ──
+// PAX to another PAX's Tracker row. Reproduces the exact sequence k5fn's forward-gate signup
+// drives against signupWebapp.js's handleSignupSave_ — append the new PAX's row, patch the
+// roster index at the append offset, then sort — using the SAME production functions
+// (patchPaxRosterIndex_, sortTrackerSheet_, resolvePaxRowIndex_) and a sort mock that genuinely
+// reorders rows (see makeGridSheet_'s sort above); a no-op sort mock could never observe this.
+{
+  var regressSheetId = 'sheet-a2hq-regression';
+  var regressTracker = makeGridSheet_([
+    ['', '', ''],
+    ['Period', '', ''],
+    ['F3 Name', 'Team', 'Fellowship'],
+    ['Delta', 'Z-Team', 0],
+    ['Echo', 'Z-Team', 0],
+  ]);
+  regressTracker.getParent = function() { return { getId: function() { return regressSheetId; } }; };
+
+  // Warm roster index the way a prior identify/dashboard read would — the leak only happens
+  // against an already-warm index (an empty/cold one just rebuilds correctly on the next read).
+  setPaxRosterIndex_('tracker', regressSheetId, { delta: 0, echo: 1 });
+
+  // signupWebapp.js's handleSignupSave_ sequence for a brand-new PAX ('Charlie'): append the
+  // row, copy the row above's Team/Fellowship so it sorts into the SAME group as the existing
+  // rows, patch the roster index at the append offset, then sort.
+  var nextRow = regressTracker.getLastRow() + 1; // 6
+  var appendOffset = nextRow - 4; // 2 — the offset the patch (below) believes Charlie will keep
+  regressTracker.getRange(nextRow, 1).setValue('Charlie');
+  regressTracker.getRange(nextRow - 1, 2, 1, 2).copyTo(regressTracker.getRange(nextRow, 2, 1, 2));
+  patchPaxRosterIndex_('tracker', regressSheetId, 'Charlie', appendOffset);
+
+  // Precondition: immediately after the patch (before the sort), the stale offset IS what a
+  // reader would get back — proves the patch really landed, so what follows tests the sort's
+  // effect, not a patch that silently no-op'd.
+  assert.equal(getPaxRosterIndex_('tracker', regressSheetId).charlie, appendOffset);
+
+  sortTrackerSheet_(regressTracker); // real reorder (Charlie/Delta/Echo, all 'Z-Team') + F3Go30-a2hq's index purge
+
+  // Post-sort ground truth: Charlie < Delta < Echo alphabetically within the same Team, so
+  // Charlie is now at offset 0 — NOT the append-time offset (2) the patch recorded. Echo moves
+  // INTO that old offset.
+  var postSortNames = regressTracker.getRange(4, 1, 3, 1).getValues().map(function(r) { return r[0]; });
+  assert.deepEqual(postSortNames, ['Charlie', 'Delta', 'Echo'], 'precondition: the sort actually reordered rows');
+
+  var rebuildReadNameColumn_ = function() {
+    return regressTracker.getRange(4, 1, 3, 1).getValues().map(function(r) { return r[0]; });
+  };
+  var resolved = resolvePaxRowIndex_('tracker', regressSheetId, 'Charlie', rebuildReadNameColumn_);
+
+  // ASSERT ON CACHE STATE, NOT ROW ORDER (bd memory f3go30-tracker-sort-invalidates-roster-index's
+  // TEST TRAP note): the correct resolution here only happens because the sort dropped the
+  // poisoned index, forcing a live rebuild. If F3Go30-a2hq's purge were reverted, resolved would
+  // instead come back as the stale patched value (2) — which post-sort belongs to Echo, not
+  // Charlie: exactly the cross-PAX identity leak this bead exists to guard against.
+  assert.equal(resolved, 0, 'resolvePaxRowIndex_ must resolve Charlie to her REAL post-sort row, not the pre-sort patched offset');
+  assert.notEqual(resolved, appendOffset, 'the stale append-time offset must not be reused after a sort moved rows');
+
+  var rebuiltIndex = getPaxRosterIndex_('tracker', regressSheetId);
+  assert.equal(rebuiltIndex.charlie, 0, 'the rebuilt index correctly re-scans post-sort offsets');
+  assert.equal(rebuiltIndex.echo, appendOffset, 'Echo (who moved INTO the old append offset) is correctly distinguished from Charlie');
 }
 
 // A sheet with no rows to sort must not touch the cache either (the early return), and a sheet

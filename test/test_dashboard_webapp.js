@@ -1472,6 +1472,56 @@ delete global.SpreadsheetApp;
 
 console.log('test_dashboard_webapp.js: resolved-context handle assertions passed');
 
+// handleCheckinSubmit_ — an explicit day OUTSIDE the identity's anchored month persists to that
+// OTHER month's tracker (F3Go30-k5fn.3 AC3), exercising resolveCheckinDayTarget_'s cross-month
+// fallback (dashboardWebapp.js) rather than the same-month fast path testSubmitUsesHandleAndSkips
+// FullResolution_ above already covers. The July handle is left untouched by the write.
+(function testSubmitExplicitDayInDifferentMonthPersistsToThatMonthsTracker() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); }; // "today" = Jul 2
+  global.formatRegistrationMonth_ = function() { return 'August 2026'; };
+
+  var fx = makeHandleFixture_(); // identity anchored to July ('sheet-jul'), no Aug day columns
+  var augRow2 = ['', '', '', '', '', '', '', '', ''];
+  var augRow3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 7, 5)];
+  var augPaxRows = [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, '']];
+  var augTrackerSheet = makeFakeTrackerSheet_(augRow2, augRow3, augPaxRows);
+  // Re-install SpreadsheetApp covering BOTH months — makeHandleFixture_'s own install only knows
+  // about 'sheet-jul'; resolveCheckinDayTarget_'s cross-month fallback needs 'sheet-aug' too.
+  installFakeSpreadsheetById_({
+    'sheet-jul': { getSheetByName: function(n) { return n === 'Tracker' ? fx.trackerSheet : null; } },
+    'sheet-aug': { getSheetByName: function(n) { return n === 'Tracker' ? augTrackerSheet : null; } },
+  });
+  global.resolveTrackerForContextDate = function(targetDate) {
+    if (targetDate.getFullYear() === 2026 && targetDate.getMonth() === 7) {
+      return { sheetId: 'sheet-aug', trackerUrl: 'https://x/aug', startDate: new Date(2026, 7, 1) };
+    }
+    throw new Error('no tracker for ' + targetDate);
+  };
+
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor'); // anchored to July, rowIndex 0
+  var hostileTemplate = { getSheetByName: function() { throw new Error('TrackerDB must not be consulted directly'); } };
+  var res = handleCheckinSubmit_(hostileTemplate, {
+    f3Name: 'Anchor', email: 'a@x.com', day: '2026-08-05', value: 1, resolvedContext: handle,
+  });
+
+  assert.equal(res.ok, true);
+  // Aug 5 is augTrackerSheet's only day column (0-based idx 8 -> sheet col 9); Anchor is row 4.
+  assert.deepEqual(augTrackerSheet._writes, [{ row: 4, col: 9, value: 1 }]);
+  assert.deepEqual(fx.trackerSheet._writes, [], 'the July tracker (the identity\'s own anchored month) must not be touched');
+
+  var patchedAug = require('../script/PaxCache.js').getPaxCacheRow_('tracker', 'sheet-aug', 'Anchor');
+  assert.ok(patchedAug, 'the write-through patch must land in the AUGUST PaxCache entry, not July\'s');
+  assert.equal(patchedAug[8], 1);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
 // ── availableMonths / registeredMonthKeys + monthGrid action (F3Go30-k5fn.1) ──────────────
 
 var TRACKER_DB_HEADERS_TEST_ = [
