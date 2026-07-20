@@ -693,6 +693,10 @@ function handleSignupSave_(templateSpreadsheet, payload) {
 
       // Write-through: same reasoning as the Responses insert above — patch the new PAX
       // straight into the Tracker roster index (dashboardWebapp.js) if one's already cached.
+      // Note this patch is immediately undone by sortTrackerSheet_ below, which drops the whole
+      // Tracker roster index because the sort reassigns every offset (F3Go30-a2hq). Kept anyway:
+      // the insert is only conditionally followed by a sort in other call orders, and an index
+      // entry that is correct-then-dropped is safe, whereas one that survives a sort is not.
       patchPaxRosterIndex_sw_('tracker', targetMonth.sheetId, payload.f3Name, nextRow - 4);
       GasLogger.log('signupWebapp.save', { trackerRowAdded: nextRow });
     }

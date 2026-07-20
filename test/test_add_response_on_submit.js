@@ -69,7 +69,8 @@ const {
   formatRegistrationMonth_,
   maybeSendRegistrationConfirmation_,
   appendToResponsesSheet_,
-  onFormSubmitLocked_
+  onFormSubmitLocked_,
+  sortTrackerSheet_
 } = require('../script/addResponseOnSubmit.js');
 
 const {
@@ -429,6 +430,57 @@ function col(values) {
     getPaxCacheRow_('responses', sheetId2, 'Anchor'), null,
     'DELETED-marking path drops the stale per-PAX value cache — it no longer resolves to old content'
   );
+}
+
+// ── F3Go30-a2hq: sortTrackerSheet_ must drop the Tracker roster index ────────────────────
+// The sort reassigns every row offset, which is precisely what PaxCache's roster index caches.
+// Leaving it behind is what let identify hand one PAX another PAX's row (and would have let
+// handleCheckinSubmit_ write a check-in there). Invalidation lives in sortTrackerSheet_ rather
+// than at its three call sites so no caller can forget it — signup in particular patches the
+// index immediately before sorting.
+{
+  var sortSheetId = 'sheet-sort-invalidate';
+  var sortTracker = makeGridSheet_([
+    ['', '', ''],
+    ['Period', '', ''],
+    ['F3 Name', 'Team', 'Fellowship'],
+    ['Zeta', 'Crucible', 0],
+    ['Alpha', 'Crucible', 0],
+  ]);
+  sortTracker.getParent = function() { return { getId: function() { return sortSheetId; } }; };
+
+  setPaxRosterIndex_('tracker', sortSheetId, { zeta: 0, alpha: 1 });
+  setPaxCacheRow_('tracker', sortSheetId, 'Zeta', ['Zeta', 'Crucible', 0]);
+  assert.notEqual(getPaxRosterIndex_('tracker', sortSheetId), null, 'precondition: roster index is warm');
+
+  sortTrackerSheet_(sortTracker);
+
+  assert.equal(
+    getPaxRosterIndex_('tracker', sortSheetId), null,
+    'sorting drops the roster index — every offset it holds was just invalidated'
+  );
+  // Per-PAX rows survive deliberately: a sort moves rows without changing their contents, and
+  // those entries are keyed by name, so re-reading them would be pure cost.
+  assert.notEqual(
+    getPaxCacheRow_('tracker', sortSheetId, 'Zeta'), null,
+    'per-PAX row cache is name-keyed and stays valid across a sort'
+  );
+}
+
+// A sheet with no rows to sort must not touch the cache either (the early return), and a sheet
+// mock without getParent must not throw — a sort must never fail over cache bookkeeping.
+{
+  var shortSheetId = 'sheet-sort-too-short';
+  setPaxRosterIndex_('tracker', shortSheetId, { solo: 0 });
+  var shortSheet = makeGridSheet_([['', '', ''], ['Period', '', ''], ['F3 Name', 'Team', '']]);
+  shortSheet.getParent = function() { return { getId: function() { return shortSheetId; } }; };
+  sortTrackerSheet_(shortSheet);
+  assert.notEqual(getPaxRosterIndex_('tracker', shortSheetId), null, 'nothing sorted, nothing invalidated');
+
+  var parentlessSheet = makeGridSheet_([
+    ['', '', ''], ['Period', '', ''], ['F3 Name', 'Team', ''], ['Zeta', 'Crucible', 0], ['Alpha', 'Crucible', 0],
+  ]);
+  assert.doesNotThrow(function() { sortTrackerSheet_(parentlessSheet); }, 'a sheet with no getParent must not break sorting');
 }
 
 console.log('test_add_response_on_submit.js: PASS');

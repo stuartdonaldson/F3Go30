@@ -1122,6 +1122,98 @@ function makeLeanIdentityResponsesSheet_(rows) {
   delete global.SpreadsheetApp;
 })();
 
+// ── F3Go30-a2hq: a stale roster index must never bind a PAX to another PAX's row ─────────
+// The live defect: signup appends the new PAX at the bottom, patches the roster index with that
+// offset, then sortTrackerSheet_ re-sorts the whole sheet — moving the new PAX up and leaving
+// the cached offset pointing at whoever now sits at the bottom. identify then reported that
+// other PAX's f3Name/team under the caller's own email, and handleCheckinSubmit_ (which writes
+// at rowIndex+4) would have written a check-in into their row.
+//
+// Fixture reproduces the exact post-sort state: 'Newbie' really lives at offset 0, but the
+// cached index still says offset 1, where 'Bystander' now sits.
+(function testResolveCheckinIdentityLeanRejectsStaleRosterBind() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
+  var monthInfo = { sheetId: 'sheet-stale', trackerUrl: 'https://x/stale', label: 'July 2026', startDate: new Date(2026, 6, 1) };
+  var responsesRows = [
+    ['', 'newbie@x.com', 'Yes', 'Newbie', '', 'Crucible', '', 'Who', 'What', 'How', '', '', ''],
+    ['', 'bystander@x.com', 'Yes', 'Bystander', '', '', '', 'W2', 'W2', 'W2', '', '', ''],
+  ];
+  // Post-sort truth: Newbie (team Crucible) sorted above Bystander (blank team sorts last).
+  var trackerRows = [
+    ['Newbie', 'Crucible', '', '', '', '', 5, 0.5, 1, ''],
+    ['Bystander', '', '', '', '', '', 9, 0.9, 1, 1],
+  ];
+  installCountingSpreadsheetApp_({
+    'sheet-stale': {
+      getSheetByName: function(n) {
+        if (n === 'Responses') return makeLeanIdentityResponsesSheet_(responsesRows);
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 6, 1), new Date(2026, 6, 2)],
+            trackerRows
+          );
+        }
+        return null;
+      },
+    },
+  });
+
+  // Poison exactly as the pre-fix signup+sort sequence left it: Newbie -> the bottom offset.
+  var PaxCache = require('../script/PaxCache.js');
+  PaxCache.setPaxRosterIndex_('tracker', 'sheet-stale', { newbie: 1, bystander: 0 });
+
+  var identity = resolveCheckinIdentityLean_(monthInfo, 'Newbie', 'newbie@x.com', null);
+  assert.equal(identity.matched, true, 'Newbie is on the roster and must still resolve');
+  assert.equal(identity.trackerRow[0], 'Newbie', 'must return Newbie\'s own row, never Bystander\'s');
+  assert.equal(identity.trackerRowIndex, 0, 'rowIndex drives the check-in WRITE — it must point at Newbie');
+  assert.equal(identity.trackerRow[1], 'Crucible', 'team comes from the correct row too');
+
+  // The poisoned index was purged, not merely worked around — otherwise every later request
+  // pays the same detour and any path lacking the guard stays exposed.
+  var repaired = PaxCache.getPaxRosterIndex_('tracker', 'sheet-stale');
+  assert.equal(repaired && repaired.newbie, 0, 'roster index rebuilt with the correct offset');
+
+  delete global.SpreadsheetApp;
+})();
+
+// Companion to the above: a PAX genuinely absent from the Tracker must still report a clean
+// miss. The retry loop must not turn "not on this roster" into a wrong-row match.
+(function testResolveCheckinIdentityLeanStillMissesForAbsentPax() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
+  var monthInfo = { sheetId: 'sheet-absent', trackerUrl: 'https://x/absent', label: 'July 2026', startDate: new Date(2026, 6, 1) };
+  installCountingSpreadsheetApp_({
+    'sheet-absent': {
+      getSheetByName: function(n) {
+        if (n === 'Responses') return makeLeanIdentityResponsesSheet_([['', 'ghost@x.com', 'Yes', 'Ghost', '', 'Crucible', '', 'W', 'W', 'W', '', '', '']]);
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 6, 1), new Date(2026, 6, 2)],
+            [['Someone Else', 'Crucible', '', '', '', '', 5, 0.5, 1, '']]
+          );
+        }
+        return null;
+      },
+    },
+  });
+
+  // Signed up (Responses has Ghost) but never landed on the Tracker, with a stale index
+  // pointing at the only row present.
+  require('../script/PaxCache.js').setPaxRosterIndex_('tracker', 'sheet-absent', { ghost: 0 });
+
+  var identity = resolveCheckinIdentityLean_(monthInfo, 'Ghost', 'ghost@x.com', null);
+  assert.equal(identity.matched, false, 'must report a miss rather than bind to Someone Else');
+
+  delete global.SpreadsheetApp;
+})();
+
 // resolveFullIdentityFromHandle_ — full cache hit never calls SpreadsheetApp.openById either.
 (function testFullFromHandleFullCacheHitNeverOpens() {
   installFakePropertiesStore_();

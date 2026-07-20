@@ -55,6 +55,10 @@ var resolvePaxRowIndex_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappP
   || (typeof globalThis !== 'undefined' && globalThis.resolvePaxRowIndex_);
 var getPaxRosterIndex_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.getPaxRosterIndex_)
   || (typeof globalThis !== 'undefined' && globalThis.getPaxRosterIndex_);
+var deletePaxRosterIndex_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.deletePaxRosterIndex_)
+  || (typeof globalThis !== 'undefined' && globalThis.deletePaxRosterIndex_);
+var deletePaxCacheRow_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.deletePaxCacheRow_)
+  || (typeof globalThis !== 'undefined' && globalThis.deletePaxCacheRow_);
 var paxCacheNormalizeName_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.paxCacheNormalizeName_)
   || (typeof globalThis !== 'undefined' && globalThis.paxCacheNormalizeName_);
 var getPaxCacheRequestStats_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.getPaxCacheRequestStats_)
@@ -64,6 +68,34 @@ var getPaxCacheRequestStats_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWe
  *  per-request GasLogger event object; {} if PaxCache isn't wired (never true in production). */
 function paxCacheStatsForLog_dw_() {
   return getPaxCacheRequestStats_dw_ ? getPaxCacheRequestStats_dw_() : {};
+}
+
+/**
+ * True when `row` really is `f3Name`'s row (F3Go30-a2hq). Every identity resolver in this file
+ * binds a PAX to a Tracker row via a cached name->offset index, so a stale index silently hands
+ * back a DIFFERENT PAX's row — and nothing downstream would notice: identify would report that
+ * row's f3Name/team as the caller's own, and handleCheckinSubmit_ would write a check-in into it.
+ * The handle-based fast paths (resolveLeanIdentityFromHandle_, resolveFullIdentityFromHandle_)
+ * always carried this gate; the resolvers identify itself uses did not, which is how a cross-PAX
+ * identity leak reached SIT. Treat this as an invariant every rowIndex-derived row must clear,
+ * not as an optimization.
+ * @param {Array} row Tracker row values.
+ * @param {string} f3Name Canonical name the caller resolved (session-supplied, for identify).
+ */
+function trackerRowBelongsToPax_dw_(row, f3Name) {
+  if (!row) return false;
+  return paxCacheNormalizeName_dw_(row[TRACKER_NAME_COL_]) === paxCacheNormalizeName_dw_(f3Name);
+}
+
+/**
+ * Purges the PaxCache entries that could have produced a wrong-row bind for {sheetId, f3Name}:
+ * the roster index (the actual carrier of stale offsets) and this PAX's own row entry, which a
+ * prior wrong-row read will have populated with someone else's values under this PAX's key.
+ * Best-effort — a resolver that cannot purge still falls through to a live re-read.
+ */
+function purgeStaleTrackerBind_dw_(sheetId, f3Name) {
+  try { if (deletePaxRosterIndex_dw_) deletePaxRosterIndex_dw_('tracker', sheetId); } catch (e) { /* best-effort */ }
+  try { if (deletePaxCacheRow_dw_) deletePaxCacheRow_dw_('tracker', sheetId, f3Name); } catch (e) { /* best-effort */ }
 }
 
 var dashboardWebappBonusModule_ = (typeof module !== 'undefined' && module.exports)
@@ -846,19 +878,42 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months, needGoals
     if (!ts || ts.getLastRow() < 4) return { matched: false, months: months };
     trackerLayout = getTrackerLayout_(ts, monthInfo.sheetId);
   }
-  var trackerRowIndex = resolvePaxRowIndex_dw_('tracker', monthInfo.sheetId, f3Name, function() {
+  function readTrackerNameColumn_() {
     var ts = trackerSheet_();
     if (!ts || ts.getLastRow() < 4) return [];
     var lastRow = ts.getLastRow();
     return ts.getRange(4, 1, lastRow - 3, 1).getValues().map(function(r) { return r[0]; });
-  });
-  if (trackerRowIndex === -1) return { matched: false, months: months };
+  }
 
-  var trackerRow = getPaxCacheRow_dw_('tracker', monthInfo.sheetId, f3Name);
-  if (!trackerRow) {
-    var ts2 = trackerSheet_();
-    trackerRow = ts2.getRange(trackerRowIndex + 4, 1, 1, ts2.getLastColumn()).getValues()[0];
-    setPaxCacheRow_dw_('tracker', monthInfo.sheetId, f3Name, trackerRow);
+  // Two attempts (F3Go30-a2hq): a cached roster index that predates a Tracker re-sort points at
+  // the wrong row, and the row it yields is then written back into PaxCache under THIS pax's
+  // name, so the poison persists across requests until something purges it. Attempt 1 uses the
+  // caches; if the row it produces doesn't bear this PAX's name, purge both carriers and take
+  // attempt 2, which is guaranteed live (the index was just deleted, the row entry with it).
+  // A second failure means the roster genuinely no longer contains this PAX — report the miss
+  // rather than returning a row belonging to someone else.
+  var trackerRowIndex = -1;
+  var trackerRow = null;
+  for (var attempt = 0; attempt < 2; attempt++) {
+    trackerRowIndex = resolvePaxRowIndex_dw_('tracker', monthInfo.sheetId, f3Name, readTrackerNameColumn_);
+    if (trackerRowIndex === -1) return { matched: false, months: months };
+
+    trackerRow = getPaxCacheRow_dw_('tracker', monthInfo.sheetId, f3Name);
+    if (!trackerRow) {
+      var ts2 = trackerSheet_();
+      trackerRow = ts2.getRange(trackerRowIndex + 4, 1, 1, ts2.getLastColumn()).getValues()[0];
+      if (trackerRowBelongsToPax_dw_(trackerRow, f3Name)) {
+        setPaxCacheRow_dw_('tracker', monthInfo.sheetId, f3Name, trackerRow);
+      }
+    }
+    if (trackerRowBelongsToPax_dw_(trackerRow, f3Name)) break;
+
+    GasLogger.log('checkinWebapp.resolveIdentity.staleBind', {
+      lean: true, sheetId: monthInfo.sheetId, requested: f3Name,
+      foundAtRowIndex: trackerRowIndex, attempt: attempt,
+    });
+    if (attempt === 1) return { matched: false, months: months };
+    purgeStaleTrackerBind_dw_(monthInfo.sheetId, f3Name);
   }
   var trackerMs = Date.now() - t2;
 
@@ -1072,6 +1127,28 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
 
   var rowIndex = rosterIndex[paxCacheNormalizeName_dw_(f3Name)];
   if (rowIndex === undefined) return { matched: false, months: months };
+
+  // Same invariant as the lean path (F3Go30-a2hq). rosterIndex here was rebuilt from
+  // trackerValues in this very function, so it agrees with those values by construction — but
+  // trackerValues itself may have come from PaxCache (buildTrackerValuesFromPaxCache_), which
+  // assembles rows using the SAME possibly-stale cached index. Verify against the row rather
+  // than trusting the assembly, and on a mismatch purge and fall back to a live read.
+  if (!trackerRowBelongsToPax_dw_(trackerValues[rowIndex], f3Name)) {
+    GasLogger.log('checkinWebapp.resolveIdentity.staleBind', {
+      lean: false, sheetId: monthInfo.sheetId, requested: f3Name, foundAtRowIndex: rowIndex,
+      fromCache: trackerFromCache,
+    });
+    purgeStaleTrackerBind_dw_(monthInfo.sheetId, f3Name);
+    if (!trackerFromCache) return { matched: false, months: months };
+    var freshLastRow = trackerSheet.getLastRow();
+    var freshLastCol = trackerSheet.getLastColumn();
+    trackerValues = trackerSheet.getRange(4, 1, freshLastRow - 3, freshLastCol).getValues();
+    rowIndex = -1;
+    for (var fi = 0; fi < trackerValues.length; fi++) {
+      if (trackerRowBelongsToPax_dw_(trackerValues[fi], f3Name)) { rowIndex = fi; break; }
+    }
+    if (rowIndex === -1) return { matched: false, months: months };
+  }
 
   GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({
     matched: true, lean: false, emailMismatch: emailMismatch,
