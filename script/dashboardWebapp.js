@@ -411,6 +411,16 @@ function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spre
   template.tokenIdentifyResultJson = JSON.stringify(tokenIdentifyResult || null);
   template.urlNsJson = JSON.stringify(ns || null);
   template.urlContextDateJson = JSON.stringify(contextDate || null);
+  // Static signup base for this page's own signup deep links (signupDeepLinkUrl_,
+  // CheckinApp.html) — already carries ?webapp=&cmd=signup, so the client only appends
+  // &targetMonth=&autoStart=1. '' when the static host isn't configured (e.g. Node tests), in
+  // which case CheckinApp.html falls back to the GAS ?cmd=signup page itself.
+  template.staticSignupBaseUrlJson = JSON.stringify(
+    (typeof buildStaticSignupUrl_ === 'function' && buildStaticSignupUrl_(webAppUrl, {
+      ns: ns || undefined,
+      contextDate: contextDate || undefined,
+    })) || ''
+  );
   template.bonusTypesJson = JSON.stringify(bonusTypeClientRules_dw_());
   template.bonusTypeCodesJson = JSON.stringify(bonusTypeDisplayList_dw_());
   // Site Q contact info for the client's "something went wrong" error banner — same Config

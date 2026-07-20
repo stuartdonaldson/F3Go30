@@ -313,7 +313,9 @@ function showAbout() {
       '<p><span class="label">Signup:</span> <a href="' + serviceUrl + '?cmd=signup" target="_blank">' + serviceUrl + '?cmd=signup</a></p>' +
       '<p><span class="label">Checkin:</span> <a href="' + serviceUrl + '?cmd=checkin" target="_blank">' + serviceUrl + '?cmd=checkin</a></p>' +
       '<p><span class="label">Checkin (static page):</span> <a href="' + staticBaseUrl + '?webapp=' + encodeURIComponent(serviceUrl) +
-        '" target="_blank">' + staticBaseUrl + '</a></p>'
+        '" target="_blank">' + staticBaseUrl + '</a></p>' +
+      '<p><span class="label">Signup (static page):</span> <a href="' + staticBaseUrl + '?webapp=' + encodeURIComponent(serviceUrl) +
+        '&amp;cmd=signup" target="_blank">' + staticBaseUrl + '?cmd=signup</a></p>'
     ) : '')
   ).setWidth(480).setHeight(420);
 

@@ -41,7 +41,8 @@ Two secondary problems ride along:
 ## 3. Non-goals
 
 - Making the GAS pages installable. `CheckinApp.html` and `SignupApp.html` both stay as the
-  zero-install fallback; retiring either is a separate decision (§7).
+  availability fallback; retiring either is decided in `F3Go30-90l5` (posture: scheduled for
+  removal) and executed in `F3Go30-wjpu`. See §7.
 - Offline **bonus** edits. The cross-month row-relocation path has a known stale-`rowIndex` bug
   class (`F3Go30-4j4o.2`) and is not safe to queue. Offline scope is day-cell check-ins only.
 - Web push in Phase 1 or 2. See §8 phasing and §10.4.
@@ -74,7 +75,7 @@ flowchart TB
 
     subgraph gas["Google Apps Script — /exec"]
         api["doPost cmd=checkin + cmd=signup<br/>JSON API"]
-        gashtml["CheckinApp + SignupApp HTML<br/>zero-install fallback"]
+        gashtml["CheckinApp + SignupApp HTML<br/>availability fallback"]
     end
 
     subgraph data["Storage"]
@@ -216,10 +217,19 @@ The one server-injected value with no JSON equivalent is `urlIdentityJson` (`Web
 exists purely to carry identity across the redirect from check-in to signup. In-page, that
 handoff has nothing to carry: the problem is deleted rather than ported.
 
-**The GAS `SignupApp.html` stays as the zero-install fallback**, exactly as `CheckinApp.html`
+**The GAS `SignupApp.html` stays as the availability fallback**, exactly as `CheckinApp.html`
 does. Both front ends keep sharing the same JSON handlers, so this adds no divergence — it moves
-the *primary* signup path onto the static origin. Retiring the GAS signup page entirely is a
-separate decision for later, once the static path has a month of real use.
+the *primary* signup path onto the static origin.
+
+It is **not** an install-free path. The static page already is that: an ordinary web page on
+GitHub Pages, where installing only adds a home-screen icon. What the GAS page still provides is
+narrower — a second origin if the static host is unreachable, and the legacy-link route for
+already-distributed `?cmd=signup` URLs, which `F3Go30-833s.11` resolves into a query-preserving
+redirect (the route, not the rendered page).
+
+Retiring it is no longer undecided: `F3Go30-90l5` set the posture to scheduled-for-removal,
+gated on `F3Go30-833s.11` complete plus a month of real static-signup use in PROD. Execution is
+`F3Go30-wjpu`.
 
 **`?cmd=signup` stays a URL contract, not a GAS address.** The static page already honours a
 param contract that mirrors GAS's — `buildStaticCheckinUrl_` (`Utilities.js:418`) documents it as

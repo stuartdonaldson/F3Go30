@@ -49,7 +49,11 @@ function renderHomePage_(e) {
   var months = getCurrentAndNextMonths_(spreadsheet, undefined, e && e.parameter && e.parameter.contextDate);
 
   var template = HtmlService.createTemplateFromFile('HomeApp');
-  template.signupUrl = webAppUrl + '?cmd=signup';
+  // Same treatment as checkinUrl below (buildStaticSignupUrl_, Utilities.js) — the landing
+  // page's "Sign Up / Update My Commit" link opens the static front end, falling back to the
+  // GAS ?cmd=signup page when the static host isn't configured.
+  template.signupUrl = (typeof buildStaticSignupUrl_ === 'function' && buildStaticSignupUrl_(webAppUrl))
+    || (webAppUrl + '?cmd=signup');
   // Opens the static check-in front end wrapping this webapp as its API backend, rather than
   // the GAS ?cmd=checkin page directly (see buildStaticCheckinUrl_, Utilities.js) — falls back
   // to the GAS page if the static host isn't configured (e.g. Node tests).
@@ -71,7 +75,54 @@ function renderHomePage_(e) {
  *   (confirmed live via Playwright frame inspection, 2026-07-04) — so these must be read here,
  *   server-side, and templated in explicitly, exactly like CheckinApp.html's saved-link token.
  */
+/**
+ * The page a legacy `?cmd=signup` arrival actually gets: a client-side hop to the static
+ * signup, carrying the original query string (buildStaticSignupRedirectUrl_).
+ *
+ * REDIRECT, NOT BANNER (F3Go30-833s.11 AC3). A banner would leave every old link landing on a
+ * second, diverging signup implementation that ADR-018 intends to retire — two UIs to keep in
+ * step, and PAX split across them by which link they happened to have saved. A redirect makes
+ * the old links equivalent to the new ones, which is the whole point. What makes it safe is
+ * that it is conditional, not destructive:
+ *   - it only fires when a static URL can actually be built, so an unconfigured/unreachable
+ *     static host renders the GAS page exactly as before;
+ *   - `?static=0` opts out explicitly, keeping ADR-018's availability fallback one query
+ *     parameter away rather than deleted;
+ *   - the hop is a visible link as well as a script navigation, so a PAX whose browser blocks
+ *     the scripted top-level navigation still gets there by tapping, never a dead end.
+ * `window.top` is required rather than `window.location`: HtmlService serves this inside a
+ * sandbox iframe, and navigating the iframe alone would leave the PAX on script.google.com
+ * with the static page trapped inside it.
+ * @param {string} staticUrl
+ */
+function renderStaticSignupRedirect_(staticUrl) {
+  var escaped = staticUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  var html =
+    '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;text-align:center;' +
+    'padding:32px 16px;color:#333}a{color:#0b5cad}</style></head><body>' +
+    '<p>Taking you to Go30 signup&hellip;</p>' +
+    '<p><a id="go" href="' + escaped + '" target="_top">Tap here if nothing happens</a></p>' +
+    '<script>window.top.location.replace(' + JSON.stringify(staticUrl) + ');<\/script>' +
+    '</body></html>';
+  return HtmlService.createHtmlOutput(html)
+    .setTitle('Go30 Hard Commit Signup')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
 function renderSignupPage_(e) {
+  // Old, already-distributed ?cmd=signup links (TinyURL short links, PAX bookmarks, Slack and
+  // email history) can't be rewritten where they sit, so this page carries their arrivals
+  // across to the static signup instead — see renderStaticSignupRedirect_ for why a redirect
+  // and not a banner, and for the conditions under which it declines to fire.
+  var staticSignupUrl = (typeof buildStaticSignupRedirectUrl_ === 'function')
+    ? buildStaticSignupRedirectUrl_(ScriptApp.getService().getUrl(), (e && e.parameter) || {})
+    : '';
+  if (staticSignupUrl) {
+    GasLogger.log('renderSignupPage_.staticRedirect', { hasQuery: !!(e && e.queryString) });
+    return renderStaticSignupRedirect_(staticSignupUrl);
+  }
+
   var spreadsheet = resolveTemplateSpreadsheet_(e);
   var lists = readTeamLists_(spreadsheet);
   var urlContextDate = (e && e.parameter && e.parameter.contextDate) || null;
@@ -587,6 +638,7 @@ function doPost(e) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderSignupPage_: renderSignupPage_,
+    renderStaticSignupRedirect_: renderStaticSignupRedirect_,
     renderHomePage_: renderHomePage_,
     handleAdminPost_: handleAdminPost_,
   };

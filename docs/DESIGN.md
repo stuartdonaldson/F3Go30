@@ -386,7 +386,7 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
     the static page is already the top-level document, so from there it could only navigate the
     installed app away.
 
-  `SignupApp.html` is unchanged and stays live as the zero-install fallback, exactly as
+  `SignupApp.html` is unchanged and stays live as the availability fallback, exactly as
   `CheckinApp.html` does — both front ends keep sharing one set of JSON handlers, so this adds no
   server-side divergence. Trade-off: the signup UI now exists twice, and the two copies can drift
   (the static one is re-expressed against this page's CSS custom properties, so it renders in

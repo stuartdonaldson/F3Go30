@@ -439,7 +439,7 @@ function buildStaticCheckinUrl_(webAppBaseUrl, opts) {
  * resolveStaticCheckinBaseUrl_ (signup is a step within that one page, not a second static
  * page), just opened with `cmd=signup` instead of defaulting to check-in. Returns '' under the
  * same conditions buildStaticCheckinUrl_ does (static host or webAppBaseUrl unavailable), so
- * callers can fall back to the GAS ?cmd=signup page — the zero-install fallback ADR-018 keeps.
+ * callers can fall back to the GAS ?cmd=signup page — the availability fallback ADR-018 keeps.
  * @param {string} webAppBaseUrl
  * @param {{id: string=, ns: string=, contextDate: string=, targetMonth: string=, autoStart: boolean=}=} opts
  */
@@ -454,6 +454,34 @@ function buildStaticSignupUrl_(webAppBaseUrl, opts) {
   if (opts.targetMonth) url += '&targetMonth=' + encodeURIComponent(opts.targetMonth);
   if (opts.autoStart) url += '&autoStart=1';
   return url;
+}
+
+/**
+ * Maps a doGet request's own query parameters onto buildStaticSignupUrl_, so an arrival on the
+ * GAS `?cmd=signup` page can be carried across to the static signup with its query string
+ * intact (F3Go30-833s.11) — targetMonth/autoStart/id/ns/contextDate all change what the signup
+ * flow does, so a redirect that dropped them would be a different request, not the same one.
+ *
+ * Returns '' — meaning "render the GAS page, don't redirect" — in exactly two cases:
+ *   1. buildStaticSignupUrl_ can't build a URL (static host unconfigured, or no webapp URL);
+ *   2. the request opted out with `?static=0`.
+ * (2) is what keeps ADR-018's availability fallback reachable: the GAS signup page is never
+ * deleted or made unreachable by this redirect, only bypassed by default.
+ * @param {string} webAppBaseUrl
+ * @param {Object=} parameter A doGet event's `e.parameter` bag.
+ * @returns {string} The static signup URL to send the arrival to, or '' to stay on GAS.
+ */
+function buildStaticSignupRedirectUrl_(webAppBaseUrl, parameter) {
+  parameter = parameter || {};
+  if (parameter.static === '0') return '';
+  if (typeof buildStaticSignupUrl_ !== 'function') return '';
+  return buildStaticSignupUrl_(webAppBaseUrl, {
+    id: parameter.id || undefined,
+    ns: parameter.ns || undefined,
+    contextDate: parameter.contextDate || undefined,
+    targetMonth: parameter.targetMonth || undefined,
+    autoStart: parameter.autoStart === '1',
+  });
 }
 
 function getLockedRowA1Notation(sheet, row, column) {
@@ -487,6 +515,7 @@ if (typeof module !== 'undefined' && module.exports) {
     resolveStaticCheckinBaseUrl_: resolveStaticCheckinBaseUrl_,
     buildStaticCheckinUrl_: buildStaticCheckinUrl_,
     buildStaticSignupUrl_: buildStaticSignupUrl_,
+    buildStaticSignupRedirectUrl_: buildStaticSignupRedirectUrl_,
     buildSlackMessage_: buildSlackMessage_,
     buildSignupSlackMessage_: buildSignupSlackMessage_
   };
