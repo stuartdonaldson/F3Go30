@@ -2,7 +2,8 @@
 /**
  * Syncs the "How it Works" content (F3Go30-e3co) from its single canonical source,
  * docs/Go30-Intro.md, out to every place it's duplicated:
- *   - script/SignupApp.html and script/CheckinApp.html's #howBody panels (in place)
+ *   - script/SignupApp.html, script/CheckinApp.html, and static-pages/src/index.html's
+ *     #howBody panels (in place)
  *   - static-pages/src/how-it-works.html (a standalone page, no SIT/PROD split — see its own
  *     header comment)
  *
@@ -26,6 +27,7 @@ const ROOT = path.resolve(__dirname, '..');
 const INTRO_MD_PATH = path.join(ROOT, 'docs', 'Go30-Intro.md');
 const SIGNUP_HTML_PATH = path.join(ROOT, 'script', 'SignupApp.html');
 const CHECKIN_HTML_PATH = path.join(ROOT, 'script', 'CheckinApp.html');
+const PWA_INDEX_HTML_PATH = path.join(ROOT, 'static-pages', 'src', 'index.html');
 const STATIC_PAGE_PATH = path.join(ROOT, 'static-pages', 'src', 'how-it-works.html');
 
 const START_MARKER = '<!-- HOW-IT-WORKS:START -->';
@@ -64,8 +66,11 @@ function buildStandalonePage_(fragment) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Go30 — How it Works</title>
 <style>
-  :root { --brand: #7a3b12; --brand-bg: #7a3b12; --brand-contrast: #fff; }
-  body { margin: 0; padding: 24px 18px 48px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; line-height: 1.6; color: #333; background: #fdfbf7; }
+  :root { --brand: #7a3b12; --brand-bg: #7a3b12; --brand-contrast: #fff; --text: #333; --bg: #fdfbf7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --brand: #e0a55f; --brand-bg: #7a3b12; --brand-contrast: #fff; --text: #ece7dc; --bg: #171b19; }
+  }
+  body { margin: 0; padding: 24px 18px 48px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; line-height: 1.6; color: var(--text); background: var(--bg); }
   main { max-width: 560px; margin: 0 auto; }
   h1 { font-size: 20px; color: var(--brand); }
   .how-section-head { margin: 14px 0 6px; font-size: 13px; font-weight: bold; color: var(--brand); letter-spacing: .04em; }
@@ -87,7 +92,7 @@ function main() {
   const introMd = fs.readFileSync(INTRO_MD_PATH, 'utf8');
   const fragment = extractFragment_(introMd);
 
-  for (const targetPath of [SIGNUP_HTML_PATH, CHECKIN_HTML_PATH]) {
+  for (const targetPath of [SIGNUP_HTML_PATH, CHECKIN_HTML_PATH, PWA_INDEX_HTML_PATH]) {
     const before = fs.readFileSync(targetPath, 'utf8');
     const after = replaceMarkers_(before, fragment);
     if (after !== before) {

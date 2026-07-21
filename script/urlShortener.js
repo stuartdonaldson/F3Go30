@@ -63,6 +63,68 @@ function shortenUrl(longUrl, customAlias, tries = 5, service = "tinyurl") {
   throw new Error(`Failed to shorten URL after ${tries} attempts. All aliases were unavailable.`);
 }
 
+/**
+ * Re-points an EXISTING TinyURL alias at a new destination, rather than minting a new short
+ * URL (F3Go30-833s.11 AC4). This is the only way to migrate short links that are already
+ * distributed — pasted into Slack, saved as PAX bookmarks — since those cannot be edited where
+ * they sit; the alias they resolve through is the one editable thing left.
+ *
+ * TinyURL's API does support this: PATCH https://api.tinyurl.com/change with
+ * {domain, alias, url} updates the destination of an alias owned by the token's account.
+ * Note the failure mode that makes verification non-optional: an alias NOT owned by this
+ * account (e.g. minted under a different token) is not editable, and shortenUrlWithTinyUrl's
+ * create path would silently mint `<alias>-1` instead — a different, undistributed short URL
+ * that leaves every existing link still pointing at the old target. Callers must therefore
+ * treat this as best-effort and re-verify the redirect target afterwards
+ * (resolveShortUrlRedirectTarget_, CreateNewTracker.js) rather than assuming success.
+ *
+ * @param {string} alias The bare alias (no domain, no slashes) to re-point.
+ * @param {string} newLongUrl The destination the alias should resolve to.
+ * @returns {boolean} True if the API reported the change applied; false on any failure.
+ */
+function repointTinyUrlAlias(alias, newLongUrl) {
+  const accessToken = PropertiesService.getScriptProperties().getProperty('TINYURL_ACCESS_TOKEN');
+  if (!accessToken) {
+    Logger.log('repointTinyUrlAlias: TINYURL_ACCESS_TOKEN missing — cannot re-point ' + alias);
+    return false;
+  }
+
+  const options = {
+    "method": "put",
+    "contentType": "application/json",
+    "headers": { "Authorization": "Bearer " + accessToken, "X-HTTP-Method-Override": "PATCH" },
+    "payload": JSON.stringify({ domain: "tinyurl.com", alias: alias, url: newLongUrl }),
+    "muteHttpExceptions": true
+  };
+
+  try {
+    const response = UrlFetchApp.fetch("https://api.tinyurl.com/change", options);
+    const statusCode = response.getResponseCode();
+    if (statusCode !== 200) {
+      Logger.log('repointTinyUrlAlias: HTTP ' + statusCode + ' for alias ' + alias + ': ' + response.getContentText());
+      return false;
+    }
+    return true;
+  } catch (error) {
+    Logger.log('repointTinyUrlAlias: fetch failed for alias ' + alias + ': ' + error.message);
+    return false;
+  }
+}
+
+/**
+ * Extracts the bare alias from a short URL ('https://tinyurl.com/Go30Signup' → 'Go30Signup'),
+ * so a stored short URL can be re-pointed without also storing its alias separately.
+ * @param {string} shortUrl
+ * @returns {string} The last path segment, or '' if there isn't one.
+ */
+function extractShortUrlAlias_(shortUrl) {
+  if (!shortUrl) return '';
+  var withoutQuery = String(shortUrl).split('?')[0].replace(/\/+$/, '');
+  var segments = withoutQuery.split('/');
+  var last = segments[segments.length - 1] || '';
+  return /^[a-zA-Z0-9_-]+$/.test(last) ? last : '';
+}
+
 function shortenUrlWithBitly(longUrl, customAlias) {
   // Retrieve Bitly API token from PropertiesService
   // see Apps Script Project / Settings > Properties
@@ -163,3 +225,9 @@ function shortenUrlWithTinyUrl(longUrl, customAlias) {
 }
 
 
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    extractShortUrlAlias_: extractShortUrlAlias_,
+    repointTinyUrlAlias: repointTinyUrlAlias,
+  };
+}

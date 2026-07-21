@@ -16,6 +16,30 @@
  * two specs don't clobber each other's SIT rows. Re-running either test here re-fills the
  * existing row rather than duplicating it, same as demo-screenshots.spec.js.
  *
+ * SCOPE, after F3Go30-833s.11 (bare `?cmd=signup` → static signup) and F3Go30-ubwl.2 (bare
+ * `?cmd=checkin` AND the home route → static check-in, all three routes via one shared
+ * redirect mechanism, buildStaticRedirectUrl_/renderStaticRedirect_): this spec's job is split
+ * into two describes below —
+ *   1. 'GAS signup fallback (?static=0)' — the two tests that navigate straight to
+ *      `?cmd=signup` force the `&static=0` opt-out (buildStaticSignupRedirectUrl_,
+ *      Utilities.js) so they keep driving the GAS-hosted SignupApp.html end to end. This is
+ *      deliberate availability-fallback coverage (ADR-018), not incidental — the opt-out is
+ *      what makes it possible to still test the fallback UI at all now that it's no longer
+ *      what a real PAX's bare link lands on by default.
+ *   2. 'Check-in flow + GAS→static signup handoff' — every navigation straight to `?cmd=checkin`
+ *      in this describe ALSO forces `&static=0` (F3Go30-ubwl.2 made that route redirect by
+ *      default too, same as signup) so these tests keep driving the GAS-hosted CheckinApp.html
+ *      end to end — this describe's whole point is the GAS-side identify/token/PaxDB-fallback
+ *      mechanics, which only the GAS fallback UI still exercises now that a bare arrival departs
+ *      immediately. The one exception is the "not you?" reset link (CheckinApp.html's
+ *      notYouLink): its href is built as a bare `?cmd=checkin` with no `static=0` of its own
+ *      (unlike this describe's own page.goto calls), so clicking it now hands off to the static
+ *      front end exactly like check-in's signupDeepLinkUrl_ hop already does for signup — see
+ *      that test's own comment. Also unaffected: the token-round-trip form POST itself
+ *      (renderCheckinPageForTypedIdentify_, dashboardWebapp.js's doPost path) is never subject to
+ *      the doGet-only redirect check, so the POST's own resulting page is always real GAS
+ *      content regardless of `static`.
+ *
  * Usage:
  *   npx playwright test tests/playwright/identity-token-flow.spec.js
  */
@@ -71,11 +95,54 @@ async function dismissGasBanner(page) {
  * browser, and confirmed here to reliably fall back under Playwright's synthetic clicks in
  * headless Chromium. When it doesn't fire within a couple seconds, the fallback UI (a real
  * anchor tag) becomes visible instead — follow that link the same way a real user would tap it.
+ *
+ * F3Go30-bkxg: SignupApp.html's post-save handoff (buildCheckinUrl_) has preferred the static
+ * check-in front end whenever it's configured since before F3Go30-833s.11 (the static check-in
+ * page shipped in v2.4.0) — confirmed live that on SIT this always fires, landing outside the
+ * GAS origin entirely. That destination URL carries `id=<token>` but never `cmd=checkin` (it's
+ * the static page's default view, buildStaticCheckinUrl_ never sets `cmd`), so "arrived" is
+ * recognized by either the GAS URL shape OR having left script.google.com with an id= in tow.
  */
+function checkinHandoffArrived_(url) {
+  if (/cmd=checkin&id=/.test(url)) return true;
+  try {
+    const parsed = new URL(url);
+    return parsed.origin !== 'https://script.google.com' && parsed.searchParams.has('id');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Follows GAS's renderStaticRedirect_ interstitial (WebApp.js, F3Go30-ubwl.2) out to the static
+ * origin.
+ *
+ * Distinct from followTokenRedirect below, despite the similar shape: attemptTopRedirect_ fires
+ * from a click and so may keep sticky user activation in a real browser, failing only under
+ * synthetic clicks. renderStaticRedirect_ fires on load with NO gesture, inside an iframe
+ * sandboxed `allow-top-navigation-by-user-activation` — Chrome blocks it for every visitor,
+ * not just this harness. The `<a id="go" target="_top">` tap-through is the only path that
+ * actually works, so follow that. Tracked separately as a product defect.
+ */
+async function followStaticRedirect(page, timeout = 20000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (new URL(page.url()).origin !== 'https://script.google.com') return;
+    const go = page.frameLocator('iframe').frameLocator('iframe').locator('#go');
+    if (await go.isVisible().catch(() => false)) {
+      const href = await go.getAttribute('href');
+      await page.goto(href, { waitUntil: 'networkidle' });
+      return;
+    }
+    await page.waitForTimeout(300);
+  }
+  throw new Error('Neither the automatic static redirect nor its tap-through link appeared within timeout');
+}
+
 async function followTokenRedirect(page, fallbackLinkLocator, timeout = 20000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (/cmd=checkin&id=/.test(page.url())) return;
+    if (checkinHandoffArrived_(page.url())) return;
     if (await fallbackLinkLocator.isVisible().catch(() => false)) {
       const href = await fallbackLinkLocator.getAttribute('href');
       await page.goto(href, { waitUntil: 'networkidle' });
@@ -84,6 +151,17 @@ async function followTokenRedirect(page, fallbackLinkLocator, timeout = 20000) {
     await page.waitForTimeout(300);
   }
   throw new Error('Neither the automatic top-redirect nor its fallback link appeared within timeout');
+}
+
+/**
+ * Locator root for wherever followTokenRedirect landed — the GAS-nested double iframe when the
+ * handoff stayed on script.google.com, or `page` directly once it left for the static front end
+ * (see followTokenRedirect's doc comment above).
+ */
+function appRootAfterCheckinHandoff(page) {
+  return new URL(page.url()).origin === 'https://script.google.com'
+    ? page.frameLocator('iframe').frameLocator('iframe')
+    : page;
 }
 
 /**
@@ -128,20 +206,24 @@ async function fillSignupInfo(app, pax) {
   await app.locator('#howInput').fill(pax.how);
 }
 
-test.describe('Identity-token check-in flow (SIT)', () => {
-  let signupUrl;
-  let checkinUrl;
+// Shared across both describes below — beforeAll in each populates these from the same
+// settings, in file declaration order (a single worker runs this whole file sequentially, so
+// the fallback describe's fixture-establishing test always completes before anything that
+// depends on it — see the handoff describe's own comment).
+let signupUrl;
+let checkinUrl;
 
-  test.beforeAll(() => {
-    const settings = loadSettings();
-    const deploymentId = settings.testDeploymentId;
-    if (!deploymentId || deploymentId.startsWith('<')) {
-      throw new Error('testDeploymentId not set in local.settings.json — run npm run deploy:sit first');
-    }
-    signupUrl = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=signup`;
-    checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=checkin`;
-  });
+test.beforeAll(() => {
+  const settings = loadSettings();
+  const deploymentId = settings.testDeploymentId;
+  if (!deploymentId || deploymentId.startsWith('<')) {
+    throw new Error('testDeploymentId not set in local.settings.json — run npm run deploy:sit first');
+  }
+  signupUrl = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=signup`;
+  checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=checkin`;
+});
 
+test.describe('GAS signup fallback (?static=0) — availability path, SIT', () => {
   test('current-month signup mints a token and redirects into check-in', async ({ page }) => {
     // This assertion depends on the mint being CURRENT_MONTH_PAX's very first session ever
     // (createdAt === lastUsedAt) — see handleCheckinIdentify_'s exact firstUse comparison
@@ -154,7 +236,13 @@ test.describe('Identity-token check-in flow (SIT)', () => {
       '--body', JSON.stringify({ f3Name: CURRENT_MONTH_PAX.f3Name, email: CURRENT_MONTH_PAX.email }),
     ], { stdio: 'pipe' });
 
-    await page.goto(signupUrl, { waitUntil: 'networkidle' });
+    // &static=0 opts out of F3Go30-833s.11's default redirect to the static signup
+    // (buildStaticSignupRedirectUrl_, Utilities.js) — deliberately, not incidentally: this test's
+    // whole job is exercising the GAS-hosted SignupApp.html end to end (ADR-018's availability
+    // fallback), and every downstream test in the OTHER describe below depends on this exact test
+    // actually completing CURRENT_MONTH_PAX's current-month signup, which only the GAS fallback
+    // UI is being driven to do here.
+    await page.goto(signupUrl + '&static=0', { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     let app = page.frameLocator('iframe').frameLocator('iframe');
 
@@ -177,65 +265,19 @@ test.describe('Identity-token check-in flow (SIT)', () => {
     // top-navigation or its fallback link (see followTokenRedirect above).
     await followTokenRedirect(page, app.locator('#goToCheckinLink'));
 
-    app = page.frameLocator('iframe').frameLocator('iframe');
-    await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    // Lands on the static check-in front end on SIT (see followTokenRedirect's doc comment) —
+    // appRootAfterCheckinHandoff picks the right locator root either way.
+    const dest = appRootAfterCheckinHandoff(page);
+    await expect(dest.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
     // recentlyMinted is true only in the first minute after this exact token was generated —
     // see IDENTITY_TOKEN_FRESH_WINDOW_MS_ (dashboardWebapp.js).
-    await expect(app.locator('#bookmarkHereNote')).toBeVisible();
-  });
-
-  test('typed identify lands directly on the check-in screen with the bookmark note — no intermediate redirect step', async ({ page }) => {
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
-    await dismissGasBanner(page);
-    const app = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
-
-    // The single form-POST navigation must already be the final, bookmarkable URL — no
-    // separate "tap here to continue" step in between (see submitCheckinIdentify's docstring).
-    expect(page.url()).toContain('cmd=checkin&id=');
-    await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
-    await expect(app.locator('#checkinHeading')).toContainText(CURRENT_MONTH_PAX.f3Name);
-    // firstUse is exact (Created-At === Last-Used-At) — this is a brand-new session, so the
-    // one-time "bookmark this page" nudge must be showing right here, on this same screen.
-    await expect(app.locator('#bookmarkHereNote')).toBeVisible();
-  });
-
-  test('reopening the bookmarked token link signs in directly, with no identify form', async ({ page }) => {
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
-    await dismissGasBanner(page);
-    const app0 = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
-    await expect(app0.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
-    const tokenUrl = page.url();
-    expect(tokenUrl).toContain('cmd=checkin&id=');
-
-    // Simulate a real bookmark reopen: a brand-new navigation straight to the saved URL.
-    await page.goto(tokenUrl, { waitUntil: 'networkidle' });
-    await dismissGasBanner(page);
-    const app = page.frameLocator('iframe').frameLocator('iframe');
-
-    // The identify form must never appear on a token'd reopen — the token round-trip
-    // (SAVED_IDENTITY_TOKEN, see CheckinApp.html) bypasses it entirely.
-    await expect(app.locator('#step-identify')).toBeHidden();
-    await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
-    await expect(app.locator('#checkinHeading')).toContainText(CURRENT_MONTH_PAX.f3Name);
-  });
-
-  test('"Not you?" returns to a blank identify form at the bare URL', async ({ page }) => {
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
-    await dismissGasBanner(page);
-    let app = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
-    await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
-
-    await app.locator('#notYouLink').click();
-    await page.waitForURL((url) => url.href.includes('cmd=checkin') && !url.href.includes('id='), { timeout: 15000 });
-
-    app = page.frameLocator('iframe').frameLocator('iframe');
-    await expect(app.locator('#step-identify')).toBeVisible({ timeout: 15000 });
-    await expect(app.locator('#idF3Name')).toHaveValue('');
-    await expect(app.locator('#idEmail')).toHaveValue('');
+    await expect(dest.locator('#bookmarkHereNote')).toBeVisible();
   });
 
   test('next-month-only signup does not mint a token or redirect into check-in', async ({ page }) => {
-    await page.goto(signupUrl, { waitUntil: 'networkidle' });
+    // Same &static=0 rationale as the test above — this test needs the GAS-hosted
+    // SignupApp.html's own #step-done/#step-choose locators, not the static twin's.
+    await page.goto(signupUrl + '&static=0', { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     let app = page.frameLocator('iframe').frameLocator('iframe');
 
@@ -260,6 +302,71 @@ test.describe('Identity-token check-in flow (SIT)', () => {
     await page.waitForTimeout(1000); // attemptTopRedirect_'s fallback window is 400ms
     expect(page.url()).not.toContain('cmd=checkin');
   });
+});
+
+test.describe('Check-in flow + GAS→static signup handoff, SIT', () => {
+  test('typed identify lands directly on the check-in screen with the bookmark note — no intermediate redirect step', async ({ page }) => {
+    await page.goto(checkinUrl + '&static=0', { waitUntil: 'networkidle' });
+    await dismissGasBanner(page);
+    const app = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
+
+    // The single form-POST navigation must already be the final, bookmarkable URL — no
+    // separate "tap here to continue" step in between (see submitCheckinIdentify's docstring).
+    expect(page.url()).toContain('cmd=checkin&id=');
+    await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(app.locator('#checkinHeading')).toContainText(CURRENT_MONTH_PAX.f3Name);
+    // firstUse is exact (Created-At === Last-Used-At) — this is a brand-new session, so the
+    // one-time "bookmark this page" nudge must be showing right here, on this same screen.
+    await expect(app.locator('#bookmarkHereNote')).toBeVisible();
+  });
+
+  test('reopening the bookmarked token link signs in directly, with no identify form', async ({ page }) => {
+    await page.goto(checkinUrl + '&static=0', { waitUntil: 'networkidle' });
+    await dismissGasBanner(page);
+    const app0 = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
+    await expect(app0.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    const tokenUrl = page.url();
+    expect(tokenUrl).toContain('cmd=checkin&id=');
+
+    // Simulate a real bookmark reopen: a brand-new navigation straight to the saved URL.
+    await page.goto(tokenUrl + '&static=0', { waitUntil: 'networkidle' });
+    await dismissGasBanner(page);
+    const app = page.frameLocator('iframe').frameLocator('iframe');
+
+    // The identify form must never appear on a token'd reopen — the token round-trip
+    // (SAVED_IDENTITY_TOKEN, see CheckinApp.html) bypasses it entirely.
+    await expect(app.locator('#step-identify')).toBeHidden();
+    await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(app.locator('#checkinHeading')).toContainText(CURRENT_MONTH_PAX.f3Name);
+  });
+
+  // F3Go30-ubwl.4: notYouLink's href is a bare `?cmd=checkin` (CheckinApp.html sets it without
+  // `static=0` — see this spec's header comment), so since F3Go30-ubwl.2 the click now hands
+  // off to the static check-in front end instead of reloading the GAS identify form in place.
+  // This test's job is therefore the handoff itself — the static landing opens with no saved
+  // token/identity carried across (fresh identify step), same reasoning as the known-but-
+  // unregistered signup handoff test below.
+  test('"Not you?" hands off into the static check-in front end with no saved identity', async ({ page }) => {
+    await page.goto(checkinUrl + '&static=0', { waitUntil: 'networkidle' });
+    await dismissGasBanner(page);
+    let app = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
+    await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+
+    // The handoff is two hops, not one: the click lands on GAS's own renderStaticRedirect_
+    // interstitial (WebApp.js), which only then leaves for the static origin. Its
+    // window.top.location.replace is the same top-level navigation this harness reliably does
+    // not perform (see followTokenRedirect's doc comment above), so follow the interstitial's
+    // own `<a id="go">` tap-through instead of waiting for an automatic bounce.
+    await app.locator('#notYouLink').click();
+    await followStaticRedirect(page);
+
+    const url = new URL(page.url());
+    expect(url.origin).not.toBe('https://script.google.com');
+    expect(url.searchParams.has('id')).toBe(false);
+    await expect(page.locator('#step-identify')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#idF3Name')).toHaveValue('');
+    await expect(page.locator('#idEmail')).toHaveValue('');
+  });
 
   // ── Known-but-not-registered-this-month fallthrough (F3Go30-xj1q.1) ──────────────────────
   // Check-in's PaxDB fallback (handleCheckinIdentify_, dashboardWebapp.js) carries a PAX known
@@ -278,7 +385,7 @@ test.describe('Identity-token check-in flow (SIT)', () => {
   const KNOWN_NOT_REGISTERED_FIXTURE_READY = true;
 
   test('typed identify for a truly-unknown name+email shows the sign-up prompt without auto-redirecting', async ({ page }) => {
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
+    await page.goto(checkinUrl + '&static=0', { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     const app = await submitCheckinIdentify(page, 'TrulyUnknownPax', 'trulyunknownpax@example.com');
 
@@ -295,13 +402,26 @@ test.describe('Identity-token check-in flow (SIT)', () => {
   // "Sign up" themselves — a direct click-triggered navigation (openSignup_), never flaky
   // since there's no async gap between the click and the navigation it triggers.
   // As of the later 2026-07 hardening work, a known-but-unregistered typed identify auto-
-  // redirects straight into a prefilled signup — using the same immediate-on-load redirect
-  // trick as the matched path (reliable because it fires the instant this fresh page loads,
-  // activated by the form submission itself, not after an async gap). step-signupRedirect's
-  // bare tap-through link is only the fallback for whichever browsers still decline it.
-  test('typed identify for a known-but-unregistered PAX redirects into prefilled signup', async ({ page }) => {
+  // redirects straight into signup — using the same immediate-on-load redirect trick as the
+  // matched path (reliable because it fires the instant this fresh page loads, activated by
+  // the form submission itself, not after an async gap). step-signupRedirect's bare tap-through
+  // link is only the fallback for whichever browsers still decline it.
+  //
+  // F3Go30-bkxg: signupDeepLinkUrl_ (CheckinApp.html) prefers the static signup front end
+  // whenever STATIC_SIGNUP_BASE_URL_ is configured, with no `static=0`-style opt-out of its
+  // own (unlike the bare ?cmd=signup entry point) — so on SIT this hop always lands on the
+  // static origin, a genuinely different document than the one this test used to assert
+  // against. Note that identity does NOT carry across that origin change: signupDeepLinkUrl_
+  // only appends targetMonth/autoStart, not f3Name/email (buildStaticSignupUrl_, Utilities.js),
+  // and localStorage is per-origin — confirmed live (2026-07) that the static page lands on its
+  // own intro/identify step, not a prefilled info step, for exactly this reason. This test's job
+  // is therefore the handoff itself: the redirect target is correct and a real signup entry
+  // point is reached. The resulting UI's own behavior (prefill, save, etc.) is
+  // static-signup.spec.js's job — see its "month-boundary: known-but-unregistered PAX..." test,
+  // which drives that same static UI from a direct static-origin entry instead.
+  test('typed identify for a known-but-unregistered PAX hands off into the static signup', async ({ page }) => {
     test.skip(!KNOWN_NOT_REGISTERED_FIXTURE_READY, 'known-but-unregistered SIT fixture not yet established — see Stage 4');
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
+    await page.goto(checkinUrl + '&static=0', { waitUntil: 'networkidle' });
     await dismissGasBanner(page);
     const app = page.frameLocator('iframe').frameLocator('iframe');
     await app.locator('#idF3Name').fill(LATE_SIGNUP_PAX.f3Name);
@@ -311,17 +431,25 @@ test.describe('Identity-token check-in flow (SIT)', () => {
       app.locator('#identifyBtn').click(),
     ]);
 
-    let app2 = page.frameLocator('iframe').frameLocator('iframe');
+    const app2 = page.frameLocator('iframe').frameLocator('iframe');
     const signupRedirectLink = app2.locator('#signupRedirectAnchor');
     if (await signupRedirectLink.isVisible({ timeout: 5000 }).catch(() => false)) {
       await Promise.all([
         page.waitForNavigation({ waitUntil: 'networkidle' }),
         signupRedirectLink.click(),
       ]);
-      app2 = page.frameLocator('iframe').frameLocator('iframe');
     }
-    expect(page.url()).toContain('cmd=signup');
-    await expect(app2.locator('#step-info')).toBeVisible({ timeout: 15000 });
-    await expect(app2.locator('#infoF3Name')).toHaveText(LATE_SIGNUP_PAX.f3Name);
+
+    // The handoff lands on the static origin (no more GAS sandbox iframe to look inside), with
+    // the same targetMonth/autoStart contract signupDeepLinkUrl_ always sends.
+    const url = new URL(page.url());
+    expect(url.origin).toBe('https://f3go30.github.io');
+    expect(url.searchParams.get('cmd')).toBe('signup');
+    expect(url.searchParams.get('targetMonth')).toBe('current');
+    expect(url.searchParams.get('autoStart')).toBe('1');
+
+    // Identity doesn't cross the origin boundary (see this test's header comment above), so the
+    // static page opens its own intro/identify step rather than a prefilled info step.
+    await expect(page.locator('#su-step-intro')).toBeVisible({ timeout: 15000 });
   });
 });

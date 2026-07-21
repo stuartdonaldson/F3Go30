@@ -36,9 +36,11 @@ test.describe('GasLogger live run', () => {
 
   test.beforeAll(() => {
     const settings = loadSettings();
-    const scriptId = settings.SCRIPT_ID_PROD;
+    // Renamed from SCRIPT_ID_PROD when local.settings.json went multi-target
+    // (docs/deployment-model.md Phase 1 migration) — F3Go30-kb8o.
+    const scriptId = settings.templateScriptId;
     if (!scriptId || scriptId.startsWith('<')) {
-      throw new Error('SCRIPT_ID_PROD not set in local.settings.json');
+      throw new Error('templateScriptId not set in local.settings.json');
     }
     editorUrl = `https://script.google.com/home/projects/${scriptId}/edit`;
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });

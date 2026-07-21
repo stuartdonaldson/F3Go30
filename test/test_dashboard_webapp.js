@@ -67,6 +67,8 @@ const {
   getCachedResponsesLayoutOnly_,
   getResponsesLayout_,
   resolveCheckinIdentityLean_,
+  handleMonthGrid_,
+  buildMonthNavigationPayload_dw_,
 } = require('../script/dashboardWebapp.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
@@ -1122,6 +1124,98 @@ function makeLeanIdentityResponsesSheet_(rows) {
   delete global.SpreadsheetApp;
 })();
 
+// ── F3Go30-a2hq: a stale roster index must never bind a PAX to another PAX's row ─────────
+// The live defect: signup appends the new PAX at the bottom, patches the roster index with that
+// offset, then sortTrackerSheet_ re-sorts the whole sheet — moving the new PAX up and leaving
+// the cached offset pointing at whoever now sits at the bottom. identify then reported that
+// other PAX's f3Name/team under the caller's own email, and handleCheckinSubmit_ (which writes
+// at rowIndex+4) would have written a check-in into their row.
+//
+// Fixture reproduces the exact post-sort state: 'Newbie' really lives at offset 0, but the
+// cached index still says offset 1, where 'Bystander' now sits.
+(function testResolveCheckinIdentityLeanRejectsStaleRosterBind() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
+  var monthInfo = { sheetId: 'sheet-stale', trackerUrl: 'https://x/stale', label: 'July 2026', startDate: new Date(2026, 6, 1) };
+  var responsesRows = [
+    ['', 'newbie@x.com', 'Yes', 'Newbie', '', 'Crucible', '', 'Who', 'What', 'How', '', '', ''],
+    ['', 'bystander@x.com', 'Yes', 'Bystander', '', '', '', 'W2', 'W2', 'W2', '', '', ''],
+  ];
+  // Post-sort truth: Newbie (team Crucible) sorted above Bystander (blank team sorts last).
+  var trackerRows = [
+    ['Newbie', 'Crucible', '', '', '', '', 5, 0.5, 1, ''],
+    ['Bystander', '', '', '', '', '', 9, 0.9, 1, 1],
+  ];
+  installCountingSpreadsheetApp_({
+    'sheet-stale': {
+      getSheetByName: function(n) {
+        if (n === 'Responses') return makeLeanIdentityResponsesSheet_(responsesRows);
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 6, 1), new Date(2026, 6, 2)],
+            trackerRows
+          );
+        }
+        return null;
+      },
+    },
+  });
+
+  // Poison exactly as the pre-fix signup+sort sequence left it: Newbie -> the bottom offset.
+  var PaxCache = require('../script/PaxCache.js');
+  PaxCache.setPaxRosterIndex_('tracker', 'sheet-stale', { newbie: 1, bystander: 0 });
+
+  var identity = resolveCheckinIdentityLean_(monthInfo, 'Newbie', 'newbie@x.com', null);
+  assert.equal(identity.matched, true, 'Newbie is on the roster and must still resolve');
+  assert.equal(identity.trackerRow[0], 'Newbie', 'must return Newbie\'s own row, never Bystander\'s');
+  assert.equal(identity.trackerRowIndex, 0, 'rowIndex drives the check-in WRITE — it must point at Newbie');
+  assert.equal(identity.trackerRow[1], 'Crucible', 'team comes from the correct row too');
+
+  // The poisoned index was purged, not merely worked around — otherwise every later request
+  // pays the same detour and any path lacking the guard stays exposed.
+  var repaired = PaxCache.getPaxRosterIndex_('tracker', 'sheet-stale');
+  assert.equal(repaired && repaired.newbie, 0, 'roster index rebuilt with the correct offset');
+
+  delete global.SpreadsheetApp;
+})();
+
+// Companion to the above: a PAX genuinely absent from the Tracker must still report a clean
+// miss. The retry loop must not turn "not on this roster" into a wrong-row match.
+(function testResolveCheckinIdentityLeanStillMissesForAbsentPax() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
+  var monthInfo = { sheetId: 'sheet-absent', trackerUrl: 'https://x/absent', label: 'July 2026', startDate: new Date(2026, 6, 1) };
+  installCountingSpreadsheetApp_({
+    'sheet-absent': {
+      getSheetByName: function(n) {
+        if (n === 'Responses') return makeLeanIdentityResponsesSheet_([['', 'ghost@x.com', 'Yes', 'Ghost', '', 'Crucible', '', 'W', 'W', 'W', '', '', '']]);
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 6, 1), new Date(2026, 6, 2)],
+            [['Someone Else', 'Crucible', '', '', '', '', 5, 0.5, 1, '']]
+          );
+        }
+        return null;
+      },
+    },
+  });
+
+  // Signed up (Responses has Ghost) but never landed on the Tracker, with a stale index
+  // pointing at the only row present.
+  require('../script/PaxCache.js').setPaxRosterIndex_('tracker', 'sheet-absent', { ghost: 0 });
+
+  var identity = resolveCheckinIdentityLean_(monthInfo, 'Ghost', 'ghost@x.com', null);
+  assert.equal(identity.matched, false, 'must report a miss rather than bind to Someone Else');
+
+  delete global.SpreadsheetApp;
+})();
+
 // resolveFullIdentityFromHandle_ — full cache hit never calls SpreadsheetApp.openById either.
 (function testFullFromHandleFullCacheHitNeverOpens() {
   installFakePropertiesStore_();
@@ -1377,5 +1471,304 @@ global.PropertiesService = { getScriptProperties: function() { return { getPrope
 delete global.SpreadsheetApp;
 
 console.log('test_dashboard_webapp.js: resolved-context handle assertions passed');
+
+// handleCheckinSubmit_ — an explicit day OUTSIDE the identity's anchored month persists to that
+// OTHER month's tracker (F3Go30-k5fn.3 AC3), exercising resolveCheckinDayTarget_'s cross-month
+// fallback (dashboardWebapp.js) rather than the same-month fast path testSubmitUsesHandleAndSkips
+// FullResolution_ above already covers. The July handle is left untouched by the write.
+(function testSubmitExplicitDayInDifferentMonthPersistsToThatMonthsTracker() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); }; // "today" = Jul 2
+  global.formatRegistrationMonth_ = function() { return 'August 2026'; };
+
+  var fx = makeHandleFixture_(); // identity anchored to July ('sheet-jul'), no Aug day columns
+  var augRow2 = ['', '', '', '', '', '', '', '', ''];
+  var augRow3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 7, 5)];
+  var augPaxRows = [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, '']];
+  var augTrackerSheet = makeFakeTrackerSheet_(augRow2, augRow3, augPaxRows);
+  // Re-install SpreadsheetApp covering BOTH months — makeHandleFixture_'s own install only knows
+  // about 'sheet-jul'; resolveCheckinDayTarget_'s cross-month fallback needs 'sheet-aug' too.
+  installFakeSpreadsheetById_({
+    'sheet-jul': { getSheetByName: function(n) { return n === 'Tracker' ? fx.trackerSheet : null; } },
+    'sheet-aug': { getSheetByName: function(n) { return n === 'Tracker' ? augTrackerSheet : null; } },
+  });
+  global.resolveTrackerForContextDate = function(targetDate) {
+    if (targetDate.getFullYear() === 2026 && targetDate.getMonth() === 7) {
+      return { sheetId: 'sheet-aug', trackerUrl: 'https://x/aug', startDate: new Date(2026, 7, 1) };
+    }
+    throw new Error('no tracker for ' + targetDate);
+  };
+
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor'); // anchored to July, rowIndex 0
+  var hostileTemplate = { getSheetByName: function() { throw new Error('TrackerDB must not be consulted directly'); } };
+  var res = handleCheckinSubmit_(hostileTemplate, {
+    f3Name: 'Anchor', email: 'a@x.com', day: '2026-08-05', value: 1, resolvedContext: handle,
+  });
+
+  assert.equal(res.ok, true);
+  // Aug 5 is augTrackerSheet's only day column (0-based idx 8 -> sheet col 9); Anchor is row 4.
+  assert.deepEqual(augTrackerSheet._writes, [{ row: 4, col: 9, value: 1 }]);
+  assert.deepEqual(fx.trackerSheet._writes, [], 'the July tracker (the identity\'s own anchored month) must not be touched');
+
+  var patchedAug = require('../script/PaxCache.js').getPaxCacheRow_('tracker', 'sheet-aug', 'Anchor');
+  assert.ok(patchedAug, 'the write-through patch must land in the AUGUST PaxCache entry, not July\'s');
+  assert.equal(patchedAug[8], 1);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// ── availableMonths / registeredMonthKeys + monthGrid action (F3Go30-k5fn.1) ──────────────
+
+var TRACKER_DB_HEADERS_TEST_ = [
+  'Date Modified', 'StartDate', 'SpreadsheetName', 'ShortTracker', 'TrackerURL', 'ShortHC', 'HC URL',
+  'SheetId', 'FormId', 'TotalPAX', 'TotalTeams', 'AverageScore',
+  'LastSignupAt', 'TriggersInitializedAt', 'LastMinusOneRunAt', 'LastNagRunAt',
+];
+
+function trackerDbRow_(sheetId, startDate) {
+  var row = new Array(TRACKER_DB_HEADERS_TEST_.length).fill('');
+  row[TRACKER_DB_HEADERS_TEST_.indexOf('SheetId')] = sheetId;
+  row[TRACKER_DB_HEADERS_TEST_.indexOf('StartDate')] = startDate;
+  row[TRACKER_DB_HEADERS_TEST_.indexOf('TrackerURL')] = 'https://x/' + sheetId;
+  return row;
+}
+
+var PAX_DB_HEADERS_TEST_ = [
+  'SheetId', 'Date', 'F3 Name', 'Team', 'WHO', 'WHAT', 'HOW', 'Comments',
+  'Hit', 'Miss', 'NoCheckin', 'Fellowship', 'Q Point', 'Inspire', 'EHing FNG',
+  'Email', 'Team Type', 'Other Team', 'Phone', 'NAG Email',
+];
+
+function paxDbRow_(sheetId, f3Name) {
+  var row = new Array(PAX_DB_HEADERS_TEST_.length).fill('');
+  row[PAX_DB_HEADERS_TEST_.indexOf('SheetId')] = sheetId;
+  row[PAX_DB_HEADERS_TEST_.indexOf('F3 Name')] = f3Name;
+  return row;
+}
+
+function makeFakeDataRangeSheet_(rows) {
+  return { getDataRange: function() { return { getValues: function() { return rows; } }; } };
+}
+
+(function testBuildMonthNavigationPayloadOrdersAvailableMonthsChronologically() {
+  global.formatRegistrationMonth_ = function(d) {
+    return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][d.getMonth()] + ' ' + d.getFullYear();
+  };
+  var fakeSpreadsheet = {
+    getSheetByName: function(name) {
+      if (name === 'TrackerDB') {
+        return makeFakeDataRangeSheet_([
+          TRACKER_DB_HEADERS_TEST_,
+          trackerDbRow_('sheet-aug', new Date(2026, 7, 1)),
+          trackerDbRow_('sheet-jun', new Date(2026, 5, 1)),
+          trackerDbRow_('sheet-jul', new Date(2026, 6, 1)),
+        ]);
+      }
+      if (name === 'PaxDB') {
+        return makeFakeDataRangeSheet_([
+          PAX_DB_HEADERS_TEST_,
+          paxDbRow_('sheet-jun', 'Anchor'),
+          paxDbRow_('sheet-jul', 'Anchor'),
+          paxDbRow_('sheet-aug', 'Someone Else'),
+        ]);
+      }
+      return null;
+    },
+  };
+
+  // AC1: availableMonths covers every TrackerDB month, ascending chronological order.
+  var nav = buildMonthNavigationPayload_dw_(fakeSpreadsheet, 'Anchor');
+  assert.deepEqual(nav.availableMonths.map(function(m) { return m.monthKey; }), ['2026-06', '2026-07', '2026-08']);
+  assert.equal(nav.availableMonths[0].label, 'June 2026');
+  assert.equal(nav.availableMonths[0].startDateIso, '2026-06-01');
+  // AC2: registeredMonthKeys lists only months where this PAX (Anchor) has a PaxDB row.
+  assert.deepEqual(nav.registeredMonthKeys.sort(), ['2026-06', '2026-07']);
+
+  delete global.formatRegistrationMonth_;
+})();
+
+(function testBuildMonthNavigationPayloadReadsPaxDbOnceNotPerMonth() {
+  var paxDbReadCount = 0;
+  global.formatRegistrationMonth_ = function() { return 'x'; };
+  var fakeSpreadsheet = {
+    getSheetByName: function(name) {
+      if (name === 'TrackerDB') {
+        return makeFakeDataRangeSheet_([
+          TRACKER_DB_HEADERS_TEST_,
+          trackerDbRow_('sheet-a', new Date(2026, 0, 1)),
+          trackerDbRow_('sheet-b', new Date(2026, 1, 1)),
+          trackerDbRow_('sheet-c', new Date(2026, 2, 1)),
+        ]);
+      }
+      if (name === 'PaxDB') {
+        paxDbReadCount++;
+        return makeFakeDataRangeSheet_([PAX_DB_HEADERS_TEST_, paxDbRow_('sheet-b', 'Anchor')]);
+      }
+      return null;
+    },
+  };
+
+  // AC3: a single Template-resident PaxDB read backs registeredMonthKeys, not a per-month loop —
+  // three TrackerDB months above must still only cost one PaxDB getSheetByName/getDataRange call.
+  buildMonthNavigationPayload_dw_(fakeSpreadsheet, 'Anchor');
+  assert.equal(paxDbReadCount, 1);
+
+  delete global.formatRegistrationMonth_;
+})();
+
+(function testBuildMonthNavigationPayloadNoNameNeverConsultsPaxDb() {
+  var paxDbCalled = false;
+  global.formatRegistrationMonth_ = function() { return 'x'; };
+  var fakeSpreadsheet = {
+    getSheetByName: function(name) {
+      if (name === 'TrackerDB') return makeFakeDataRangeSheet_([TRACKER_DB_HEADERS_TEST_, trackerDbRow_('sheet-jul', new Date(2026, 6, 1))]);
+      if (name === 'PaxDB') { paxDbCalled = true; return makeFakeDataRangeSheet_([PAX_DB_HEADERS_TEST_]); }
+      return null;
+    },
+  };
+  var nav = buildMonthNavigationPayload_dw_(fakeSpreadsheet, '');
+  assert.deepEqual(nav.registeredMonthKeys, []);
+  assert.equal(paxDbCalled, false, 'no PaxDB read when f3Name is unknown (anti-enumeration)');
+
+  delete global.formatRegistrationMonth_;
+})();
+
+// handleMonthGrid_ — AC4-AC7: accepts {date|monthKey, f3Name, email}, delegates to
+// resolveDashboardMonth_ / resolvePaxRowIndex_ / buildMonthGridEntries_, and returns
+// registered:false (not an error) when the PAX has no row in an existing tracker.
+(function testHandleMonthGridNoTrackerForDateReturnsError() {
+  // No resolveTrackerForContextDate stub installed -> resolveDashboardMonth_'s try/catch swallows
+  // the miss and returns null, exactly like a genuine "no TrackerDB row for this date" (AC5).
+  var res = handleMonthGrid_({}, { monthKey: '2026-11', f3Name: 'Anchor', email: 'anchor@x.com' });
+  assert.equal(res.ok, false);
+  assert.equal(res.error, 'no_tracker_for_date');
+})();
+
+(function testHandleMonthGridRegisteredPaxReturnsMonthGridViaHelpers() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.formatRegistrationMonth_ = function() { return 'September 2026'; };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-sep', trackerUrl: 'https://x/sep', startDate: new Date(2026, 8, 1) };
+  };
+  installFakeSpreadsheetById_({
+    'sheet-sep': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1), new Date(2026, 8, 2)],
+            [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 0]]
+          );
+        }
+        if (n === 'Responses') {
+          return makeLeanIdentityResponsesSheet_([
+            ['', 'anchor@x.com', 'Yes', 'Anchor', 'AO', 'Crucible', '', 'W', 'W', 'W', '', '', ''],
+          ]);
+        }
+        return null;
+      },
+    },
+  });
+
+  var res = handleMonthGrid_({}, { monthKey: '2026-09', f3Name: 'Anchor', email: 'anchor@x.com' });
+  assert.equal(res.ok, true);
+  assert.equal(res.registered, true);
+  assert.equal(res.monthKey, '2026-09');
+  assert.equal(res.monthLabel, 'September 2026');
+  assert.equal(res.trackerUrl, 'https://x/sep');
+  assert.deepEqual(res.monthGrid, [
+    { dateIso: '2026-09-01', status: 'done' },
+    { dateIso: '2026-09-02', status: 'missed' },
+  ]);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+// Copilot review (PR#4 follow-up, F3Go30-9jsa): "registered" must mirror
+// resolveCheckinIdentityLean_'s definition (a live, non-DELETED Responses row) — a Tracker row
+// alone isn't enough. A DELETED Responses row (ADR-008 email-change convention) with a
+// not-yet-cleaned-up Tracker row must still come back registered:false.
+(function testHandleMonthGridDeletedResponsesRowIsNotRegisteredDespiteTrackerRow() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.formatRegistrationMonth_ = function() { return 'September 2026'; };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-sep-deleted', trackerUrl: 'https://x/sep', startDate: new Date(2026, 8, 1) };
+  };
+  installFakeSpreadsheetById_({
+    'sheet-sep-deleted': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1), new Date(2026, 8, 2)],
+            [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 0]]
+          );
+        }
+        if (n === 'Responses') {
+          return makeLeanIdentityResponsesSheet_([
+            ['', 'anchor@x.com', 'DELETED', 'Anchor', 'AO', 'Crucible', '', 'W', 'W', 'W', '', '', ''],
+          ]);
+        }
+        return null;
+      },
+    },
+  });
+
+  var res = handleMonthGrid_({}, { monthKey: '2026-09', f3Name: 'Anchor', email: 'anchor@x.com' });
+  assert.equal(res.ok, true);
+  assert.equal(res.registered, false, 'DELETED Responses row must not read as registered');
+  assert.deepEqual(res.monthGrid, []);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+(function testHandleMonthGridUnregisteredPaxReturnsOkNotError() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.formatRegistrationMonth_ = function() { return 'October 2026'; };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-oct', trackerUrl: 'https://x/oct', startDate: new Date(2026, 9, 1) };
+  };
+  installFakeSpreadsheetById_({
+    'sheet-oct': {
+      getSheetByName: function(n) {
+        if (n !== 'Tracker') return null;
+        return makeFakeTrackerSheet_(
+          ['', '', '', '', '', '', '', '', ''],
+          ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 9, 1)],
+          [['SomeoneElse', 'Crucible', '', '', '', '', 5, 0.5, 1]]
+        );
+      },
+    },
+  });
+
+  // AC6: a tracker exists for this month, but the requesting PAX has no row in it -> ok:true,
+  // registered:false — never an error response.
+  var res = handleMonthGrid_({}, { monthKey: '2026-10', f3Name: 'Anchor', email: 'anchor@x.com' });
+  assert.equal(res.ok, true);
+  assert.equal(res.registered, false);
+  assert.deepEqual(res.monthGrid, []);
+  assert.equal(res.error, undefined);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+console.log('test_dashboard_webapp.js: month navigation / monthGrid assertions passed');
 
 console.log('test_dashboard_webapp.js: all assertions passed');

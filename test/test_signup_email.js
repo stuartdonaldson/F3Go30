@@ -62,4 +62,36 @@ const signupEmail = require('../script/signupEmail.js');
   assert.ok(msg.htmlBody.indexOf('cmd=signup&id=') === -1, 'no session guid → no &id on the edit link');
 }
 
+// --- Static host configured: both the check-in and edit-goals (signup) links point at the
+// static front end instead of the bare GAS routes (F3Go30-833s.10 / ADR-018 §7) ---
+{
+  global.STATIC_PAGES_BASE_URL_ = 'https://pax.example.github.io/f3go30/';
+  global.APP_DEPLOY_TARGET = 'TEST';
+  delete require.cache[require.resolve('../script/Utilities.js')];
+  delete require.cache[require.resolve('../script/signupEmail.js')];
+  var staticSignupEmail = require('../script/signupEmail.js');
+
+  var msg = staticSignupEmail.buildSignupReuseEmailTemplate_({
+    mode: 'reuse',
+    f3Name: 'Anchor',
+    trackerUrl: 'https://tracker.example.com',
+    checkinSessionGuid: 'sess-123',
+    summaryLines: ['Who: Leader'],
+    registrationMonth: 'July 2026',
+  });
+
+  var staticBase = 'https://pax.example.github.io/f3go30/sit/';
+  assert.ok(msg.htmlBody.indexOf(staticBase + '?id=sess-123"') !== -1,
+    'HTML check-in link points at the static front end when configured');
+  assert.ok(msg.htmlBody.indexOf(staticBase + '?cmd=signup&id=sess-123') !== -1,
+    'HTML edit-goals (signup) link points at the static front end when configured');
+  assert.ok(msg.body.indexOf(staticBase + '?cmd=signup&id=sess-123') !== -1,
+    'plaintext edit-goals (signup) link points at the static front end when configured');
+
+  delete global.STATIC_PAGES_BASE_URL_;
+  delete global.APP_DEPLOY_TARGET;
+  delete require.cache[require.resolve('../script/Utilities.js')];
+  delete require.cache[require.resolve('../script/signupEmail.js')];
+}
+
 console.log('test_signup_email.js: all assertions passed');

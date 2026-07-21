@@ -44,12 +44,27 @@ function include_(filename) {
  * current month's tracker spreadsheet. Replaces the old bare {"status":"ok"} JSON response.
  */
 function renderHomePage_(e) {
-  var spreadsheet = resolveTemplateSpreadsheet_(e);
   var webAppUrl = ScriptApp.getService().getUrl();
+  // The home page arrival redirect (F3Go30-ubwl.2) shares buildStaticCheckinRedirectUrl_ with
+  // cmd=checkin: the static page's default view with no `cmd` param IS check-in, so home carries
+  // an arrival to the exact same static URL a check-in arrival would get, identity params intact.
+  var staticHomeUrl = (typeof buildStaticCheckinRedirectUrl_ === 'function')
+    ? buildStaticCheckinRedirectUrl_(webAppUrl, (e && e.parameter) || {})
+    : '';
+  if (staticHomeUrl) {
+    logStaticRedirect_(e, 'renderHomePage_', 'home');
+    return renderStaticRedirect_(staticHomeUrl, { bodyLabel: 'Go30', title: 'Go30' });
+  }
+
+  var spreadsheet = resolveTemplateSpreadsheet_(e);
   var months = getCurrentAndNextMonths_(spreadsheet, undefined, e && e.parameter && e.parameter.contextDate);
 
   var template = HtmlService.createTemplateFromFile('HomeApp');
-  template.signupUrl = webAppUrl + '?cmd=signup';
+  // Same treatment as checkinUrl below (buildStaticSignupUrl_, Utilities.js) — the landing
+  // page's "Sign Up / Update My Commit" link opens the static front end, falling back to the
+  // GAS ?cmd=signup page when the static host isn't configured.
+  template.signupUrl = (typeof buildStaticSignupUrl_ === 'function' && buildStaticSignupUrl_(webAppUrl))
+    || (webAppUrl + '?cmd=signup');
   // Opens the static check-in front end wrapping this webapp as its API backend, rather than
   // the GAS ?cmd=checkin page directly (see buildStaticCheckinUrl_, Utilities.js) — falls back
   // to the GAS page if the static host isn't configured (e.g. Node tests).
@@ -71,7 +86,111 @@ function renderHomePage_(e) {
  *   (confirmed live via Playwright frame inspection, 2026-07-04) — so these must be read here,
  *   server-side, and templated in explicitly, exactly like CheckinApp.html's saved-link token.
  */
+/**
+ * The page a legacy GAS arrival (signup, check-in, or home) actually gets: a client-side hop to
+ * the static front end, carrying the original query string (buildStaticSignupRedirectUrl_ /
+ * buildStaticCheckinRedirectUrl_). Generalized from the signup-only renderStaticSignupRedirect_
+ * (F3Go30-833s.11) so all three arrival routes share exactly one window.top redirect renderer
+ * (F3Go30-ubwl.2) — the `label` param is the only per-route difference (what the "Taking you
+ * to..." copy names).
+ *
+ * REDIRECT, NOT BANNER (F3Go30-833s.11 AC3). A banner would leave every old link landing on a
+ * second, diverging implementation that ADR-018 intends to retire — two UIs to keep in step, and
+ * PAX split across them by which link they happened to have saved. A redirect makes the old
+ * links equivalent to the new ones, which is the whole point. What makes it safe is that it is
+ * conditional, not destructive:
+ *   - it only fires when a static URL can actually be built, so an unconfigured/unreachable
+ *     static host renders the GAS page exactly as before;
+ *   - `?static=0` opts out explicitly, keeping the GAS-rendered page one query parameter away
+ *     rather than deleted (a developer/legacy escape hatch, not an availability guarantee —
+ *     ADR-019);
+ *   - the hop is an explicit tap, so it is never a dead end.
+ *
+ * ONE DELIBERATE TAP, NOT AN AUTO-REDIRECT. This originally also ran
+ * `window.top.location.replace(...)` on load and framed the link as a "Tap here if nothing
+ * happens" fallback. That scripted navigation could never fire for anyone: HtmlService serves
+ * this inside an iframe sandboxed `allow-top-navigation-by-user-activation`, and a script
+ * running on load has no user activation, so Chrome refuses it ("Unsafe attempt to initiate
+ * navigation ... has no user activation") and throws an uncaught SecurityError into the
+ * console. The link was therefore not the fallback path but the only path, while the copy
+ * promised an automatic hop that never came. It is now presented as what it actually is — a
+ * single deliberate tap — and the dead replace() call is gone rather than left throwing.
+ *
+ * Navigating the sandbox iframe instead (meta refresh, window.location) is NOT an alternative:
+ * it would leave the PAX on script.google.com with the static page trapped inside it, and the
+ * address bar is exactly what has to change for the new link to be bookmarkable at all.
+ * @param {string} staticUrl
+ * @param {{bodyLabel: string=, title: string=}=} opts bodyLabel names what moved, e.g.
+ *   'Go30 check-in' (default 'Go30'); title is the page's setTitle (default 'Go30').
+ */
+function renderStaticRedirect_(staticUrl, opts) {
+  opts = opts || {};
+  var bodyLabel = opts.bodyLabel || 'Go30';
+  var title = opts.title || 'Go30';
+  var escaped = staticUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  var html =
+    '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;text-align:center;' +
+    'padding:40px 20px;color:#333}' +
+    'h1{font-size:20px;margin:0 0 10px}' +
+    'p{font-size:15px;line-height:1.5;color:#555;margin:0 0 26px}' +
+    'a#go{display:inline-block;background:#0b5cad;color:#fff;text-decoration:none;' +
+    'padding:14px 30px;border-radius:8px;font-size:17px;font-weight:600}' +
+    '</style></head><body>' +
+    '<h1>' + bodyLabel + ' has moved</h1>' +
+    '<p>Tap below to continue, then update your bookmark to the new address.</p>' +
+    '<p><a id="go" href="' + escaped + '" target="_top">Continue</a></p>' +
+    '</body></html>';
+  return HtmlService.createHtmlOutput(html)
+    .setTitle(title)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/**
+ * Records one GAS-to-static redirect interstitial, shared by all three arrival routes
+ * (renderHomePage_, renderSignupPage_, renderCheckinPage_) so the logging shape can't drift
+ * between them the way three hand-copied blocks did. Always logs to Axiom (via GasLogger,
+ * including the raw session token so Axiom can be filtered/joined per visitor even when no
+ * f3Name is resolvable) and, in the GAS runtime only (logActivity is undefined under Node
+ * tests), best-effort resolves the token to a PAX name for the spreadsheet's own Activity tab
+ * — every redirect is recorded there even when the token can't be tied to anyone.
+ * @param {Object} e        The doGet request event (for e.parameter.id / spreadsheet resolution).
+ * @param {string} routeTag GasLogger tag prefix, e.g. 'renderCheckinPage_'.
+ * @param {string} label    Human label for the Activity sheet message, e.g. 'check-in'.
+ */
+function logStaticRedirect_(e, routeTag, label) {
+  var redirectToken = (e && e.parameter && e.parameter.id) || null;
+  GasLogger.log(routeTag + '.staticRedirect', { hasQuery: !!(e && e.queryString), token: redirectToken });
+
+  if (typeof logActivity === 'undefined') return;
+
+  var activityMsg = 'Redirect to static ' + label;
+  if (redirectToken && typeof resolveCheckinSession_ === 'function') {
+    try {
+      var tokenSession = resolveCheckinSession_(resolveTemplateSpreadsheet_(e), redirectToken);
+      if (tokenSession && tokenSession.f3Name) {
+        activityMsg += ' (' + maskPiiForLog_(tokenSession.f3Name) + ')';
+      }
+    } catch (err) {
+      GasLogger.log(routeTag + '.redirectLogError', { error: err.message });
+    }
+  }
+  logActivity(activityMsg, 'GAS-to-static-redirect');
+}
+
 function renderSignupPage_(e) {
+  // Old, already-distributed ?cmd=signup links (TinyURL short links, PAX bookmarks, Slack and
+  // email history) can't be rewritten where they sit, so this page carries their arrivals
+  // across to the static signup instead — see renderStaticRedirect_ for why a redirect
+  // and not a banner, and for the conditions under which it declines to fire.
+  var staticSignupUrl = (typeof buildStaticSignupRedirectUrl_ === 'function')
+    ? buildStaticSignupRedirectUrl_(ScriptApp.getService().getUrl(), (e && e.parameter) || {})
+    : '';
+  if (staticSignupUrl) {
+    logStaticRedirect_(e, 'renderSignupPage_', 'signup');
+    return renderStaticRedirect_(staticSignupUrl, { bodyLabel: 'Go30 signup', title: 'Go30 Hard Commit Signup' });
+  }
+
   var spreadsheet = resolveTemplateSpreadsheet_(e);
   var lists = readTeamLists_(spreadsheet);
   var urlContextDate = (e && e.parameter && e.parameter.contextDate) || null;
@@ -587,6 +706,8 @@ function doPost(e) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderSignupPage_: renderSignupPage_,
+    renderStaticRedirect_: renderStaticRedirect_,
+    logStaticRedirect_: logStaticRedirect_,
     renderHomePage_: renderHomePage_,
     handleAdminPost_: handleAdminPost_,
   };

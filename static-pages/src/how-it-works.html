@@ -5,8 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Go30 — How it Works</title>
 <style>
-  :root { --brand: #7a3b12; --brand-bg: #7a3b12; --brand-contrast: #fff; }
-  body { margin: 0; padding: 24px 18px 48px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; line-height: 1.6; color: #333; background: #fdfbf7; }
+  :root { --brand: #7a3b12; --brand-bg: #7a3b12; --brand-contrast: #fff; --text: #333; --bg: #fdfbf7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --brand: #e0a55f; --brand-bg: #7a3b12; --brand-contrast: #fff; --text: #ece7dc; --bg: #171b19; }
+  }
+  body { margin: 0; padding: 24px 18px 48px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; line-height: 1.6; color: var(--text); background: var(--bg); }
   main { max-width: 560px; margin: 0 auto; }
   h1 { font-size: 20px; color: var(--brand); }
   .how-section-head { margin: 14px 0 6px; font-size: 13px; font-weight: bold; color: var(--brand); letter-spacing: .04em; }

@@ -861,7 +861,13 @@ function resolveShortUrlRedirectTarget_(shortUrl) {
 
 /**
  * Ensures the stable, NameSpace-derived signup short URL (Config row 'Signup Short URL')
- * points at the web app's cmd=signup URL, creating or repairing it as needed.
+ * points at the signup entry point, creating or repairing it as needed.
+ *
+ * F3Go30-833s.11: the target is now the STATIC signup (buildStaticSignupUrl_), falling back to
+ * the GAS ?cmd=signup page when the static host isn't configured. This short URL is the one
+ * that gets pasted into Slack, so it is also the single biggest already-distributed link —
+ * which is why the repair path below tries to RE-POINT the existing alias before minting a new
+ * one: minting a new one migrates nobody who already saved the old.
  * @param {Sheet} configSheet
  * @param {Array<Array>} configRows Mutable rows array kept in sync by upsertConfigSheetRow_.
  * @param {string} nameSpace
@@ -872,7 +878,8 @@ function ensureSignupShortUrl_(configSheet, configRows, nameSpace) {
   // otherwise fall back to ScriptApp.getService().getUrl()
   var webappUrl = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL');
   var serviceUrl = webappUrl || ScriptApp.getService().getUrl();
-  var expectedTarget = serviceUrl + '?cmd=signup';
+  var expectedTarget = (typeof buildStaticSignupUrl_ === 'function' && buildStaticSignupUrl_(serviceUrl))
+    || (serviceUrl + '?cmd=signup');
 
   var existing = getConfigValue_(null, 'Signup Short URL', configRows);
   var existingShortUrl = existing && existing.primary ? existing.primary : null;
@@ -889,6 +896,27 @@ function ensureSignupShortUrl_(configSheet, configRows, nameSpace) {
       existingShortUrl: existingShortUrl,
       actualTarget: actualTarget,
       expectedTarget: expectedTarget
+    });
+  }
+
+  // Repair: prefer re-pointing the alias PAX already have over minting a replacement. Verified
+  // by re-reading the redirect rather than trusting the API's response — a not-owned alias
+  // can report failure quietly, and silently keeping a stale short URL is the one outcome
+  // worse than creating a new one.
+  if (decision.action === 'repair' && typeof repointTinyUrlAlias === 'function') {
+    var existingAlias = extractShortUrlAlias_(existingShortUrl);
+    if (existingAlias && repointTinyUrlAlias(existingAlias, expectedTarget) &&
+        resolveShortUrlRedirectTarget_(existingShortUrl) === expectedTarget) {
+      GasLogger.log('ensureSignupShortUrl_.repointed', {
+        shortUrl: existingShortUrl,
+        alias: existingAlias,
+        expectedTarget: expectedTarget
+      });
+      return existingShortUrl;
+    }
+    GasLogger.log('ensureSignupShortUrl_.repointFailed', {
+      existingShortUrl: existingShortUrl,
+      alias: existingAlias
     });
   }
 

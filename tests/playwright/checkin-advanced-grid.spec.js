@@ -4,8 +4,22 @@
  * Exercises the Test surface fixed in F3Go30-th22.1's design (calendar + unified selection
  * panel, superseding the original per-day-row layout). Reuses the same live-SIT NoSadClown
  * fixture PAX as demo-screenshots.spec.js (an idempotent signup with a real current-month
- * Tracker row) — GAS webapps render inside a sandboxed iframe, so every locator below goes
- * through the same nested frameLocator that spec uses.
+ * Tracker row).
+ *
+ * TARGET (F3Go30-ubwl.2 follow-up): this spec drives the STATIC front end, not the GAS-hosted
+ * CheckinApp.html it originally targeted. Once a bare `?cmd=checkin` began redirecting out to
+ * the static page, the grid a real PAX actually touches is the static one — so that is what
+ * this coverage is worth having against. The static page ships the identical grid markup
+ * (#advancedGrid / #advancedToggleBtn / .cal-cell …, static-pages/src/index.html), so every
+ * assertion below is unchanged; only the setup differs. Two consequences:
+ *   - no sandboxed iframe, so `app` is just the page itself rather than a nested frameLocator;
+ *   - the page authenticates by `?id=<guid>` (minted once in beforeAll, same call the typed
+ *     identify form makes) instead of re-typing name+email and riding a form POST per test.
+ * The GAS fallback page keeps its own coverage in static-checkin.spec.js's `?static=0`
+ * regression guard and identity-token-flow.spec.js's fallback describe (ADR-018).
+ *
+ * Served from an ephemeral 127.0.0.1 origin exactly as static-checkin.spec.js does, which also
+ * keeps the cross-origin call path honest — the page fetches the real SIT /exec endpoint.
  *
  * Client tests write only to days OTHER than today/yesterday (an explicit past day fixture and
  * a future day near month-end) so they never fight demo-screenshots.spec.js's own today/
@@ -21,8 +35,11 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const crypto = require('crypto');
 
 const ROOT = path.resolve(__dirname, '../..');
+const STATIC_DIR = path.join(ROOT, 'static-pages', 'src');
 
 // NoSadClown is a disposable automation-only fixture (same one demo-screenshots.spec.js drives
 // destructively via real check-ins/bonus edits) — safe to write to and clear here too.
@@ -37,12 +54,19 @@ function loadSettings() {
   return JSON.parse(fs.readFileSync(p, 'utf8'));
 }
 
-async function dismissGasBanner(page) {
-  const dismissBtn = page.getByRole('button', { name: 'Dismiss' });
-  if (await dismissBtn.isVisible({ timeout: 8000 }).catch(() => false)) {
-    await dismissBtn.click();
-    await expect(dismissBtn).toBeHidden({ timeout: 5000 }).catch(() => {});
-  }
+/** Minimal static file server — origin is http://127.0.0.1:<port>, unrelated to any GAS host. */
+function startStaticServer() {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const file = path.join(STATIC_DIR, req.url.split('?')[0] === '/' ? '/index.html' : req.url.split('?')[0]);
+      fs.readFile(file, (err, data) => {
+        if (err) { res.writeHead(404); res.end(); return; }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(data);
+      });
+    });
+    server.listen(0, '127.0.0.1', () => resolve(server));
+  });
 }
 
 function isoDate(d) {
@@ -50,39 +74,44 @@ function isoDate(d) {
 }
 
 test.describe('Advanced calendar grid (client, live SIT)', () => {
-  let checkinUrl;
+  let execUrl;
+  let staticOrigin;
+  let server;
+  let sessionGuid;
   let app;
   let todayIso;
 
-  test.beforeAll(() => {
+  test.beforeAll(async ({ request }) => {
     const settings = loadSettings();
     const deploymentId = settings.testDeploymentId;
     if (!deploymentId || deploymentId.startsWith('<')) {
       throw new Error('testDeploymentId not set in local.settings.json — run npm run deploy:sit first');
     }
-    checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=checkin`;
+    execUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
+
+    // Mint one real session guid for the fixture PAX up front — the static page authenticates
+    // by ?id=<guid>, so per-test typed identify (and its form POST) is unnecessary here.
+    sessionGuid = crypto.randomUUID();
+    const res = await request.post(execUrl + '?cmd=checkin', {
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      data: JSON.stringify({ action: 'identify', f3Name: DEMO_PAX.f3Name, email: DEMO_PAX.email, guid: sessionGuid }),
+      maxRedirects: 5,
+    });
+    const json = await res.json();
+    expect(json.matched).toBe(true);
+
+    server = await startStaticServer();
+    staticOrigin = `http://127.0.0.1:${server.address().port}`;
+  });
+
+  test.afterAll(async () => {
+    if (server) await new Promise((resolve) => server.close(resolve));
   });
 
   test.beforeEach(async ({ page }) => {
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
-    await dismissGasBanner(page);
-    app = page.frameLocator('iframe').frameLocator('iframe');
-
-    await app.locator('#idF3Name').fill(DEMO_PAX.f3Name);
-    await app.locator('#idEmail').fill(DEMO_PAX.email);
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle' }),
-      app.locator('#identifyBtn').click(),
-    ]);
-    app = page.frameLocator('iframe').frameLocator('iframe');
-    const saveLink = app.locator('#saveLinkAnchor');
-    if (await saveLink.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: 'networkidle' }),
-        saveLink.click(),
-      ]);
-      app = page.frameLocator('iframe').frameLocator('iframe');
-    }
+    await page.goto(`${staticOrigin}/index.html?webapp=${encodeURIComponent(execUrl)}&id=${sessionGuid}`);
+    // Flat DOM on the static front end — no sandbox iframe to reach through.
+    app = page;
     await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
     todayIso = isoDate(new Date());
   });

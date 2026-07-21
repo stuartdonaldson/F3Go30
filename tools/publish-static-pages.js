@@ -23,7 +23,7 @@
  * Usage:
  *   node tools/publish-static-pages.js [--env sit|prod|all] [--skip-bump]
  */
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { bumpBuildNumber_ } = require('./manage-deployments.js');
@@ -82,7 +82,7 @@ function main() {
   // during a single-env publish (e.g. npm run deploy:sit) would require the *other* env's
   // deployment ID to be configured too, and fail the deploy if it isn't.
   console.log('🔨 Building static pages...');
-  execSync(`node ${path.join(__dirname, 'build-static-pages.js')} --env ${env}`, { cwd: ROOT, stdio: 'inherit' });
+  execFileSync('node', [path.join(__dirname, 'build-static-pages.js'), '--env', env], { cwd: ROOT, stdio: 'inherit' });
 
   const pkg = JSON.parse(fs.readFileSync(PKG_PATH, 'utf8'));
 
@@ -97,16 +97,22 @@ function main() {
     console.log(`📦 copied static-pages/dist/${e} -> ${path.relative(ROOT, dest)}`);
   });
 
-  const status = execSync('git status --porcelain', { cwd: staticRepo }).toString().trim();
+  // Scope both the dirty check and the staging to just the env(s) being published. An unscoped
+  // `git add dist` would let a SIT deploy commit and push whatever happened to be sitting
+  // modified under dist/prod/ (e.g. a half-finished PROD publish), and an unscoped status check
+  // would treat unrelated dirt elsewhere in F3Static as "there is something to publish" and then
+  // die on an empty commit.
+  const distPaths = envs.map((e) => `dist/${e}`);
+  const status = execFileSync('git', ['status', '--porcelain', '--', ...distPaths], { cwd: staticRepo }).toString().trim();
   if (!status) {
-    console.log('✅ F3Static working tree already matches build output — nothing to publish.');
+    console.log(`✅ F3Static ${distPaths.join(', ')} already matches build output — nothing to publish.`);
     return;
   }
 
-  execSync('git add dist', { cwd: staticRepo, stdio: 'inherit' });
+  execFileSync('git', ['add', ...distPaths], { cwd: staticRepo, stdio: 'inherit' });
   const message = `Publish static pages v${pkg.version}.${pkg.build || 0} (${envs.join(', ')})`;
-  execSync(`git commit -m ${JSON.stringify(message)}`, { cwd: staticRepo, stdio: 'inherit' });
-  execSync('git push', { cwd: staticRepo, stdio: 'inherit' });
+  execFileSync('git', ['commit', '-m', message], { cwd: staticRepo, stdio: 'inherit' });
+  execFileSync('git', ['push'], { cwd: staticRepo, stdio: 'inherit' });
   console.log(`🚀 Published to F3Static and pushed.`);
 }
 

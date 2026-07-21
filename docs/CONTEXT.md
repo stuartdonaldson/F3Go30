@@ -69,12 +69,19 @@ month's tracker in minutes without manual sheet or trigger configuration in the 
 - Upsert a row (date modified, start date, name, tracker URL, form URL, spreadsheet ID, form
   ID) into the template's `TrackerDB` sheet each time a new tracker is created, keyed by
   spreadsheet ID — the same row is also the dispatch target for centralized triggers (ADR-010)
-- Serve a PAX-facing daily check-in + dashboard web app (`?cmd=checkin`): identifies the PAX by
+- Serve a PAX-facing daily check-in + dashboard web app: identifies the PAX by
   F3 Name + Email (same pair as HC sign-up), prompts for today's (and, if missed, yesterday's)
   check-in, then shows streak, score, weekly bonus points, and a team-grouped PAX leaderboard
   read live from the current month's Tracker sheet
-- The check-in page also ships as a static front end (GitHub Pages, calling the same JSON
-  identify/checkin/dashboard endpoint) for a faster first paint than the GAS `HtmlService` sandbox
+- Serve every PAX-facing flow — HC sign-up, daily check-in, dashboard, bonus entries, and the
+  month calendar — from a single **static origin** (one GitHub Pages page) rather than from
+  Google's servers, calling the Apps Script deployment only as a JSON API (ADR-019). A PAX
+  moving between sign-up and check-in stays on one page and one origin, so nothing bounces them
+  out to `script.google.com` mid-flow (and, on a phone with the page saved to the home screen,
+  out of the installed app and into the browser). Links already distributed to the Apps Script
+  origin — bookmarks, TinyURL short links, Slack posts — are honoured by a query-preserving
+  redirect to the equivalent static URL, which tells the PAX once that the link has moved
+- The static front end is also faster to first paint than the GAS `HtmlService` sandbox
   allows (see `docs/StaticHTMLonGas.md`). For a saved-link (token) visit, it caches the PAX's
   last-known identify response in the browser (`localStorage`, key `go30CheckinSnapshot:v1`,
   14-day TTL, excluding one-shot/security fields) so a returning visit paints the check-in step
@@ -308,19 +315,22 @@ Alternate Flows:
 A1: F3 Name + Email match a PAX known to a prior month's sign-up (found in the historical
     `PaxDB` roster, requiring an EXACT match on both fields — the same anti-enumeration
     boundary as a current-month match) but not registered for the CURRENT month → instead of a
-    dead-end message, the PAX is carried automatically (same browser-storage handoff as a
-    completed sign-up) into a prefilled sign-up for the current month, arriving via the same
-    deep link (`?cmd=signup&targetMonth=current&autoStart=1`) the dashboard's own "Sign up for
-    next month" nudge uses. A truly unknown F3 Name + Email (no match anywhere, current or
+    dead-end message, the PAX is carried automatically into a prefilled sign-up for the current
+    month, started for them at the point the dashboard's own "Sign up for next month" nudge
+    would start it. Since ADR-019 both live on the static origin, so this is a step change
+    within the same page — the PAX's identity is already in hand and nothing leaves the origin.
+    A truly unknown F3 Name + Email (no match anywhere, current or
     historical) still gets the generic "not found" message with a manual "Sign up" button —
-    the two cases are visually indistinguishable except for the automatic redirect, preserving
+    the two cases are visually indistinguishable except for the automatic hand-off, preserving
     the anti-enumeration property (a truly-unknown pair reveals nothing more than one that's
     merely unregistered this month)
 A2: PAX taps "Dashboard" without checking in → dashboard loads without writing any check-in value
 A3: Target Tracker cell is a formula (unexpected sheet layout) → write is refused; check-in
     is not recorded and the client shows the error banner
-A4: Automatic redirect (to the tokened check-in URL, or to sign-up per A1) is blocked by the
-    browser → a manual link/button is shown instead, carrying the same target URL
+A4: An automatic navigation the flow depends on (the tokened check-in URL, or the legacy-link
+    redirect from an old GAS bookmark) is blocked by the browser → a manual link/button is shown
+    instead, carrying the same target URL. Does not apply to the sign-up hand-off in A1, which is
+    a step change within one page and involves no navigation
 A5: PAX taps "Show month calendar" instead of using TODAY/YESTERDAY → a full-month calendar
     replaces the TODAY/YESTERDAY blocks; tapping any day opens a single selection panel offering
     Hit/Miss/No-Check-in/Failed for that day. Hit/Miss/No-Check-in can be set for any day, past or
@@ -370,6 +380,9 @@ Constraints:
 | Template | The canonical Go30 spreadsheet from which new monthly trackers are copied; since ADR-010, also the sole runtime container for all triggers and dispatch logic |
 | NameSpace | Region identifier read from Config (e.g., `F3Waxhaw`); drives spreadsheet naming |
 | TrackerDB | Sheet in the Template recording every monthly tracker's spreadsheet ID, form ID, and active date range; used both to aggregate cross-tracker metrics and, since ADR-010, to resolve which spreadsheet a centrally-dispatched function should operate on for a given context date |
+| Static origin | The GitHub Pages host serving `static-pages/src/index.html` — since ADR-019 the primary front end for every PAX-facing flow. It calls the Apps Script deployment as a JSON API; each env's build bakes in its own deployment URL as the default backend, so generated links no longer need a `?webapp=` param to carry it (F3Go30-9jsa) — that param still works as a client-side override for older links |
+| GAS origin | The Apps Script `/exec` deployment (`script.google.com`). Still the JSON API and the whole admin/trigger runtime; as a *front end* it is redirect-only since ADR-019 — a page GET there redirects to the static origin rather than rendering |
+| Legacy-link redirect | The query-preserving GAS→static redirect that honours links distributed before the migration (bookmarks, TinyURL short links, Slack posts). It is why the GAS HTML pages still exist; it is *not* an availability guarantee — no PAX-facing flow is entitled to a working GAS-rendered page if the static origin is down (ADR-019, `F3Go30-ys15`) |
 | Context date | The date a dispatch function is operating "as of" — the real current date for production trigger firings, or an explicit override (e.g. a future date) for tests targeting an isolated `TrackerDB` row |
 
 ## References

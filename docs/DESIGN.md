@@ -73,7 +73,8 @@ class BG1,BG3 lightgreen
 | Entry Points | `onOpen.js` | Custom menu |
 | Tracker Lifecycle | `CreateNewTracker.js`, `CopyTemplate.js`, `addResponseOnSubmit.js`, `markMinusOne.js`, `nag.js` | Copy-and-init workflow, template-copy mechanics, form-submit handler, nightly miss marking, daily reminder email workflow — all triggers installed once on the Template and dispatching by `TrackerDB` lookup (ADR-010) |
 | Dispatch / TrackerDB | `go30tools.js` | `TrackerDB`/`PaxDB` schema, cross-tracker aggregation, and (per ADR-010) the context-date → target-spreadsheet resolution used by every centrally-dispatched function |
-| Web Apps | `WebApp.js`, `signupWebapp.js`, `SignupApp.html`, `dashboardWebapp.js`, `CheckinApp.html`, `IdentityCore.html`, `HomeApp.html`, `bonusWebapp.js` | `doGet`/`doPost` dispatcher by `cmd` query param (`signup`, `checkin`, `admin`); each `cmd` renders its own `HtmlService` template and handles its own `action`-keyed POST body. `signupWebapp.js`/`SignupApp.html` = HC sign-up; `dashboardWebapp.js`/`CheckinApp.html` = daily check-in + PAX dashboard, reading/writing the current month's Tracker sheet directly (no separate data store); `bonusWebapp.js` = bonus-list/add/edit actions under the same `checkin` cmd; `IdentityCore.html` = client-side identity/HTTP plumbing shared by both `SignupApp.html` and `CheckinApp.html` (see `include_()` below); no `cmd` (or an unrecognized one) renders `HomeApp.html`, a landing page linking to sign-up, check-in/dashboard, and the current month's tracker spreadsheet |
+| Static Front End (PRIMARY) | `static-pages/src/index.html` | The PAX-facing front end since ADR-019: one GitHub Pages document carrying every PAX flow — sign-up, daily check-in, dashboard, bonus entries, and the month calendar — as in-page steps, over the same `cmd=signup`/`cmd=checkin` JSON API the GAS pages post to. Reached directly by its own URL (`buildStaticSignupUrl_`/`buildStaticCheckinUrl_`, `Utilities.js`); the build stamps each env's own GAS deployment URL in as the page's default backend (F3Go30-6bl6), so generated links no longer need to carry it as `?webapp=` (F3Go30-9jsa) — that param still works as a client-side override for older bookmarked links or the unbuilt page in local testing |
+| Web Apps (JSON API + redirect) | `WebApp.js`, `signupWebapp.js`, `SignupApp.html`, `dashboardWebapp.js`, `CheckinApp.html`, `IdentityCore.html`, `HomeApp.html`, `bonusWebapp.js` | `doGet`/`doPost` dispatcher by `cmd` query param (`signup`, `checkin`, `admin`). **`doPost` is the JSON API for both origins** — `signupWebapp.js` = HC sign-up; `dashboardWebapp.js` = daily check-in + PAX dashboard, reading/writing the current month's Tracker sheet directly (no separate data store); `bonusWebapp.js` = bonus-list/add/edit actions under the same `checkin` cmd. **`doGet` is redirect-only** since ADR-019: `?cmd=signup`, `?cmd=checkin`, and the bare home route answer with a query-preserving redirect to the equivalent static URL. The `HtmlService` pages behind them (`SignupApp.html`, `CheckinApp.html`, `HomeApp.html`, plus the `IdentityCore.html` identity/HTTP partial they share via `include_()`) still render, but only under `?static=0` or when the static host can't be resolved — they are a not-yet-deleted capability, not a live requirement (`F3Go30-90l5`/`F3Go30-wjpu`) |
 | Identity / Check-in | `CheckinSessions.js`, `IdentityToken.js` | Bookmarkable check-in link — `CheckinSessions.js` mints/resolves a server-stored GUID session so a returning PAX can reload the check-in/dashboard page without re-entering F3 Name + Email each visit; `IdentityToken.js`'s signed-token verify path is kept only to honor links minted before the rollout (see the decision below) |
 | Bonus Rules | `BonusTypes.js` | Centralized bonus-type registry (rule definitions: points, link requirement, cap) consumed by `dashboardWebapp.js`/`bonusWebapp.js` chip rendering and validation |
 | Email | `onboardingEmail.js`, `responseSettingsEmail.js`, `signupEmail.js`, `signupReuse.js` + matching `*Template.html` files | Site-Q onboarding email, response-settings confirmation email, sign-up confirmation email, and repeat-signup detection/reuse |
@@ -357,6 +358,85 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
   original full-resolution function rather than a shared code path — deliberate, since each
   fast/slow pair has different inputs available and different Axiom timing needs (see
   `resolveFullIdentityFromHandle_`'s header comment). See ADR-015 for the full rationale.
+
+- **Signup as a step of the static front end (F3Go30-833s.9) — DECIDED:** `static-pages/src/index.html`
+  now carries the whole signup flow itself, over the same `cmd=signup` JSON API (`handleSignupPost_`,
+  `WebApp.js`) `SignupApp.html` posts to. No server change: `handleSignupIdentify_` already returns
+  `months`/`aoList`/`goalList` on both the matched and unmatched paths, which is everything
+  `SignupApp.html` receives as server-injected template variables. See ADR-018 and
+  docs/pwa-design.md §7 for the rationale.
+
+  It replaces three paths that navigated the **top-level document** cross-origin to
+  `?cmd=signup` — the goals "Edit" link, the "Sign up" buttons, and the auto-redirect on a
+  `knownPaxNotRegistered` identify. On an installed home-screen app those handed the PAX off to
+  Safari mid-flow; the third fired at a month boundary, ejecting a returning PAX before they ever
+  reached the dashboard. In-page there is no navigation and therefore no identity handoff either:
+  `SignupApp.html`'s `urlIdentityJson` (`WebApp.js`) exists solely to carry identity across that
+  redirect, and has no static counterpart because the identity is already in memory.
+
+  Two consequences worth naming:
+  - **`cmd` carries two meanings on the static origin.** `?cmd=signup` on the *page* URL is page
+    routing (open on the signup step, alongside `targetMonth`/`autoStart`) — the static half of the
+    param contract `buildStaticCheckinUrl_` (`Utilities.js`) documents, which is what lets a signup
+    link migrate between origins as a base-URL swap with the query string preserved. `CMD_` is the
+    *API dispatcher* selector. Because one page now drives both dispatchers, `callApi()` takes a
+    per-call `cmd` argument (defaulting to `CMD_`); left a page constant, signup actions would land
+    in the check-in dispatcher and fail as `unknown_action`.
+  - **`attemptTopRedirect_` is deliberately not carried over** into the static page's inlined copy
+    of `IdentityCore.html`. It exists to break a GAS page out of its `HtmlService` sandbox iframe;
+    the static page is already the top-level document, so from there it could only navigate the
+    installed app away.
+
+  `SignupApp.html` is unchanged and stays live only to serve the legacy-link redirect route
+  (ADR-019) — it is **not** an availability fallback, and no PAX-facing flow is entitled to it
+  rendering. Both front ends keep sharing one set of JSON handlers, so this adds no server-side
+  divergence. Trade-off: the signup UI now exists twice, and the two copies can drift (the
+  static one is re-expressed against this page's CSS custom properties, so it renders in
+  light/dark where the GAS page is hardcoded light). Retiring the GAS signup page is a separate
+  decision (`F3Go30-90l5` decides the posture, `F3Go30-wjpu` executes), deferred until the
+  static path has a month of real use.
+
+- **GAS reduced to redirect-only, all three routes (F3Go30-ubwl) — DECIDED:** ADR-019 (superseding
+  ADR-018's availability-fallback claim only, per `F3Go30-ys15`'s "unreachable-host fallback is
+  not a requirement" finding) makes the static origin primary for **every** PAX-facing front
+  end — not just signup. A plain `doGet` arrival at `?cmd=signup`, `?cmd=checkin`, or the bare
+  home route (no `cmd`) now redirects to the equivalent static URL by default; `?static=0` is the
+  one opt-out, rendering the GAS page as before (developer/legacy escape hatch, not a PAX-facing
+  availability guarantee — see docs/OPERATIONS.md's `?static=0` section).
+
+  One shared mechanism serves all three routes rather than three (`buildStaticRedirectUrl_`,
+  `script/Utilities.js`, generalized from signup's original `buildStaticSignupRedirectUrl_`):
+  given a doGet's own `e.parameter` bag and whichever static-URL builder applies
+  (`buildStaticSignupUrl_` or `buildStaticCheckinUrl_`), it forwards `id`/`ns`/`contextDate`/
+  `targetMonth`/`autoStart` onto the static URL, appends `from=gas` (below), and returns `''` —
+  meaning "render the GAS page" — when either the static host can't be resolved or `static=0` was
+  requested. `renderSignupPage_`/`renderCheckinPage_`/`renderHomePage_` (`WebApp.js` /
+  `dashboardWebapp.js`) each call this once and, on a non-empty result, hand off to one shared
+  renderer, `renderStaticRedirect_` (`WebApp.js`, generalized from the original
+  `renderStaticSignupRedirect_`) — a "&lt;label&gt; has moved" page with a single tappable
+  **Continue** button to the static URL, parameterized only by that label.
+  Home reuses the check-in builder/URL rather than a third implementation: the static page's
+  default (no-`cmd`) view already *is* check-in.
+
+  **One deliberate tap, not an auto-redirect.** `renderStaticRedirect_` originally also fired
+  `window.top.location.replace(...)` on load, with the link framed as a fallback ("Tap here if
+  nothing happens"). That scripted hop could never fire for anyone: HtmlService serves the page
+  inside an iframe sandboxed `allow-top-navigation-by-user-activation`, and a script running on
+  load has no user gesture, so Chrome refuses the navigation for every visitor (observed as an
+  uncaught SecurityError in the console on every legacy arrival). The tap was therefore the only
+  path all along; the page now presents it as such and the dead `replace()` call is gone. Unlike
+  this, `attemptTopRedirect_`'s identify→personal-link swap (`IdentityCore.html`, see Sign-up/
+  Daily check-in in CONTEXT.md) fires from a click and can retain the gesture in a real browser —
+  a genuinely different mechanism, not affected by this fix.
+
+  **Bookmark advisory (F3Go30-ubwl.3):** every redirect appends `from=gas` to the destination URL
+  so the static page (`static-pages/src/index.html`) can tell a PAX their old GAS link moved — a
+  dismissible banner (`#gasMovedBanner`), shown only when `from=gas` is present and not previously
+  dismissed (`localStorage['go30GasMovedDismissed']`). The marker is stripped from the address bar
+  via `history.replaceState` immediately after the banner renders, so a PAX who bookmarks straight
+  from the address bar doesn't carry `from=gas` forward and get nagged on a URL that never moved.
+  The advisory necessarily lives on the static page, not the GAS interstitial — a PAX cannot
+  bookmark a page they're not on.
 
 ---
 

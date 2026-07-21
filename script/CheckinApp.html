@@ -102,7 +102,7 @@
   .header-right { text-align: right; display: flex; align-items: center; gap: 12px; }
   .header-name { font-weight: bold; font-size: 20px; }
   .header-sub { font-size: 13px; opacity: .6; }
-  .more-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); color: var(--brand-contrast); width: 32px; height: 32px; border-radius: 8px; font-size: 20px; font-weight: bold; cursor: pointer; line-height: 1; }
+  .more-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); color: var(--brand-contrast); width: 32px; height: 32px; border-radius: 8px; font-size: 20px; font-weight: bold; cursor: pointer; line-height: 1; padding: 0; display: flex; align-items: center; justify-content: center; }
   .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 22px; box-shadow: 0 2px 10px var(--shadow); margin-top: 18px; }
   .card h1, .card h2 { margin: 0 0 6px; color: var(--brand); }
   .card h1 { font-size: 23px; }
@@ -154,6 +154,8 @@
   .cal-cell .x-mark::before { transform: translateY(-50%) rotate(45deg); }
   .cal-cell .x-mark::after { transform: translateY(-50%) rotate(-45deg); }
   .checkin-status { font-size: 15px; color: var(--text-faint); margin: -2px 0 8px; }
+  .checkin-status.status-warn { color: var(--warn-fg); font-weight: bold; }
+  .checkin-status.status-late { color: var(--danger); font-weight: bold; }
   .checkin-section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: var(--brand); margin: 18px 0 8px; }
   .goals-reminder { background: var(--soft-bg); border: 1px solid var(--soft-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 4px; }
   .goals-reminder-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
@@ -466,7 +468,7 @@
           <span>How it Works</span>
           <span id="howChevron">&#9660;</span>
         </button>
-        <div id="howBody" class="hidden" style="padding:0 18px 20px;font-size:14px;line-height:1.6;color:#333;border-top:1px solid #e8e0d0;">
+        <div id="howBody" class="hidden" style="padding:0 18px 20px;font-size:14px;line-height:1.6;color:var(--text);border-top:1px solid var(--border);">
           <!-- HOW-IT-WORKS:START -->
 <p class="how-section-head">THE CORE MISSION</p>
 <p style="margin:0 0 14px;">Execute a Daily Challenge that aligns with your Ultimate Goals, supported by the accountability of your fellow HIMs.</p>
@@ -547,6 +549,11 @@
   var CMD_ = 'checkin'; // read by IdentityCore's callApi() to post to ?cmd=checkin
   var NS_ = <?!= urlNsJson ?> || ''; // ADR-014 D3 — echoed on every callApi() POST by IdentityCore
   var CONTEXT_DATE_ = <?!= urlContextDateJson ?> || ''; // F3Go30-31w5.1 — echoed on every callApi() POST by IdentityCore
+  // F3Go30-833s.11 — static signup base (buildStaticSignupUrl_), already carrying
+  // ?cmd=signup plus this request's ns/contextDate (F3Go30-9jsa dropped the redundant
+  // webapp= — the static build bakes its own env's backend in). '' when the static host isn't
+  // configured, in which case signupDeepLinkUrl_ falls back to the GAS ?cmd=signup page.
+  var STATIC_SIGNUP_BASE_URL_ = <?!= staticSignupBaseUrlJson ?> || '';
 </script>
 <?!= include_('IdentityCore') ?>
 <script>
@@ -874,6 +881,19 @@
     unavailable: 'No tracker day for this date yet',
   };
 
+  // Random encouragement/needling lines shown once a day is actually checked in, keyed by the
+  // same 'done'/'missed' vocabulary as CHECKIN_STATUS_TEXT_ — mirrors the LINES/pick() pattern
+  // from static-pages/src/inspire/index.html (the F3 "Inspire" quote pool), reused here rather
+  // than duplicated wording, so a PAX sees a different line each visit instead of a static string.
+  var INSPIRE_LINES_ = {
+    done: ['Posted. Banked it. ✅', 'One more for the Six.', 'That rep counts. Keep posting.', "Showed up. That's the whole game."],
+    missed: ['Missed one? The Six always catches up. Post tomorrow.', "One fartsack doesn't define the month. Back in the gloom.", 'Leave no man behind — including yourself.'],
+  };
+  function pickInspireLine_(status) {
+    var pool = INSPIRE_LINES_[status];
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
   /** Maps a submitted check-in value back to the same status vocabulary the server uses
    * (dayValueStatus_ in dashboardWebapp.js) so the tri-state buttons can re-render immediately
    * on submit success without a second round trip just to learn what we already just wrote. */
@@ -917,7 +937,23 @@
     var yesBtn = $(prefix + 'YesBtn');
     var noBtn = $(prefix + 'NoBtn');
     var noneBtn = $(prefix + 'NoneBtn');
-    $(prefix + 'StatusNote').textContent = CHECKIN_STATUS_TEXT_[status] || '';
+    var noteEl = $(prefix + 'StatusNote');
+    var text = CHECKIN_STATUS_TEXT_[status] || '';
+    var late = false, warn = false;
+    if (status === 'done' || status === 'missed') {
+      text = pickInspireLine_(status);
+    } else if (status === 'pending' && prefix === 'today') {
+      text = 'How did you do today?';
+    } else if (status === 'pending' && prefix === 'yesterday') {
+      // Same before/after-10am split as yesterdayCheckinStatus_'s board-tile badge, applied here
+      // to the YESTERDAY status line itself instead of a team-tile badge.
+      late = new Date().getHours() >= YESTERDAY_CHECKIN_WARNING_HOUR_;
+      warn = !late;
+      text = late ? "Check in for yesterday, you're running late" : 'Not checked in yet';
+    }
+    noteEl.textContent = text;
+    noteEl.classList.toggle('status-late', late);
+    noteEl.classList.toggle('status-warn', warn);
     yesBtn.classList.toggle('current', status === 'done');
     noBtn.classList.toggle('current', status === 'missed');
     noneBtn.classList.toggle('current', status === 'pending');
@@ -1259,9 +1295,15 @@
    * through here so the URL shape stays in one spot. autoStart tells SignupApp.html to skip
    * intro/identify (identity is already in the shared-key localStorage) and open the goal step
    * prefilled; a current-month save then redirects back into check-in via the identityToken
-   * handoff (performSave_, SignupApp.html), so every one of these round-trips lands back here. */
+   * handoff (performSave_, SignupApp.html), so every one of these round-trips lands back here.
+   *
+   * F3Go30-833s.11: prefers the static signup front end (STATIC_SIGNUP_BASE_URL_, which already
+   * carries ?cmd=signup and this request's ns/contextDate), falling back to the GAS
+   * ?cmd=signup page when the static host isn't configured. Both forms already have a query
+   * string, so targetMonth/autoStart append with '&' either way. */
   function signupDeepLinkUrl_(targetMonth) {
-    return WEBAPP_URL + '?cmd=signup&targetMonth=' + targetMonth + '&autoStart=1';
+    var base = STATIC_SIGNUP_BASE_URL_ || (WEBAPP_URL + '?cmd=signup');
+    return base + '&targetMonth=' + targetMonth + '&autoStart=1';
   }
 
   /** Opens the signup app deep-linked past the intro/identify steps straight to goal

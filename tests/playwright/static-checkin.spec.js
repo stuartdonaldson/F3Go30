@@ -530,7 +530,11 @@ test.describe('Existing GAS HtmlService check-in page still works unchanged', ()
   test('renders and identifies via the iframe sandbox (regression guard)', async ({ page }) => {
     const settings = loadSettings();
     const deploymentId = settings.testDeploymentId;
-    const checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=checkin`;
+    // F3Go30-ubwl.2 made a bare `?cmd=checkin` redirect straight out to the static front end,
+    // so this guard forces the `&static=0` opt-out to keep reaching the GAS-hosted
+    // CheckinApp.html at all — same pattern identity-token-flow.spec.js adopted. Without it
+    // this lands on renderStaticRedirect_'s interstitial and never sees #step-identify.
+    const checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=checkin&static=0`;
     await page.goto(checkinUrl, { waitUntil: 'networkidle' });
     const dismissBtn = page.getByRole('button', { name: 'Dismiss' });
     if (await dismissBtn.isVisible({ timeout: 8000 }).catch(() => false)) await dismissBtn.click();

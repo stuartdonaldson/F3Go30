@@ -375,7 +375,7 @@ Playwright, captures Logger output, and asserts on the Drive files written to
 `GAS_LOGGER_LOCAL_PATH/F3Go30/`.
 
 **Prerequisites:**
-- `local.settings.json` populated (`GAS_LOGGER_LOCAL_PATH`, `SCRIPT_ID_PROD`)
+- `local.settings.json` populated (`GAS_LOGGER_LOCAL_PATH`, `templateScriptId`)
 - Google Drive for Desktop mounted at `GAS_LOGGER_LOCAL_PATH`
 - Node.js installed; `npm install` run once
 
@@ -432,6 +432,60 @@ curl -s -L "https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec?cmd=signup" 
   --data-raw '{"action":"identify","f3Name":"Some Name","email":"some@example.com"}' \
   -H "Content-Type: text/plain"
 ```
+
+### Producing a sign-up or check-in link (post-ADR-019)
+
+Since ADR-019 the link an operator hands out is a **static-origin** URL, not a
+`script.google.com` one. Nothing is hand-assembled — three builders in `script/Utilities.js`
+produce every link the system emits. None of them carry the GAS deployment URL in the link
+itself (F3Go30-9jsa) — the static build already bakes each env's own `/exec` URL in as its
+default backend (F3Go30-6bl6), so the page already knows which API to call without it. An
+explicit `?webapp=` still works as a client-side override for older bookmarked links that
+carry it, or for the unbuilt page in local/Playwright testing.
+
+| Builder | Produces | Used by |
+|---------|----------|---------|
+| `buildStaticSignupUrl_(webAppBaseUrl, opts)` | static page opened on the sign-up step (`&cmd=signup`, plus optional `targetMonth`/`autoStart`) | `ensureSignupShortUrl_` (CreateNewTracker.js), `signupEmail.js`, the dashboard's "Sign up for next month" nudge |
+| `buildStaticCheckinUrl_(webAppBaseUrl, opts)` | static page on its default check-in step; `opts.id` bakes in a PAX's check-in session guid | `signupEmail.js`, `nag.js`, the home route |
+| `buildStaticRedirectUrl_(builder, webAppBaseUrl, parameter)` | the above, with an arriving GAS request's own query params forwarded and `from=gas` appended | the `doGet` redirect for all three routes |
+
+Both URL builders return `''` when the static host isn't configured or no webapp URL is
+available; every caller falls back to the old `?cmd=signup` / `?cmd=checkin` GAS URL in that
+case.
+
+**The advertised sign-up link is a short URL, and it is re-pointed, not re-minted.** Each
+namespace has one stable TinyURL alias recorded in the Config sheet's `Signup Short URL` row.
+`ensureSignupShortUrl_` (CreateNewTracker.js) runs on tracker creation and, since
+F3Go30-833s.11, resolves the alias's current target and **re-points the existing alias** at the
+static signup URL rather than minting a new one — this short URL is what gets pasted into Slack,
+making it the single most widely distributed link in the system, and minting a fresh alias would
+migrate nobody who saved the old one. If the alias exists but resolves somewhere unexpected, the
+mismatch is logged (`ensureSignupShortUrl_.mismatch`) rather than silently overwritten.
+
+**Old links keep working.** A `?cmd=signup` / `?cmd=checkin` / bare-home URL distributed before
+the migration — bookmark, home-screen icon, Slack post, or a short URL that was never
+re-pointed — lands on the GAS origin and is answered with a query-preserving redirect to the
+equivalent static URL, carrying `id`/`ns`/`contextDate`/`targetMonth`/`autoStart` across intact.
+The destination shows a one-time "this link moved, update your bookmark" banner (triggered by
+the `from=gas` marker the redirect appends). See the next section for the opt-out, and
+`F3Go30-90l5`/`F3Go30-wjpu` for when the GAS pages are removed outright.
+
+### `?static=0` — GAS-side redirect opt-out (F3Go30-ubwl)
+
+Since ADR-019, a plain GET at the GAS origin — `?cmd=signup`, `?cmd=checkin`, or the bare home
+route (no `cmd`) — redirects by default to the equivalent static-page URL
+(`buildStaticRedirectUrl_`/`renderStaticRedirect_`, one shared implementation behind all three
+routes, script/Utilities.js + script/WebApp.js). `?static=0` on the request suppresses that
+redirect and renders the GAS-hosted page directly instead — useful when developing/debugging the
+GAS page itself, or when driving a Playwright spec against the GAS-hosted UI on purpose (see
+`tests/playwright/identity-token-flow.spec.js`'s two describes, one of which forces `static=0` on
+every navigation for exactly this reason).
+
+**What `?static=0` does NOT provide:** an unreachable-static-host fallback for a real PAX. Per
+`F3Go30-ys15`'s resolved decision (ADR-019), no PAX-facing guarantee depends on the GAS front end
+being reachable if the static origin (GitHub Pages) is down — `?static=0` is a developer/legacy
+escape hatch, not an availability contract. A PAX whose bookmarked GAS link redirects into an
+unreachable static host has no GAS-side fallback to fall back to.
 
 ### Testing month-boundary fallback (contextDate override, F3Go30-31w5.1)
 

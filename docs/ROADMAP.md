@@ -4,6 +4,13 @@
 
 - Menu item to announce next month signup in current tracker
 - Evaluate README.md word count — currently ~2,000 words vs. 800-word Minimal tier target; determine if section-level scaling is needed
+- Installable check-in app (PWA) — scoped in `docs/pwa-design.md`, tracked as epic `F3Go30-833s`
+- Move the system of record off Google Sheets to a database — Sheets is the latency ceiling
+  (1.5–3.2s dashboard round trips, dominated by spreadsheet opens) and the reason the caching
+  layer exists. Strategic; see `docs/pwa-design.md` §9 for why it shapes the PWA's API boundary
+- Tenant model so other F3 regions can use one deployment instead of forking — the ADR-014
+  namespace mechanism already proves out the resolution half. Strategic; see
+  `docs/pwa-design.md` §9
 
 ## Recently Delivered
 

@@ -41,6 +41,20 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   indicator shows in the header while it double-checks with the server) instead of waiting on a
   network round trip before showing anything; if that saved link had gone stale or been revoked,
   it now correctly falls back to the sign-in form instead of continuing to show old data. (v2.4.2)
+- Signing up and editing your goals now happen right on the check-in page instead of sending you
+  off to a separate Google-hosted page and back. This matters most at the start of a month: if
+  you open check-in before you've signed up for the new month, you now go straight to your goals
+  with your name and previous answers already filled in, and land back on check-in when you're
+  done — previously that bounced you out to another site (and, on a phone with the page saved to
+  your home screen, out of the app entirely and into your browser). The old sign-up page still
+  works for anyone using a link to it.
+- An old bookmarked or saved check-in link (and the plain Go30 home link) now takes you straight
+  to the new plain-web-page check-in instead of the old Google-hosted one, the same way sign-up
+  links already did. The first time you land there from an old link, a banner reminds you the
+  link has moved and to update your bookmark — dismiss it once and it won't show again. Getting
+  there is one tap on a "has moved / Continue" button rather than an automatic jump — Google's
+  hosting doesn't allow the jump to happen on its own, so the button is the real way there, not
+  a fallback for a rare case.
 
 ---
 
