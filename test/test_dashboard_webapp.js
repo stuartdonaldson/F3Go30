@@ -1660,12 +1660,19 @@ function makeFakeDataRangeSheet_(rows) {
   installFakeSpreadsheetById_({
     'sheet-sep': {
       getSheetByName: function(n) {
-        if (n !== 'Tracker') return null;
-        return makeFakeTrackerSheet_(
-          ['', '', '', '', '', '', '', '', '', ''],
-          ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1), new Date(2026, 8, 2)],
-          [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 0]]
-        );
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1), new Date(2026, 8, 2)],
+            [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 0]]
+          );
+        }
+        if (n === 'Responses') {
+          return makeLeanIdentityResponsesSheet_([
+            ['', 'anchor@x.com', 'Yes', 'Anchor', 'AO', 'Crucible', '', 'W', 'W', 'W', '', '', ''],
+          ]);
+        }
+        return null;
       },
     },
   });
@@ -1680,6 +1687,48 @@ function makeFakeDataRangeSheet_(rows) {
     { dateIso: '2026-09-01', status: 'done' },
     { dateIso: '2026-09-02', status: 'missed' },
   ]);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+// Copilot review (PR#4 follow-up, F3Go30-9jsa): "registered" must mirror
+// resolveCheckinIdentityLean_'s definition (a live, non-DELETED Responses row) — a Tracker row
+// alone isn't enough. A DELETED Responses row (ADR-008 email-change convention) with a
+// not-yet-cleaned-up Tracker row must still come back registered:false.
+(function testHandleMonthGridDeletedResponsesRowIsNotRegisteredDespiteTrackerRow() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.formatRegistrationMonth_ = function() { return 'September 2026'; };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-sep-deleted', trackerUrl: 'https://x/sep', startDate: new Date(2026, 8, 1) };
+  };
+  installFakeSpreadsheetById_({
+    'sheet-sep-deleted': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1), new Date(2026, 8, 2)],
+            [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 0]]
+          );
+        }
+        if (n === 'Responses') {
+          return makeLeanIdentityResponsesSheet_([
+            ['', 'anchor@x.com', 'DELETED', 'Anchor', 'AO', 'Crucible', '', 'W', 'W', 'W', '', '', ''],
+          ]);
+        }
+        return null;
+      },
+    },
+  });
+
+  var res = handleMonthGrid_({}, { monthKey: '2026-09', f3Name: 'Anchor', email: 'anchor@x.com' });
+  assert.equal(res.ok, true);
+  assert.equal(res.registered, false, 'DELETED Responses row must not read as registered');
+  assert.deepEqual(res.monthGrid, []);
 
   delete global.SpreadsheetApp;
   delete global.resolveTrackerForContextDate;

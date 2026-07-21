@@ -2305,6 +2305,37 @@ function handleMonthGrid_(templateSpreadsheet, payload) {
     return notRegistered;
   }
 
+  // "Registered" mirrors resolveCheckinIdentityLean_'s definition — a live (non-DELETED)
+  // Responses row, not merely a Tracker row — so a PAX whose signup was deleted (ADR-008
+  // email-change convention) can't get registered:true / a full monthGrid here just because a
+  // stale Tracker row hasn't been cleaned up yet (Copilot review, F3Go30-9jsa PR#4 follow-up).
+  var responsesLayoutForGrid = getCachedResponsesLayoutOnly_(monthInfo.sheetId);
+  var responsesSheetForGrid = null;
+  function responsesSheetForGrid_() {
+    if (!responsesSheetForGrid) responsesSheetForGrid = SpreadsheetApp.openById(monthInfo.sheetId).getSheetByName('Responses');
+    return responsesSheetForGrid;
+  }
+  if (!responsesLayoutForGrid) {
+    var rsForGrid = responsesSheetForGrid_();
+    if (!rsForGrid) return notRegistered;
+    responsesLayoutForGrid = getResponsesLayout_(rsForGrid, monthInfo.sheetId);
+  }
+  var responsesColumnsForGrid = responsesLayoutForGrid.columns;
+  var responsesRowIndex = resolvePaxRowIndex_dw_('responses', monthInfo.sheetId, f3Name, function() {
+    var rs = responsesSheetForGrid_();
+    if (!rs) return [];
+    var lastRow = rs.getLastRow();
+    if (lastRow < 2) return [];
+    var rows = rs.getRange(2, 1, lastRow - 1, rs.getLastColumn()).getValues();
+    return rows.map(function(row) {
+      return String(row[responsesColumnsForGrid.PARTICIPATION] || '').trim().toLowerCase() === 'deleted' ? '' : row[responsesColumnsForGrid.F3_NAME];
+    });
+  });
+  if (responsesRowIndex === -1) {
+    GasLogger.log('checkinWebapp.monthGrid.result', { registered: false, monthKey: monthKey, durationMs: Date.now() - t0 });
+    return notRegistered;
+  }
+
   var trackerRow = getPaxCacheRow_dw_('tracker', monthInfo.sheetId, f3Name);
   var freshRead = !trackerRow;
   if (freshRead) {
