@@ -296,11 +296,17 @@
 
   // Builds a check-in link through the static front end when configured, falling back to the
   // GAS ?cmd=checkin page otherwise — every check-in link on this page goes through this
-  // instead of hand-building a WEBAPP_URL + '?cmd=checkin' URL.
+  // instead of hand-building a WEBAPP_URL + '?cmd=checkin' URL. STATIC_CHECKIN_BASE_URL_ (no
+  // longer guaranteed to carry ?webapp=, F3Go30-9jsa) may or may not already have a query
+  // string (e.g. ?ns=... from this page's own arrival params) — pick '?' vs '&' accordingly,
+  // same as buildStaticRedirectUrl_ (Utilities.js) does server-side.
   function buildCheckinUrl_(sessionGuid) {
-    var idSuffix = sessionGuid ? ('&id=' + encodeURIComponent(sessionGuid)) : '';
-    if (STATIC_CHECKIN_BASE_URL_) return STATIC_CHECKIN_BASE_URL_ + idSuffix;
-    return WEBAPP_URL + '?cmd=checkin' + idSuffix;
+    if (!sessionGuid) return STATIC_CHECKIN_BASE_URL_ || (WEBAPP_URL + '?cmd=checkin');
+    var idParam = 'id=' + encodeURIComponent(sessionGuid);
+    if (STATIC_CHECKIN_BASE_URL_) {
+      return STATIC_CHECKIN_BASE_URL_ + (STATIC_CHECKIN_BASE_URL_.indexOf('?') === -1 ? '?' : '&') + idParam;
+    }
+    return WEBAPP_URL + '?cmd=checkin&' + idParam;
   }
 
   function showStep(name) {
