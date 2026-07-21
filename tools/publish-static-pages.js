@@ -97,13 +97,19 @@ function main() {
     console.log(`📦 copied static-pages/dist/${e} -> ${path.relative(ROOT, dest)}`);
   });
 
-  const status = execSync('git status --porcelain', { cwd: staticRepo }).toString().trim();
+  // Scope both the dirty check and the staging to just the env(s) being published. An unscoped
+  // `git add dist` would let a SIT deploy commit and push whatever happened to be sitting
+  // modified under dist/prod/ (e.g. a half-finished PROD publish), and an unscoped status check
+  // would treat unrelated dirt elsewhere in F3Static as "there is something to publish" and then
+  // die on an empty commit.
+  const distPaths = envs.map((e) => `dist/${e}`);
+  const status = execSync(`git status --porcelain -- ${distPaths.join(' ')}`, { cwd: staticRepo }).toString().trim();
   if (!status) {
-    console.log('✅ F3Static working tree already matches build output — nothing to publish.');
+    console.log(`✅ F3Static ${distPaths.join(', ')} already matches build output — nothing to publish.`);
     return;
   }
 
-  execSync('git add dist', { cwd: staticRepo, stdio: 'inherit' });
+  execSync(`git add ${distPaths.join(' ')}`, { cwd: staticRepo, stdio: 'inherit' });
   const message = `Publish static pages v${pkg.version}.${pkg.build || 0} (${envs.join(', ')})`;
   execSync(`git commit -m ${JSON.stringify(message)}`, { cwd: staticRepo, stdio: 'inherit' });
   execSync('git push', { cwd: staticRepo, stdio: 'inherit' });
