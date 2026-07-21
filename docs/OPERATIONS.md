@@ -375,7 +375,7 @@ Playwright, captures Logger output, and asserts on the Drive files written to
 `GAS_LOGGER_LOCAL_PATH/F3Go30/`.
 
 **Prerequisites:**
-- `local.settings.json` populated (`GAS_LOGGER_LOCAL_PATH`, `SCRIPT_ID_PROD`)
+- `local.settings.json` populated (`GAS_LOGGER_LOCAL_PATH`, `templateScriptId`)
 - Google Drive for Desktop mounted at `GAS_LOGGER_LOCAL_PATH`
 - Node.js installed; `npm install` run once
 
