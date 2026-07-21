@@ -113,6 +113,32 @@ function checkinHandoffArrived_(url) {
   }
 }
 
+/**
+ * Follows GAS's renderStaticRedirect_ interstitial (WebApp.js, F3Go30-ubwl.2) out to the static
+ * origin.
+ *
+ * Distinct from followTokenRedirect below, despite the similar shape: attemptTopRedirect_ fires
+ * from a click and so may keep sticky user activation in a real browser, failing only under
+ * synthetic clicks. renderStaticRedirect_ fires on load with NO gesture, inside an iframe
+ * sandboxed `allow-top-navigation-by-user-activation` — Chrome blocks it for every visitor,
+ * not just this harness. The `<a id="go" target="_top">` tap-through is the only path that
+ * actually works, so follow that. Tracked separately as a product defect.
+ */
+async function followStaticRedirect(page, timeout = 20000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (new URL(page.url()).origin !== 'https://script.google.com') return;
+    const go = page.frameLocator('iframe').frameLocator('iframe').locator('#go');
+    if (await go.isVisible().catch(() => false)) {
+      const href = await go.getAttribute('href');
+      await page.goto(href, { waitUntil: 'networkidle' });
+      return;
+    }
+    await page.waitForTimeout(300);
+  }
+  throw new Error('Neither the automatic static redirect nor its tap-through link appeared within timeout');
+}
+
 async function followTokenRedirect(page, fallbackLinkLocator, timeout = 20000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -326,10 +352,13 @@ test.describe('Check-in flow + GAS→static signup handoff, SIT', () => {
     let app = await submitCheckinIdentify(page, CURRENT_MONTH_PAX.f3Name, CURRENT_MONTH_PAX.email);
     await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
 
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle' }),
-      app.locator('#notYouLink').click(),
-    ]);
+    // The handoff is two hops, not one: the click lands on GAS's own renderStaticRedirect_
+    // interstitial (WebApp.js), which only then leaves for the static origin. Its
+    // window.top.location.replace is the same top-level navigation this harness reliably does
+    // not perform (see followTokenRedirect's doc comment above), so follow the interstitial's
+    // own `<a id="go">` tap-through instead of waiting for an automatic bounce.
+    await app.locator('#notYouLink').click();
+    await followStaticRedirect(page);
 
     const url = new URL(page.url());
     expect(url.origin).not.toBe('https://script.google.com');

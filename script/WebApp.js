@@ -104,14 +104,24 @@ function renderHomePage_(e) {
  *   - `?static=0` opts out explicitly, keeping the GAS-rendered page one query parameter away
  *     rather than deleted (a developer/legacy escape hatch, not an availability guarantee —
  *     ADR-019);
- *   - the hop is a visible link as well as a script navigation, so a PAX whose browser blocks
- *     the scripted top-level navigation still gets there by tapping, never a dead end.
- * `window.top` is required rather than `window.location`: HtmlService serves this inside a
- * sandbox iframe, and navigating the iframe alone would leave the PAX on script.google.com
- * with the static page trapped inside it.
+ *   - the hop is an explicit tap, so it is never a dead end.
+ *
+ * ONE DELIBERATE TAP, NOT AN AUTO-REDIRECT. This originally also ran
+ * `window.top.location.replace(...)` on load and framed the link as a "Tap here if nothing
+ * happens" fallback. That scripted navigation could never fire for anyone: HtmlService serves
+ * this inside an iframe sandboxed `allow-top-navigation-by-user-activation`, and a script
+ * running on load has no user activation, so Chrome refuses it ("Unsafe attempt to initiate
+ * navigation ... has no user activation") and throws an uncaught SecurityError into the
+ * console. The link was therefore not the fallback path but the only path, while the copy
+ * promised an automatic hop that never came. It is now presented as what it actually is — a
+ * single deliberate tap — and the dead replace() call is gone rather than left throwing.
+ *
+ * Navigating the sandbox iframe instead (meta refresh, window.location) is NOT an alternative:
+ * it would leave the PAX on script.google.com with the static page trapped inside it, and the
+ * address bar is exactly what has to change for the new link to be bookmarkable at all.
  * @param {string} staticUrl
- * @param {{bodyLabel: string=, title: string=}=} opts bodyLabel is the "Taking you to <bodyLabel>"
- *   copy (default 'Go30'); title is the page's setTitle (default 'Go30').
+ * @param {{bodyLabel: string=, title: string=}=} opts bodyLabel names what moved, e.g.
+ *   'Go30 check-in' (default 'Go30'); title is the page's setTitle (default 'Go30').
  */
 function renderStaticRedirect_(staticUrl, opts) {
   opts = opts || {};
@@ -121,10 +131,15 @@ function renderStaticRedirect_(staticUrl, opts) {
   var html =
     '<!DOCTYPE html><html><head><meta charset="utf-8">' +
     '<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;text-align:center;' +
-    'padding:32px 16px;color:#333}a{color:#0b5cad}</style></head><body>' +
-    '<p>Taking you to ' + bodyLabel + '&hellip;</p>' +
-    '<p><a id="go" href="' + escaped + '" target="_top">Tap here if nothing happens</a></p>' +
-    '<script>window.top.location.replace(' + JSON.stringify(staticUrl) + ');<\/script>' +
+    'padding:40px 20px;color:#333}' +
+    'h1{font-size:20px;margin:0 0 10px}' +
+    'p{font-size:15px;line-height:1.5;color:#555;margin:0 0 26px}' +
+    'a#go{display:inline-block;background:#0b5cad;color:#fff;text-decoration:none;' +
+    'padding:14px 30px;border-radius:8px;font-size:17px;font-weight:600}' +
+    '</style></head><body>' +
+    '<h1>' + bodyLabel + ' has moved</h1>' +
+    '<p>Tap below to continue, then update your bookmark to the new address.</p>' +
+    '<p><a id="go" href="' + escaped + '" target="_top">Continue</a></p>' +
     '</body></html>';
   return HtmlService.createHtmlOutput(html)
     .setTitle(title)

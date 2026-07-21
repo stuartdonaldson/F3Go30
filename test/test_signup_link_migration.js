@@ -193,7 +193,7 @@ const { extractShortUrlAlias_ } = require('../script/urlShortener.js');
   var expected = buildStaticCheckinRedirectUrl_(WEBAPP, { id: 'sess-123', ns: 'sit-smoke', contextDate: '2026-07-01' });
   assert.ok(output.__html, 'renders the redirect page, not the GAS home template');
   assert.ok(
-    output.__html.indexOf('window.top.location.replace(' + JSON.stringify(expected) + ')') !== -1,
+    output.__html.indexOf('href="' + expected.replace(/&/g, '&amp;') + '"') !== -1,
     'home route redirect must target the same static URL check-in would, with identity params intact'
   );
 })();
@@ -209,7 +209,7 @@ const { extractShortUrlAlias_ } = require('../script/urlShortener.js');
   var expected = buildStaticCheckinRedirectUrl_(WEBAPP, { id: 'sess-123', ns: 'sit-smoke', contextDate: '2026-07-01' });
   assert.ok(output.__html, 'renders the redirect page, not the GAS check-in template');
   assert.ok(
-    output.__html.indexOf('window.top.location.replace(' + JSON.stringify(expected) + ')') !== -1,
+    output.__html.indexOf('href="' + expected.replace(/&/g, '&amp;') + '"') !== -1,
     'check-in route redirect must carry id/ns/contextDate across to the static front end'
   );
 })();
@@ -227,20 +227,23 @@ const { extractShortUrlAlias_ } = require('../script/urlShortener.js');
   var expected = buildStaticSignupRedirectUrl_(WEBAPP, { targetMonth: 'next', autoStart: '1' });
 
   assert.ok(output.__html, 'renders the redirect page, not the GAS signup template');
-  // window.top, not window.location — HtmlService serves this inside a sandbox iframe, so
-  // navigating the frame alone would leave the PAX on script.google.com with the static page
-  // trapped inside it.
-  assert.ok(
-    output.__html.indexOf('window.top.location.replace(' + JSON.stringify(expected) + ')') !== -1,
-    'scripted hop targets the top frame with the query-preserving static URL'
-  );
-  // Never a dead end: the same destination is a real, tappable link, so a browser that blocks
-  // the scripted top-level navigation still gets the PAX there.
+  // The tappable link is the ONLY hop, not a fallback behind a scripted one: HtmlService serves
+  // this inside an iframe sandboxed allow-top-navigation-by-user-activation, so a script-driven
+  // top navigation on load has no user gesture and is refused for every visitor. See
+  // renderStaticRedirect_'s doc comment.
   assert.ok(
     output.__html.indexOf('href="' + expected.replace(/&/g, '&amp;') + '"') !== -1,
-    'redirect page also offers the destination as a manual link'
+    'redirect page offers the query-preserving static URL as a real link'
   );
-  assert.ok(output.__html.indexOf('target="_top"') !== -1, 'manual link escapes the sandbox iframe too');
+  // target="_top", not a frame-local navigation — otherwise the PAX stays on script.google.com
+  // with the static page trapped inside the sandbox iframe and an unbookmarkable address bar.
+  assert.ok(output.__html.indexOf('target="_top"') !== -1, 'manual link escapes the sandbox iframe');
+  // The dead scripted hop must not come back: it could never fire, and it threw an uncaught
+  // SecurityError into the console on every legacy arrival.
+  assert.ok(
+    output.__html.indexOf('location.replace(') === -1,
+    'no scripted top-level navigation — it cannot fire without a user gesture'
+  );
 })();
 
 (function testStaticZeroStillRendersTheGasSignupPage() {

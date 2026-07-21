@@ -413,10 +413,21 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
   requested. `renderSignupPage_`/`renderCheckinPage_`/`renderHomePage_` (`WebApp.js` /
   `dashboardWebapp.js`) each call this once and, on a non-empty result, hand off to one shared
   renderer, `renderStaticRedirect_` (`WebApp.js`, generalized from the original
-  `renderStaticSignupRedirect_`) — the same `window.top.location.replace(...)` + tappable-fallback-
-  link page signup already used, parameterized only by the "Taking you to &lt;label&gt;…" copy.
+  `renderStaticSignupRedirect_`) — a "&lt;label&gt; has moved" page with a single tappable
+  **Continue** button to the static URL, parameterized only by that label.
   Home reuses the check-in builder/URL rather than a third implementation: the static page's
   default (no-`cmd`) view already *is* check-in.
+
+  **One deliberate tap, not an auto-redirect.** `renderStaticRedirect_` originally also fired
+  `window.top.location.replace(...)` on load, with the link framed as a fallback ("Tap here if
+  nothing happens"). That scripted hop could never fire for anyone: HtmlService serves the page
+  inside an iframe sandboxed `allow-top-navigation-by-user-activation`, and a script running on
+  load has no user gesture, so Chrome refuses the navigation for every visitor (observed as an
+  uncaught SecurityError in the console on every legacy arrival). The tap was therefore the only
+  path all along; the page now presents it as such and the dead `replace()` call is gone. Unlike
+  this, `attemptTopRedirect_`'s identify→personal-link swap (`IdentityCore.html`, see Sign-up/
+  Daily check-in in CONTEXT.md) fires from a click and can retain the gesture in a real browser —
+  a genuinely different mechanism, not affected by this fix.
 
   **Bookmark advisory (F3Go30-ubwl.3):** every redirect appends `from=gas` to the destination URL
   so the static page (`static-pages/src/index.html`) can tell a PAX their old GAS link moved — a

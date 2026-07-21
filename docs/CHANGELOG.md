@@ -51,7 +51,10 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
 - An old bookmarked or saved check-in link (and the plain Go30 home link) now takes you straight
   to the new plain-web-page check-in instead of the old Google-hosted one, the same way sign-up
   links already did. The first time you land there from an old link, a banner reminds you the
-  link has moved and to update your bookmark — dismiss it once and it won't show again.
+  link has moved and to update your bookmark — dismiss it once and it won't show again. Getting
+  there is one tap on a "has moved / Continue" button rather than an automatic jump — Google's
+  hosting doesn't allow the jump to happen on its own, so the button is the real way there, not
+  a fallback for a rare case.
 
 ---
 
