@@ -2306,17 +2306,22 @@ function handleMonthGrid_(templateSpreadsheet, payload) {
   }
 
   var trackerRow = getPaxCacheRow_dw_('tracker', monthInfo.sheetId, f3Name);
-  if (!trackerRow) {
+  var freshRead = !trackerRow;
+  if (freshRead) {
     trackerRow = trackerSheet.getRange(rowIndex + 4, 1, 1, trackerSheet.getLastColumn()).getValues()[0];
-    setPaxCacheRow_dw_('tracker', monthInfo.sheetId, f3Name, trackerRow);
   }
   // Same stale-roster-index guard as every other rowIndex-derived Tracker read in this file
   // (F3Go30-a2hq) — a mismatch here means the cached index no longer agrees with the sheet, so
-  // treat it exactly like "no row" rather than risk handing back a different PAX's month.
+  // treat it exactly like "no row" rather than risk handing back (and caching) a different PAX's
+  // month. Only cache once the row is confirmed to belong to f3Name (mirrors
+  // resolveCheckinIdentityLean_).
   if (!trackerRowBelongsToPax_dw_(trackerRow, f3Name)) {
     purgeStaleTrackerBind_dw_(monthInfo.sheetId, f3Name);
     GasLogger.log('checkinWebapp.monthGrid.staleBind', { sheetId: monthInfo.sheetId, requested: f3Name });
     return notRegistered;
+  }
+  if (freshRead) {
+    setPaxCacheRow_dw_('tracker', monthInfo.sheetId, f3Name, trackerRow);
   }
 
   GasLogger.log('checkinWebapp.monthGrid.result', { registered: true, monthKey: monthKey, durationMs: Date.now() - t0 });

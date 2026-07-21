@@ -312,10 +312,14 @@ function showAbout() {
       '<hr>' +
       '<p><span class="label">Signup:</span> <a href="' + serviceUrl + '?cmd=signup" target="_blank">' + serviceUrl + '?cmd=signup</a></p>' +
       '<p><span class="label">Checkin:</span> <a href="' + serviceUrl + '?cmd=checkin" target="_blank">' + serviceUrl + '?cmd=checkin</a></p>' +
-      '<p><span class="label">Checkin (static page):</span> <a href="' + staticBaseUrl + '?webapp=' + encodeURIComponent(serviceUrl) +
+      // No ?webapp= override here: the static build already bakes this env's own /exec URL in
+      // as its default backend (F3Go30-6bl6), and this About dialog always reflects the
+      // spreadsheet's own env, so the baked default is already correct — an explicit override
+      // would just be duplicating it (and risking drifting out of sync with the visible text).
+      '<p><span class="label">Checkin (static page):</span> <a href="' + staticBaseUrl +
         '" target="_blank">' + staticBaseUrl + '</a></p>' +
-      '<p><span class="label">Signup (static page):</span> <a href="' + staticBaseUrl + '?webapp=' + encodeURIComponent(serviceUrl) +
-        '&amp;cmd=signup" target="_blank">' + staticBaseUrl + '?cmd=signup</a></p>'
+      '<p><span class="label">Signup (static page):</span> <a href="' + staticBaseUrl + '?cmd=signup' +
+        '" target="_blank">' + staticBaseUrl + '?cmd=signup</a></p>'
     ) : '')
   ).setWidth(480).setHeight(420);
 
