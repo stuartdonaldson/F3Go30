@@ -2,10 +2,11 @@
 """
 activity_log.py — Query Axiom logs and summarize key PAX activity.
 
-Aggregates signup, check-in-page-view, checkin, dashboard-view, bonus, nag-email, and legacy
-GAS-to-static redirect events into human-readable summaries, ordered chronologically. Field
-names match the actual GasLogger event payloads (see script/dashboardWebapp.js,
-script/signupWebapp.js, script/nag.js, script/WebApp.js) — not guessed names.
+Aggregates signup, check-in-page-view, checkin, dashboard-view, bonus, nag-email, onEdit cache
+refresh, and legacy GAS-to-static redirect events into human-readable summaries, ordered
+chronologically. Field names match the actual GasLogger event payloads (see
+script/dashboardWebapp.js, script/signupWebapp.js, script/nag.js, script/WebApp.js,
+script/TrackerEditTrigger.js) — not guessed names.
 
 Viewing the check-in page, logging a checkin, and viewing the dashboard are each their own
 activity, but a PAX typically does all three back-to-back in one sitting. Activities that
@@ -38,6 +39,13 @@ Notes:
       a lookup happens whether or not anything is ever saved. They are reported as
       [SIGNUP LOOKUP] and [SIGNUP NEW] / [SIGNUP UPDATE] accordingly — see
       _signup_exec_index_ and _attribute_signup_saves_ below.
+    - [CACHE] lines are TrackerEditTrigger.js's onEdit handler (handleTrackerEdit_) firing on a
+      manual Tracker/Responses/Bonus Tracker sheet edit — ADR-016's onEdit half of PaxCache
+      freshness. `patched` means a narrow single-PAX-row patch (tryPatchSinglePaxRow_te_);
+      `invalidated` means a whole-sheet PaxCache + CacheService wipe (the more expensive path,
+      wipePaxCacheAndRelatedCachesForSheet_). Neither event carries an f3Name (the trigger fires
+      before/without resolving "who" beyond the row it patches), so these are always standalone
+      lines, never joined into a PAX's [SESSION].
     - [REDIRECT] lines are legacy ?cmd=checkin/?cmd=signup/home arrivals landing on the GAS
       "has moved" interstitial (logStaticRedirect_, script/WebApp.js) before the PAX taps through
       to the static front end. Never attributable to a PAX from Axiom alone (no f3Name is logged
@@ -265,6 +273,18 @@ def _classify(event: dict, entry_index: dict = None, legacy_exec_ids: set = None
         bonus_type = data.get('type', '?')
         return {'ts': epoch, 'ts_str': ts_str, 'group': _SESSION, 'f3Name': f3_name,
                 'label': 'BONUS', 'detail': f"added bonus {bonus_type}"}
+
+    if name == 'handleTrackerEdit_.patched':
+        sheet_name = data.get('sheetName', '?')
+        sheet_id = data.get('sheetId', '?')
+        return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': None,
+                'label': 'CACHE PATCH', 'detail': f"onEdit refresh: {sheet_name} row patched (sheetId={sheet_id})"}
+
+    if name == 'handleTrackerEdit_.invalidated':
+        sheet_name = data.get('sheetName', '?')
+        sheet_id = data.get('sheetId', '?')
+        return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': None,
+                'label': 'CACHE WIPE', 'detail': f"onEdit refresh: {sheet_name} whole-sheet cache wiped (sheetId={sheet_id})"}
 
     if name == 'sendNagEmail.complete':
         emails_sent = data.get('emailsSent', '?')

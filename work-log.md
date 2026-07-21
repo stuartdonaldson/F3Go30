@@ -2068,3 +2068,40 @@ Open: No test currently asserts on the new copy/colors directly (existing specs 
 
 ### Key Learnings:
 The GAS-hosted `CheckinApp.html` is no longer the page real PAX traffic lands on for check-in — a bare `?cmd=checkin` redirects out to the static front end (`static-pages/src/index.html`), which ships an independently-maintained duplicate of the same status-rendering JS/CSS. Any future checkin-page UI change needs to be applied to both files until that duplication is resolved.
+
+## 2026-07-21 11:14:39
+_session 2e024404 · v3 · 07-21_
+
+### Objective 2: Release the checkin-page rework to PROD (v2.4.4)
+Rationale: The checkin copy/icon changes (Objective 1, logged in the prior entry this session) were verified on SIT and ready to ship; user asked directly to "deploy to prod, and commit and tag the version."
+Rejected: `npm version patch` requires a clean tree; rather than stashing the pre-existing unrelated `CLAUDE.md` edit, the user chose to commit it as its own separate commit first, keeping the release commit/tag scoped to just this branch's real changes.
+Outcome [user-facing]: PROD (TEMPLATE) GAS project and PROD static pages redeployed at v2.4.4; feature stayed on `f3go30-833s-pwa-design` per the user's explicit choice rather than merging to main first.
+Outcome [developer-facing]: Four commits landed on the branch and were pushed: the CLAUDE.md doc-standard addition, the checkin rework, the `v2.4.4` tag commit, and a follow-up commit capturing the `package.json`/`version.js` PROD-stamp state the deploy script wrote after tagging (build counter reset, `APP_DEPLOY_TARGET` flipped to TEMPLATE) — without which the tagged commit would have understated what was actually live.
+
+### Objective 3: Diagnose and fix a PAX's ("Needles") stale PROD dashboard after a direct spreadsheet edit  [accreted]
+Transition: surfaced immediately after the PROD release, as a live incident report — investigated in the same session while full context on the just-shipped deploy (and its own open cache-wipe requirement) was still warm.
+Rationale: User reported Needles checked in by editing the Tracker sheet directly, but Little John's dashboard view of him stayed stale. Root cause: PaxCache (PropertiesService, no TTL) is only invalidated by webapp write-through or by a per-spreadsheet *installable* onEdit trigger (ADR-016 retired the old Drive-modtime poll backstop) — and that trigger is only auto-installed at tracker-creation time going forward, so older trackers can be missing it entirely with no automatic backfill. Compounded by a second live risk: the morning's v2.4.4 deploy carried an unrelated identity-leak fix (F3Go30-a2hq) whose tracking issue (F3Go30-x2vd, P1, open) requires a post-deploy full cache wipe on PROD that wasn't yet confirmed done.
+Outcome [user-facing]: Ran `syncTrackerTriggers --env prod` (backfilled the missing onEdit trigger onto 2 active trackers) and `invalidateAllCache --env prod` (wiped 64 PaxCache entries + 61 layout caches) — Needles' dashboard should now reflect his manual edit on next load, and this also satisfies F3Go30-x2vd's open post-deploy wipe requirement.
+Outcome [internal]: Traced the full PaxCache/onEdit/write-through architecture (PaxCache.js, TrackerEditTrigger.js, TrackerTriggerLifecycle.js, dashboardWebapp.js, ADR-016) to identify the exact gap rather than guessing at a fix.
+Open: Not yet confirmed with the user that Needles' dashboard is now showing correctly — the two admin actions ran clean, but no live re-check was requested or observed in-session.
+
+### Objective 4: Add onEdit cache-refresh visibility to tools/activity_log.py  [accreted]
+Transition: direct follow-on request right after the Needles fix, to close the observability gap that made this incident hard to see in the activity log in the first place (no line existed for a `handleTrackerEdit_` firing).
+Rationale: User asked to "report out also when the onEdit cache refresh triggers" — the existing report had no visibility into TrackerEditTrigger.js's `handleTrackerEdit_.patched`/`.invalidated` GasLogger events, so an incident like Needles' would show no trace at all in the report (confirmed live: a `--env prod --since 24h` run showed zero CACHE lines, consistent with his tracker having had no installed trigger to fire in the first place).
+Outcome [developer-facing]: Added `[CACHE PATCH]` and `[CACHE WIPE]` activity classifications for `handleTrackerEdit_.patched`/`.invalidated` (sheet name + sheetId in the detail line, always standalone since these events carry no f3Name), plus a new module-docstring Notes bullet explaining the two variants. Verified against live PROD Axiom data and with a synthetic-event unit check of `_classify`.
+
+### Key Learnings:
+An Apps Script *installable* trigger (`ScriptApp.newTrigger(...).forSpreadsheet(ss).onEdit()`) is per-spreadsheet state, not code — a handler function existing in the script project guarantees nothing about whether any given spreadsheet actually has it wired up, especially for objects (like monthly Tracker copies) created before the wiring code existed. Any cache-invalidation design that depends on an installable trigger needs either a backfill-on-read check or a monitored provisioning step for every object it must cover, not just a wiring correct at the newest creation call sites.
+
+## 2026-07-21 18:45:00
+_session ca61ea8d · v3 · 07-21_
+
+### Objective 1: Diagnose and fix dark-mode unreadability in the dashboard's "How it Works" panel
+Rationale: User reported the dashboard's "How it Works" section still rendered wrong in dark mode after a prior fix (commit 1f1dc31). Investigation traced the live surface first — confirmed the GAS webapp now redirects to the static-pages PWA (`static-pages/src/index.html`) rather than serving `script/CheckinApp.html` directly, and confirmed the GitHub Pages `F3Static` dist output matches source exactly (no deploy-lag). The actual defect was in `static-pages/src/index.html`'s `#howBody` panel, which hardcoded `color:#333;border-top:1px solid #e8e0d0` instead of the dark-mode-aware `var(--text)`/`var(--border)` already used correctly by `CheckinApp.html` and `SignupApp.html` — a fourth, unmanaged copy of the "How it Works" content that had drifted from the other three.
+Rejected: Normalizing `index.html`'s wording to the canonical fragment was initially uncertain (it had contextual phrasing like "right here on the check-in page" and "trophy icon"), but the project's own documented policy in `docs/Go30-Intro.md` already commits to normalized wording over per-context excerpts, so `index.html` was brought in line with that existing decision rather than treated as an exception.
+Outcome [user-facing]: Dashboard's "How it Works" panel now readable in dark mode on the live PWA.
+Outcome [developer-facing]: `static-pages/src/index.html` added as a fourth sync target in `tools/sync-how-it-works.js`, wrapped in `HOW-IT-WORKS:START/END` markers sourced from `docs/Go30-Intro.md`, so this content can no longer drift independently. Verified idempotent (`node tools/sync-how-it-works.js` twice — second run reports all four targets up to date) and existing `test/test_sync_how_it_works.js` still passes.
+Open: Changes are staged locally only — not yet built to `static-pages/dist/`, deployed to SIT/PROD, or pushed to the `F3Static` GitHub Pages repo.
+
+### Key Learnings:
+The GAS-served `script/CheckinApp.html`/`SignupApp.html` webapp now serves only a "this has moved" redirect stub pointing to the `static-pages` GitHub Pages PWA — the real check-in/dashboard UI a user hits live is `static-pages/src/index.html`, not the GAS HtmlService templates. Any future dark-mode/styling investigation should start there, not in `script/`.

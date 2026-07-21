@@ -290,6 +290,19 @@ function deploy(targetKey, options = {}) {
   saveDeploymentId_(targetKey, deploymentId);
   console.log(`💾 ${TARGETS[targetKey].deploymentIdKey} saved to local.settings.json`);
 
+  // Clears PaxCache (PropertiesService) plus the Tracker/Responses layout + full-roster
+  // CacheService blobs for every active tracker on this target, so code just pushed here that
+  // changed cache shape/serialization can never leave a stale/incompatible entry behind for the
+  // next request to trip over (F3Go30-x2vd was exactly this: a fix landed on PROD without this
+  // step, and the wipe had to be run by hand afterward). Must run after the deploy above, not
+  // before — wiping first just lets the still-live old code repopulate a stale entry.
+  const invalidateEnv = targetKey === 'template' ? 'prod' : 'sit';
+  console.log(`\n🧹 Invalidating PaxCache/layout caches on ${label}…`);
+  execSyncWithRetry_(`node tools/callWebapp.js invalidateAllCache --env ${invalidateEnv}`, {
+    stdio: 'inherit',
+    cwd: ROOT,
+  });
+
   if (targetKey === 'template') {
     console.log('\n🔗 Setting WEBAPP_URL script property on PROD…');
     execSyncWithRetry_('node tools/callWebapp.js setWebappUrl --env prod', {
