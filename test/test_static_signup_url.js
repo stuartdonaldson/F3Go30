@@ -10,10 +10,12 @@ const { buildStaticSignupUrl_ } = require('../script/Utilities.js');
 
 const WEBAPP = 'https://script.example.com/exec';
 
-// --- Static host configured: builds a static URL carrying cmd=signup and the webapp backend ---
+// --- Static host configured: builds a static URL carrying cmd=signup, no redundant webapp= ---
+// (the static build bakes its own env's GAS backend URL in by default, F3Go30-6bl6 /
+// F3Go30-9jsa, so a GAS-generated link doesn't need to pass it)
 {
   var url = buildStaticSignupUrl_(WEBAPP);
-  assert.equal(url, 'https://pax.example.github.io/f3go30/sit/?webapp=' + encodeURIComponent(WEBAPP) + '&cmd=signup');
+  assert.equal(url, 'https://pax.example.github.io/f3go30/sit/?cmd=signup');
 }
 
 // --- Optional opts are appended in order, only when supplied ---
@@ -27,8 +29,7 @@ const WEBAPP = 'https://script.example.com/exec';
   });
   assert.equal(
     url,
-    'https://pax.example.github.io/f3go30/sit/?webapp=' + encodeURIComponent(WEBAPP) +
-      '&cmd=signup&id=sess-123&ns=demo&contextDate=2026-07-01&targetMonth=next&autoStart=1'
+    'https://pax.example.github.io/f3go30/sit/?cmd=signup&id=sess-123&ns=demo&contextDate=2026-07-01&targetMonth=next&autoStart=1'
   );
 }
 

@@ -437,8 +437,11 @@ curl -s -L "https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec?cmd=signup" 
 
 Since ADR-019 the link an operator hands out is a **static-origin** URL, not a
 `script.google.com` one. Nothing is hand-assembled — three builders in `script/Utilities.js`
-produce every link the system emits, and all of them carry the GAS deployment URL in `?webapp=`
-so the page knows which API to call:
+produce every link the system emits. None of them carry the GAS deployment URL in the link
+itself (F3Go30-9jsa) — the static build already bakes each env's own `/exec` URL in as its
+default backend (F3Go30-6bl6), so the page already knows which API to call without it. An
+explicit `?webapp=` still works as a client-side override for older bookmarked links that
+carry it, or for the unbuilt page in local/Playwright testing.
 
 | Builder | Produces | Used by |
 |---------|----------|---------|

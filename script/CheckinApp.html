@@ -548,7 +548,8 @@
   var NS_ = <?!= urlNsJson ?> || ''; // ADR-014 D3 — echoed on every callApi() POST by IdentityCore
   var CONTEXT_DATE_ = <?!= urlContextDateJson ?> || ''; // F3Go30-31w5.1 — echoed on every callApi() POST by IdentityCore
   // F3Go30-833s.11 — static signup base (buildStaticSignupUrl_), already carrying
-  // ?webapp=&cmd=signup plus this request's ns/contextDate. '' when the static host isn't
+  // ?cmd=signup plus this request's ns/contextDate (F3Go30-9jsa dropped the redundant
+  // webapp= — the static build bakes its own env's backend in). '' when the static host isn't
   // configured, in which case signupDeepLinkUrl_ falls back to the GAS ?cmd=signup page.
   var STATIC_SIGNUP_BASE_URL_ = <?!= staticSignupBaseUrlJson ?> || '';
 </script>
@@ -1266,7 +1267,7 @@
    * handoff (performSave_, SignupApp.html), so every one of these round-trips lands back here.
    *
    * F3Go30-833s.11: prefers the static signup front end (STATIC_SIGNUP_BASE_URL_, which already
-   * carries ?webapp=&cmd=signup and this request's ns/contextDate), falling back to the GAS
+   * carries ?cmd=signup and this request's ns/contextDate), falling back to the GAS
    * ?cmd=signup page when the static host isn't configured. Both forms already have a query
    * string, so targetMonth/autoStart append with '&' either way. */
   function signupDeepLinkUrl_(targetMonth) {

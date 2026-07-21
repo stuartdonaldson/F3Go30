@@ -458,7 +458,7 @@ function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spre
   template.urlNsJson = JSON.stringify(ns || null);
   template.urlContextDateJson = JSON.stringify(contextDate || null);
   // Static signup base for this page's own signup deep links (signupDeepLinkUrl_,
-  // CheckinApp.html) — already carries ?webapp=&cmd=signup, so the client only appends
+  // CheckinApp.html) — already carries ?cmd=signup, so the client only appends
   // &targetMonth=&autoStart=1. '' when the static host isn't configured (e.g. Node tests), in
   // which case CheckinApp.html falls back to the GAS ?cmd=signup page itself.
   template.staticSignupBaseUrlJson = JSON.stringify(

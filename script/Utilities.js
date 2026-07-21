@@ -412,13 +412,36 @@ function resolveStaticCheckinBaseUrl_() {
 }
 
 /**
+ * Joins [key, value] pairs into a query string, in order, skipping any pair whose value is
+ * falsy — the one place buildStaticCheckinUrl_ and buildStaticSignupUrl_ turn their opts into a
+ * URL, so the two builders can't drift into different escaping or separator logic (F3Go30-9jsa).
+ * Returns '' (not '?') when every pair is skipped, so callers control whether/how a prefix like
+ * `?cmd=signup` is glued on.
+ * @param {Array<[string, string]>} pairs
+ */
+function joinQueryParams_(pairs) {
+  var parts = [];
+  for (var i = 0; i < pairs.length; i++) {
+    if (pairs[i][1]) parts.push(pairs[i][0] + '=' + encodeURIComponent(pairs[i][1]));
+  }
+  return parts.join('&');
+}
+
+/**
  * Builds a check-in link that opens the static check-in front end (GitHub Pages) wrapping the
  * given GAS webapp base URL as its API backend, instead of the GAS-hosted ?cmd=checkin page
  * directly — every PAX-facing generated check-in link (nag/signup emails, the home landing
  * page, the signup app's own links) should go through this rather than building `?cmd=checkin`
  * by hand, so they all move to the static front end together. Query params mirror what
- * static-pages/src/index.html reads (STATIC_PARAMS_): webapp, id, ns, contextDate. Returns ''
- * if either the static base or webAppBaseUrl is unavailable, so callers can omit the link.
+ * static-pages/src/index.html reads (STATIC_PARAMS_): id, ns, contextDate. No `webapp=` param
+ * is emitted (F3Go30-9jsa) — the static build already bakes each env's own /exec URL in as its
+ * default backend (F3Go30-6bl6), and resolveStaticCheckinBaseUrl_ already sends this same
+ * webAppBaseUrl's env to the matching sit/ or prod/ static path, so a GAS-generated link
+ * carrying its own env's backend URL again is redundant. webAppBaseUrl is still required as the
+ * availability gate (an unconfigured GAS deployment has nothing to hand off to). The static
+ * page's own STATIC_PARAMS_.get('webapp') override is untouched, so old bookmarked links that
+ * still carry the param keep working. Returns '' if either the static base or webAppBaseUrl is
+ * unavailable, so callers can omit the link.
  * @param {string} webAppBaseUrl
  * @param {{id: string=, ns: string=, contextDate: string=}=} opts
  */
@@ -426,18 +449,20 @@ function buildStaticCheckinUrl_(webAppBaseUrl, opts) {
   var staticBase = resolveStaticCheckinBaseUrl_();
   if (!staticBase || !webAppBaseUrl) return '';
   opts = opts || {};
-  var url = staticBase + '?webapp=' + encodeURIComponent(webAppBaseUrl);
-  if (opts.id) url += '&id=' + encodeURIComponent(opts.id);
-  if (opts.ns) url += '&ns=' + encodeURIComponent(opts.ns);
-  if (opts.contextDate) url += '&contextDate=' + encodeURIComponent(opts.contextDate);
-  return url;
+  var query = joinQueryParams_([
+    ['id', opts.id],
+    ['ns', opts.ns],
+    ['contextDate', opts.contextDate],
+  ]);
+  return staticBase + (query ? '?' + query : '');
 }
 
 /**
  * Signup counterpart to buildStaticCheckinUrl_ (ADR-018 §7) — same static front end
  * (static-pages/src/index.html), same GitHub Pages host resolved by
  * resolveStaticCheckinBaseUrl_ (signup is a step within that one page, not a second static
- * page), just opened with `cmd=signup` instead of defaulting to check-in. Returns '' under the
+ * page), just opened with `cmd=signup` instead of defaulting to check-in. No `webapp=` param
+ * (F3Go30-9jsa) — see buildStaticCheckinUrl_ for why. Returns '' under the
  * same conditions buildStaticCheckinUrl_ does (static host or webAppBaseUrl unavailable), so
  * callers can fall back to emitting the GAS ?cmd=signup URL. Note that is a build-time fallback
  * for an unconfigured static host, NOT a PAX-facing availability guarantee — per ADR-019 the GAS
@@ -450,13 +475,15 @@ function buildStaticSignupUrl_(webAppBaseUrl, opts) {
   var staticBase = resolveStaticCheckinBaseUrl_();
   if (!staticBase || !webAppBaseUrl) return '';
   opts = opts || {};
-  var url = staticBase + '?webapp=' + encodeURIComponent(webAppBaseUrl) + '&cmd=signup';
-  if (opts.id) url += '&id=' + encodeURIComponent(opts.id);
-  if (opts.ns) url += '&ns=' + encodeURIComponent(opts.ns);
-  if (opts.contextDate) url += '&contextDate=' + encodeURIComponent(opts.contextDate);
-  if (opts.targetMonth) url += '&targetMonth=' + encodeURIComponent(opts.targetMonth);
-  if (opts.autoStart) url += '&autoStart=1';
-  return url;
+  var query = joinQueryParams_([
+    ['cmd', 'signup'],
+    ['id', opts.id],
+    ['ns', opts.ns],
+    ['contextDate', opts.contextDate],
+    ['targetMonth', opts.targetMonth],
+    ['autoStart', opts.autoStart ? '1' : ''],
+  ]);
+  return staticBase + '?' + query;
 }
 
 /**

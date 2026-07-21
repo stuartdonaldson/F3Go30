@@ -80,12 +80,12 @@ const signupEmail = require('../script/signupEmail.js');
     registrationMonth: 'July 2026',
   });
 
-  var staticBase = 'https://pax.example.github.io/f3go30/sit/?webapp=' + encodeURIComponent(BASE);
-  assert.ok(msg.htmlBody.indexOf(staticBase + '&id=sess-123"') !== -1,
+  var staticBase = 'https://pax.example.github.io/f3go30/sit/';
+  assert.ok(msg.htmlBody.indexOf(staticBase + '?id=sess-123"') !== -1,
     'HTML check-in link points at the static front end when configured');
-  assert.ok(msg.htmlBody.indexOf(staticBase + '&cmd=signup&id=sess-123') !== -1,
+  assert.ok(msg.htmlBody.indexOf(staticBase + '?cmd=signup&id=sess-123') !== -1,
     'HTML edit-goals (signup) link points at the static front end when configured');
-  assert.ok(msg.body.indexOf(staticBase + '&cmd=signup&id=sess-123') !== -1,
+  assert.ok(msg.body.indexOf(staticBase + '?cmd=signup&id=sess-123') !== -1,
     'plaintext edit-goals (signup) link points at the static front end when configured');
 
   delete global.STATIC_PAGES_BASE_URL_;
