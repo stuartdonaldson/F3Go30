@@ -387,18 +387,14 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
     the static page is already the top-level document, so from there it could only navigate the
     installed app away.
 
-  `SignupApp.html` is unchanged and stays live, exactly as `CheckinApp.html` does — both front
-  ends keep sharing one set of JSON handlers, so this adds no server-side divergence. Trade-off:
-  the signup UI now exists twice, and the two copies can drift (the static one is re-expressed
-  against this page's CSS custom properties, so it renders in light/dark where the GAS page is
-  hardcoded light). Retiring the GAS signup page is a separate decision (`F3Go30-90l5` decides
-  the posture, `F3Go30-wjpu` executes), deferred until the static path has a month of real use.
-
-  > **Superseded in part (ADR-019, 2026-07-20).** As originally written this paragraph called
-  > `SignupApp.html` the *availability fallback*. `F3Go30-ys15` resolved that unreachable-host
-  > availability fallback is not a requirement, so the GAS pages are no longer kept for that
-  > reason — see the next decision. What survives here is the placement decision (static origin
-  > primary, in-page signup step, unchanged JSON API) and the duplicate-UI trade-off.
+  `SignupApp.html` is unchanged and stays live only to serve the legacy-link redirect route
+  (ADR-019) — it is **not** an availability fallback, and no PAX-facing flow is entitled to it
+  rendering. Both front ends keep sharing one set of JSON handlers, so this adds no server-side
+  divergence. Trade-off: the signup UI now exists twice, and the two copies can drift (the
+  static one is re-expressed against this page's CSS custom properties, so it renders in
+  light/dark where the GAS page is hardcoded light). Retiring the GAS signup page is a separate
+  decision (`F3Go30-90l5` decides the posture, `F3Go30-wjpu` executes), deferred until the
+  static path has a month of real use.
 
 - **GAS reduced to redirect-only, all three routes (F3Go30-ubwl) — DECIDED:** ADR-019 (superseding
   ADR-018's availability-fallback claim only, per `F3Go30-ys15`'s "unreachable-host fallback is

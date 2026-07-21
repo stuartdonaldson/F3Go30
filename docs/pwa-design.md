@@ -226,9 +226,11 @@ path onto the static origin.
 
 It is **not** an install-free path. The static page already is that: an ordinary web page on
 GitHub Pages, where installing only adds a home-screen icon. What the GAS page still provides is
-narrower — a second origin if the static host is unreachable, and the legacy-link route for
-already-distributed `?cmd=signup` URLs, which `F3Go30-833s.11` resolves into a query-preserving
-redirect (the route, not the rendered page).
+narrower still, after ADR-019 settled it: **only** the legacy-link route for already-distributed
+`?cmd=signup` URLs, which `F3Go30-833s.11` resolves into a query-preserving redirect (the route,
+not the rendered page). It is not a second origin to fall back to — `F3Go30-ys15` resolved that
+unreachable-host availability is not a requirement, so if the static host is down the flow is
+down.
 
 Retiring it is no longer undecided: `F3Go30-90l5` set the posture to scheduled-for-removal,
 gated on `F3Go30-833s.11` complete plus a month of real static-signup use in PROD. Execution is
@@ -313,7 +315,7 @@ the gate has data to read.
 | A broken service worker is invisible to Axiom | Keep API calls out of the worker; report the shell version on every identify so a stale cohort is visible server-side. |
 | Third front-end state — installed / browser / GAS | Extend the `activity_log.py` entry-path join to report `standalone` alongside `static page` and `GAS page`. |
 | Offline queue corrupts a bonus row | Out of scope by design. Check-ins only. |
-| Static signup regresses a flow every PAX uses monthly | The GAS signup page stays as the fallback, and the JSON handlers are shared and already covered by `test_signup_webapp.js`. Ship SIT-then-PROD as usual. |
+| Static signup regresses a flow every PAX uses monthly | The JSON handlers are shared and already covered by `test_signup_webapp.js`; ship SIT-then-PROD as usual. Note the GAS signup page is **not** a mitigation here — since ADR-019 it only serves the legacy-link redirect, and a PAX hitting it is redirected onto the static page rather than shown the GAS form. |
 | `index.html` grows past a comfortable single-file size | Already 2,013 lines; signup adds roughly 600. Revisit the single-file constraint if it passes ~3,500, not before — being dependency-free is what makes the page cheap to reason about. |
 
 ---

@@ -26,6 +26,8 @@ returns an HTML page that lets a PAX identify themselves, see (and edit) their e
 they already have one, and choose which month's tracker to save into. **This is intended to
 become the primary, advertised signup entry point, replacing the Google Form** — see §8
 Migration: Retiring the Google Form for what that means for existing monthly-creation code.
+(That happened, but the entry point has since moved off GAS entirely: signup is now a step of
+the static page, and this GAS route redirects to it. ADR-018/ADR-019.)
 
 A GAS web app dispatcher already exists per **ADR-009** (`/adr/009-web-app-dispatcher-instead-of-clasp-run.md`)
 for a *different* purpose (authenticated dev/test RPC). This feature is a **separate, anonymous,
@@ -54,6 +56,10 @@ redeployed monthly the way the HC Google Form is.
 ---
 
 ## 4. Entry Point
+
+> **No longer current (ADR-018/ADR-019).** The PAX-facing entry point is the static page's
+> `?cmd=signup` URL (`buildStaticSignupUrl_`, `script/Utilities.js`); the GAS URL below now
+> answers a page GET with a redirect to it. The `doPost` JSON contract is unchanged.
 
 ```
 GET  https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec?cmd=signup
@@ -278,7 +284,9 @@ dormant as a fallback**, not deleted or actively removed:
   sheet "Next Month HC Signup" link), the registration confirmation email's links
   (`signupReuse.js` `sendRegistrationConfirmationEmail_`), and the monthly Site-Q
   notification/Slack-message links (`CreateNewTracker.js`) should be updated to point at the
-  webapp's `?cmd=signup` URL instead of the Form URL.
+  webapp's `?cmd=signup` URL instead of the Form URL. **Since ADR-018/ADR-019 those links point
+  at the STATIC signup URL, not the GAS one** — see `docs/OPERATIONS.md` §Producing a sign-up or
+  check-in link.
 - `handleFormSubmit_` (the `onFormSubmit` trigger in `script/addResponseOnSubmit.js`) is left
   fully intact — if a PAX or Site Q falls back to the dormant Form, it must still work exactly as
   it does today. The webapp's `doPost` save path is **new, parallel write logic**, not a
