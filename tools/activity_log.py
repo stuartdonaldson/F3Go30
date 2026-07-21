@@ -2,10 +2,10 @@
 """
 activity_log.py — Query Axiom logs and summarize key PAX activity.
 
-Aggregates signup, check-in-page-view, checkin, dashboard-view, bonus, and nag-email events
-into human-readable summaries, ordered chronologically. Field names match the actual GasLogger
-event payloads (see script/dashboardWebapp.js, script/signupWebapp.js, script/nag.js) — not
-guessed names.
+Aggregates signup, check-in-page-view, checkin, dashboard-view, bonus, nag-email, and legacy
+GAS-to-static redirect events into human-readable summaries, ordered chronologically. Field
+names match the actual GasLogger event payloads (see script/dashboardWebapp.js,
+script/signupWebapp.js, script/nag.js, script/WebApp.js) — not guessed names.
 
 Viewing the check-in page, logging a checkin, and viewing the dashboard are each their own
 activity, but a PAX typically does all three back-to-back in one sitting. Activities that
@@ -38,6 +38,13 @@ Notes:
       a lookup happens whether or not anything is ever saved. They are reported as
       [SIGNUP LOOKUP] and [SIGNUP NEW] / [SIGNUP UPDATE] accordingly — see
       _signup_exec_index_ and _attribute_signup_saves_ below.
+    - [REDIRECT] lines are legacy ?cmd=checkin/?cmd=signup/home arrivals landing on the GAS
+      "has moved" interstitial (logStaticRedirect_, script/WebApp.js) before the PAX taps through
+      to the static front end. Never attributable to a PAX from Axiom alone (no f3Name is logged
+      here, by the PII rule, and the token isn't re-logged on any later event to join against) —
+      only the saved-link token itself is shown when present. The resolved PAX name, when the
+      token matches a live session, is written to the spreadsheet's own Activity tab instead
+      (see tools/callWebapp.js getSheet --body '{"sheetName":"Activity"}').
 """
 import argparse
 import pathlib
@@ -271,6 +278,22 @@ def _classify(event: dict, entry_index: dict = None, legacy_exec_ids: set = None
         error = data.get('error', '?')
         return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': None,
                 'label': 'NAG FAILED', 'detail': f"team={team} error={error}"}
+
+    # A legacy GAS URL (?cmd=checkin, ?cmd=signup, or bare home) arriving at the one-tap
+    # "has moved" interstitial (logStaticRedirect_, script/WebApp.js). This is its own execution,
+    # separate from any later identify — Axiom never carries f3Name here (PII rule), and the
+    # token itself isn't re-logged on the later identify event either, so there is no reliable
+    # join back to a PAX from Axiom data alone. Report the route and, when a saved-link token
+    # rode along, the token itself — the closest thing to "who" that Axiom actually has. The
+    # resolved PAX name (when the token matches a live CheckinSessions row) is only ever written
+    # to the spreadsheet's own Activity tab (logActivity, GAS-side), not Axiom.
+    if name.endswith('.staticRedirect') and name.startswith('render'):
+        route = {'renderHomePage_.staticRedirect': 'home', 'renderSignupPage_.staticRedirect': 'signup',
+                 'renderCheckinPage_.staticRedirect': 'check-in'}.get(name, name)
+        token = data.get('token')
+        who = f"token={token}" if token else "no token (anonymous arrival)"
+        return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': None,
+                'label': 'REDIRECT', 'detail': f"legacy {route} link → static interstitial ({who})"}
 
     return None
 

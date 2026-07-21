@@ -52,7 +52,7 @@ function renderHomePage_(e) {
     ? buildStaticCheckinRedirectUrl_(webAppUrl, (e && e.parameter) || {})
     : '';
   if (staticHomeUrl) {
-    GasLogger.log('renderHomePage_.staticRedirect', { hasQuery: !!(e && e.queryString) });
+    logStaticRedirect_(e, 'renderHomePage_', 'home');
     return renderStaticRedirect_(staticHomeUrl, { bodyLabel: 'Go30', title: 'Go30' });
   }
 
@@ -146,6 +146,38 @@ function renderStaticRedirect_(staticUrl, opts) {
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
+/**
+ * Records one GAS-to-static redirect interstitial, shared by all three arrival routes
+ * (renderHomePage_, renderSignupPage_, renderCheckinPage_) so the logging shape can't drift
+ * between them the way three hand-copied blocks did. Always logs to Axiom (via GasLogger,
+ * including the raw session token so Axiom can be filtered/joined per visitor even when no
+ * f3Name is resolvable) and, in the GAS runtime only (logActivity is undefined under Node
+ * tests), best-effort resolves the token to a PAX name for the spreadsheet's own Activity tab
+ * — every redirect is recorded there even when the token can't be tied to anyone.
+ * @param {Object} e        The doGet request event (for e.parameter.id / spreadsheet resolution).
+ * @param {string} routeTag GasLogger tag prefix, e.g. 'renderCheckinPage_'.
+ * @param {string} label    Human label for the Activity sheet message, e.g. 'check-in'.
+ */
+function logStaticRedirect_(e, routeTag, label) {
+  var redirectToken = (e && e.parameter && e.parameter.id) || null;
+  GasLogger.log(routeTag + '.staticRedirect', { hasQuery: !!(e && e.queryString), token: redirectToken });
+
+  if (typeof logActivity === 'undefined') return;
+
+  var activityMsg = 'Redirect to static ' + label;
+  if (redirectToken && typeof resolveCheckinSession_ === 'function') {
+    try {
+      var tokenSession = resolveCheckinSession_(resolveTemplateSpreadsheet_(e), redirectToken);
+      if (tokenSession && tokenSession.f3Name) {
+        activityMsg += ' (' + maskPiiForLog_(tokenSession.f3Name) + ')';
+      }
+    } catch (err) {
+      GasLogger.log(routeTag + '.redirectLogError', { error: err.message });
+    }
+  }
+  logActivity(activityMsg, 'GAS-to-static-redirect');
+}
+
 function renderSignupPage_(e) {
   // Old, already-distributed ?cmd=signup links (TinyURL short links, PAX bookmarks, Slack and
   // email history) can't be rewritten where they sit, so this page carries their arrivals
@@ -155,7 +187,7 @@ function renderSignupPage_(e) {
     ? buildStaticSignupRedirectUrl_(ScriptApp.getService().getUrl(), (e && e.parameter) || {})
     : '';
   if (staticSignupUrl) {
-    GasLogger.log('renderSignupPage_.staticRedirect', { hasQuery: !!(e && e.queryString) });
+    logStaticRedirect_(e, 'renderSignupPage_', 'signup');
     return renderStaticRedirect_(staticSignupUrl, { bodyLabel: 'Go30 signup', title: 'Go30 Hard Commit Signup' });
   }
 
@@ -675,6 +707,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderSignupPage_: renderSignupPage_,
     renderStaticRedirect_: renderStaticRedirect_,
+    logStaticRedirect_: logStaticRedirect_,
     renderHomePage_: renderHomePage_,
     handleAdminPost_: handleAdminPost_,
   };

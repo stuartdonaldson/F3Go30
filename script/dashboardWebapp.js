@@ -511,7 +511,7 @@ function renderCheckinPage_(e) {
     ? buildStaticCheckinRedirectUrl_(ScriptApp.getService().getUrl(), (e && e.parameter) || {})
     : '';
   if (staticCheckinUrl) {
-    GasLogger.log('renderCheckinPage_.staticRedirect', { hasQuery: !!(e && e.queryString) });
+    logStaticRedirect_(e, 'renderCheckinPage_', 'check-in');
     return renderStaticRedirect_(staticCheckinUrl, { bodyLabel: 'Go30 check-in', title: 'Go30 Check-In' });
   }
 

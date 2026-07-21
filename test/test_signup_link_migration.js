@@ -79,11 +79,12 @@ global.Utilities = { getUuid: function() { return 'fake-uuid'; } };
 global.GasLogger = { log: function() {}, logError: function() {}, run: function(name, fn) { return fn(); } };
 global.PropertiesService = { getScriptProperties: function() { return { getProperty: function() { return null; } }; } };
 
-const { renderSignupPage_, renderHomePage_, renderStaticRedirect_ } = require('../script/WebApp.js');
-// dashboardWebapp.js's renderCheckinPage_ calls renderStaticRedirect_ as a bare GAS-runtime
-// global (one flat script scope in production) — bind it before requiring dashboardWebapp.js,
-// mirroring the buildStatic*_ globals above.
+const { renderSignupPage_, renderHomePage_, renderStaticRedirect_, logStaticRedirect_ } = require('../script/WebApp.js');
+// dashboardWebapp.js's renderCheckinPage_ calls renderStaticRedirect_ and logStaticRedirect_ as
+// bare GAS-runtime globals (one flat script scope in production) — bind them before requiring
+// dashboardWebapp.js, mirroring the buildStatic*_ globals above.
 global.renderStaticRedirect_ = renderStaticRedirect_;
+global.logStaticRedirect_ = logStaticRedirect_;
 const { buildCheckinPageOutput_, renderCheckinPage_ } = require('../script/dashboardWebapp.js');
 const { extractShortUrlAlias_ } = require('../script/urlShortener.js');
 
