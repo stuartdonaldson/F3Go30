@@ -2054,3 +2054,17 @@ Open: gaslogger.spec.js's `SCRIPT_ID_PROD not set in local.settings.json` gap no
 
 ### Key Learnings:
 A refactor that removes an "always-present" query param from a URL-builder is a breaking change for every caller that assumed a leading `?`/`&` state from that guarantee — grep for every call site's own concatenation logic, not just the builder's own tests, before trusting a green unit-test suite; the actual break here only surfaced under live Playwright regression.
+
+## 2026-07-21 10:51:49
+_session 2e024404 · v3 · 07-21_
+
+### Objective 1: Rework checkin page TODAY/YESTERDAY status copy, add grace-period-aware YESTERDAY messaging, and center the Bonus/Tracker header icons
+Rationale: The pending-state copy read as flat status text ("No check-in yet") rather than inviting a response, and YESTERDAY gave no urgency signal as the grace period elapsed. User asked for: TODAY pending → "How did you do today?"; TODAY/YESTERDAY checked-in states → a random line pulled from the Inspire quote pool instead of a static string; YESTERDAY pending before 10am → "Not checked in yet" in yellow; at/after 10am → "Check in for yesterday, you're running late" in bold red. Separately, the header's chalice (Bonus) and chart (Tracker) button icons weren't visually centered in their 32×32 buttons.
+Rejected: considered inventing a fresh quote-pool mechanism, but reused the existing `LINES`/`pick()` pattern already prototyped (unshipped) in `static-pages/src/inspire/index.html` rather than duplicating a new one.
+Outcome [user-facing]: `script/CheckinApp.html` and `static-pages/src/index.html` (the live front end real check-in traffic actually redirects to — discovered mid-task, so both copies of the duplicated status-rendering logic were updated) now show the new TODAY/YESTERDAY copy, grace-period color coding (`.status-warn`/`.status-late`, reusing existing `--warn-fg`/`--danger` theme vars), and randomized Inspire-style lines on checked-in states. `.more-btn` now centers its icon via flex instead of relying on default button UA padding.
+Outcome [developer-facing]: Flagged the pre-existing duplication between `script/CheckinApp.html` and `static-pages/src/index.html` (no sync tooling links them, per standing CLAUDE.md code-quality note) rather than silently patching around it.
+Outcome [internal]: Deployed to SIT twice (v2.4.3.12 then v2.4.3.13, the second to pick up the static-page edit made after the first deploy) and ran the live Playwright suite (`checkin-advanced-grid`, `static-checkin`, `identity-token-flow` — 38 tests). First pass: 35 passed, 3 failed (one in the unrelated signup iframe `#step-done`, two in checkin/static-checkin identify redirects); all 3 passed clean on isolated retry, confirming flakiness rather than a regression from this change.
+Open: No test currently asserts on the new copy/colors directly (existing specs only exercise status transitions generically) — a manual click-through on SIT would be the only way to visually confirm the new strings/colors render as intended.
+
+### Key Learnings:
+The GAS-hosted `CheckinApp.html` is no longer the page real PAX traffic lands on for check-in — a bare `?cmd=checkin` redirects out to the static front end (`static-pages/src/index.html`), which ships an independently-maintained duplicate of the same status-rendering JS/CSS. Any future checkin-page UI change needs to be applied to both files until that duplication is resolved.
