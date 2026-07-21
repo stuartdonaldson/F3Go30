@@ -37,6 +37,18 @@
 - User/admin-facing change worth announcing → docs/CHANGELOG.md §Unreleased (minor-series level;
   NOT per-deploy/patch/build — see that file's "What belongs here")
 
+## Code Quality
+
+- **No duplicated logic across call sites.** Before adding similar logic to more than one call
+  site, check whether it's the same shape each time — extract one shared function and call it
+  from each site instead of hand-copying the block. Duplicated logic drifts: a fix, guard, or
+  field lands on one copy and gets forgotten in the others.
+- **Flag existing duplication you encounter**, even outside the current task's scope. If work
+  in one file surfaces near-identical logic already repeated elsewhere, say so and propose
+  consolidating it — don't silently work around it.
+  (Captured as a lesson-learned in DevStandard, 2026-07-20: no gate or skill currently checks
+  for this automatically, so it depends on this standing instruction until resolved upstream.)
+
 ## Maintenance Protocol
 
 Claude does not monitor documents between sessions, detect drift, or update documents
