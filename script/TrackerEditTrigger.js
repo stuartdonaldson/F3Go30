@@ -121,19 +121,25 @@ function patchResponsesFullRosterCache_te_(sheetId, sheetRow, sheetCol, newValue
  * offset. That last check is what catches a row insert/delete: GAS's onEdit event doesn't
  * reliably distinguish a structural shift from a plain cell edit, so without it a shifted row
  * could silently patch a DIFFERENT pax's cached data under the touched row's now-stale identity.
- * @returns {boolean} true if the edit was fully handled (patched, or correctly a no-op).
+ *
+ * Always returns whatever F3 Name it managed to resolve along the way (even on a fall-through to
+ * the wipe below), so the caller can attribute the Axiom log line to a PAX whenever the edit was
+ * at least narrowed down to a single row — this is best-effort: edits this can't narrow to a row
+ * at all (Bonus Tracker, multi-cell, header row, unresolvable Responses layout) log with no name.
+ * @returns {{patched: boolean, f3Name: ?string}} patched: true if the edit was fully handled
+ *   (patched, or correctly a no-op); f3Name: the resolved PAX name, or null if never resolved.
  */
 function tryPatchSinglePaxRow_te_(e, sheet, sheetName, sheetId) {
   try {
     var kind = TRACKER_EDIT_KIND_BY_SHEET_[sheetName];
-    if (!kind) return false;
+    if (!kind) return { patched: false, f3Name: null };
 
     var range = e.range;
-    if (range.getNumRows() !== 1 || range.getNumColumns() !== 1) return false;
+    if (range.getNumRows() !== 1 || range.getNumColumns() !== 1) return { patched: false, f3Name: null };
 
     var row = range.getRow();
     var headerRows = TRACKER_EDIT_HEADER_ROWS_[sheetName];
-    if (row < headerRows) return false;
+    if (row < headerRows) return { patched: false, f3Name: null };
 
     var col = range.getColumn();
     var nameCol; // 1-based sheet column holding the PAX's F3 Name
@@ -141,17 +147,17 @@ function tryPatchSinglePaxRow_te_(e, sheet, sheetName, sheetId) {
       nameCol = TRACKER_EDIT_NAME_COL_ZERO_BASED_ + 1;
     } else {
       var f3NameColZeroBased = resolveResponsesNameColFromCachedLayout_te_(sheetId);
-      if (f3NameColZeroBased === null) return false;
+      if (f3NameColZeroBased === null) return { patched: false, f3Name: null };
       nameCol = f3NameColZeroBased + 1;
     }
 
     var name = sheet.getRange(row, nameCol).getValue();
-    if (!name) return false;
+    if (!name) return { patched: false, f3Name: null };
 
     var normName = paxCacheNormalizeName_te_(name);
     var rosterIndex = getPaxRosterIndex_te_(kind, sheetId);
     var expectedRowIndex = row - headerRows;
-    if (!rosterIndex || rosterIndex[normName] !== expectedRowIndex) return false;
+    if (!rosterIndex || rosterIndex[normName] !== expectedRowIndex) return { patched: false, f3Name: name };
 
     var newValue = range.getValue();
     var cachedRow = getPaxCacheRow_te_(kind, sheetId, name);
@@ -168,9 +174,9 @@ function tryPatchSinglePaxRow_te_(e, sheet, sheetName, sheetId) {
       patchResponsesFullRosterCache_te_(sheetId, row, col, newValue);
     }
 
-    return true;
+    return { patched: true, f3Name: name };
   } catch (err) {
-    return false; // any unexpected failure here just falls back to the whole-sheet wipe
+    return { patched: false, f3Name: null }; // any unexpected failure here just falls back to the whole-sheet wipe
   }
 }
 
@@ -229,12 +235,17 @@ function handleTrackerEdit_(e) {
     if (!TRACKER_EDIT_INVALIDATING_SHEETS_[sheetName]) return;
 
     var sheetId = resolveTrackerEditSpreadsheet_(e).getId();
+    // Cheap, non-PII — the touched A1 range itself, not who touched it. Mainly useful for the
+    // null-f3Name log cases below (Bonus Tracker, header row, multi-cell paste, unresolvable
+    // Responses layout), where it's the only clue left as to what shape of edit caused the wipe.
+    var rangeA1 = e.range.getA1Notation();
 
     // C10 (F3Go30-o39s.11): try a narrow per-PAX-row patch first — cheaper than a whole-sheet
     // wipe + cold rebuild for the common case (a single manual cell edit). Falls through to the
     // wipe below for anything it can't safely narrow down (see tryPatchSinglePaxRow_te_).
-    if (tryPatchSinglePaxRow_te_(e, sheet, sheetName, sheetId)) {
-      GasLogger.log('handleTrackerEdit_.patched', { sheetId: sheetId, sheetName: sheetName });
+    var patchResult = tryPatchSinglePaxRow_te_(e, sheet, sheetName, sheetId);
+    if (patchResult.patched) {
+      GasLogger.log('handleTrackerEdit_.patched', { sheetId: sheetId, sheetName: sheetName, f3Name: patchResult.f3Name, range: rangeA1 });
       return;
     }
 
@@ -242,8 +253,9 @@ function handleTrackerEdit_(e) {
     // signal that this onEdit trigger itself fired a whole-sheet wipe (as opposed to the narrow
     // per-row patch above). GasLogger.run (not a bare GasLogger.log) is required here — log()
     // only queues the entry in memory; flush() is what actually POSTs to Axiom, and only .run()
-    // calls flush() automatically.
-    GasLogger.log('handleTrackerEdit_.invalidated', { sheetId: sheetId, sheetName: sheetName });
+    // calls flush() automatically. f3Name is whatever tryPatchSinglePaxRow_te_ managed to resolve
+    // before falling back (null for edits it never narrowed to a row, e.g. Bonus Tracker/paste).
+    GasLogger.log('handleTrackerEdit_.invalidated', { sheetId: sheetId, sheetName: sheetName, f3Name: patchResult.f3Name, range: rangeA1 });
     wipePaxCacheAndRelatedCachesForSheet_te_(sheetId);
   });
 }

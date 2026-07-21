@@ -2105,3 +2105,12 @@ Open: Changes are staged locally only — not yet built to `static-pages/dist/`,
 
 ### Key Learnings:
 The GAS-served `script/CheckinApp.html`/`SignupApp.html` webapp now serves only a "this has moved" redirect stub pointing to the `static-pages` GitHub Pages PWA — the real check-in/dashboard UI a user hits live is `static-pages/src/index.html`, not the GAS HtmlService templates. Any future dark-mode/styling investigation should start there, not in `script/`.
+
+## 2026-07-21 16:40:38
+_session 5c9cc1fb · v3 · 07-21_
+
+### Objective 1: Attribute onEdit cache patch/wipe log lines to the PAX and cell range involved
+Rationale: `[CACHE]` log lines (handleTrackerEdit_.patched/.invalidated) previously carried only sheetId/sheetName, giving no way to tell what triggered a given patch or wipe. User asked for f3Name on both, then — noting f3Name is null for edits that can't be narrowed to a single row (Bonus Tracker, header row, multi-cell paste, unresolvable Responses layout) — asked what other non-PII signal could fill that gap; the edited A1 range was the answer, since it distinguishes those null-name cases from each other at a glance.
+Outcome [developer-facing]: `tryPatchSinglePaxRow_te_` (script/TrackerEditTrigger.js) now returns `{patched, f3Name}` instead of a bare boolean, resolving f3Name best-effort even on fall-through paths; `handleTrackerEdit_` also captures `e.range.getA1Notation()` and logs both `f3Name` and `range` on `.patched`/`.invalidated` events.
+Outcome [developer-facing]: `tools/activity_log.py`'s CACHE PATCH/CACHE WIPE detail lines append `pax=<name>` and `range=<A1>` when present; docstring updated to match.
+Outcome [developer-facing]: test/test_tracker_edit_trigger.js's fake range stub gained `getA1Notation`; full `npm test` suite passes.

@@ -92,7 +92,8 @@ function makeFakeEditEvent_(sheetName, spreadsheetId, opts) {
     getColumn: function() { return opts.col; },
     getNumRows: function() { return opts.numRows === undefined ? 1 : opts.numRows; },
     getNumColumns: function() { return opts.numCols === undefined ? 1 : opts.numCols; },
-    getValue: function() { return opts.newValue; }
+    getValue: function() { return opts.newValue; },
+    getA1Notation: function() { return opts.a1Notation || 'A1'; }
   };
   return { range: range, sheet: sheet };
 }

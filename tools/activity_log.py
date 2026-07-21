@@ -43,9 +43,14 @@ Notes:
       manual Tracker/Responses/Bonus Tracker sheet edit — ADR-016's onEdit half of PaxCache
       freshness. `patched` means a narrow single-PAX-row patch (tryPatchSinglePaxRow_te_);
       `invalidated` means a whole-sheet PaxCache + CacheService wipe (the more expensive path,
-      wipePaxCacheAndRelatedCachesForSheet_). Neither event carries an f3Name (the trigger fires
-      before/without resolving "who" beyond the row it patches), so these are always standalone
-      lines, never joined into a PAX's [SESSION].
+      wipePaxCacheAndRelatedCachesForSheet_). Both events carry an f3Name whenever the edit was
+      narrowed down to a single row (best-effort — an edit that can't be narrowed to a row at all,
+      e.g. Bonus Tracker or a multi-cell paste, logs with no name) and a `range` field (the
+      touched A1 notation, e.g. "A1:C5" for a paste vs "D2" for one cell) — range is the only clue
+      left when f3Name is missing, since it distinguishes a Bonus Tracker edit / header-row edit /
+      bulk paste from each other at a glance. These lines are always standalone, never joined into
+      a PAX's [SESSION] — the edit is a sheet-owner action, not part of that PAX's own check-in
+      flow.
     - [REDIRECT] lines are legacy ?cmd=checkin/?cmd=signup/home arrivals landing on the GAS
       "has moved" interstitial (logStaticRedirect_, script/WebApp.js) before the PAX taps through
       to the static front end. Never attributable to a PAX from Axiom alone (no f3Name is logged
@@ -277,14 +282,22 @@ def _classify(event: dict, entry_index: dict = None, legacy_exec_ids: set = None
     if name == 'handleTrackerEdit_.patched':
         sheet_name = data.get('sheetName', '?')
         sheet_id = data.get('sheetId', '?')
+        f3_name = data.get('f3Name')
+        cell_range = data.get('range')
+        who = f" pax={f3_name}" if f3_name else ""
+        where = f" range={cell_range}" if cell_range else ""
         return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': None,
-                'label': 'CACHE PATCH', 'detail': f"onEdit refresh: {sheet_name} row patched (sheetId={sheet_id})"}
+                'label': 'CACHE PATCH', 'detail': f"onEdit refresh: {sheet_name} row patched (sheetId={sheet_id}){who}{where}"}
 
     if name == 'handleTrackerEdit_.invalidated':
         sheet_name = data.get('sheetName', '?')
         sheet_id = data.get('sheetId', '?')
+        f3_name = data.get('f3Name')
+        cell_range = data.get('range')
+        who = f" pax={f3_name}" if f3_name else ""
+        where = f" range={cell_range}" if cell_range else ""
         return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': None,
-                'label': 'CACHE WIPE', 'detail': f"onEdit refresh: {sheet_name} whole-sheet cache wiped (sheetId={sheet_id})"}
+                'label': 'CACHE WIPE', 'detail': f"onEdit refresh: {sheet_name} whole-sheet cache wiped (sheetId={sheet_id}){who}{where}"}
 
     if name == 'sendNagEmail.complete':
         emails_sent = data.get('emailsSent', '?')
