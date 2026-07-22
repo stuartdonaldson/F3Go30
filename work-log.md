@@ -2129,3 +2129,22 @@ Rationale: tracker-edit-trigger-live-check.spec.js was stale (told the operator 
 Rejected: the first live run exposed two real problems, surfaced by checking Axiom rather than trusting the green Playwright result: test 1 logged `.invalidated` instead of `.patched` (the deploy's own invalidateAllCache had just cooled the cache, so the "patch" claim raced a cold start); test 2's second edit produced no Axiom event at all, not even an error. Rather than declare a pass, reported both honestly. The user then proposed warming the cache after invalidation, which was implemented via a live `cmd=checkin` identify call (`targetMonth: 'explicit'` + `targetSheetId`) reusing the app's real resolveCheckinIdentityFull_ path — plus replacing the blind `expect(true)` assertions with real `getSheet`-based cell-value polling, and an `Escape` keypress after each `Enter` to close the stray autocomplete state that had silently swallowed the second click.
 Outcome [developer-facing]: tests/playwright/tracker-edit-trigger-live-check.spec.js rewritten with an explicit cache-warm-up step, three scenarios (patch, self-heal round-trip, multi-cell wipe), and real cell-value assertions instead of eyeballing Axiom by hand.
 Outcome [internal]: Reran live against SIT tracker `1vucQTzY...`; all three scenarios passed with verified cell values, cross-checked against the Axiom event timeline confirming `.patched`/`.invalidated` landed exactly as each test claims.
+
+## 2026-07-22 23:20:00
+_session 037e9023 · v3 · 07-22_
+
+### Objective 1: PWA dashboard freshness — render cached data instantly, always revalidate against live data
+Rationale: The dashboard was slow to feel current after navigation or backgrounding — either it blocked on a fresh fetch every time, or it showed a cache that could silently go stale. Beads 833s.13 and 833s.14 both serve this one goal: render the cache immediately then revalidate in place, and make sure a revalidation actually happens whenever the app becomes relevant again (on load and on resume from background), not just on a hard refresh.
+Outcome [user-facing]: Dashboard now renders from cache immediately and always re-renders in place once a revalidation fetch returns, so the visible state converges on live data without a blocking spinner (static-pages/src/index.html).
+Outcome [user-facing]: Resuming the app (bringing it back from background/inactive) now triggers a pax-data refetch plus a dashboard prefetch, so data doesn't go stale while the tab/app was backgrounded (static-pages/src/index.html).
+Outcome [developer-facing]: Added test/test_dashboard_stale_while_revalidate.js (214 lines) and test/test_session_resume_refresh.js (194 lines) covering both behaviors.
+
+### Objective 2: Stamp client APP_VERSION into every callApi payload and log it server-side
+Rationale: Diagnosing client-side issues in the field required knowing which build a given request came from; there was no version signal traveling with API calls.
+Outcome [developer-facing]: static-pages/src/index.html's callApi() now stamps `clientVersion: STATIC_BUILD_VERSION_` on every POST body; script/WebApp.js's buildWebAppRequestLog_ (shared by doGet/doPost) gained extractClientVersion_, which lifts clientVersion out of the parsed POST body and logs it, defaulting to `'legacy'` when absent, unparseable, or the request has no postData (e.g. GAS-native pages or old cached clients).
+Outcome [developer-facing]: Added test/test_client_version_logging.js and extended test/test_static_page_client_invariants.js.
+
+### Objective 3: Make weekly-capped bonus entries legible — "does not count" must be obvious at save time
+Rationale: A bonus entry that lands over the weekly cap silently earns 0 points (`counts=false`), but a PAX saving that entry got no immediate signal — the existing "extra"/counts=false badge only showed up later, in the list view.
+Outcome [user-facing]: A new #bonusSaveNotice banner now appears immediately after a bonusAdd/bonusEdit save whose entry lands counts=false, naming the bonus type in plain language and stating that no points were added (static-pages/src/index.html, script/CheckinApp.html).
+Outcome [developer-facing]: Verified the pre-existing counts=false "extra" badge/note in the bonus list was intact (AC1) rather than re-implementing it; added test/test_bonus_save_notice.js (118 lines) covering the new banner.
