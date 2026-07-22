@@ -238,6 +238,7 @@
   .bonus-badge.pending { background: var(--badge-pending-bg); color: var(--badge-pending-fg); }
   .bonus-badge.extra { background: var(--badge-extra-bg); color: var(--badge-extra-fg); }
   .bonus-entry-note { font-size: 12.5px; color: var(--badge-extra-fg); margin-top: 6px; line-height: 1.35; }
+  .bonus-save-notice { background: var(--badge-extra-bg); color: var(--badge-extra-fg); border-radius: 8px; padding: 10px 12px; font-size: 14px; line-height: 1.4; margin-bottom: 10px; }
   .bonus-edit-btn { background: transparent; border: none; color: var(--link); font-size: 14px; cursor: pointer; font-family: inherit; text-decoration: underline; padding: 0; }
   .card-head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .card-head-row h2 { margin: 0; white-space: nowrap; }
@@ -519,6 +520,7 @@
         <p class="muted">Log EHing an FNG, Fellowship, a Q, or an Inspire moment. EHing FNG, Q
           Point, and Inspire need a link to Slack as evidence before they count.</p>
         <div id="bonusListError" class="error-text hidden"></div>
+        <div id="bonusSaveNotice" class="bonus-save-notice hidden"></div>
         <div id="bonusList"></div>
         <button class="secondary" id="bonusAddBtn" style="margin-top:14px;">+ Add Bonus</button>
       </div>
@@ -2016,8 +2018,39 @@
     $('bonusWhen').max = isoDate_(lastOfThisMonth);
   }
 
+  function hideBonusSaveNotice_() {
+    $('bonusSaveNotice').classList.add('hidden');
+  }
+
+  function showBonusSaveNotice_(text) {
+    var el = $('bonusSaveNotice');
+    el.textContent = text;
+    el.classList.remove('hidden');
+  }
+
+  // Tells a PAX at save time when the entry they just recorded won't move their score — the
+  // weekly-cap version of the list badge's "extra" label (F3Go30-833s.16). Only trusts rowIndex
+  // matching when the saved entry's month equals the currently-viewed month: rowIndex is only
+  // unique within one Bonus Tracker sheet, and a cross-month save reloads a *different* sheet's
+  // list, where the same rowIndex could belong to an unrelated entry.
+  function reportBonusSaveOutcome_(savedRowIndex, savedWhenIso) {
+    var viewedIso = isoDate_(state.viewDate || new Date());
+    if (String(savedWhenIso || '').slice(0, 7) !== viewedIso.slice(0, 7)) {
+      hideBonusSaveNotice_();
+      return;
+    }
+    var saved = state.bonusEntries.filter(function(e) { return e.rowIndex === savedRowIndex; })[0];
+    if (saved && saved.complete && saved.counts === false) {
+      showBonusSaveNotice_('Recorded — but it won’t add points: only one ' + saved.type +
+        ' counts per week, and you already have one credited for this week.');
+    } else {
+      hideBonusSaveNotice_();
+    }
+  }
+
   /** Populates and shows the add/edit form. entry is null when adding a new one. */
   function openBonusForm_(entry) {
+    hideBonusSaveNotice_();
     state.bonusEditingRowIndex = entry ? entry.rowIndex : null;
     // Must match the dateISO the list was actually fetched with (state.bonusListContextIso), not
     // entry.whenIso — an entry's own date doesn't necessarily resolve back to the sheet it's
@@ -2065,6 +2098,7 @@
 
   $('bonusBtn').addEventListener('click', function() {
     hideApiError_();
+    hideBonusSaveNotice_();
     closeBonusForm_();
     showStep('bonus');
     loadBonusList_();
@@ -2104,7 +2138,7 @@
     }
     setButtonLoading_(btn, true, 'Saving…');
     callApi(action, payload)
-      .then(function() {
+      .then(function(res) {
         // Bonus totals are baked into the cached per-month dashboard payload (see monthCache
         // above); a save here would otherwise leave the dashboard showing pre-edit bonus totals
         // until the user navigates months, mirroring the checkin invalidation pattern.
@@ -2113,7 +2147,9 @@
           invalidateMonthCacheFor_(state.bonusEditingOriginalWhenIso);
         }
         closeBonusForm_();
-        return loadBonusList_();
+        return loadBonusList_().then(function() {
+          reportBonusSaveOutcome_(res && res.rowIndex, payload.whenIso);
+        });
       })
       .catch(function(err) {
         var msg = BONUS_ERROR_TEXT_[err && err.message] || null;
