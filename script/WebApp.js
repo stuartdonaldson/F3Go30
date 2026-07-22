@@ -8,9 +8,28 @@
  */
 
 /**
+ * F3Go30-833s.15: pulls just the clientVersion field out of a JSON POST body — never the
+ * rest of postData.contents (see buildWebAppRequestLog_'s note on why). 'legacy' covers
+ * GAS-served pages (CheckinApp.html/SignupApp.html) and old cached static clients, neither
+ * of which send the field; anything else unparseable also falls back to 'legacy' rather
+ * than throwing.
+ */
+function extractClientVersion_(e) {
+  if (!e || !e.postData || !e.postData.contents) return 'legacy';
+  try {
+    var payload = JSON.parse(e.postData.contents);
+    return (payload && payload.clientVersion) || 'legacy';
+  } catch (err) {
+    return 'legacy';
+  }
+}
+
+/**
  * Never includes postData.contents — request bodies (cmd=signup, cmd=admin) carry PAX
  * names/emails or secrets, and GasLogger.log() data must never contain either. Only
- * type/length are safe to log.
+ * type/length are safe to log. clientVersion is the one field deliberately lifted out of
+ * that body (F3Go30-833s.15) — it identifies which static-page build a PWA client is
+ * running, which the entry log had no way to answer before.
  */
 function buildWebAppRequestLog_(e) {
   return {
@@ -21,7 +40,8 @@ function buildWebAppRequestLog_(e) {
     postData: e && e.postData ? {
       type: e.postData.type,
       length: e.postData.length
-    } : null
+    } : null,
+    clientVersion: extractClientVersion_(e)
   };
 }
 
@@ -710,5 +730,6 @@ if (typeof module !== 'undefined' && module.exports) {
     logStaticRedirect_: logStaticRedirect_,
     renderHomePage_: renderHomePage_,
     handleAdminPost_: handleAdminPost_,
+    buildWebAppRequestLog_: buildWebAppRequestLog_,
   };
 }

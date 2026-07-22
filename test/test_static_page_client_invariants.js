@@ -51,6 +51,16 @@ function readScript_(name) {
   assert.match(fnMatch[0], /CONTEXT_DATE_/, 'callApi body must reference CONTEXT_DATE_ so contextDate round-trips on every POST');
 })();
 
+(function testStaticPageCallApiStampsClientVersion() {
+  // F3Go30-833s.15: every callApi() POST carries the build-stamped STATIC_BUILD_VERSION_ so
+  // Axiom can tell which static-page build a PWA client is running.
+  var src = readStaticPage_();
+  var fnMatch = src.match(/function callApi\([\s\S]*?\n  \}/);
+  assert.ok(fnMatch, 'callApi function body not found in index.html');
+  assert.match(fnMatch[0], /clientVersion: STATIC_BUILD_VERSION_/,
+    'callApi body must stamp clientVersion from STATIC_BUILD_VERSION_ on every POST');
+})();
+
 // ── NS_ / CONTEXT_DATE_ coverage extends to the signup step, not only SignupApp.html ──────────
 //    (F3Go30-833s.12 AC 3). callApi always echoes NS_/CONTEXT_DATE_ regardless of which cmd is
 //    passed (asserted above), so it's enough to confirm the signup step's own call sites route

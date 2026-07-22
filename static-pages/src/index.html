@@ -826,7 +826,12 @@
     var body = Object.assign({}, payload, {
       action: action,
       ns: (typeof NS_ !== 'undefined' ? NS_ : ''),
-      contextDate: (typeof CONTEXT_DATE_ !== 'undefined' ? CONTEXT_DATE_ : '')
+      contextDate: (typeof CONTEXT_DATE_ !== 'undefined' ? CONTEXT_DATE_ : ''),
+      // F3Go30-833s.15: identifies which static-page build sent this request — GitHub Pages
+      // caching + home-screen PWA launches can leave a client on a stale build for days with
+      // no other way to tell from the server side. null (unbuilt src/ served directly) is
+      // sent through as-is; buildWebAppRequestLog_ treats any falsy value as 'legacy'.
+      clientVersion: STATIC_BUILD_VERSION_
     });
     pendingRequestCount_++;
     updateSyncingIndicator_();
