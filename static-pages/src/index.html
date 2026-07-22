@@ -2804,6 +2804,40 @@
       });
   });
 
+  // F3Go30-833s.14: an installed PWA resumed from background stays alive in memory — no
+  // pageshow.persisted fires (that only covers the bfcache-restore case, see the listener near
+  // the top of this file) — so without this, a session parked all day never refetches anything
+  // and a PAX can check in against an hours-stale snapshot. Throttled (skip if the last refresh
+  // was under RESUME_REFRESH_THROTTLE_MS_ ago) and silent: reuses the same reconcile path the
+  // startup token-identify uses (applyIdentifySuccess_ with preserveView true, F3Go30-5nfj.5)
+  // so it never clobbers an open bonus form or the PAX's current month-calendar position, and a
+  // failed background request is swallowed — the current display is left exactly as it was.
+  var RESUME_REFRESH_THROTTLE_MS_ = 2 * 60 * 1000;
+  var lastResumeRefreshAt_ = Date.now();
+
+  function silentResumeRefresh_() {
+    if (!state.checkinReady || !SAVED_IDENTITY_TOKEN) return;
+    var now = Date.now();
+    if (now - lastResumeRefreshAt_ < RESUME_REFRESH_THROTTLE_MS_) return;
+    lastResumeRefreshAt_ = now;
+    callApi('identify', { token: SAVED_IDENTITY_TOKEN })
+      .then(function(res) {
+        // Token went stale (revoked) while parked, or a plain miss — leave the current display
+        // untouched; the PAX's next real action (a check-in submit) will surface the failure.
+        if (!res.matched) return;
+        if (res.config) applyServerConfig_(res.config);
+        reconcileWithLocalWrites_(res);
+        applyIdentifySuccess_(res, { preserveView: true });
+        saveCheckinSnapshot_(SAVED_IDENTITY_TOKEN, res);
+        prefetchDashboard_();
+      })
+      .catch(function() { /* silent — swallowed, current display stays as-is */ });
+  }
+
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') silentResumeRefresh_();
+  });
+
   // F3Go30-5nfj.5: run last — see runIdentityBootstrap_'s own docstring for why this can't run
   // at its original inline position any more.
   runIdentityBootstrap_();
