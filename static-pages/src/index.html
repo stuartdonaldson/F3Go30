@@ -1722,12 +1722,18 @@
     }
   });
 
+  // F3Go30-833s.13: stale-while-revalidate — a cached copy for today renders instantly (whether
+  // or not a prefetch happens to be in flight), then a revalidation fetch (chained onto that
+  // prefetch if present, otherwise fired fresh) re-renders in place the moment it lands. The
+  // blocking "Loading…" button is now reserved for the one case with nothing to show yet: no
+  // cached month payload for today at all.
   $('dashboardBtn').addEventListener('click', function() {
     var btn = this;
     var todayIso = isoDate_(new Date());
     var cached = state.monthCache[monthKeyOf_(new Date())];
-    if (cached && !state.dashboardPrefetchPromise && cached.dayDates.indexOf(todayIso) !== -1) {
+    if (cached && cached.dayDates.indexOf(todayIso) !== -1) {
       renderDashboard_(cached, cached.dayDates.indexOf(todayIso));
+      revalidateDashboard_();
       return;
     }
     setButtonLoading_(btn, true, 'Loading…');
@@ -2549,6 +2555,23 @@
       .finally(function() { state.dashboardPrefetchPromise = null; });
   }
 
+  // F3Go30-833s.13: silent revalidation for a dashboard that's already on screen — chains onto an
+  // in-flight prefetch when one exists (avoids a duplicate fetch), otherwise fires its own silent
+  // loadDashboard_(). Re-renders in place only if the view is still parked on today (the PAX may
+  // have navigated to another day/month while this was in flight) — pendingSelfWrites patching
+  // inside loadDashboard_ already protects any own-day write made in the meantime regardless.
+  function revalidateDashboard_() {
+    var todayIso = isoDate_(new Date());
+    var chain = state.dashboardPrefetchPromise || loadDashboard_(undefined, { silent: true });
+    chain.then(function() {
+      var fresh = state.monthCache[monthKeyOf_(new Date())];
+      if (fresh && fresh.dayDates.indexOf(todayIso) !== -1 &&
+          state.viewDate && isoDate_(state.viewDate) === todayIso) {
+        renderDashboard_(fresh, fresh.dayDates.indexOf(todayIso));
+      }
+    }).catch(function() { /* swallowed — the already-rendered cached copy stays on screen */ });
+  }
+
   function navigateDashboard_(deltaDays) {
     if (!state.viewDate || state.dashboardLoading) return;
     var newDate = new Date(state.viewDate);
@@ -2569,6 +2592,34 @@
 
   $('datePrevBtn').addEventListener('click', function() { navigateDashboard_(-1); });
   $('dateNextBtn').addEventListener('click', function() { navigateDashboard_(1); });
+
+  // F3Go30-833s.13: pull-to-refresh as an explicit refresh gesture on the dashboard step —
+  // standalone PWA mode has no browser chrome to pull against, so the same downward-pull-at-
+  // the-top gesture just rubber-bands and does nothing today. Recognized here and wired to the
+  // same silent revalidateDashboard_() the stale-while-revalidate path uses, never a page reload.
+  (function initDashboardPullToRefresh_() {
+    var dashboardStep = $('step-dashboard');
+    var PULL_THRESHOLD_PX_ = 70;
+    var startY = null;
+    var pulling = false;
+
+    dashboardStep.addEventListener('touchstart', function(e) {
+      if ((document.scrollingElement || document.documentElement).scrollTop > 0) { startY = null; return; }
+      startY = e.touches[0].clientY;
+      pulling = false;
+    }, { passive: true });
+
+    dashboardStep.addEventListener('touchmove', function(e) {
+      if (startY === null) return;
+      pulling = (e.touches[0].clientY - startY) > PULL_THRESHOLD_PX_;
+    }, { passive: true });
+
+    dashboardStep.addEventListener('touchend', function() {
+      if (pulling) revalidateDashboard_();
+      startY = null;
+      pulling = false;
+    });
+  })();
 
   var howOpen = false;
   $('howBtn').addEventListener('click', function() {
