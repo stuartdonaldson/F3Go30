@@ -197,6 +197,24 @@ function deletePaxRosterIndex_(kind, sheetId) {
 }
 
 /**
+ * Builds a {normalizedName: rowIndex} roster index from a flat list of raw names in row order —
+ * first occurrence of a normalized name wins (mirrors dashboardWebapp.js's own roster-building
+ * loop, which does the same over full row data; this variant exists separately because its
+ * callers only ever have a bare name column, never full rows, to build from).
+ * @param {Array<string>} names Raw (non-normalized) names, in row order.
+ * @returns {Object<string, number>}
+ */
+function buildRosterIndexFromNames_(names) {
+  var rosterIndex = {};
+  (names || []).forEach(function(name, idx) {
+    var norm = paxCacheNormalizeName_(name);
+    if (!norm) return;
+    if (!Object.prototype.hasOwnProperty.call(rosterIndex, norm)) rosterIndex[norm] = idx;
+  });
+  return rosterIndex;
+}
+
+/**
  * Adds/updates a single name's entry in an already-cached roster index without a full rebuild.
  * Lock-guarded (same convention as signupWebapp.js's ensureResponseColumn_): this is a
  * read-modify-write on a single shared property, and two concurrent signups patching the same
@@ -580,6 +598,7 @@ if (typeof module !== 'undefined' && module.exports) {
     deletePaxCacheRow_: deletePaxCacheRow_,
     getPaxRosterIndex_: getPaxRosterIndex_,
     setPaxRosterIndex_: setPaxRosterIndex_,
+    buildRosterIndexFromNames_: buildRosterIndexFromNames_,
     deletePaxRosterIndex_: deletePaxRosterIndex_,
     patchPaxRosterIndex_: patchPaxRosterIndex_,
     wipePaxCacheForSheet_: wipePaxCacheForSheet_,

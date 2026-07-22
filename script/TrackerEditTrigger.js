@@ -34,6 +34,10 @@ var setPaxCacheRow_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTrigge
   || (typeof globalThis !== 'undefined' && globalThis.setPaxCacheRow_);
 var getPaxRosterIndex_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.getPaxRosterIndex_)
   || (typeof globalThis !== 'undefined' && globalThis.getPaxRosterIndex_);
+var setPaxRosterIndex_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.setPaxRosterIndex_)
+  || (typeof globalThis !== 'undefined' && globalThis.setPaxRosterIndex_);
+var buildRosterIndexFromNames_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.buildRosterIndexFromNames_)
+  || (typeof globalThis !== 'undefined' && globalThis.buildRosterIndexFromNames_);
 var paxCacheNormalizeName_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.paxCacheNormalizeName_)
   || (typeof globalThis !== 'undefined' && globalThis.paxCacheNormalizeName_);
 
@@ -91,6 +95,18 @@ function serializeDateMarker_te_(v) {
 }
 
 /**
+ * Resolves the 1-based sheet column holding the PAX's F3 Name for a given cache kind — shared by
+ * tryPatchSinglePaxRow_te_ and rebuildRosterIndexAfterWipe_te_ so the two don't drift.
+ * @returns {?number} 1-based column index, or null if it can't be cheaply resolved right now
+ *   (Responses only, when dashboardWebapp.js's layout cache is cold).
+ */
+function resolveNameColumn_te_(kind, sheetId) {
+  if (kind === 'tracker') return TRACKER_EDIT_NAME_COL_ZERO_BASED_ + 1;
+  var f3NameColZeroBased = resolveResponsesNameColFromCachedLayout_te_(sheetId);
+  return f3NameColZeroBased === null ? null : f3NameColZeroBased + 1;
+}
+
+/**
  * Patches one cell of the Responses full-roster CacheService blob (dashboardWebapp.js's
  * responsesValuesCacheKey_) in place, if it's currently cached — a direct JSON patch of the one
  * touched cell rather than a full deserialize/reserialize round trip of every row.
@@ -142,14 +158,8 @@ function tryPatchSinglePaxRow_te_(e, sheet, sheetName, sheetId) {
     if (row < headerRows) return { patched: false, f3Name: null };
 
     var col = range.getColumn();
-    var nameCol; // 1-based sheet column holding the PAX's F3 Name
-    if (kind === 'tracker') {
-      nameCol = TRACKER_EDIT_NAME_COL_ZERO_BASED_ + 1;
-    } else {
-      var f3NameColZeroBased = resolveResponsesNameColFromCachedLayout_te_(sheetId);
-      if (f3NameColZeroBased === null) return { patched: false, f3Name: null };
-      nameCol = f3NameColZeroBased + 1;
-    }
+    var nameCol = resolveNameColumn_te_(kind, sheetId);
+    if (nameCol === null) return { patched: false, f3Name: null };
 
     var name = sheet.getRange(row, nameCol).getValue();
     if (!name) return { patched: false, f3Name: null };
@@ -178,6 +188,37 @@ function tryPatchSinglePaxRow_te_(e, sheet, sheetName, sheetId) {
   } catch (err) {
     return { patched: false, f3Name: null }; // any unexpected failure here just falls back to the whole-sheet wipe
   }
+}
+
+/**
+ * Rebuilds just the roster index (name -> row) immediately after a whole-sheet wipe, from a
+ * single-column read of the Name column — cheap relative to a full per-PAX row rebuild (which
+ * only a live PAX check-in/dashboard read does, dashboardWebapp.js's resolveCheckinIdentityFull_)
+ * and is all tryPatchSinglePaxRow_te_'s safety guard actually needs. Without this, a wipe leaves
+ * the roster index empty until some PAX happens to check in live; on a tracker with no concurrent
+ * live traffic (e.g. a run of manual test edits), every edit in between keeps missing the guard
+ * and re-wiping instead of patching — observed live on SIT (F3Go30-o39s.12). A missing per-PAX row
+ * cache entry is already handled gracefully elsewhere in the patch path (skipped, not an error),
+ * so there's no need to rebuild those here — only the roster index gates the patch path.
+ * Best-effort: any failure just leaves the roster index absent, same as before this existed.
+ */
+function rebuildRosterIndexAfterWipe_te_(sheet, sheetName, sheetId) {
+  try {
+    var kind = TRACKER_EDIT_KIND_BY_SHEET_[sheetName];
+    if (!kind) return; // Bonus Tracker — no per-PAX roster kind to rebuild
+
+    var nameCol = resolveNameColumn_te_(kind, sheetId);
+    if (nameCol === null) return;
+
+    var headerRows = TRACKER_EDIT_HEADER_ROWS_[sheetName];
+    var lastRow = sheet.getLastRow();
+    if (lastRow < headerRows) return;
+
+    var names = sheet.getRange(headerRows, nameCol, lastRow - headerRows + 1, 1).getValues()
+      .map(function(r) { return r[0]; });
+    var rosterIndex = buildRosterIndexFromNames_te_(names);
+    setPaxRosterIndex_te_(kind, sheetId, rosterIndex);
+  } catch (err) { /* best-effort — next edit just falls back to wipe again, as before this existed */ }
 }
 
 /**
@@ -257,6 +298,12 @@ function handleTrackerEdit_(e) {
     // before falling back (null for edits it never narrowed to a row, e.g. Bonus Tracker/paste).
     GasLogger.log('handleTrackerEdit_.invalidated', { sheetId: sheetId, sheetName: sheetName, f3Name: patchResult.f3Name, range: rangeA1 });
     wipePaxCacheAndRelatedCachesForSheet_te_(sheetId);
+
+    // Self-heal (F3Go30-o39s.12): rebuild just the roster index right away, from a cheap
+    // single-column read, rather than leaving it empty until some PAX happens to check in live.
+    // Without this, every edit on a low/no-traffic tracker keeps missing tryPatchSinglePaxRow_te_'s
+    // roster-index guard and re-wiping instead of patching — see rebuildRosterIndexAfterWipe_te_.
+    rebuildRosterIndexAfterWipe_te_(sheet, sheetName, sheetId);
   });
 }
 
