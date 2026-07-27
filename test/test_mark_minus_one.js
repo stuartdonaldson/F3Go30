@@ -186,6 +186,7 @@ function makeFakeFullTrackerSheet(dateRow, rows) {
   const bulkWriteCalls = [];
   const cacheWriteCalls = [];
   const wipeCalls = [];
+  const layoutRemoveCalls = [];
   global.setPaxCacheRowsBulk_ = function(kind, sheetId, rowsByName, rosterIndex) {
     bulkWriteCalls.push({ kind: kind, sheetId: sheetId, rowsByName: rowsByName, rosterIndex: rosterIndex });
   };
@@ -193,8 +194,15 @@ function makeFakeFullTrackerSheet(dateRow, rows) {
     cacheWriteCalls.push({ cacheKey: cacheKey, values: values });
   };
   global.trackerValuesCacheKey_ = function(sheetId) { return 'go30dash:trackerValues:' + sheetId; };
+  global.trackerLayoutCacheKey_ = function(sheetId) { return 'go30dash:trackerLayout:' + sheetId; };
+  global.responsesLayoutCacheKey_ = function(sheetId) { return 'go30dash:responsesLayout:' + sheetId; };
   global.paxCacheNormalizeName_ = function(name) { return String(name || '').trim().toLowerCase(); };
   global.wipePaxCacheAndRelatedCachesForSheet_ = function(sheetId) { wipeCalls.push(sheetId); };
+  global.CacheService = {
+    getScriptCache: function() {
+      return { removeAll: function(keys) { layoutRemoveCalls.push(keys); } };
+    }
+  };
 
   markEmptyCellsAsMinusOne_(TODAY);
 
@@ -214,6 +222,14 @@ function makeFakeFullTrackerSheet(dateRow, rows) {
 
   assert.equal(cacheWriteCalls.length, 2, 'the CacheService full-roster blob is refreshed for both months too');
   assert.equal(wipeCalls.length, 0, 'the repopulate path is used, not the wipe fallback, when the bulk-write helpers are available');
+
+  assert.equal(layoutRemoveCalls.length, 2, 'the tracker/responses layout cache is cleared for both months too');
+  const layoutSheetIdsCleared = layoutRemoveCalls.map(function(keys) { return keys[0].split(':')[2]; }).sort();
+  assert.deepEqual(layoutSheetIdsCleared, [CURRENT_SHEET_ID, PRIOR_SHEET_ID].sort());
+  layoutRemoveCalls.forEach(function(keys) {
+    const sheetId = keys[0].split(':')[2];
+    assert.deepEqual(keys.sort(), ['go30dash:responsesLayout:' + sheetId, 'go30dash:trackerLayout:' + sheetId].sort());
+  });
 
   console.log('test_mark_minus_one.js: F3Go30-o39s.3 repopulate-both-months PASS');
 }

@@ -65,11 +65,14 @@ function isoDate(d) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
-/** Minimal static file server — origin is http://127.0.0.1:<port>, unrelated to any GAS host. */
-function startStaticServer() {
+/** Minimal static file server — origin is http://127.0.0.1:<port>, unrelated to any GAS host.
+ * `dir` defaults to the unbuilt source; the F3Go30-833s.18 block below passes the BUILT output
+ * instead, since a version-stamped build is exactly what it needs to exercise. */
+function startStaticServer(dir) {
+  const rootDir = dir || STATIC_DIR;
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
-      const file = path.join(STATIC_DIR, req.url.split('?')[0] === '/' ? '/index.html' : req.url.split('?')[0]);
+      const file = path.join(rootDir, req.url.split('?')[0] === '/' ? '/index.html' : req.url.split('?')[0]);
       fs.readFile(file, (err, data) => {
         if (err) { res.writeHead(404); res.end(); return; }
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -540,5 +543,122 @@ test.describe('Existing GAS HtmlService check-in page still works unchanged', ()
     if (await dismissBtn.isVisible({ timeout: 8000 }).catch(() => false)) await dismissBtn.click();
     const app = page.frameLocator('iframe').frameLocator('iframe');
     await expect(app.locator('#step-identify')).toBeVisible({ timeout: 15000 });
+  });
+});
+
+// ── Stale-client update banner + honest version footer (F3Go30-833s.18) ──────────────────────
+// These need a BUILT page: STATIC_BUILD_VERSION_ is null in src/ (served directly above), and a
+// null build stamp deliberately never banners — there is no build to be behind. So this block
+// serves static-pages/dist/sit/ and stubs only the identify response's config.appVersion to
+// manufacture the version skew an installed client would hit days after a release.
+test.describe('Stale installed client: update banner + version footer (F3Go30-833s.18)', () => {
+  const BUILT_DIR = path.join(ROOT, 'static-pages', 'dist', 'sit');
+  let staticOrigin;
+  let server;
+  let sessionGuid;
+  let builtVersion;
+
+  test.beforeAll(async ({ request }) => {
+    const builtPage = path.join(BUILT_DIR, 'index.html');
+    if (!fs.existsSync(builtPage)) {
+      throw new Error(`${builtPage} not found — run: node tools/build-static-pages.js --env sit`);
+    }
+    const stamp = fs.readFileSync(builtPage, 'utf8').match(/var STATIC_BUILD_VERSION_ = "([^"]+)"/);
+    if (!stamp) throw new Error('built page carries no STATIC_BUILD_VERSION_ — build did not stamp it');
+    builtVersion = stamp[1];
+
+    const settings = loadSettings();
+    const deploymentId = settings.testDeploymentId;
+    const checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
+    sessionGuid = crypto.randomUUID();
+    const res = await request.post(checkinUrl + '?cmd=checkin', {
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      data: JSON.stringify({ action: 'identify', f3Name: DEMO_PAX.f3Name, email: DEMO_PAX.email, guid: sessionGuid }),
+      maxRedirects: 5,
+    });
+    expect((await res.json()).matched).toBe(true);
+
+    server = await startStaticServer(BUILT_DIR);
+    staticOrigin = `http://127.0.0.1:${server.address().port}`;
+  });
+
+  test.afterAll(async () => {
+    if (server) await new Promise((resolve) => server.close(resolve));
+  });
+
+  // The built page has its webapp URL baked in, so no ?webapp= override is needed here.
+  function builtPageUrl() {
+    return `${staticOrigin}/index.html?id=${sessionGuid}`;
+  }
+
+  /** Rewrites config.appVersion on every identify response, leaving the rest of the live
+   * response untouched — the client sees a server one release ahead of its own build. */
+  async function serveVersion(page, appVersion) {
+    await page.route('**/exec*', async (route) => {
+      const req = route.request();
+      if (req.method() !== 'POST' || !(req.postData() || '').includes('"action":"identify"')) {
+        return route.continue();
+      }
+      const res = await route.fetch({ maxRedirects: 5 });
+      const json = await res.json();
+      if (json && json.config) json.config.appVersion = appVersion;
+      await route.fulfill({ response: res, body: JSON.stringify(json), contentType: 'application/json' });
+    });
+  }
+
+  test('server one version ahead -> reload banner appears and the footer names both versions', async ({ page }) => {
+    await serveVersion(page, '99.9.9');
+    await page.goto(builtPageUrl());
+    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: 15000 });
+    // AC3: the footer must report the build the PAX is actually running, not the server's.
+    const footer = await page.locator('#versionFooter').textContent();
+    expect(footer).toContain(builtVersion);
+    expect(footer).toContain('99.9.9');
+  });
+
+  test('client current with the server -> no banner, footer shows the running build', async ({ page }) => {
+    await page.goto(builtPageUrl());
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#updateBanner')).toBeHidden();
+    await expect(page.locator('#versionFooter')).toHaveText(`v${builtVersion} (build)`);
+  });
+
+  test('Reload re-fetches the document', async ({ page }) => {
+    // The whole point of the banner: an installed PWA that never navigates gets the document
+    // pulled again. Counting document requests proves that directly.
+    let documentLoads = 0;
+    page.on('request', (req) => { if (req.resourceType() === 'document') documentLoads++; });
+
+    await serveVersion(page, '99.9.9');
+    await page.goto(builtPageUrl());
+    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: 15000 });
+    expect(documentLoads).toBe(1);
+
+    await page.locator('#updateReloadBtn').click();
+    await expect.poll(() => documentLoads, { timeout: 15000 }).toBe(2);
+    // Let the reloaded page's own identify settle before the test tears the context down,
+    // otherwise the stubbed route is still in flight when the fixture closes.
+    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: 15000 });
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+  });
+
+  test('"Not now" dismisses this version only, and the dismissal survives a reload', async ({ page }) => {
+    await serveVersion(page, '99.9.9');
+    await page.goto(builtPageUrl());
+    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: 15000 });
+    await page.locator('#updateDismissBtn').click();
+    await expect(page.locator('#updateBanner')).toBeHidden();
+    expect(await page.evaluate((k) => localStorage.getItem(k), 'go30UpdateDismissed')).toBe('99.9.9');
+
+    // Same version again -> stays quiet.
+    await page.goto(builtPageUrl());
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#updateBanner')).toBeHidden();
+
+    // A LATER release must be able to prompt again (AC5).
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await serveVersion(page, '99.9.10');
+    await page.goto(builtPageUrl());
+    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: 15000 });
   });
 });

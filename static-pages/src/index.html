@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Go30 Dashboard</title>
 <link rel="icon" type="image/png" href="assets/Go30-Logo.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="Go30">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <style>
   * { box-sizing: border-box; }
   :root {
@@ -214,12 +217,14 @@
   .api-error-banner { background: var(--error-bg); border-bottom: 3px solid var(--error-border); color: var(--error-fg); padding: 12px 18px; font-size: 17px; line-height: 1.5; }
   .api-error-banner strong { display: block; margin-bottom: 2px; }
   .api-error-detail { margin-top: 6px; font-family: monospace; font-size: 15px; background: var(--input-bg); border: 1px solid var(--error-detail-border); border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
-  /* F3Go30-ubwl.3: reuses the shared warn-* theme vars (F3Go30-dtr2) — no banner-specific colors.
+  /* Page-level advisory banner (F3Go30-ubwl.3, generalized in F3Go30-833s.18 for the second one).
+     Reuses the shared warn-* theme vars (F3Go30-dtr2) — no banner-specific colors.
      display lives on the -inner wrapper, not this class itself, so toggling .hidden on the outer
      element isn't fighting an equal-specificity `display` declared on the same element/class. */
-  .gas-moved-banner { background: var(--warn-bg); border-bottom: 3px solid var(--warn-border); color: var(--warn-fg); padding: 12px 18px; font-size: 15px; line-height: 1.5; }
-  .gas-moved-banner-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .gas-moved-banner button { background: none; border: none; color: var(--warn-fg); text-decoration: underline; cursor: pointer; font-size: 14px; padding: 0; font-family: inherit; flex-shrink: 0; }
+  .page-banner { background: var(--warn-bg); border-bottom: 3px solid var(--warn-border); color: var(--warn-fg); padding: 12px 18px; font-size: 15px; line-height: 1.5; }
+  .page-banner-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .page-banner button { background: none; border: none; color: var(--warn-fg); text-decoration: underline; cursor: pointer; font-size: 14px; padding: 0; font-family: inherit; flex-shrink: 0; }
+  .page-banner-actions { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
   .date-nav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 18px; }
   .date-nav-btn { width: 44px; height: 44px; border-radius: 8px; border: 2px solid var(--brand); background: var(--card-bg); color: var(--brand); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
   .date-nav-btn svg { width: 20px; height: 20px; display: block; }
@@ -238,6 +243,7 @@
   .bonus-badge.pending { background: var(--badge-pending-bg); color: var(--badge-pending-fg); }
   .bonus-badge.extra { background: var(--badge-extra-bg); color: var(--badge-extra-fg); }
   .bonus-entry-note { font-size: 12.5px; color: var(--badge-extra-fg); margin-top: 6px; line-height: 1.35; }
+  .bonus-save-notice { background: var(--badge-extra-bg); color: var(--badge-extra-fg); border-radius: 8px; padding: 10px 12px; font-size: 14px; line-height: 1.4; margin-bottom: 10px; }
   .bonus-edit-btn { background: transparent; border: none; color: var(--link); font-size: 14px; cursor: pointer; font-family: inherit; text-decoration: underline; padding: 0; }
   .card-head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .card-head-row h2 { margin: 0; white-space: nowrap; }
@@ -317,10 +323,23 @@
   <!-- F3Go30-ubwl.3: shown on arrival from a GAS redirect (?from=gas — F3Go30-ubwl §Marker
        param, script/Utilities.js buildStaticRedirectUrl_). Page-level, above .wrap, so it never
        blocks or delays the check-in grid rendered beneath it. -->
-  <div id="gasMovedBanner" class="gas-moved-banner hidden">
-    <div class="gas-moved-banner-inner">
+  <div id="gasMovedBanner" class="page-banner hidden">
+    <div class="page-banner-inner">
       <span>This link has moved — please update your bookmark to the address now shown in your browser's address bar.</span>
       <button id="gasMovedDismissBtn" type="button">Got it</button>
+    </div>
+  </div>
+
+  <!-- F3Go30-833s.18: shown when this document's build (STATIC_BUILD_VERSION_) is behind the
+       version the server reports on identify. An installed PWA is resumed rather than navigated
+       to, so it may never re-fetch its own document — this is the only prompt to do so. -->
+  <div id="updateBanner" class="page-banner hidden">
+    <div class="page-banner-inner">
+      <span>A newer version of this app is available.</span>
+      <span class="page-banner-actions">
+        <button id="updateReloadBtn" type="button">Reload</button>
+        <button id="updateDismissBtn" type="button">Not now</button>
+      </span>
     </div>
   </div>
 
@@ -640,6 +659,7 @@
         <p class="muted">Log EHing an FNG, Fellowship, a Q, or an Inspire moment. EHing FNG, Q
           Point, and Inspire need a link to Slack as evidence before they count.</p>
         <div id="bonusListError" class="error-text hidden"></div>
+        <div id="bonusSaveNotice" class="bonus-save-notice hidden"></div>
         <div id="bonusList"></div>
         <button class="secondary" id="bonusAddBtn" style="margin-top:14px;">+ Add Bonus</button>
       </div>
@@ -757,6 +777,19 @@
 
   // isoDate_ is defined further down (dashboard section) but this is a plain function
   // declaration, hoisted to the top of the shared top-level scope — safe to call here.
+  //
+  // F3Go30-833s.17: todayStatus/yesterdayStatus are date-free scalars — replaying them verbatim
+  // painted YESTERDAY's status under the TODAY heading whenever the snapshot was written on an
+  // earlier day of the same month (the headings themselves are recomputed from the live clock in
+  // applyIdentifySuccess_). The live identify usually corrects that a moment later, but the
+  // offline/flaky launch this snapshot exists to serve is exactly when it does not.
+  //
+  // savedAt (already stored for the TTL check) says whether the day actually rolled:
+  //   - Same day: nothing is stale, so both scalars replay verbatim. This is the ONLY way a
+  //     cross-month yesterday survives — on the 1st the server resolves yesterday against the
+  //     PRIOR month's tracker (resolveCheckinDayTarget_, dashboardWebapp.js), which this
+  //     snapshot's single-month monthGrid can't represent.
+  //   - Day rolled: re-derive both from the date-keyed monthGrid against the live date.
   function loadCheckinSnapshot_(token) {
     try {
       var raw = localStorage.getItem(CHECKIN_SNAPSHOT_KEY_);
@@ -764,12 +797,34 @@
       var snap = JSON.parse(raw);
       if (!snap || snap.token !== token) return null;
       if (!snap.savedAt || (Date.now() - snap.savedAt) > CHECKIN_SNAPSHOT_TTL_MS_) return null;
-      var todayIso = isoDate_(new Date());
-      if (!(snap.monthGrid || []).some(function(e) { return e.dateIso === todayIso; })) return null;
+      var todayD = new Date();
+      var todayIso = isoDate_(todayD);
+      var todayEntry = snapshotGridEntry_(snap, todayIso);
+      if (!todayEntry) return null;
+      if (isoDate_(new Date(snap.savedAt)) === todayIso) return snap;
+
+      var yesterdayD = new Date(todayD);
+      yesterdayD.setDate(yesterdayD.getDate() - 1);
+      var yesterdayEntry = snapshotGridEntry_(snap, isoDate_(yesterdayD));
+      snap.todayStatus = todayEntry.status;
+      // Loading at all means the grid holds the live today, which after a roll puts the live
+      // yesterday in that same grid — so this null branch is unreachable in normal operation and
+      // stands only as a guard for a jumped device clock or a contextDate dev override.
+      // Hidden beats wrong.
+      snap.yesterdayStatus = yesterdayEntry ? yesterdayEntry.status : null;
+      snap.yesterdayAvailable = !!yesterdayEntry;
       return snap;
     } catch (e) {
       return null;
     }
+  }
+
+  function snapshotGridEntry_(snap, dateIso) {
+    var entries = (snap && snap.monthGrid) || [];
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].dateIso === dateIso) return entries[i];
+    }
+    return null;
   }
 
   function clearCheckinSnapshot_() {
@@ -826,7 +881,12 @@
     var body = Object.assign({}, payload, {
       action: action,
       ns: (typeof NS_ !== 'undefined' ? NS_ : ''),
-      contextDate: (typeof CONTEXT_DATE_ !== 'undefined' ? CONTEXT_DATE_ : '')
+      contextDate: (typeof CONTEXT_DATE_ !== 'undefined' ? CONTEXT_DATE_ : ''),
+      // F3Go30-833s.15: identifies which static-page build sent this request — GitHub Pages
+      // caching + home-screen PWA launches can leave a client on a stale build for days with
+      // no other way to tell from the server side. null (unbuilt src/ served directly) is
+      // sent through as-is; buildWebAppRequestLog_ treats any falsy value as 'legacy'.
+      clientVersion: STATIC_BUILD_VERSION_
     });
     pendingRequestCount_++;
     updateSyncingIndicator_();
@@ -937,24 +997,46 @@
 
   function $(id) { return document.getElementById(id); }
 
-  // Shows the build-time-stamped version right away (no network round trip needed) — reconciled
-  // with the live GAS-reported version once the first identify response's `config.appVersion`
-  // lands (applyServerConfig_ below overwrites this with the authoritative value).
-  if (STATIC_BUILD_VERSION_) $('versionFooter').textContent = 'v' + STATIC_BUILD_VERSION_ + ' (build)';
+  // ── Page banners and client-build freshness ───────────────────────────
+  // Both page-level advisories (the F3Go30-ubwl.3 "this link moved" bookmark notice and the
+  // F3Go30-833s.18 stale-client update prompt) are the same shape — show once, dismiss to
+  // localStorage, stay down — so they share one implementation rather than two hand-copied
+  // show/dismiss/persist blocks. Kept contiguous so test_static_page_client_invariants.js can
+  // extract and execute this REAL source against DOM/storage stand-ins (the extraction pattern
+  // used by test_session_resume_refresh.js), not a re-implementation of it.
+  //
+  // Independent of showStep()/the identify bootstrap below — runs once, immediately, regardless
+  // of which step ends up shown, so it never gates or delays the rest of page init.
 
-  // F3Go30-ubwl.3: "this link moved" advisory for arrivals via a GAS redirect. Independent of
-  // showStep()/the identify bootstrap below — runs once, immediately, regardless of which step
-  // ends up shown, so it never gates or delays the rest of page init.
-  var GAS_MOVED_DISMISSED_KEY_ = 'go30GasMovedDismissed';
-  function isGasMovedDismissed_() {
-    try { return localStorage.getItem(GAS_MOVED_DISMISSED_KEY_) === '1'; } catch (e) { return false; }
+  /** Wires a dismissible page banner to its storage key. The dismissal is recorded as a VALUE,
+   * not a flag, so a banner whose subject changes (e.g. a new app version) can prompt again:
+   * only the exact value already dismissed stays silent. Callers passing no value get '1',
+   * i.e. dismiss-forever. */
+  function makeDismissibleBanner_(bannerId, dismissBtnId, storageKey) {
+    var shownValue_ = '1';
+    function stored_() {
+      try { return localStorage.getItem(storageKey); } catch (e) { return null; }
+    }
+    var banner = {
+      hide: function() { $(bannerId).classList.add('hidden'); },
+      /** Shows the banner unless this exact value was already dismissed. Returns whether it
+       * ended up visible, so callers can gate follow-on work on the banner having rendered. */
+      show: function(value) {
+        shownValue_ = String(value == null ? '1' : value);
+        if (stored_() === shownValue_) return false;
+        $(bannerId).classList.remove('hidden');
+        return true;
+      },
+    };
+    $(dismissBtnId).addEventListener('click', function() {
+      banner.hide();
+      try { localStorage.setItem(storageKey, shownValue_); } catch (e) { /* not fatal */ }
+    });
+    return banner;
   }
-  $('gasMovedDismissBtn').addEventListener('click', function() {
-    $('gasMovedBanner').classList.add('hidden');
-    try { localStorage.setItem(GAS_MOVED_DISMISSED_KEY_, '1'); } catch (e) { /* not fatal */ }
-  });
-  if (FROM_GAS_ && !isGasMovedDismissed_()) {
-    $('gasMovedBanner').classList.remove('hidden');
+
+  var gasMovedBanner_ = makeDismissibleBanner_('gasMovedBanner', 'gasMovedDismissBtn', 'go30GasMovedDismissed');
+  if (FROM_GAS_ && gasMovedBanner_.show()) {
     // Strip the marker once the advisory has rendered — otherwise a PAX who bookmarks straight
     // from the address bar carries `from=gas` forward and gets nagged forever on a URL that
     // never moved. replaceState (not pushState/reload) keeps this invisible to the back button.
@@ -964,6 +1046,40 @@
       history.replaceState(null, '', gasMovedUrl_);
     } catch (e) { /* not fatal — worst case the marker just lingers in the address bar */ }
   }
+
+  var updateBanner_ = makeDismissibleBanner_('updateBanner', 'updateDismissBtn', 'go30UpdateDismissed');
+  $('updateReloadBtn').addEventListener('click', function() { location.reload(); });
+
+  /** True when this document is a BUILT client running a different version than the server
+   * reports. A null clientBuild means unbuilt src/ served directly (local dev + Playwright) —
+   * there is no build to be behind, so that is never staleness. */
+  function isUpdateAvailable_(clientBuild, serverVersion) {
+    return !!(clientBuild && serverVersion && clientBuild !== serverVersion);
+  }
+
+  /** Footer text that never masks a stale client. The version a PAX reads back off the footer
+   * during support must be the one their document is actually running, so the client build is
+   * always what's shown; the server's version is named alongside it only when they differ. */
+  function formatVersionFooter_(clientBuild, serverVersion) {
+    if (isUpdateAvailable_(clientBuild, serverVersion)) {
+      return 'v' + clientBuild + ' (build) · server v' + serverVersion;
+    }
+    if (clientBuild) return 'v' + clientBuild + ' (build)';
+    if (serverVersion) return 'v' + serverVersion + ' (server)';
+    return '';
+  }
+
+  /** Repaints the version footer and raises/clears the update prompt. Called once at load with
+   * no server version yet (so the footer is populated without a network round trip), then again
+   * from applyServerConfig_ on every identify response. */
+  function applyVersionState_(clientBuild, serverVersion) {
+    var footer = formatVersionFooter_(clientBuild, serverVersion);
+    if (footer) $('versionFooter').textContent = footer;
+    if (isUpdateAvailable_(clientBuild, serverVersion)) updateBanner_.show(serverVersion);
+    else updateBanner_.hide();
+  }
+
+  applyVersionState_(STATIC_BUILD_VERSION_, null);
 
   function showStep(name) {
     ['identify', 'checkin', 'dashboard', 'bonus', 'signup'].forEach(function(s) {
@@ -1032,7 +1148,11 @@
       });
     }
     if (NAME_SPACE) $('headerName').textContent = NAME_SPACE;
-    if (APP_VERSION) $('versionFooter').textContent = 'v' + APP_VERSION;
+    // F3Go30-833s.18: the server's version is authoritative for "what's current", NOT for what
+    // this document is running — an installed PWA can go days without re-fetching itself, so
+    // painting cfg.appVersion into the footer used to make a stale client look current. The
+    // client's own build stays on display; a mismatch raises the reload prompt instead.
+    applyVersionState_(STATIC_BUILD_VERSION_, APP_VERSION);
   }
 
   // ── Step: identify ────────────────────────────────────────────────────
@@ -1722,12 +1842,18 @@
     }
   });
 
+  // F3Go30-833s.13: stale-while-revalidate — a cached copy for today renders instantly (whether
+  // or not a prefetch happens to be in flight), then a revalidation fetch (chained onto that
+  // prefetch if present, otherwise fired fresh) re-renders in place the moment it lands. The
+  // blocking "Loading…" button is now reserved for the one case with nothing to show yet: no
+  // cached month payload for today at all.
   $('dashboardBtn').addEventListener('click', function() {
     var btn = this;
     var todayIso = isoDate_(new Date());
     var cached = state.monthCache[monthKeyOf_(new Date())];
-    if (cached && !state.dashboardPrefetchPromise && cached.dayDates.indexOf(todayIso) !== -1) {
+    if (cached && cached.dayDates.indexOf(todayIso) !== -1) {
       renderDashboard_(cached, cached.dayDates.indexOf(todayIso));
+      revalidateDashboard_();
       return;
     }
     setButtonLoading_(btn, true, 'Loading…');
@@ -2549,6 +2675,23 @@
       .finally(function() { state.dashboardPrefetchPromise = null; });
   }
 
+  // F3Go30-833s.13: silent revalidation for a dashboard that's already on screen — chains onto an
+  // in-flight prefetch when one exists (avoids a duplicate fetch), otherwise fires its own silent
+  // loadDashboard_(). Re-renders in place only if the view is still parked on today (the PAX may
+  // have navigated to another day/month while this was in flight) — pendingSelfWrites patching
+  // inside loadDashboard_ already protects any own-day write made in the meantime regardless.
+  function revalidateDashboard_() {
+    var todayIso = isoDate_(new Date());
+    var chain = state.dashboardPrefetchPromise || loadDashboard_(undefined, { silent: true });
+    chain.then(function() {
+      var fresh = state.monthCache[monthKeyOf_(new Date())];
+      if (fresh && fresh.dayDates.indexOf(todayIso) !== -1 &&
+          state.viewDate && isoDate_(state.viewDate) === todayIso) {
+        renderDashboard_(fresh, fresh.dayDates.indexOf(todayIso));
+      }
+    }).catch(function() { /* swallowed — the already-rendered cached copy stays on screen */ });
+  }
+
   function navigateDashboard_(deltaDays) {
     if (!state.viewDate || state.dashboardLoading) return;
     var newDate = new Date(state.viewDate);
@@ -2569,6 +2712,34 @@
 
   $('datePrevBtn').addEventListener('click', function() { navigateDashboard_(-1); });
   $('dateNextBtn').addEventListener('click', function() { navigateDashboard_(1); });
+
+  // F3Go30-833s.13: pull-to-refresh as an explicit refresh gesture on the dashboard step —
+  // standalone PWA mode has no browser chrome to pull against, so the same downward-pull-at-
+  // the-top gesture just rubber-bands and does nothing today. Recognized here and wired to the
+  // same silent revalidateDashboard_() the stale-while-revalidate path uses, never a page reload.
+  (function initDashboardPullToRefresh_() {
+    var dashboardStep = $('step-dashboard');
+    var PULL_THRESHOLD_PX_ = 70;
+    var startY = null;
+    var pulling = false;
+
+    dashboardStep.addEventListener('touchstart', function(e) {
+      if ((document.scrollingElement || document.documentElement).scrollTop > 0) { startY = null; return; }
+      startY = e.touches[0].clientY;
+      pulling = false;
+    }, { passive: true });
+
+    dashboardStep.addEventListener('touchmove', function(e) {
+      if (startY === null) return;
+      pulling = (e.touches[0].clientY - startY) > PULL_THRESHOLD_PX_;
+    }, { passive: true });
+
+    dashboardStep.addEventListener('touchend', function() {
+      if (pulling) revalidateDashboard_();
+      startY = null;
+      pulling = false;
+    });
+  })();
 
   var howOpen = false;
   $('howBtn').addEventListener('click', function() {
@@ -2655,7 +2826,38 @@
     $('bonusWhen').max = isoDate_(lastOfThisMonth);
   }
 
+  function hideBonusSaveNotice_() {
+    $('bonusSaveNotice').classList.add('hidden');
+  }
+
+  function showBonusSaveNotice_(text) {
+    var el = $('bonusSaveNotice');
+    el.textContent = text;
+    el.classList.remove('hidden');
+  }
+
+  // Tells a PAX at save time when the entry they just recorded won't move their score — the
+  // weekly-cap version of the list badge's "extra" label (F3Go30-833s.16). Only trusts rowIndex
+  // matching when the saved entry's month equals the currently-viewed month: rowIndex is only
+  // unique within one Bonus Tracker sheet, and a cross-month save reloads a *different* sheet's
+  // list, where the same rowIndex could belong to an unrelated entry.
+  function reportBonusSaveOutcome_(savedRowIndex, savedWhenIso) {
+    var viewedIso = isoDate_(state.viewDate || new Date());
+    if (String(savedWhenIso || '').slice(0, 7) !== viewedIso.slice(0, 7)) {
+      hideBonusSaveNotice_();
+      return;
+    }
+    var saved = state.bonusEntries.filter(function(e) { return e.rowIndex === savedRowIndex; })[0];
+    if (saved && saved.complete && saved.counts === false) {
+      showBonusSaveNotice_('Recorded — but it won’t add points: only one ' + saved.type +
+        ' counts per week, and you already have one credited for this week.');
+    } else {
+      hideBonusSaveNotice_();
+    }
+  }
+
   function openBonusForm_(entry) {
+    hideBonusSaveNotice_();
     state.bonusEditingRowIndex = entry ? entry.rowIndex : null;
     state.bonusEditingOriginalWhenIso = entry ? (state.bonusListContextIso || isoDate_(new Date())) : null;
     state.bonusEditingOriginalSnapshot = entry
@@ -2689,6 +2891,7 @@
 
   $('bonusBtn').addEventListener('click', function() {
     hideApiError_();
+    hideBonusSaveNotice_();
     closeBonusForm_();
     showStep('bonus');
     loadBonusList_();
@@ -2728,7 +2931,7 @@
     }
     setButtonLoading_(btn, true, 'Saving…');
     callApi(action, payload)
-      .then(function() {
+      .then(function(res) {
         // Bonus totals are baked into the cached per-month dashboard payload (see monthCache
         // above); a save here would otherwise leave the dashboard showing pre-edit bonus totals
         // until the user navigates months, mirroring the checkin invalidation pattern.
@@ -2737,7 +2940,9 @@
           invalidateMonthCacheFor_(state.bonusEditingOriginalWhenIso);
         }
         closeBonusForm_();
-        return loadBonusList_();
+        return loadBonusList_().then(function() {
+          reportBonusSaveOutcome_(res && res.rowIndex, payload.whenIso);
+        });
       })
       .catch(function(err) {
         var msg = BONUS_ERROR_TEXT_[err && err.message] || null;
@@ -2751,6 +2956,40 @@
       .finally(function() {
         setButtonLoading_(btn, false);
       });
+  });
+
+  // F3Go30-833s.14: an installed PWA resumed from background stays alive in memory — no
+  // pageshow.persisted fires (that only covers the bfcache-restore case, see the listener near
+  // the top of this file) — so without this, a session parked all day never refetches anything
+  // and a PAX can check in against an hours-stale snapshot. Throttled (skip if the last refresh
+  // was under RESUME_REFRESH_THROTTLE_MS_ ago) and silent: reuses the same reconcile path the
+  // startup token-identify uses (applyIdentifySuccess_ with preserveView true, F3Go30-5nfj.5)
+  // so it never clobbers an open bonus form or the PAX's current month-calendar position, and a
+  // failed background request is swallowed — the current display is left exactly as it was.
+  var RESUME_REFRESH_THROTTLE_MS_ = 2 * 60 * 1000;
+  var lastResumeRefreshAt_ = Date.now();
+
+  function silentResumeRefresh_() {
+    if (!state.checkinReady || !SAVED_IDENTITY_TOKEN) return;
+    var now = Date.now();
+    if (now - lastResumeRefreshAt_ < RESUME_REFRESH_THROTTLE_MS_) return;
+    lastResumeRefreshAt_ = now;
+    callApi('identify', { token: SAVED_IDENTITY_TOKEN })
+      .then(function(res) {
+        // Token went stale (revoked) while parked, or a plain miss — leave the current display
+        // untouched; the PAX's next real action (a check-in submit) will surface the failure.
+        if (!res.matched) return;
+        if (res.config) applyServerConfig_(res.config);
+        reconcileWithLocalWrites_(res);
+        applyIdentifySuccess_(res, { preserveView: true });
+        saveCheckinSnapshot_(SAVED_IDENTITY_TOKEN, res);
+        prefetchDashboard_();
+      })
+      .catch(function() { /* silent — swallowed, current display stays as-is */ });
+  }
+
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') silentResumeRefresh_();
   });
 
   // F3Go30-5nfj.5: run last — see runIdentityBootstrap_'s own docstring for why this can't run

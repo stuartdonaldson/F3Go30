@@ -131,6 +131,9 @@ npm run deploy:sit    # push to SIT (testScriptId)       — alias: npm run depl
 npm run deploy:prod   # push to PROD (templateScriptId)  — alias: npm run push
 npm run release:patch # bump version + deploy:prod + git push --follow-tags
 ```
+Before changing a request/response shape on `handleCheckinPost_` / `handleSignupPost_`, read
+docs/OPERATIONS.md §API compatibility with installed clients — installed PWA clients update on
+their own schedule, so a stale client posting to a new server must keep working.
 
 ### Web app calls (all environments, all endpoints)
 ```

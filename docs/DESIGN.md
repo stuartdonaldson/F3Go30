@@ -128,13 +128,27 @@ Sheets UI). The Drive-modtime poll (formerly `ensurePaxCacheFresh_`) and its
 writer between them. See ADR-016 for the full rationale and the accepted
 residual risk (a manual edit made in the window before `onEdit` fires).
 
+A write-through entry is derived from the sheet **after** the write, never from
+the pre-write row the request read on the way in
+(`refreshPaxCacheRowFromSheet_`, `PaxCache.js` — lock-guarded over the re-read
+and the cache write, dropping the entry if the lock can't be taken). A
+snapshot-derived entry is wrong two ways, both observed live: concurrent
+writers to the same PAX row silently clobber each other's columns
+(F3Go30-xg8f), and the sheet's formula-computed columns — Score, Raw Score,
+bonus totals — keep their pre-write values (F3Go30-s1a5). The rule spans both
+writers into a PAX's Tracker row: the check-in submit, which writes a day cell,
+and the bonus add/edit, which writes only the `Bonus Tracker` sheet but moves
+the Tracker's bonus/score formulas with it (`refreshTrackerRowAfterBonusWrite_`,
+`dashboardWebapp.js`). A cross-month bonus edit refreshes both months' rows —
+the entry leaves one tracker and arrives in the other.
+
 Nine caches make up the PAX/token-data caching surface today (originally
 catalogued as ten in `docs/staging/caching-consolidation-review.md`; the
 `asOf` marker row from that review no longer exists):
 
 | # | Cache | Backing store | Granularity | Populated by | Invalidated by |
 |---|-------|---------------|-------------|--------------|----------------|
-| 1 | PaxCache per-PAX row (`kind=tracker`) | PropertiesService `go30pax:` | one PAX row | identity/full reads, check-in write-through | write-through patch; onEdit wipe; nightly purge |
+| 1 | PaxCache per-PAX row (`kind=tracker`) | PropertiesService `go30pax:` | one PAX row | identity/full reads, check-in + bonus write-through | post-write row re-read (`refreshPaxCacheRowFromSheet_`); onEdit wipe; nightly purge |
 | 2 | PaxCache per-PAX row (`kind=responses`) | PropertiesService `go30pax:` | one PAX row | identity/full reads | signup delete; onEdit wipe; nightly purge |
 | 3 | PaxCache roster index | PropertiesService `go30idx:` | one map/sheet | roster rebuild, bulk write | signup patch; onEdit wipe |
 | 4 | Tracker layout (row2/row3) | CacheService `go30dash:trackerLayout:` | one/sheet | `getTrackerLayout_` | TTL only (21600s); onEdit wipe |
@@ -437,6 +451,32 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
   from the address bar doesn't carry `from=gas` forward and get nagged on a URL that never moved.
   The advisory necessarily lives on the static page, not the GAS interstitial — a PAX cannot
   bookmark a page they're not on.
+
+- **Client-build staleness is surfaced, not assumed away (F3Go30-833s.18) — DECIDED:** an installed
+  PWA rarely performs a real navigation (Android resumes the existing task; iOS suspends/resumes
+  for days), so the document may never be re-fetched and a PAX can run a week-old build against a
+  current server indefinitely. This is not an HTTP-caching problem — no request is made at all —
+  and `silentResumeRefresh_` (F3Go30-833s.14) refreshes *data* on resume, never the *document*.
+
+  Remediation needs no new plumbing: the authoritative version already arrives on every identify as
+  `config.appVersion`, so `applyServerConfig_` compares it against the document's own build stamp
+  (`STATIC_BUILD_VERSION_`, injected by `tools/build-static-pages.js`) and raises a dismissible
+  "newer version available — reload" banner (`#updateBanner`) on mismatch. A null build stamp means
+  unbuilt `src/` served directly (local dev + Playwright) and is never treated as staleness.
+  Dismissal is recorded as the **version dismissed** (`localStorage['go30UpdateDismissed']`), not a
+  boolean, so a later release can prompt again.
+
+  The version footer was the same defect in reverse: it painted the *server's* `appVersion` over
+  the build stamp, so a stale client displayed the current version and support questions about the
+  footer were guaranteed to mislead. It now always reports the client's own build, naming the
+  server's version alongside it only when the two differ.
+
+  Both page-level banners share one `makeDismissibleBanner_` implementation (show-once / dismiss-
+  to-`localStorage` / stay-down) rather than two hand-copied blocks; the gas-moved advisory passes
+  no value and so dismisses forever, the update prompt passes the version. This constrains
+  releases — see docs/OPERATIONS.md §API compatibility with installed clients: once PAX have
+  installed, we no longer control when a client updates, so the two JSON dispatchers must stay
+  backward-compatible for stale clients.
 
 ---
 

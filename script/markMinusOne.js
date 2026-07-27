@@ -92,6 +92,15 @@ function refreshPaxCacheForSheet_(sheetId) {
       if (typeof setCachedSheetValues_ === 'function' && typeof trackerValuesCacheKey_ === 'function') {
         setCachedSheetValues_(trackerValuesCacheKey_(sheetId), trackerValues);
       }
+      // Tracker/Responses layout blobs (row2/row3 day columns, Responses header map) have no
+      // write-through path into this nightly refresh — clear them so a structural change that
+      // somehow missed TrackerEditTrigger_'s onEdit wipe still self-heals within a day instead
+      // of riding out its full 6h CacheService TTL.
+      if (typeof trackerLayoutCacheKey_ === 'function' && typeof responsesLayoutCacheKey_ === 'function') {
+        try {
+          CacheService.getScriptCache().removeAll([trackerLayoutCacheKey_(sheetId), responsesLayoutCacheKey_(sheetId)]);
+        } catch (e3) { /* best-effort */ }
+      }
     } else if (typeof wipePaxCacheAndRelatedCachesForSheet_ === 'function') {
       wipePaxCacheAndRelatedCachesForSheet_(sheetId);
     }

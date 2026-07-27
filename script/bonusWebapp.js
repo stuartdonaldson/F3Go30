@@ -521,11 +521,13 @@ function clearBonusEntry_(bonusSheet, f3Name, rowIndexHint, originalSnapshot) {
     var rowIndex = findBonusRowByIdentity_(bonusSheet, f3Name, originalSnapshot, rowIndexHint);
     if (!rowIndex) return { ok: false, error: 'not_found' };
 
+    // Two batched calls, not five individual ones: B:E sit between A and F:I holding a spilled
+    // array formula (see writeBonusEnteredColumns_ below) that must not be touched, so Name and
+    // Type/When/What/Link are the only two contiguous entered-column ranges. Batching also means
+    // each clear is a single Sheets API mutation — no window where onEdit/Axiom sees (and a
+    // mid-write interruption could leave) a torn row mixing cleared and un-cleared columns.
     bonusSheet.getRange(rowIndex, BONUS_TRACKER_NAME_COL_).clearContent();
-    bonusSheet.getRange(rowIndex, BONUS_TRACKER_TYPE_COL_).clearContent();
-    bonusSheet.getRange(rowIndex, BONUS_TRACKER_WHEN_COL_).clearContent();
-    bonusSheet.getRange(rowIndex, BONUS_TRACKER_WHAT_COL_).clearContent();
-    bonusSheet.getRange(rowIndex, BONUS_TRACKER_LINK_COL_).clearContent();
+    bonusSheet.getRange(rowIndex, BONUS_TRACKER_TYPE_COL_, 1, 4).clearContent();
     patchBonusCaches_(bonusSheet.getParent().getId(), 'clear', rowIndex, f3Name, null, originalSnapshot);
     return { ok: true };
   } finally {
@@ -533,12 +535,23 @@ function clearBonusEntry_(bonusSheet, f3Name, rowIndexHint, originalSnapshot) {
   }
 }
 
+// Two batched calls, not five individual ones: B:E sit between A and F:I holding a spilled array
+// formula (Period/Uncapped Points/Multiplier/Complete, anchored at B2, recalculated off column A)
+// that must never be written to directly — see addBonusEntry_'s doc. Name and Type/When/What/Link
+// are the only two contiguous entered-column ranges, so that's the minimum without clobbering
+// B:E. Batching also collapses each write to a single Sheets API mutation per range: previously 5
+// separate setValue calls meant 5 separate onEdit firings (each triggering a full Bonus Tracker
+// PaxCache wipe — Bonus Tracker has no per-row patch path, see TrackerEditTrigger.js) and a real
+// window where a mid-write interruption (execution timeout, transient error) left the row torn —
+// part new, part stale.
 function writeBonusEnteredColumns_(bonusSheet, row, f3Name, payload) {
   bonusSheet.getRange(row, BONUS_TRACKER_NAME_COL_).setValue(f3Name);
-  bonusSheet.getRange(row, BONUS_TRACKER_TYPE_COL_).setValue(payload.type);
-  bonusSheet.getRange(row, BONUS_TRACKER_WHEN_COL_).setValue(parseBonusDateLocal_(payload.whenIso));
-  bonusSheet.getRange(row, BONUS_TRACKER_WHAT_COL_).setValue(String(payload.message || '').trim());
-  bonusSheet.getRange(row, BONUS_TRACKER_LINK_COL_).setValue(String(payload.link || '').trim());
+  bonusSheet.getRange(row, BONUS_TRACKER_TYPE_COL_, 1, 4).setValues([[
+    payload.type,
+    parseBonusDateLocal_(payload.whenIso),
+    String(payload.message || '').trim(),
+    String(payload.link || '').trim(),
+  ]]);
 }
 
 if (typeof module !== 'undefined' && module.exports) {

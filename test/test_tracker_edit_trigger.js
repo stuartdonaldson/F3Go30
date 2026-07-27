@@ -92,7 +92,8 @@ function makeFakeEditEvent_(sheetName, spreadsheetId, opts) {
     getColumn: function() { return opts.col; },
     getNumRows: function() { return opts.numRows === undefined ? 1 : opts.numRows; },
     getNumColumns: function() { return opts.numCols === undefined ? 1 : opts.numCols; },
-    getValue: function() { return opts.newValue; }
+    getValue: function() { return opts.newValue; },
+    getA1Notation: function() { return opts.a1Notation || 'A1'; }
   };
   return { range: range, sheet: sheet };
 }
@@ -169,13 +170,19 @@ resetCalls_();
   assert.deepEqual(wipeCalls, [sheetId], 'a multi-row edit cannot be mapped to one pax row — falls back to wipe');
 })();
 
-// Header-row edit falls back to the whole-sheet wipe.
+// Header-row edit falls back to the whole-sheet wipe, which must also clear the tracker/responses
+// layout cache blobs (row2/row3 day columns, Responses header map) — those previously rode out
+// their full 6h CacheService TTL even on a structural edit caught right here.
 resetCalls_();
 (function() {
   var sheetId = 'tracker-header';
+  fakeCache.put('go30dash:trackerLayout:' + sheetId, JSON.stringify({ row2: ['x'], row3: ['y'] }));
+  fakeCache.put('go30dash:responsesLayout:' + sheetId, JSON.stringify({ columns: { F3_NAME: 0 } }));
   var e = makeFakeEditEvent_('Tracker', sheetId, { row: 2, col: 9, numRows: 1, numCols: 1, newValue: 'x' });
   handleTrackerEdit_(e);
   assert.deepEqual(wipeCalls, [sheetId], 'a Tracker header-row (row < 4) edit falls back to wipe');
+  assert.equal(fakeCache.get('go30dash:trackerLayout:' + sheetId), null, 'the tracker layout cache is cleared, not left to ride out its TTL');
+  assert.equal(fakeCache.get('go30dash:responsesLayout:' + sheetId), null, 'the responses layout cache is cleared too');
 })();
 (function() {
   resetCalls_();
@@ -251,6 +258,63 @@ resetCalls_();
 
   var blob = JSON.parse(fakeCache.get('go30dash:responsesValues:' + sheetId));
   assert.equal(blob[0][3], 'new-who', 'the full-roster CacheService blob is patched in place, not wiped');
+})();
+
+// ── Self-heal after a wipe (F3Go30-o39s.12) ─────────────────────────────────────────────────
+// A wipe used to leave the roster index empty until some PAX happened to check in live —
+// meaning every edit on a low/no-traffic tracker kept missing tryPatchSinglePaxRow_te_'s guard
+// and re-wiping instead of patching (observed live on SIT). rebuildRosterIndexAfterWipe_te_
+// rebuilds the roster index immediately from a cheap single-column read, so the very next edit
+// on a now-indexed row patches instead of wiping again.
+resetCalls_();
+(function() {
+  var sheetId = 'tracker-selfheal';
+  // Two PAX rows on the live sheet: Dredd at sheet row 4 (index 0), Anderson at row 5 (index 1).
+  var liveNames = ['Dredd', 'Anderson'];
+  var headerRows = 4;
+
+  var sheet = {
+    getName: function() { return 'Tracker'; },
+    getParent: function() { return { getId: function() { return sheetId; } }; },
+    getLastRow: function() { return headerRows - 1 + liveNames.length; },
+    getRange: function(row, col, numRows) {
+      if (numRows === undefined) {
+        // Single-cell name lookup (tryPatchSinglePaxRow_te_'s own getRange(row, nameCol) call).
+        return { getValue: function() { return liveNames[row - headerRows]; } };
+      }
+      // Multi-row, single-column read (rebuildRosterIndexAfterWipe_te_'s getRange(headerRows,
+      // nameCol, numRows, 1) call).
+      var slice = liveNames.slice(row - headerRows, row - headerRows + numRows);
+      return { getValues: function() { return slice.map(function(n) { return [n]; }); } };
+    }
+  };
+
+  function makeEdit(newValue) {
+    return {
+      range: {
+        getSheet: function() { return sheet; },
+        getRow: function() { return 4; },
+        getColumn: function() { return 9; },
+        getNumRows: function() { return 1; },
+        getNumColumns: function() { return 1; },
+        getValue: function() { return newValue; },
+        getA1Notation: function() { return 'I4'; }
+      }
+    };
+  }
+
+  // First edit lands on a cold cache (no roster index yet) — wipes, then self-heals the index.
+  handleTrackerEdit_(makeEdit(1));
+  assert.deepEqual(wipeCalls, [sheetId], 'first edit on a cold cache wipes');
+  assert.deepEqual(
+    realPaxCache.getPaxRosterIndex_('tracker', sheetId), { dredd: 0, anderson: 1 },
+    'the wipe immediately self-heals the roster index from a live column read'
+  );
+
+  // Second edit on the same, now-indexed row patches instead of wiping again.
+  resetCalls_();
+  handleTrackerEdit_(makeEdit(2));
+  assert.deepEqual(wipeCalls, [], 'second edit on the same row patches instead of re-wiping, thanks to the self-healed roster index');
 })();
 
 // resolveTrackerEditSpreadsheet_ — derives the spreadsheet id from the event's own range,

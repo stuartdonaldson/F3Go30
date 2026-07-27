@@ -20,6 +20,13 @@ global.GasLogger = { log: function() {}, logError: function() {}, run: function(
 var fakeScriptProperties_ = { getProperty: function() { return null; } };
 global.PropertiesService = { getScriptProperties: function() { return fakeScriptProperties_; } };
 
+// Default always-granted script lock — PaxCache's post-write row refresh (F3Go30-xg8f) takes one
+// on every check-in write. Tests that care about lock behavior install their own via
+// installFakeLockService_ below.
+global.LockService = {
+  getScriptLock: function() { return { waitLock: function() {}, releaseLock: function() {} }; },
+};
+
 // resolveContextDate_ (go30tools.js, F3Go30-31w5.1) isn't required by this file — these tests
 // don't exercise contextDate override behavior (see test_context_date.js for that), so a plain
 // real-clock stub keeps existing "what day is it" call sites working unchanged.
@@ -69,6 +76,8 @@ const {
   resolveCheckinIdentityLean_,
   handleMonthGrid_,
   buildMonthNavigationPayload_dw_,
+  handleBonusAdd_,
+  handleBonusEdit_,
 } = require('../script/dashboardWebapp.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
@@ -681,7 +690,14 @@ function installFakePropertiesStore_() {
 }
 
 // Minimal Tracker sheet: row2 (bonus period numbers), row3 (F3 Name + date/'Bonus' headers), and
-// data rows from row 4. setValue/clearContent record what was written so a submit can be asserted.
+// data rows from row 4. setValue/clearContent record what was written so a submit can be asserted,
+// AND apply it to the backing rows — a write path that re-reads the row it just wrote
+// (F3Go30-xg8f) can only be tested against a sheet whose reads reflect its own writes.
+//
+// _afterNextRowRead: one-shot hook fired right after the next single-row data read, used to
+// simulate a CONCURRENT execution's write landing between this request's read and its own write
+// (see the lost-update tests). It receives the backing paxRows so a test can mutate the sheet
+// out from under the in-flight request, exactly as a second GAS execution would.
 function makeFakeTrackerSheet_(row2, row3, paxRows) {
   var width = [row2, row3].concat(paxRows).reduce(function(m, r) { return Math.max(m, r.length); }, 0);
   var writes = [];
@@ -689,6 +705,9 @@ function makeFakeTrackerSheet_(row2, row3, paxRows) {
     getLastRow: function() { return 3 + paxRows.length; },
     getLastColumn: function() { return width; },
     _fullRangeReadCount: 0,
+    _singleRowReadCount: 0,
+    _afterNextRowRead: null,
+    _paxRows: paxRows,
     getRange: function(row, col, numRows) {
       if (row === 4 && numRows > 1) sheet._fullRangeReadCount++;
       return {
@@ -697,11 +716,22 @@ function makeFakeTrackerSheet_(row2, row3, paxRows) {
           if (row === 3) return [row3.slice()];
           var out = [];
           for (var i = 0; i < (numRows || 1); i++) out.push((paxRows[row - 4 + i] || []).slice());
+          if ((numRows || 1) === 1) {
+            sheet._singleRowReadCount++;
+            var hook = sheet._afterNextRowRead;
+            if (hook) { sheet._afterNextRowRead = null; hook(paxRows); }
+          }
           return out;
         },
         getFormula: function() { return ''; },
-        setValue: function(v) { writes.push({ row: row, col: col, value: v }); },
-        clearContent: function() { writes.push({ row: row, col: col, value: null }); },
+        setValue: function(v) {
+          writes.push({ row: row, col: col, value: v });
+          if (paxRows[row - 4]) paxRows[row - 4][col - 1] = v;
+        },
+        clearContent: function() {
+          writes.push({ row: row, col: col, value: null });
+          if (paxRows[row - 4]) paxRows[row - 4][col - 1] = '';
+        },
       };
     },
     _writes: writes,
@@ -715,6 +745,10 @@ function installFakeSpreadsheetById_(bySheetId) {
       if (!Object.prototype.hasOwnProperty.call(bySheetId, id)) throw new Error('no such spreadsheet: ' + id);
       return bySheetId[id];
     },
+    // No-op: the fake sheets apply writes to their backing rows immediately, so there's nothing
+    // pending to flush. Present because the post-write cache refresh calls it (PaxCache.js
+    // refreshPaxCacheRowFromSheet_ — real GAS needs it for formula recalc to be readable back).
+    flush: function() {},
   };
 }
 
@@ -1522,6 +1556,185 @@ console.log('test_dashboard_webapp.js: resolved-context handle assertions passed
   global.resolveContextDate_ = function() { return new Date(); };
 })();
 
+// ── Post-write cache derivation / lost update (F3Go30-xg8f, F3Go30-s1a5) ────────────────────
+// A cached row derived from the request's PRE-write snapshot is wrong regardless of locking: two
+// overlapping check-ins for the same PAX both snapshot the same row, patch different columns, and
+// whichever writes the cache last silently drops the other's day (observed in SIT 2026-07-27 —
+// spreadsheet correct, dashboard missing yesterday). The cache entry must instead be derived from
+// the sheet AFTER the write, with a lock closing the residual ordering window.
+
+/** Fake LockService. failWaitLock:true makes waitLock throw, exercising the lock-unavailable path. */
+function installFakeLockService_(opts) {
+  opts = opts || {};
+  var state = { acquired: 0, released: 0 };
+  global.LockService = {
+    getScriptLock: function() {
+      return {
+        waitLock: function() {
+          if (opts.failWaitLock) throw new Error('could not obtain lock');
+          state.acquired++;
+        },
+        releaseLock: function() { state.released++; },
+      };
+    },
+  };
+  return state;
+}
+
+/** makeHandleFixture_ with both of July's day columns blank for Anchor — the "hasn't checked in
+ *  for a couple of days" starting state from the original report. */
+function makeUncheckedFixture_() {
+  var row2 = ['', '', '', '', '', '', '', '', '', ''];
+  var row3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score',
+    new Date(2026, 6, 1), new Date(2026, 6, 2)];
+  var paxRows = [
+    ['Anchor', 'Crucible', '', '', '', '', 0, 0, '', ''],   // rowIndex 0 — Jul 1 (col 8) and Jul 2 (col 9) both blank
+    ['Slaw', 'Impala', '', '', '', '', 3, 0.3, 0, 1],
+  ];
+  var trackerSheet = makeFakeTrackerSheet_(row2, row3, paxRows);
+  installFakeSpreadsheetById_({ 'sheet-jul': { getSheetByName: function(n) { return n === 'Tracker' ? trackerSheet : null; } } });
+  var monthInfo = { sheetId: 'sheet-jul', trackerUrl: 'https://example/jul', label: 'July 2026', startDate: new Date(2026, 6, 1) };
+  return { trackerSheet: trackerSheet, monthInfo: monthInfo };
+}
+
+// AC1: the original incident. The TODAY request snapshots the row while both days are blank; the
+// concurrent YESTERDAY request's write lands before TODAY's request writes its cache entry. The
+// surviving cache entry must contain BOTH days.
+(function testConcurrentCheckinsDoNotClobberEachOtherInPaxCache() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installFakeLockService_();
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); }; // "today" = Jul 2
+
+  var fx = makeUncheckedFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
+
+  // The concurrent YESTERDAY execution: lands its Jul 1 write on the sheet right after THIS
+  // request has read its identity row (so this request's snapshot predates it).
+  fx.trackerSheet._afterNextRowRead = function(paxRows) { paxRows[0][8] = 1; };
+
+  var res = handleCheckinSubmit_({ getSheetByName: function() { throw new Error('full resolution must not run'); } },
+    { f3Name: 'Anchor', email: 'a@x.com', day: 'today', value: 1, resolvedContext: handle });
+  assert.equal(res.ok, true);
+
+  var cached = PaxCache.getPaxCacheRow_('tracker', 'sheet-jul', 'Anchor');
+  assert.ok(cached, 'the PAX row should still be cached');
+  assert.equal(cached[9], 1, "today's own write must be in the cached row");
+  assert.equal(cached[8], 1, "the concurrent yesterday write must NOT be clobbered by this request's stale snapshot");
+
+  delete global.SpreadsheetApp;
+  delete global.LockService;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// AC2: the cached row is derived from post-write SHEET state, not the request's snapshot — proven
+// on a column this request never touches. Raw Score (col 6) is formula-computed in the real sheet,
+// so this is also F3Go30-s1a5's stale-score symptom: same root cause, same fix.
+(function testCheckinCacheRowIsDerivedFromPostWriteSheetState() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installFakeLockService_();
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); };
+
+  var fx = makeUncheckedFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
+  // Stand-in for the sheet's own formula recalc after the write: Raw Score moves 0 -> 1 in a
+  // column this request never writes to.
+  fx.trackerSheet._afterNextRowRead = function(paxRows) { paxRows[0][6] = 1; };
+
+  var res = handleCheckinSubmit_({ getSheetByName: function() { throw new Error('full resolution must not run'); } },
+    { f3Name: 'Anchor', email: 'a@x.com', day: 'today', value: 1, resolvedContext: handle });
+  assert.equal(res.ok, true);
+
+  var cached = PaxCache.getPaxCacheRow_('tracker', 'sheet-jul', 'Anchor');
+  assert.equal(cached[6], 1, 'cached row must carry the SHEET\'s post-write value, not the pre-write snapshot\'s');
+  assert.equal(cached[9], 1);
+
+  delete global.SpreadsheetApp;
+  delete global.LockService;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// AC4: if the lock can't be acquired, the entry is DELETED rather than written from a derivation
+// that can't be guaranteed ordered — the next reader rebuilds live. Correctness over cache hit.
+(function testCheckinDropsCachedRowWhenLockUnavailable() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installFakeLockService_({ failWaitLock: true });
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); };
+
+  var fx = makeUncheckedFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
+
+  var res = handleCheckinSubmit_({ getSheetByName: function() { throw new Error('full resolution must not run'); } },
+    { f3Name: 'Anchor', email: 'a@x.com', day: 'today', value: 1, resolvedContext: handle });
+  assert.equal(res.ok, true, 'a lock failure must not fail the check-in — the sheet write still succeeded');
+  assert.deepEqual(fx.trackerSheet._writes, [{ row: 4, col: 10, value: 1 }], 'the day cell is still written');
+  assert.equal(PaxCache.getPaxCacheRow_('tracker', 'sheet-jul', 'Anchor'), null,
+    'cached row must be dropped, not written from an unordered derivation');
+
+  delete global.SpreadsheetApp;
+  delete global.LockService;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// AC3: the cross-month branch of resolveCheckinDayTarget_ carries the identical hazard and must go
+// through the same shared derivation — not a hand-copied second implementation.
+(function testCrossMonthCheckinCacheRowIsAlsoDerivedFromPostWriteSheetState() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installFakeLockService_();
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); };
+  global.formatRegistrationMonth_ = function() { return 'August 2026'; };
+
+  var fx = makeHandleFixture_();
+  var augTrackerSheet = makeFakeTrackerSheet_(
+    ['', '', '', '', '', '', '', '', ''],
+    ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 7, 5), new Date(2026, 7, 6)],
+    [['Anchor', 'Crucible', '', '', '', '', 0, 0, '', '']]
+  );
+  installFakeSpreadsheetById_({
+    'sheet-jul': { getSheetByName: function(n) { return n === 'Tracker' ? fx.trackerSheet : null; } },
+    'sheet-aug': { getSheetByName: function(n) { return n === 'Tracker' ? augTrackerSheet : null; } },
+  });
+  global.resolveTrackerForContextDate = function(targetDate) {
+    if (targetDate.getFullYear() === 2026 && targetDate.getMonth() === 7) {
+      return { sheetId: 'sheet-aug', trackerUrl: 'https://x/aug', startDate: new Date(2026, 7, 1) };
+    }
+    throw new Error('no tracker for ' + targetDate);
+  };
+
+  // A concurrent execution marks Aug 6 (col 9) in the August sheet after this request has read
+  // Anchor's August row.
+  augTrackerSheet._afterNextRowRead = function(paxRows) { paxRows[0][9] = 1; };
+
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor'); // anchored to July
+  var res = handleCheckinSubmit_({ getSheetByName: function() { throw new Error('TrackerDB must not be consulted directly'); } },
+    { f3Name: 'Anchor', email: 'a@x.com', day: '2026-08-05', value: 1, resolvedContext: handle });
+  assert.equal(res.ok, true);
+
+  var cachedAug = PaxCache.getPaxCacheRow_('tracker', 'sheet-aug', 'Anchor');
+  assert.ok(cachedAug);
+  assert.equal(cachedAug[8], 1, "this request's own Aug 5 write");
+  assert.equal(cachedAug[9], 1, 'the concurrent Aug 6 write must survive in the cross-month path too');
+
+  delete global.SpreadsheetApp;
+  delete global.LockService;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+console.log('test_dashboard_webapp.js: post-write cache derivation assertions passed');
+
 // ── availableMonths / registeredMonthKeys + monthGrid action (F3Go30-k5fn.1) ──────────────
 
 var TRACKER_DB_HEADERS_TEST_ = [
@@ -1770,5 +1983,296 @@ function makeFakeDataRangeSheet_(rows) {
 })();
 
 console.log('test_dashboard_webapp.js: month navigation / monthGrid assertions passed');
+
+// ── Bonus writes refresh the PAX's cached Tracker row (F3Go30-s1a5 item 2) ───────────────────
+// A bonus entry recalculates the Tracker sheet's formula-computed Score/Raw Score/bonus-total
+// columns, but the dashboard reads those out of the cached PaxCache tracker row — so a bonus
+// write that leaves the cached row alone serves a pre-bonus score to every warm read until
+// something else rebuilds it (observed 2026-07-22: bonus PILLS correct, score stale, one
+// payload). Same fix as the check-in path (F3Go30-xg8f): re-derive the cached row from the
+// sheet after the write, via the shared refreshPaxCacheRowFromSheet_.
+
+/** Re-installs the always-granted default lock — earlier lock-behavior tests delete it. */
+function installDefaultLockService_() {
+  global.LockService = { getScriptLock: function() { return { waitLock: function() {}, releaseLock: function() {} }; } };
+}
+
+/**
+ * Bonus Tracker stand-in. rows are full 9-column entered rows (A..I) starting at sheet row 2;
+ * maxRows mirrors a real sheet's pre-formatted physical row count. onWrite fires after any
+ * mutation, standing in for the Tracker sheet's own formula recalc — a real bonus write moves
+ * Score/Raw Score in the PAX's Tracker row, which is exactly what the cached row must pick up.
+ */
+function makeFakeBonusSheet_(sheetId, maxRows, rows, onWrite) {
+  var backing = rows.map(function(r) { return r.slice(); });
+  function cell(r, c) {
+    var row = backing[r - 2];
+    if (!row) return '';
+    var v = row[c - 1];
+    return v === undefined ? '' : v;
+  }
+  function setCell(r, c, v) {
+    if (!backing[r - 2]) backing[r - 2] = [];
+    backing[r - 2][c - 1] = v;
+    if (onWrite) onWrite();
+  }
+  return {
+    _rows: backing,
+    getMaxRows: function() { return maxRows; },
+    getLastRow: function() { return backing.length + 1; },
+    getParent: function() { return { getId: function() { return sheetId; } }; },
+    getRange: function(row, col, numRows, numCols) {
+      var nR = numRows || 1, nC = numCols || 1;
+      return {
+        getValues: function() {
+          var out = [];
+          for (var i = 0; i < nR; i++) {
+            var line = [];
+            for (var c = 0; c < nC; c++) line.push(cell(row + i, col + c));
+            out.push(line);
+          }
+          return out;
+        },
+        getValue: function() { return cell(row, col); },
+        setValue: function(v) { setCell(row, col, v); },
+        setValues: function(values) {
+          for (var i = 0; i < values.length; i++) {
+            for (var c = 0; c < values[i].length; c++) setCell(row + i, col + c, values[i][c]);
+          }
+        },
+        clearContent: function() {
+          for (var i = 0; i < nR; i++) {
+            for (var c = 0; c < nC; c++) setCell(row + i, col + c, '');
+          }
+        },
+      };
+    },
+  };
+}
+
+/**
+ * One month's tracker spreadsheet (Responses + Tracker + Bonus Tracker) wired so a Bonus Tracker
+ * write bumps the Tracker row's Score (col idx 7) and Raw Score (col idx 6) to the given
+ * post-bonus values, the way the sheet's own formulas would.
+ */
+function makeBonusMonthFixture_(opts) {
+  var paxRows = [[opts.f3Name, 'Crucible', '', '', '', '', opts.rawScoreBefore, opts.scoreBefore, 1, '']];
+  var trackerSheet = makeFakeTrackerSheet_(
+    ['', '', '', '', '', '', '', '', '', ''],
+    ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(opts.year, opts.month, 1), new Date(opts.year, opts.month, 2)],
+    paxRows
+  );
+  var recalc = function() {
+    paxRows[0][6] = opts.rawScoreAfter;
+    paxRows[0][7] = opts.scoreAfter;
+  };
+  var bonusSheet = makeFakeBonusSheet_(opts.sheetId, 20, opts.bonusRows || [], recalc);
+  var responsesSheet = makeLeanIdentityResponsesSheet_([
+    ['', opts.email, 'Yes', opts.f3Name, '', 'Crucible', '', 'Who', 'What', 'How', '', '', ''],
+  ]);
+  return {
+    sheetId: opts.sheetId,
+    trackerSheet: trackerSheet,
+    bonusSheet: bonusSheet,
+    paxRows: paxRows,
+    spreadsheet: {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') return trackerSheet;
+        if (n === 'Bonus Tracker') return bonusSheet;
+        if (n === 'Responses') return responsesSheet;
+        return null;
+      },
+    },
+    monthInfo: {
+      sheetId: opts.sheetId,
+      trackerUrl: 'https://x/' + opts.sheetId,
+      label: 'Month',
+      startDate: new Date(opts.year, opts.month, 1),
+    },
+  };
+}
+
+// AC2 (bonusAdd): after a bonus add, the PAX's cached tracker row must carry the sheet's
+// recalculated score — not the pre-bonus one it was warmed with.
+(function testBonusAddRefreshesCachedTrackerRow() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installDefaultLockService_();
+  global.formatRegistrationMonth_ = function() { return 'July 2026'; };
+
+  var fx = makeBonusMonthFixture_({
+    sheetId: 'sheet-jul-bonus', f3Name: 'Anchor', email: 'anchor@x.com',
+    year: 2026, month: 6, rawScoreBefore: 5, scoreBefore: 0.5, rawScoreAfter: 8, scoreAfter: 0.8,
+  });
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: fx.sheetId, trackerUrl: fx.monthInfo.trackerUrl, startDate: fx.monthInfo.startDate };
+  };
+  installFakeSpreadsheetById_({ 'sheet-jul-bonus': fx.spreadsheet });
+
+  // Warm the cache exactly as a preceding dashboard/bonus-list read would: the cached row now
+  // holds the PRE-bonus score.
+  var warm = resolveCheckinIdentityLean_(fx.monthInfo, 'Anchor', 'anchor@x.com', null, false);
+  assert.equal(warm.matched, true);
+  assert.equal(PaxCache.getPaxCacheRow_('tracker', 'sheet-jul-bonus', 'Anchor')[7], 0.5);
+
+  var res = handleBonusAdd_({}, {
+    f3Name: 'Anchor', email: 'anchor@x.com',
+    type: 'Fellowship', whenIso: '2026-07-02', message: 'coffeeteria',
+  });
+  assert.equal(res.ok, true);
+
+  var cached = PaxCache.getPaxCacheRow_('tracker', 'sheet-jul-bonus', 'Anchor');
+  assert.ok(cached, 'the row should still be cached (or dropped — see the lock-failure test)');
+  assert.equal(cached[7], 0.8, 'cached Score must reflect the post-bonus sheet value');
+  assert.equal(cached[6], 8, 'cached Raw Score must reflect the post-bonus sheet value');
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+// AC2 (bonusEdit, same month): editing an existing entry changes its points too (type/date
+// changes move it between capped weeks), so the same guarantee has to hold on the edit path.
+(function testBonusEditSameMonthRefreshesCachedTrackerRow() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installDefaultLockService_();
+  global.formatRegistrationMonth_ = function() { return 'July 2026'; };
+
+  var existing = ['Anchor', 1, 1, 1, true, 'Fellowship', new Date(2026, 6, 2), 'coffeeteria', ''];
+  var fx = makeBonusMonthFixture_({
+    sheetId: 'sheet-jul-edit', f3Name: 'Anchor', email: 'anchor@x.com',
+    year: 2026, month: 6, rawScoreBefore: 8, scoreBefore: 0.8, rawScoreAfter: 9, scoreAfter: 0.9,
+    bonusRows: [existing],
+  });
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: fx.sheetId, trackerUrl: fx.monthInfo.trackerUrl, startDate: fx.monthInfo.startDate };
+  };
+  installFakeSpreadsheetById_({ 'sheet-jul-edit': fx.spreadsheet });
+
+  var warm = resolveCheckinIdentityLean_(fx.monthInfo, 'Anchor', 'anchor@x.com', null, false);
+  assert.equal(warm.matched, true);
+  assert.equal(PaxCache.getPaxCacheRow_('tracker', 'sheet-jul-edit', 'Anchor')[7], 0.8);
+
+  var res = handleBonusEdit_({}, {
+    f3Name: 'Anchor', email: 'anchor@x.com',
+    type: 'Fellowship', whenIso: '2026-07-02', message: 'coffeeteria, second round', rowIndex: 2,
+    originalWhenIso: '2026-07-02',
+    original: { type: 'Fellowship', whenIso: '2026-07-02', message: 'coffeeteria', link: '' },
+  });
+  assert.equal(res.ok, true);
+
+  var cached = PaxCache.getPaxCacheRow_('tracker', 'sheet-jul-edit', 'Anchor');
+  assert.equal(cached[7], 0.9, 'cached Score must reflect the post-edit sheet value');
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+// AC2 (bonusEdit across months): the entry is added to the new month and cleared from the old,
+// so BOTH months' cached tracker rows go stale — both must be refreshed.
+(function testBonusEditCrossMonthRefreshesBothCachedTrackerRows() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installDefaultLockService_();
+  global.formatRegistrationMonth_ = function() { return 'Month'; };
+
+  var oldEntry = ['Anchor', 1, 1, 1, true, 'Fellowship', new Date(2026, 6, 2), 'coffeeteria', ''];
+  var july = makeBonusMonthFixture_({
+    sheetId: 'sheet-jul-x', f3Name: 'Anchor', email: 'anchor@x.com',
+    year: 2026, month: 6, rawScoreBefore: 8, scoreBefore: 0.8, rawScoreAfter: 6, scoreAfter: 0.6,
+    bonusRows: [oldEntry],
+  });
+  var august = makeBonusMonthFixture_({
+    sheetId: 'sheet-aug-x', f3Name: 'Anchor', email: 'anchor@x.com',
+    year: 2026, month: 7, rawScoreBefore: 2, scoreBefore: 0.2, rawScoreAfter: 4, scoreAfter: 0.4,
+  });
+  global.resolveTrackerForContextDate = function(date) {
+    return date.getMonth() === 7
+      ? { sheetId: 'sheet-aug-x', trackerUrl: 'https://x/aug', startDate: new Date(2026, 7, 1) }
+      : { sheetId: 'sheet-jul-x', trackerUrl: 'https://x/jul', startDate: new Date(2026, 6, 1) };
+  };
+  installFakeSpreadsheetById_({ 'sheet-jul-x': july.spreadsheet, 'sheet-aug-x': august.spreadsheet });
+
+  assert.equal(resolveCheckinIdentityLean_(july.monthInfo, 'Anchor', 'anchor@x.com', null, false).matched, true);
+  assert.equal(resolveCheckinIdentityLean_(august.monthInfo, 'Anchor', 'anchor@x.com', null, false).matched, true);
+  assert.equal(PaxCache.getPaxCacheRow_('tracker', 'sheet-jul-x', 'Anchor')[7], 0.8);
+  assert.equal(PaxCache.getPaxCacheRow_('tracker', 'sheet-aug-x', 'Anchor')[7], 0.2);
+
+  var res = handleBonusEdit_({}, {
+    f3Name: 'Anchor', email: 'anchor@x.com',
+    type: 'Fellowship', whenIso: '2026-08-02', message: 'coffeeteria', rowIndex: 2,
+    originalWhenIso: '2026-07-02',
+    original: { type: 'Fellowship', whenIso: '2026-07-02', message: 'coffeeteria', link: '' },
+  });
+  assert.equal(res.ok, true);
+
+  assert.equal(PaxCache.getPaxCacheRow_('tracker', 'sheet-aug-x', 'Anchor')[7], 0.4,
+    "the destination month's cached row must reflect the added entry");
+  assert.equal(PaxCache.getPaxCacheRow_('tracker', 'sheet-jul-x', 'Anchor')[7], 0.6,
+    "the source month's cached row must reflect the cleared entry");
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+// AC (shared with F3Go30-xg8f AC4): when the lock can't be taken the entry is DELETED rather than
+// written from a derivation that can't be trusted — the bonus path inherits this from the shared
+// helper, so a lock-starved bonus write must never leave a stale row behind.
+(function testBonusAddWithoutLockDropsCachedTrackerRow() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installDefaultLockService_();
+  global.formatRegistrationMonth_ = function() { return 'July 2026'; };
+
+  var fx = makeBonusMonthFixture_({
+    sheetId: 'sheet-jul-lock', f3Name: 'Anchor', email: 'anchor@x.com',
+    year: 2026, month: 6, rawScoreBefore: 5, scoreBefore: 0.5, rawScoreAfter: 8, scoreAfter: 0.8,
+  });
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: fx.sheetId, trackerUrl: fx.monthInfo.trackerUrl, startDate: fx.monthInfo.startDate };
+  };
+  installFakeSpreadsheetById_({ 'sheet-jul-lock': fx.spreadsheet });
+
+  assert.equal(resolveCheckinIdentityLean_(fx.monthInfo, 'Anchor', 'anchor@x.com', null, false).matched, true);
+  assert.ok(PaxCache.getPaxCacheRow_('tracker', 'sheet-jul-lock', 'Anchor'));
+
+  // addBonusEntry_ takes its own lock first and would bail with 'locked' — only the refresh's
+  // lock fails here, so the write still happens and only the cache derivation is untrustworthy.
+  var calls = 0;
+  global.LockService = {
+    getScriptLock: function() {
+      return {
+        waitLock: function() { if (++calls > 1) throw new Error('could not obtain lock'); },
+        releaseLock: function() {},
+      };
+    },
+  };
+
+  var res = handleBonusAdd_({}, {
+    f3Name: 'Anchor', email: 'anchor@x.com',
+    type: 'Fellowship', whenIso: '2026-07-02', message: 'coffeeteria',
+  });
+  assert.equal(res.ok, true, 'the bonus write itself still succeeds');
+  assert.equal(PaxCache.getPaxCacheRow_('tracker', 'sheet-jul-lock', 'Anchor'), null,
+    'an unverifiable derivation must drop the entry, not cache a stale row');
+
+  global.LockService = { getScriptLock: function() { return { waitLock: function() {}, releaseLock: function() {} }; } };
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+console.log('test_dashboard_webapp.js: bonus write-through cache assertions passed');
 
 console.log('test_dashboard_webapp.js: all assertions passed');

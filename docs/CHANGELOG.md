@@ -55,6 +55,29 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   there is one tap on a "has moved / Continue" button rather than an automatic jump — Google's
   hosting doesn't allow the jump to happen on its own, so the button is the real way there, not
   a fallback for a rare case.
+- Check-in now tells you when it's out of date. If a newer version of the app has been released
+  since your copy last loaded — which can go unnoticed for days once you've saved check-in to
+  your home screen, because it doesn't reload itself — a banner offers you a "Reload" to pick it
+  up (or "Not now", which stays quiet until the *next* release). The version at the bottom of the
+  page now always shows the version you're actually running, and names the current one alongside
+  it when yours is behind, so it's a reliable answer when someone asks what version you're on.
+- Fixed the dashboard disagreeing with the spreadsheet after a check-in or a bonus entry. Two
+  check-ins tapped in quick succession (say "today", then "yesterday" before the first finished)
+  could leave the dashboard showing only one of them even though both were recorded correctly.
+  Separately, adding or editing a bonus moved your bonus pills but left your Total Score at its
+  pre-bonus value until something else refreshed it. Both now update as soon as the entry is
+  saved, and the dashboard's numbers come from the spreadsheet's own recalculated values.
+- Bonus entries that don't actually raise your score — because the weekly cap for that bonus type
+  was already credited, or the entry is still missing a required link — now say so plainly, both
+  in the bonus list and in the confirmation you see right after saving, instead of silently
+  looking identical to a bonus that counted.
+- Fixed a blank icon when adding Go30 to your iPhone's home screen (Android was unaffected);
+  it now shows the Go30 logo like everywhere else.
+- Fixed the dashboard and check-in getting stuck showing an old snapshot in a long-lived app
+  session — most noticeable if you keep Go30 open on your home screen through the day: a bonus
+  entry or check-in from earlier could go on showing stale counts even after returning to the
+  app, since it only checked for fresh data right after opening, not on every visit. Reopening
+  the app now always refreshes in the background, updating the screen in place once it lands.
 
 ---
 
