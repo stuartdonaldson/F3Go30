@@ -83,7 +83,16 @@ function makeMockBonusSheet_(maxRows, names, fullRows) {
         },
         getValue: function() { return cell(row, col); },
         setValue: function(v) { setCell(row, col, v); },
-        clearContent: function() { setCell(row, col, ''); },
+        setValues: function(values) {
+          for (var i = 0; i < values.length; i++) {
+            for (var c = 0; c < values[i].length; c++) setCell(row + i, col + c, values[i][c]);
+          }
+        },
+        clearContent: function() {
+          for (var i = 0; i < nR; i++) {
+            for (var c = 0; c < nC; c++) setCell(row + i, col + c, '');
+          }
+        },
       };
     },
   };
