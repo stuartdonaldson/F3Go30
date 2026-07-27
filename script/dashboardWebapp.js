@@ -57,6 +57,8 @@ var getPaxRosterIndex_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPa
   || (typeof globalThis !== 'undefined' && globalThis.getPaxRosterIndex_);
 var deletePaxRosterIndex_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.deletePaxRosterIndex_)
   || (typeof globalThis !== 'undefined' && globalThis.deletePaxRosterIndex_);
+var refreshPaxCacheRowFromSheet_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.refreshPaxCacheRowFromSheet_)
+  || (typeof globalThis !== 'undefined' && globalThis.refreshPaxCacheRowFromSheet_);
 var deletePaxCacheRow_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.deletePaxCacheRow_)
   || (typeof globalThis !== 'undefined' && globalThis.deletePaxCacheRow_);
 var paxCacheNormalizeName_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.paxCacheNormalizeName_)
@@ -1849,14 +1851,13 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
   if (cell.getFormula()) return { ok: false, error: 'cell_is_formula' };
 
   if (payload.value === null) cell.clearContent(); else cell.setValue(payload.value);
-  // True write-through (F3Go30-5nfj.3): patch a copy of the PAX's own pre-write row in memory
-  // (target.row, from resolveCheckinDayTarget_) with the new cell value, and store that directly
-  // rather than deleting the cached entry — no re-read needed, and every OTHER pax's PaxCache row
-  // (and the dashboard's PaxCache-assembled full-board read, resolveCheckinIdentityFull_/
-  // resolveFullIdentityFromHandle_) stays untouched and correct.
-  var patchedRow = target.row.slice();
-  patchedRow[target.col] = payload.value === null ? '' : payload.value;
-  setPaxCacheRow_dw_('tracker', target.sheetId, payload.f3Name, patchedRow);
+  // Write-through (F3Go30-5nfj.3) — still a single-row, single-PAX refresh, so every OTHER pax's
+  // PaxCache row (and the dashboard's PaxCache-assembled full-board read,
+  // resolveCheckinIdentityFull_/resolveFullIdentityFromHandle_) stays untouched and correct. But
+  // the row is re-read from the sheet rather than derived from target.row, this request's
+  // PRE-write snapshot: that snapshot loses a concurrent check-in's day (F3Go30-xg8f) and carries
+  // stale formula-computed score columns (F3Go30-s1a5). See refreshPaxCacheRowFromSheet_.
+  refreshPaxCacheRowFromSheet_dw_('tracker', target.sheetId, payload.f3Name, target.trackerSheet, sheetRow);
   GasLogger.log('checkinWebapp.checkin', { f3Name: payload.f3Name, day: payload.day, value: payload.value });
   return { ok: true };
 }
@@ -1891,7 +1892,39 @@ function resolveBonusSheet_(templateSpreadsheet, payload, dateIso) {
   if (!identity.matched) return { error: 'not_found' };
   var bonusSheet = identity.targetSs.get().getSheetByName('Bonus Tracker');
   if (!bonusSheet) return { error: 'bonus_sheet_not_found' };
-  return { bonusSheet: bonusSheet, canonicalName: identity.trackerRow[TRACKER_NAME_COL_], monthStart: monthInfo.startDate };
+  return {
+    bonusSheet: bonusSheet,
+    canonicalName: identity.trackerRow[TRACKER_NAME_COL_],
+    monthStart: monthInfo.startDate,
+    // Carried purely so a write path can refresh this PAX's cached Tracker row afterwards
+    // (refreshTrackerRowAfterBonusWrite_) — identity is already resolved here, so no caller
+    // has to resolve it a second time just to know which row to re-read.
+    sheetId: monthInfo.sheetId,
+    targetSs: identity.targetSs,
+    trackerRowIndex: identity.trackerRowIndex,
+  };
+}
+
+/**
+ * Re-derives this PAX's cached Tracker row from the sheet after a Bonus Tracker write
+ * (F3Go30-s1a5 item 2). A bonus entry doesn't touch the Tracker sheet directly, but the Tracker's
+ * Score / Raw Score / per-period bonus columns are FORMULAS fed by the Bonus Tracker — so the
+ * cached row (which is what the dashboard reads those columns out of) is stale the moment a bonus
+ * lands, and stays stale for every warm read until something rebuilds it. Same shared helper,
+ * same post-write derivation rule as the check-in path (F3Go30-xg8f): never patch a cached row
+ * from pre-write state, always re-read it from the sheet.
+ *
+ * Best-effort by construction — refreshPaxCacheRowFromSheet_ drops the entry rather than caching
+ * an untrustworthy derivation, so the worst case is a cold rebuild on the next read.
+ * @param {{sheetId:string, targetSs:Object, trackerRowIndex:number, canonicalName:string}} resolved
+ *   a resolveBonusSheet_ result.
+ */
+function refreshTrackerRowAfterBonusWrite_(resolved) {
+  if (!resolved || resolved.trackerRowIndex === undefined || resolved.trackerRowIndex < 0) return;
+  var trackerSheet = resolved.targetSs.get().getSheetByName('Tracker');
+  if (!trackerSheet) return;
+  refreshPaxCacheRowFromSheet_dw_('tracker', resolved.sheetId, resolved.canonicalName,
+    trackerSheet, resolved.trackerRowIndex + 4);
 }
 
 function handleBonusList_(templateSpreadsheet, payload) {
@@ -1909,7 +1942,10 @@ function handleBonusAdd_(templateSpreadsheet, payload) {
   var resolved = resolveBonusSheet_(templateSpreadsheet, payload, payload.whenIso);
   if (resolved.error) return { ok: false, error: resolved.error };
   var result = addBonusEntry_dw_(resolved.bonusSheet, resolved.canonicalName, payload);
-  if (result.ok) GasLogger.log('checkinWebapp.bonusAdd', { f3Name: resolved.canonicalName, type: payload.type });
+  if (result.ok) {
+    refreshTrackerRowAfterBonusWrite_(resolved);
+    GasLogger.log('checkinWebapp.bonusAdd', { f3Name: resolved.canonicalName, type: payload.type });
+  }
   return result;
 }
 
@@ -1971,6 +2007,11 @@ function handleBonusEdit_(templateSpreadsheet, payload) {
     if (!addResult.ok) return addResult;
 
     var clearResult = clearBonusEntry_dw_(original.bonusSheet, original.canonicalName, located, originalSnapshot);
+    // Both months' Tracker scores moved — the entry arrived in one and left the other — so both
+    // cached rows are stale. Refreshed unconditionally: whatever the clear did or didn't do, the
+    // sheet is the authority and re-reading it is right either way.
+    refreshTrackerRowAfterBonusWrite_(resolved);
+    refreshTrackerRowAfterBonusWrite_(original);
     if (!clearResult.ok) {
       GasLogger.log('checkinWebapp.bonusEdit.clearFailed', {
         f3Name: resolved.canonicalName, oldRowIndex: located, newRowIndex: addResult.rowIndex, error: clearResult.error,
@@ -1987,7 +2028,10 @@ function handleBonusEdit_(templateSpreadsheet, payload) {
   if (resolvedSame.error) return { ok: false, error: resolvedSame.error };
 
   var result = editBonusEntry_dw_(resolvedSame.bonusSheet, resolvedSame.canonicalName, payload.rowIndex, payload, originalSnapshot);
-  if (result.ok) GasLogger.log('checkinWebapp.bonusEdit', { f3Name: resolvedSame.canonicalName, rowIndex: result.rowIndex });
+  if (result.ok) {
+    refreshTrackerRowAfterBonusWrite_(resolvedSame);
+    GasLogger.log('checkinWebapp.bonusEdit', { f3Name: resolvedSame.canonicalName, rowIndex: result.rowIndex });
+  }
   return result;
 }
 
@@ -2407,6 +2451,8 @@ if (typeof module !== 'undefined' && module.exports) {
     handleCheckinSubmit_: handleCheckinSubmit_,
     handleCheckinDashboard_: handleCheckinDashboard_,
     handleMonthGrid_: handleMonthGrid_,
+    handleBonusAdd_: handleBonusAdd_,
+    handleBonusEdit_: handleBonusEdit_,
     buildMonthNavigationPayload_dw_: buildMonthNavigationPayload_dw_,
     buildResolvedContextHandle_: buildResolvedContextHandle_,
     monthInfoFromHandle_: monthInfoFromHandle_,

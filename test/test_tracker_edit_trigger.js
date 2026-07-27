@@ -170,13 +170,19 @@ resetCalls_();
   assert.deepEqual(wipeCalls, [sheetId], 'a multi-row edit cannot be mapped to one pax row — falls back to wipe');
 })();
 
-// Header-row edit falls back to the whole-sheet wipe.
+// Header-row edit falls back to the whole-sheet wipe, which must also clear the tracker/responses
+// layout cache blobs (row2/row3 day columns, Responses header map) — those previously rode out
+// their full 6h CacheService TTL even on a structural edit caught right here.
 resetCalls_();
 (function() {
   var sheetId = 'tracker-header';
+  fakeCache.put('go30dash:trackerLayout:' + sheetId, JSON.stringify({ row2: ['x'], row3: ['y'] }));
+  fakeCache.put('go30dash:responsesLayout:' + sheetId, JSON.stringify({ columns: { F3_NAME: 0 } }));
   var e = makeFakeEditEvent_('Tracker', sheetId, { row: 2, col: 9, numRows: 1, numCols: 1, newValue: 'x' });
   handleTrackerEdit_(e);
   assert.deepEqual(wipeCalls, [sheetId], 'a Tracker header-row (row < 4) edit falls back to wipe');
+  assert.equal(fakeCache.get('go30dash:trackerLayout:' + sheetId), null, 'the tracker layout cache is cleared, not left to ride out its TTL');
+  assert.equal(fakeCache.get('go30dash:responsesLayout:' + sheetId), null, 'the responses layout cache is cleared too');
 })();
 (function() {
   resetCalls_();

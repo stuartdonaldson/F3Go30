@@ -240,6 +240,62 @@ function patchPaxRosterIndex_(kind, sheetId, name, rowIndex) {
 }
 
 /**
+ * Refreshes one PAX's cached row from the sheet AFTER a write to that row — the only correct way
+ * to write-through a row edit (F3Go30-xg8f, F3Go30-s1a5).
+ *
+ * The tempting cheaper move — patch the edited column into the copy of the row the request read
+ * on the way in, and cache that — is wrong for two independent reasons, both observed live:
+ *   1. LOST UPDATE. Two concurrent check-ins for the same PAX both snapshot the same pre-write
+ *      row, each patch a different day column, and whichever writes the cache last silently
+ *      drops the other's day. The sheet is fine (different cells), so the corruption shows up
+ *      only on the dashboard, and it is permanent — buildTrackerValuesFromPaxCache_ keeps
+ *      serving the row as a hit because the roster index is still complete.
+ *   2. STALE DERIVED COLUMNS. Score / Raw Score / bonus totals are sheet formulas. A snapshot
+ *      patch carries their PRE-write values forward, so a PAX's own score lags their own
+ *      check-in until something rebuilds the row.
+ * A row derived from post-write sheet state has neither problem by construction.
+ *
+ * Lock-guarded over (re-read -> cache write) — same convention as patchPaxRosterIndex_ above.
+ * The cell write itself deliberately stays OUTSIDE the lock: making the re-read and the cache
+ * write atomic with respect to each other is already sufficient to order concurrent writers
+ * (a later writer's re-read cannot be interleaved into an earlier writer's section, so the last
+ * cache write always reflects every cell write that preceded it), and keeping the section down
+ * to two operations avoids serializing all check-ins script-wide during a morning burst.
+ *
+ * flush() first: setValue is queued, and the formula recalc it triggers is not visible to a
+ * getValues in the same execution until pending writes are applied.
+ *
+ * On lock failure or a failed re-read, the entry is DELETED rather than written from a
+ * derivation that can't be trusted — the next reader rebuilds it live. Correctness over cache hit.
+ *
+ * @param {string} kind 'tracker' | 'responses'
+ * @param {string} sheetId Spreadsheet id the row lives in.
+ * @param {string} name PAX name to key the cache entry under.
+ * @param {Sheet} sheet Already-open sheet handle the write just went through.
+ * @param {number} sheetRow 1-based sheet row number that was written.
+ */
+function refreshPaxCacheRowFromSheet_(kind, sheetId, name, sheet, sheetRow) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch (e) {
+    GasLogger.log('refreshPaxCacheRowFromSheet_.lockFailed', { kind: kind, sheetId: sheetId, error: e.message });
+    deletePaxCacheRow_(kind, sheetId, name);
+    return;
+  }
+  try {
+    SpreadsheetApp.flush();
+    var row = sheet.getRange(sheetRow, 1, 1, sheet.getLastColumn()).getValues()[0];
+    setPaxCacheRow_(kind, sheetId, name, row);
+  } catch (e) {
+    GasLogger.log('refreshPaxCacheRowFromSheet_.rereadFailed', { kind: kind, sheetId: sheetId, error: e.message });
+    deletePaxCacheRow_(kind, sheetId, name);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
  * Wipes every cached entry (roster index + all per-PAX rows) for {kind, sheetId} — the fallback
  * used for edits too broad to invalidate precisely (header-row edits, bulk pastes, row
  * insert/delete). PropertiesService has no prefix-delete, so this enumerates all keys once;
@@ -307,6 +363,13 @@ function wipePaxCacheAndRelatedCachesForSheet_(sheetId) {
     cache.remove('go30dash:responsesValues:' + sheetId);
     cache.remove('go30dash:bonusEntries:' + sheetId);
     cache.remove('go30dash:bonusRows:' + sheetId);
+    // Tracker row2/row3 + Responses header layout blobs (trackerLayoutCacheKey_/
+    // responsesLayoutCacheKey_) previously relied on their 6h TTL alone even for a structural
+    // edit caught right here (a header-row edit fails tryPatchSinglePaxRow_te_'s row check and
+    // falls through to this wipe) — clearing them too means a manual day-column/header edit is
+    // picked up on the very next request instead of after up to 6h of staleness.
+    cache.remove('go30dash:trackerLayout:' + sheetId);
+    cache.remove('go30dash:responsesLayout:' + sheetId);
   } catch (e2) { /* best-effort — write-through invalidation at the point of write is the primary path */ }
 }
 
@@ -601,6 +664,7 @@ if (typeof module !== 'undefined' && module.exports) {
     buildRosterIndexFromNames_: buildRosterIndexFromNames_,
     deletePaxRosterIndex_: deletePaxRosterIndex_,
     patchPaxRosterIndex_: patchPaxRosterIndex_,
+    refreshPaxCacheRowFromSheet_: refreshPaxCacheRowFromSheet_,
     wipePaxCacheForSheet_: wipePaxCacheForSheet_,
     wipePaxCacheAndRelatedCachesForSheet_: wipePaxCacheAndRelatedCachesForSheet_,
     wipeAllPaxCache_: wipeAllPaxCache_,

@@ -61,6 +61,12 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   up (or "Not now", which stays quiet until the *next* release). The version at the bottom of the
   page now always shows the version you're actually running, and names the current one alongside
   it when yours is behind, so it's a reliable answer when someone asks what version you're on.
+- Fixed the dashboard disagreeing with the spreadsheet after a check-in or a bonus entry. Two
+  check-ins tapped in quick succession (say "today", then "yesterday" before the first finished)
+  could leave the dashboard showing only one of them even though both were recorded correctly.
+  Separately, adding or editing a bonus moved your bonus pills but left your Total Score at its
+  pre-bonus value until something else refreshed it. Both now update as soon as the entry is
+  saved, and the dashboard's numbers come from the spreadsheet's own recalculated values.
 
 ---
 

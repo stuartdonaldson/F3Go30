@@ -461,7 +461,8 @@ function handleAdminPost_(e) {
         // Stays bound (ADR-014 D2/D4): PaxCache/layout cache keys live in this executing
         // deployment's own PropertiesService/CacheService store, never in a namespace copy.
         var trackerState = _readTrackerDbRowsBySheetId_(SpreadsheetApp.getActiveSpreadsheet());
-        var layoutKeys = Object.keys(trackerState.bySheetId).map(trackerLayoutCacheKey_);
+        var sheetIds = Object.keys(trackerState.bySheetId);
+        var layoutKeys = sheetIds.map(trackerLayoutCacheKey_).concat(sheetIds.map(responsesLayoutCacheKey_));
         if (layoutKeys.length) {
           CacheService.getScriptCache().removeAll(layoutKeys);
           layoutCleared = layoutKeys.length;
