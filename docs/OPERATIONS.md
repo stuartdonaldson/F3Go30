@@ -36,6 +36,37 @@ npm run deploy:prod   # full deploy: push code + update named deployment URL
 edit `.clasp.json` by hand. Both `deploy:prod` and `deploy:sit` do a full deploy (code push
 plus named deployment URL update); `npm run push` is a kept alias for `deploy:prod`.
 
+**Before changing a web app request or response shape, read §API compatibility with installed
+clients below** — the deploy pushes the backend and the static client together, but they do not
+land on a PAX's device together.
+
+### API compatibility with installed clients
+
+A plain web page self-corrects on the next visit. An **installed** PWA may not re-fetch its
+document for days — Android resumes the existing task on home-screen launch, iOS suspends and
+resumes — so we no longer control when a client updates. `npm run deploy:*` pushes the GAS
+backend and the static build together, but they *land on the client* at different times, leaving
+an open-ended version-skew window. A stale client posting to a new server must keep working.
+
+The standing rule for the two JSON dispatchers — `handleCheckinPost_` and `handleSignupPost_`
+(`script/WebApp.js`), the entire blast radius of this constraint:
+
+- **Additive response fields are safe.**
+- **Renaming or removing a response field an older client reads is a breaking change.**
+- **A request field a newer client sends must remain OPTIONAL server-side.**
+- **Behaviour changes to an existing action must be backward-compatible, or ship as a new
+  action.**
+
+**Seeing which builds are still live before making a breaking change:** every `callApi` POST
+stamps the client's build as `clientVersion` (F3Go30-833s.15), which `WebApp.js` lifts into the
+request log — query it in Axiom (`tools/query_axiom.py`) to find the oldest build still posting.
+Clients missing the field log as `legacy`.
+
+Clients also *self-heal* once they do reach the server: an identify response's `config.appVersion`
+is compared against the document's own `STATIC_BUILD_VERSION_`, and a mismatch raises a
+dismissible "newer version available — reload" banner (F3Go30-833s.18). That shortens the skew
+window; it does not close it, since a client that never reaches the server never sees the banner.
+
 ---
 
 ## Configuration

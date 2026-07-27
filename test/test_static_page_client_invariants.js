@@ -302,29 +302,35 @@ function baseNavState_() {
   });
 })();
 
-// ── F3Go30-ubwl.4 AC3: the "this link moved" bookmark advisory (F3Go30-ubwl.3) — extracted and ──
-//    executed the same way the cal-nav block above is (real source, minimal DOM/storage stand-
-//    ins), so these prove the actual init-time behavior rather than just pattern-matching tokens.
+// ── The page-banner block: the "this link moved" bookmark advisory (F3Go30-ubwl.3/ubwl.4 AC3) ──
+//    and the stale-client update banner + version footer (F3Go30-833s.18), which share one
+//    makeDismissibleBanner_ implementation. Extracted and executed the same way the cal-nav block
+//    above is (real source, minimal DOM/storage stand-ins), so these prove the actual init-time
+//    behavior rather than just pattern-matching tokens.
 
-function extractGasMovedBlock_() {
+function extractBannerBlock_() {
   var src = readStaticPage_();
-  var startMarker = '// F3Go30-ubwl.3: "this link moved" advisory';
+  var startMarker = '// ── Page banners and client-build freshness';
   var endMarker = '\n\n  function showStep(name)';
   var startIdx = src.indexOf(startMarker);
   var endIdx = src.indexOf(endMarker);
-  assert.ok(startIdx !== -1 && endIdx !== -1, 'gas-moved-banner block markers not found in index.html — extraction markers may have drifted');
+  assert.ok(startIdx !== -1 && endIdx !== -1, 'page-banner block markers not found in index.html — extraction markers may have drifted');
   return src.slice(startIdx, endIdx);
 }
 
 // Runs the extracted block as a same-realm function (see makeCalNavHarness_'s comment on why
 // `Function`, not `vm`, is used) against a fake `$`/localStorage/history/location — none of
-// which are under test here (AC3 is the banner's show/strip/dismiss behavior itself).
-function makeGasMovedHarness_(fromGas, opts) {
+// which are under test here (the behavior under test is the banners' own show/strip/dismiss
+// logic and the footer text).
+function makeBannerHarness_(fromGas, opts) {
   opts = opts || {};
   var elements = {};
+  // Both banners ship hidden in the markup (asserted below), so the stand-ins start hidden too —
+  // otherwise "was never shown" and "was explicitly shown" would be indistinguishable.
+  var INITIALLY_HIDDEN_ = { gasMovedBanner: true, updateBanner: true };
   function fakeEl_(id) {
     if (!elements[id]) {
-      var classes = {};
+      var classes = INITIALLY_HIDDEN_[id] ? { hidden: true } : {};
       var listeners = {};
       elements[id] = {
         classList: {
@@ -334,6 +340,7 @@ function makeGasMovedHarness_(fromGas, opts) {
         },
         addEventListener: function(evt, fn) { listeners[evt] = fn; },
         click: function() { if (listeners.click) listeners.click(); },
+        textContent: '',
       };
     }
     return elements[id];
@@ -345,36 +352,60 @@ function makeGasMovedHarness_(fromGas, opts) {
   };
   var replaceStateCalls = [];
   var fakeHistory = { replaceState: function(state, title, url) { replaceStateCalls.push(String(url)); } };
-  var fakeLocation = { href: opts.href || 'https://pax.example.github.io/f3go30/sit/?from=gas&id=sess-1' };
+  var reloadCallCount = 0;
+  var fakeLocation = {
+    href: opts.href || 'https://pax.example.github.io/f3go30/sit/?from=gas&id=sess-1',
+    reload: function() { reloadCallCount++; },
+  };
 
-  var factory = new Function('FROM_GAS_', '$', 'localStorage', 'history', 'location', 'URL',
-    extractGasMovedBlock_() + '\nreturn { isGasMovedDismissed_: isGasMovedDismissed_ };'
+  var factory = new Function('FROM_GAS_', 'STATIC_BUILD_VERSION_', '$', 'localStorage', 'history', 'location', 'URL',
+    extractBannerBlock_() + '\nreturn { applyVersionState_: applyVersionState_ };'
   );
-  var fns = factory(fromGas, fakeEl_, fakeLocalStorage, fakeHistory, fakeLocation, URL);
-  return { fns: fns, elements: elements, storage: storage, replaceStateCalls: replaceStateCalls };
+  var fns = factory(
+    fromGas,
+    Object.prototype.hasOwnProperty.call(opts, 'buildVersion') ? opts.buildVersion : null,
+    fakeEl_, fakeLocalStorage, fakeHistory, fakeLocation, URL
+  );
+  return {
+    fns: fns,
+    elements: elements,
+    storage: storage,
+    replaceStateCalls: replaceStateCalls,
+    reloadCallCount: function() { return reloadCallCount; },
+    // Convenience: what the footer reads and whether the update banner is up, after an identify
+    // response carrying `serverVersion` has been applied.
+    applyServerVersion: function(serverVersion) {
+      fns.applyVersionState_(
+        Object.prototype.hasOwnProperty.call(opts, 'buildVersion') ? opts.buildVersion : null,
+        serverVersion
+      );
+    },
+    footerText: function() { return fakeEl_('versionFooter').textContent; },
+    updateBannerHidden: function() { return fakeEl_('updateBanner').classList.has('hidden'); },
+  };
 }
 
 (function testGasMovedBannerShowsWhenFromGasAndNotDismissed() {
-  var h = makeGasMovedHarness_(true);
+  var h = makeBannerHarness_(true);
   assert.equal(h.elements.gasMovedBanner.classList.has('hidden'), false, 'banner must be shown on a from=gas arrival');
 })();
 
 (function testGasMovedBannerStaysHiddenWhenFromGasAbsent() {
-  var h = makeGasMovedHarness_(false);
+  var h = makeBannerHarness_(false);
   assert.equal(h.elements.gasMovedBanner === undefined || h.elements.gasMovedBanner.classList.has('hidden') !== false, true,
     'banner must not be shown when the arrival did not come from a GAS redirect');
   assert.equal(h.replaceStateCalls.length, 0, 'no address-bar rewrite when there is nothing to strip');
 })();
 
 (function testGasMovedBannerStaysHiddenWhenPreviouslyDismissed() {
-  var h = makeGasMovedHarness_(true, { storage: { go30GasMovedDismissed: '1' } });
+  var h = makeBannerHarness_(true, { storage: { go30GasMovedDismissed: '1' } });
   assert.equal(h.elements.gasMovedBanner === undefined || h.elements.gasMovedBanner.classList.has('hidden') !== false, true,
     'a PAX who already dismissed the advisory must not see it again');
   assert.equal(h.replaceStateCalls.length, 0, 'no address-bar rewrite when the banner never rendered');
 })();
 
 (function testGasMovedMarkerIsStrippedFromTheAddressBarAfterRendering() {
-  var h = makeGasMovedHarness_(true, { href: 'https://pax.example.github.io/f3go30/sit/?from=gas&id=sess-1' });
+  var h = makeBannerHarness_(true, { href: 'https://pax.example.github.io/f3go30/sit/?from=gas&id=sess-1' });
   assert.equal(h.replaceStateCalls.length, 1, 'history.replaceState must be called exactly once');
   var strippedUrl = new URL(h.replaceStateCalls[0]);
   assert.equal(strippedUrl.searchParams.has('from'), false, 'from=gas must be stripped once the advisory has rendered');
@@ -382,11 +413,99 @@ function makeGasMovedHarness_(fromGas, opts) {
 })();
 
 (function testGasMovedDismissalHidesTheBannerAndPersists() {
-  var h = makeGasMovedHarness_(true);
+  var h = makeBannerHarness_(true);
   assert.equal(h.elements.gasMovedBanner.classList.has('hidden'), false, 'sanity: banner shown before dismissal');
   h.elements.gasMovedDismissBtn.click();
   assert.equal(h.elements.gasMovedBanner.classList.has('hidden'), true, 'dismiss button must hide the banner');
   assert.equal(h.storage.go30GasMovedDismissed, '1', 'dismissal must persist to localStorage so it is not shown again');
+})();
+
+// ── F3Go30-833s.18: stale installed clients — update-available banner + honest version footer ──
+//    An installed PWA may not re-fetch its document for days, so a PAX can run a week-old build
+//    against a current server indefinitely. The only signal available is the authoritative
+//    cfg.appVersion arriving on every identify, compared against this document's own build stamp.
+
+(function testBothBannersShipHiddenInTheMarkup() {
+  // The harness stand-ins start hidden to model this; if the markup ever drops class="hidden",
+  // the banners would flash on every load AND the tests below would silently stop proving
+  // anything, so assert the markup directly.
+  var src = readStaticPage_();
+  ['gasMovedBanner', 'updateBanner'].forEach(function(id) {
+    var tagMatch = src.match(new RegExp('<div id="' + id + '"[^>]*>'));
+    assert.ok(tagMatch, id + ' element not found in index.html');
+    assert.match(tagMatch[0], /class="[^"]*\bhidden\b/, id + ' must ship hidden in the markup');
+  });
+})();
+
+(function testUpdateBannerShownWhenABuiltClientIsBehindTheServer() {
+  var h = makeBannerHarness_(false, { buildVersion: '2.4.5' });
+  h.applyServerVersion('2.4.7');
+  assert.equal(h.updateBannerHidden(), false, 'a built client behind the server version must be offered a reload');
+})();
+
+(function testUpdateBannerStaysHiddenWhenTheClientIsCurrent() {
+  var h = makeBannerHarness_(false, { buildVersion: '2.4.7' });
+  h.applyServerVersion('2.4.7');
+  assert.equal(h.updateBannerHidden(), true, 'a current client must not be nagged to reload');
+})();
+
+(function testUpdateBannerStaysHiddenForUnbuiltSource() {
+  // AC2: STATIC_BUILD_VERSION_ is null when src/ is served directly (local dev + Playwright).
+  // That is not a stale client — there is no build to compare — so no banner.
+  var h = makeBannerHarness_(false, { buildVersion: null });
+  h.applyServerVersion('2.4.7');
+  assert.equal(h.updateBannerHidden(), true, 'unbuilt src/ served directly must never show the update banner');
+})();
+
+(function testUpdateBannerReloadButtonReloadsTheDocument() {
+  var h = makeBannerHarness_(false, { buildVersion: '2.4.5' });
+  h.applyServerVersion('2.4.7');
+  assert.equal(h.reloadCallCount(), 0, 'sanity: nothing reloads until the PAX asks for it');
+  h.elements.updateReloadBtn.click();
+  assert.equal(h.reloadCallCount(), 1, 'the reload action must re-fetch the document');
+})();
+
+(function testUpdateBannerDismissalIsPerVersion() {
+  // AC5: dismissing 2.4.7 must not silence the prompt for 2.4.8.
+  var h = makeBannerHarness_(false, { buildVersion: '2.4.5' });
+  h.applyServerVersion('2.4.7');
+  h.elements.updateDismissBtn.click();
+  assert.equal(h.updateBannerHidden(), true, 'dismiss must hide the banner');
+  assert.equal(h.storage.go30UpdateDismissed, '2.4.7', 'dismissal must be recorded against the version dismissed, not a flag');
+
+  var same = makeBannerHarness_(false, { buildVersion: '2.4.5', storage: { go30UpdateDismissed: '2.4.7' } });
+  same.applyServerVersion('2.4.7');
+  assert.equal(same.updateBannerHidden(), true, 'the dismissed version must not prompt again');
+
+  var later = makeBannerHarness_(false, { buildVersion: '2.4.5', storage: { go30UpdateDismissed: '2.4.7' } });
+  later.applyServerVersion('2.4.8');
+  assert.equal(later.updateBannerHidden(), false, 'a later version must be able to prompt again');
+})();
+
+(function testVersionFooterNamesTheClientBuildAndTheServerSeparatelyWhenTheyDiffer() {
+  // AC3: the footer previously showed only the SERVER's version, so a stale client displayed the
+  // CURRENT version — asking a PAX "what does the footer say?" was guaranteed to mislead.
+  var h = makeBannerHarness_(false, { buildVersion: '2.4.5' });
+  assert.equal(h.footerText(), 'v2.4.5 (build)', 'before any identify, the footer shows this document\'s own build');
+  h.applyServerVersion('2.4.7');
+  assert.match(h.footerText(), /2\.4\.5/, 'the footer must keep reporting the CLIENT build a PAX is actually running');
+  assert.match(h.footerText(), /2\.4\.7/, 'the footer must also name the server version so the skew is visible');
+})();
+
+(function testVersionFooterNamesOnlyTheClientBuildWhenClientAndServerAgree() {
+  // No skew to report, so the server version adds nothing — and the footer text must not change
+  // when the first identify lands, or a current client appears to "update" mid-session.
+  var h = makeBannerHarness_(false, { buildVersion: '2.4.7' });
+  assert.equal(h.footerText(), 'v2.4.7 (build)', 'sanity: the load-time paint');
+  h.applyServerVersion('2.4.7');
+  assert.equal(h.footerText(), 'v2.4.7 (build)', 'an agreeing identify must leave the footer exactly as loaded');
+})();
+
+(function testVersionFooterMarksAnUnbuiltClientAsServerReported() {
+  var h = makeBannerHarness_(false, { buildVersion: null });
+  h.applyServerVersion('2.4.7');
+  assert.equal(h.footerText(), 'v2.4.7 (server)',
+    'with no client build to report, the footer must say the version it shows came from the server');
 })();
 
 console.log('test_static_page_client_invariants.js: all assertions passed');
