@@ -53,7 +53,26 @@ const ROOT = path.resolve(__dirname, '../..');
 const STATIC_DIR = path.join(ROOT, 'static-pages', 'src');
 const DEMO_PAX = { f3Name: 'NoSadClown', email: 'nosadclown@example.com' };
 
+// Every wait below that is gated on a LIVE GAS round trip having landed uses this. It is a
+// "did this wedge?" guard, not a latency budget — nothing here asserts how fast the app is.
+//
+// It was 15000 back when a lost request hung forever, so any finite number worked. F3Go30-313u
+// bounded the transport: a read now times out at 12s and retries once, so a genuinely lost read
+// surfaces at up to 12+12=24s and RECOVERS. At 15000 those recoveries read as failures — the app
+// behaving exactly as designed, reported as a defect, and only when SIT happens to drop a request,
+// so it flakes by load rather than by code. 30000 sits above the real worst case.
+//
+// Deliberately tight waits (the 500ms/1000ms instant-paint assertions, which are the actual
+// behavioural guards for the localStorage snapshot paint) are NOT this constant — leave them.
+const LIVE_ROUND_TRIP_MS = 30000;
+
 test.use({ storageState: undefined, viewport: { width: 390, height: 844 }, headless: true });
+
+// File-scoped, so playwright.config.js's shared 120000 (sized for the slow GAS editor specs) is
+// left alone. Several tests here chain three or four LIVE_ROUND_TRIP_MS waits; at the widened 30s
+// each, an unlucky run could exhaust a 2-minute per-test budget and die as "Test ended" mid-click
+// — the same false red this change exists to remove, just relocated.
+test.describe.configure({ timeout: 240000 });
 
 function loadSettings() {
   const p = path.join(ROOT, 'local.settings.json');
@@ -127,7 +146,7 @@ test.describe('Static check-in front end (client, live SIT)', () => {
   test('CORS spike: cross-origin fetch reads the identify JSON and renders the check-in view', async ({ page }) => {
     const t0 = Date.now();
     await page.goto(checkinPageUrl());
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     const firstPaintMs = Date.now() - t0;
     // eslint-disable-next-line no-console
     console.log(`[F3Go30-5nfj.2] static page: ?id= -> #step-checkin visible in ${firstPaintMs}ms`);
@@ -139,7 +158,7 @@ test.describe('Static check-in front end (client, live SIT)', () => {
 
   test('unrecognized token falls through to the blank identify form, same as GAS', async ({ page }) => {
     await page.goto(`${staticOrigin}/index.html?webapp=${encodeURIComponent(checkinUrl)}&id=${crypto.randomUUID()}`);
-    await expect(page.locator('#step-identify')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-identify')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#idError')).toBeHidden();
   });
 
@@ -148,13 +167,13 @@ test.describe('Static check-in front end (client, live SIT)', () => {
     // submit handler), which has no real navigation to land the browser on a token'd URL the
     // way GAS's real form POST does — applyIdentifySuccess_ must patch the URL itself instead.
     await page.goto(`${staticOrigin}/index.html?webapp=${encodeURIComponent(checkinUrl)}`);
-    await expect(page.locator('#step-identify')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-identify')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     expect(new URL(page.url()).searchParams.get('id')).toBeNull();
 
     await page.locator('#idF3Name').fill(DEMO_PAX.f3Name);
     await page.locator('#idEmail').fill(DEMO_PAX.email);
     await page.locator('#identifyBtn').click();
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
 
     const idParam = new URL(page.url()).searchParams.get('id');
     expect(idParam).toBeTruthy();
@@ -162,14 +181,14 @@ test.describe('Static check-in front end (client, live SIT)', () => {
     // Reloading that exact URL (simulating a reopened bookmark) must skip the identify form
     // entirely — the whole point of landing on a token'd URL in the first place.
     await page.reload();
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#headerName')).toContainText(DEMO_PAX.f3Name);
   });
 
   test.describe('once identified', () => {
     test.beforeEach(async ({ page }) => {
       await page.goto(checkinPageUrl());
-      await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+      await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     });
 
     test('page load: TODAY/YESTERDAY visible, calendar hidden', async ({ page }) => {
@@ -189,7 +208,7 @@ test.describe('Static check-in front end (client, live SIT)', () => {
       // attached) — waiting briefly then clicking through must not add a second call.
       await page.waitForTimeout(1500);
       await page.locator('#dashboardBtn').click();
-      await expect(page.locator('#step-dashboard')).toBeVisible({ timeout: 15000 });
+      await expect(page.locator('#step-dashboard')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
       await expect(page.locator('#dPaxBoard')).not.toBeEmpty();
       expect(dashboardCalls).toBeLessThanOrEqual(1);
     });
@@ -291,7 +310,7 @@ test.describe('Static check-in front end (client, live SIT)', () => {
     // any future harness config change).
     await page.goto(checkinPageUrl());
     await page.evaluate((k) => localStorage.clear(), 'go30CheckinSnapshot:v1');
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
 
     // Race the background prefetch: no waitForTimeout between these two clicks — prefetchDashboard_
     // (fired at the end of applyIdentifySuccess_, just before #step-checkin became visible above)
@@ -299,12 +318,12 @@ test.describe('Static check-in front end (client, live SIT)', () => {
     await page.locator(probeBtnId).click();
     await page.locator('#dashboardBtn').click();
 
-    await expect(page.locator('#step-dashboard')).toBeVisible({ timeout: 15000 });
-    await expect.poll(() => page.locator('#dScoreSub').innerHTML(), { timeout: 15000 }).toBe(expectedScoreSubHtml);
+    await expect(page.locator('#step-dashboard')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await expect.poll(() => page.locator('#dScoreSub').innerHTML(), { timeout: LIVE_ROUND_TRIP_MS }).toBe(expectedScoreSubHtml);
 
     // Restore original status so repeated runs don't accumulate drift on the shared fixture PAX.
     await page.locator('#dMonthProgressTile').click();
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await page.locator(restoreBtnId).click();
     await expect.poll(async () => {
       const check = await page.request.post(checkinUrl + '?cmd=checkin', {
@@ -314,7 +333,7 @@ test.describe('Static check-in front end (client, live SIT)', () => {
       });
       const checkJson = await check.json();
       return checkJson.dayValues[todayIdx];
-    }, { timeout: 15000 }).toBe(originalValue);
+    }, { timeout: LIVE_ROUND_TRIP_MS }).toBe(originalValue);
   });
 });
 
@@ -360,8 +379,8 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
     // Populate a real snapshot from a normal prior visit (saveCheckinSnapshot_ fires once the live
     // token-identify response lands — wait for #checkinSyncingNote to clear as proof it landed).
     await page.goto(checkinPageUrl());
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: 15000 });
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
     const snapshotRaw = await page.evaluate((k) => localStorage.getItem(k), 'go30CheckinSnapshot:v1');
     expect(snapshotRaw).toBeTruthy();
 
@@ -385,15 +404,15 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
     await expect(page.locator('#step-tokenLoading')).toBeHidden();
 
     // Once the delayed live response lands, the syncing note clears and checkin stays visible.
-    await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: 15000 });
+    await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#step-checkin')).toBeVisible();
   });
 
   test('race: check-in write fired while a stale in-flight identify is still pending -> snapshot ends up with the post-write value once syncing completes (F3Go30-5nfj.5 regression)', async ({ page }) => {
     // Populate a real snapshot from a normal prior visit.
     await page.goto(checkinPageUrl());
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: 15000 });
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
 
     const snapshot = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), 'go30CheckinSnapshot:v1');
     expect(snapshot).toBeTruthy();
@@ -428,7 +447,7 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
 
       // Wait for the delayed identify to resolve (syncing note clears) — this is the moment
       // reconcileWithLocalWrites_/saveCheckinSnapshot_ run against the in-flight identify response.
-      await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: 15000 });
+      await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
 
       // No further navigation/reload — assert the snapshot the syncing identify just persisted
       // already reflects the write, proving locallyWrittenIso protected it during reconciliation.
@@ -452,8 +471,8 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
 
     // Populate a real snapshot from a normal prior visit.
     await page.goto(checkinPageUrl());
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: 15000 });
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
     const snapshot = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), 'go30CheckinSnapshot:v1');
     expect(snapshot).toBeTruthy();
 
@@ -478,14 +497,14 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
     try {
       // Reload: paints instantly from the now-stale snapshot (still showing originalStatus).
       await page.goto(checkinPageUrl());
-      await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+      await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
 
       await page.locator('#advancedToggleBtn').click();
       await expect(page.locator('#advancedGrid')).toBeVisible();
 
       // Polls (toHaveClass) until the live identify response reconciles the calendar — no manual
       // refresh performed by this test, matching the AC's "no manual refresh needed".
-      await expect(page.locator(`.cal-cell[data-date="${futureIso}"]`)).toHaveClass(new RegExp('st-' + probeStatus), { timeout: 15000 });
+      await expect(page.locator(`.cal-cell[data-date="${futureIso}"]`)).toHaveClass(new RegExp('st-' + probeStatus), { timeout: LIVE_ROUND_TRIP_MS });
     } finally {
       const restoreValue = statusToValue(originalStatus);
       await page.request.post(checkinUrl + '?cmd=checkin', {
@@ -500,8 +519,8 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
     // Seed a well-formed snapshot (reusing a real one's shape from a normal prior visit — full
     // control while staying representative) but with a token that matches no live session.
     await page.goto(checkinPageUrl());
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: 15000 });
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
     const snapshot = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), 'go30CheckinSnapshot:v1');
     expect(snapshot).toBeTruthy();
 
@@ -522,7 +541,7 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
 
     // Once the live identify call resolves matched:false for the bogus token, falls back to the
     // blank identify form and the stale snapshot is cleared.
-    await expect(page.locator('#step-identify')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-identify')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#step-checkin')).toBeHidden();
     const remaining = await page.evaluate((k) => localStorage.getItem(k), 'go30CheckinSnapshot:v1');
     expect(remaining).toBeNull();
@@ -542,7 +561,7 @@ test.describe('Existing GAS HtmlService check-in page still works unchanged', ()
     const dismissBtn = page.getByRole('button', { name: 'Dismiss' });
     if (await dismissBtn.isVisible({ timeout: 8000 }).catch(() => false)) await dismissBtn.click();
     const app = page.frameLocator('iframe').frameLocator('iframe');
-    await expect(app.locator('#step-identify')).toBeVisible({ timeout: 15000 });
+    await expect(app.locator('#step-identify')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
   });
 });
 
@@ -609,7 +628,7 @@ test.describe('Stale installed client: update banner + version footer (F3Go30-83
   test('server one version ahead -> reload banner appears and the footer names both versions', async ({ page }) => {
     await serveVersion(page, '99.9.9');
     await page.goto(builtPageUrl());
-    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     // AC3: the footer must report the build the PAX is actually running, not the server's.
     const footer = await page.locator('#versionFooter').textContent();
     expect(footer).toContain(builtVersion);
@@ -618,7 +637,7 @@ test.describe('Stale installed client: update banner + version footer (F3Go30-83
 
   test('client current with the server -> no banner, footer shows the running build', async ({ page }) => {
     await page.goto(builtPageUrl());
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#updateBanner')).toBeHidden();
     await expect(page.locator('#versionFooter')).toHaveText(`v${builtVersion} (build)`);
   });
@@ -631,34 +650,34 @@ test.describe('Stale installed client: update banner + version footer (F3Go30-83
 
     await serveVersion(page, '99.9.9');
     await page.goto(builtPageUrl());
-    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     expect(documentLoads).toBe(1);
 
     await page.locator('#updateReloadBtn').click();
-    await expect.poll(() => documentLoads, { timeout: 15000 }).toBe(2);
+    await expect.poll(() => documentLoads, { timeout: LIVE_ROUND_TRIP_MS }).toBe(2);
     // Let the reloaded page's own identify settle before the test tears the context down,
     // otherwise the stubbed route is still in flight when the fixture closes.
-    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await page.unrouteAll({ behavior: 'ignoreErrors' });
   });
 
   test('"Not now" dismisses this version only, and the dismissal survives a reload', async ({ page }) => {
     await serveVersion(page, '99.9.9');
     await page.goto(builtPageUrl());
-    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await page.locator('#updateDismissBtn').click();
     await expect(page.locator('#updateBanner')).toBeHidden();
     expect(await page.evaluate((k) => localStorage.getItem(k), 'go30UpdateDismissed')).toBe('99.9.9');
 
     // Same version again -> stays quiet.
     await page.goto(builtPageUrl());
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#updateBanner')).toBeHidden();
 
     // A LATER release must be able to prompt again (AC5).
     await page.unrouteAll({ behavior: 'ignoreErrors' });
     await serveVersion(page, '99.9.10');
     await page.goto(builtPageUrl());
-    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#updateBanner')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
   });
 });
