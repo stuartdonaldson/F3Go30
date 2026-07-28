@@ -313,10 +313,16 @@
     </div>
   </div>
 
+  <!-- F3Go30-313u: two guidance lines, one banner. A server that answered with an error is the
+       Site Q's to hear about; a request that never made it across the network is not — telling a
+       PAX on a dead connection to email their Site Q sends them chasing the wrong person. Which
+       line shows (and whether the contact link shows at all) is decided by showApiError_ from
+       the error's own `isTransport` flag. -->
   <div id="apiErrorBanner" class="api-error-banner hidden">
-    <strong>Something went wrong.</strong>
-    <span>Please try again, or refresh the browser and try again. If the problem persists,
+    <strong id="apiErrorHeadline">Something went wrong.</strong>
+    <span id="apiErrorServerGuidance">Please try again, or refresh the browser and try again. If the problem persists,
       notify <span id="apiErrorSiteQName">your Site Q</span><a id="apiErrorContactLink" class="hidden" href="#">(email)</a>.</span>
+    <span id="apiErrorNetworkGuidance" class="hidden">Check your internet connection and try again — nothing was lost.</span>
     <div id="apiErrorDetail" class="api-error-detail"></div>
   </div>
 
@@ -861,6 +867,82 @@
     try { localStorage.removeItem(TOKEN_STORAGE_KEY_); } catch (e) { /* not fatal */ }
   }
 
+  // ── Transport (F3Go30-313u) ───────────────────────────────────────────────────────────────
+  // Every call below is a cross-origin POST to the GAS /exec endpoint, which answers 302 ->
+  // script.googleusercontent.com/macros/echo. That second hop is observably unreliable in BOTH
+  // directions — seen live on SIT 2026-07-28: a request that never reached GAS at all (browser
+  // raised `TypeError: Failed to fetch`, no doPost in Axiom) and, minutes later, a request GAS
+  // executed and answered in 668ms whose response never arrived (the page sat on "Checking…"
+  // indefinitely; the same call succeeded on every retry). Neither flake is ours to fix.
+  //
+  // What IS ours is the damage. Without a timeout a lost response never settles the promise, so
+  // `finally` never runs, pendingRequestCount_ never decrements, the "Syncing…" indicator spins
+  // forever and the submitting button stays disabled — no recovery but a manual reload, and no
+  // hint to the PAX that a reload is what is needed.
+  // Two timeouts, because giving up early costs something very different on each side.
+  //
+  // Both numbers are calibrated against MEASURED client-side round trips, not against Axiom's
+  // server-side durationMs — the 302 hop to script.googleusercontent.com roughly doubles the
+  // server's own figure, and calibrating on the server number produces a timeout that fires on
+  // perfectly healthy requests. 12 live identify calls against SIT, no abort, 2026-07-28:
+  // min 3.3s, median 4.8s, p90 6.5s, max 9.1s, plus one that the browser itself gave up on at
+  // 29s with `Failed to fetch` (~8% loss — the failure this whole block exists for).
+  //
+  // Reads: 12s, comfortably above the 9.1s slowest healthy call, so the timeout fires on losses
+  // rather than on slowness. A read can be re-asked for free, so an unnecessary abort is cheap —
+  // but not free, since it doubles load on an endpoint already having a bad day.
+  //
+  // Writes: never retried (see RETRYABLE_ACTIONS_), so aborting one early means telling a PAX
+  // their check-in or signup failed when it may well have landed server-side — the worst outcome
+  // available here. Long leash; the timeout exists only to guarantee the promise settles at all,
+  // not to be reached in normal operation.
+  var REQUEST_TIMEOUT_MS_ = 12000;
+  var WRITE_TIMEOUT_MS_ = 25000;
+
+  // Read-only actions, safe to repeat. A retry here is invisible to the PAX and costs one extra
+  // execution. Deliberately a whitelist and not "everything except the writes I remembered":
+  // a new action is un-retried until someone states it is idempotent, which is the safe default
+  // for the wrong guess. NEVER add a write — a lost response on a write may mean it landed, so
+  // retrying one risks a duplicate signup, check-in or bonus row.
+  var RETRYABLE_ACTIONS_ = ['identify', 'dashboard', 'bonusList', 'monthGrid'];
+
+  var NETWORK_ERROR_MESSAGE_ = 'Couldn’t reach the server. Check your internet connection and try again.';
+
+  // A request aborted because the page is going away is not a failure worth alarming anyone
+  // about — the document is already doomed and the banner would flash for an instant on the way
+  // out. showApiError_ reads this flag; see AC5 on F3Go30-313u.
+  var pageIsUnloading_ = false;
+  window.addEventListener('pagehide', function() { pageIsUnloading_ = true; });
+
+  /** The single point where a below-HTTP failure becomes a PAX-readable one. Flagged so the
+   * banner can drop the Site-Q escalation (a connectivity problem is not the Site Q's to fix)
+   * and so the retry below can tell a transport failure from a server that answered. */
+  function makeTransportError_() {
+    var err = new Error(NETWORK_ERROR_MESSAGE_);
+    err.isTransport = true;
+    return err;
+  }
+
+  /** One attempt, bounded. Resolves with the raw Response (status handling stays in callApi);
+   * rejects with a flagged transport error for anything that dies below HTTP, including the
+   * timeout — the abort and a genuine network drop are the same thing to the PAX. */
+  function fetchAttempt_(url, bodyJson, timeoutMs) {
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, timeoutMs);
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: bodyJson,
+      signal: controller.signal,
+    }).then(function(res) {
+      clearTimeout(timeoutId);
+      return res;
+    }, function() {
+      clearTimeout(timeoutId);
+      throw makeTransportError_();
+    });
+  }
+
   // F3Go30-5nfj.5: reference-counted, not a boolean — more than one request can be in flight at
   // once (e.g. the PAX clicking multiple checkin buttons before earlier ones settle), so the
   // indicator must stay visible until the LAST outstanding request settles, not just the first.
@@ -888,12 +970,18 @@
       // sent through as-is; buildWebAppRequestLog_ treats any falsy value as 'legacy'.
       clientVersion: STATIC_BUILD_VERSION_
     });
+    var url = WEBAPP_URL + '?cmd=' + (cmd || CMD_);
+    var bodyJson = JSON.stringify(body);
+    var mayRetry = RETRYABLE_ACTIONS_.indexOf(action) !== -1;
+    var timeoutMs = mayRetry ? REQUEST_TIMEOUT_MS_ : WRITE_TIMEOUT_MS_;
     pendingRequestCount_++;
     updateSyncingIndicator_();
-    return fetch(WEBAPP_URL + '?cmd=' + (cmd || CMD_), {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(body),
+    return fetchAttempt_(url, bodyJson, timeoutMs).catch(function(err) {
+      // Exactly one retry, and only for a read that died below HTTP. A server that ANSWERED —
+      // any status, any json.ok:false — is not re-asked: it has already made its decision, and
+      // repeating the call would only double the load while returning the same answer.
+      if (!mayRetry || !err || !err.isTransport) throw err;
+      return fetchAttempt_(url, bodyJson, timeoutMs);
     }).then(function(res) {
       if (!res.ok) throw new Error('Server returned HTTP ' + res.status);
       return res.json();
@@ -1091,15 +1179,27 @@
   }
 
   function showApiError_(action, err) {
+    // F3Go30-313u AC5: a request the browser killed because this document is being torn down is
+    // not a failure to report — the banner would flash for an instant on the way out and mean
+    // nothing. Bail before touching the DOM.
+    if (pageIsUnloading_) return;
+
     var detail =
       'Time: ' + new Date().toISOString() + '\n' +
       'Action: ' + action + '\n' +
       'Error: ' + (err && err.message ? err.message : String(err));
     $('apiErrorDetail').textContent = detail;
 
+    // F3Go30-313u AC4: a transport failure gets connectivity wording and no Site-Q escalation;
+    // a server-reported error keeps the original copy and contact path untouched (AC6).
+    var isTransport = !!(err && err.isTransport);
+    $('apiErrorHeadline').textContent = isTransport ? 'Couldn’t reach the server.' : 'Something went wrong.';
+    $('apiErrorNetworkGuidance').classList.toggle('hidden', !isTransport);
+    $('apiErrorServerGuidance').classList.toggle('hidden', isTransport);
+
     $('apiErrorSiteQName').textContent = SITE_Q_NAME || 'your Site Q';
     var contactLink = $('apiErrorContactLink');
-    if (SITE_Q_EMAIL) {
+    if (SITE_Q_EMAIL && !isTransport) {
       contactLink.href = 'mailto:' + SITE_Q_EMAIL +
         '?subject=' + encodeURIComponent('F3 Go30 check-in error') +
         '&body=' + encodeURIComponent(detail);
