@@ -455,15 +455,33 @@
         <button class="secondary" id="suChooseBackBtn">Back</button>
       </div>
 
+      <!-- F3Go30-1f75: the check-in page is the primary call to action here, exactly as it is in
+           the confirmation email (CHECKIN_EMAIL_COPY_, script/signupEmail.js) — a personal
+           bookmarkable link that skips the name/email form on every future visit. The Tracker
+           sheet is the fallback for someone who can't get the check-in page to work, not the
+           headline. Copy is deliberately shorter than the email's: this card is read once,
+           standing up, on a phone. -->
       <div id="su-step-done" class="card hidden center">
         <div class="checkmark">&#10003;</div>
         <h2>You're committed!</h2>
         <p>Your Hard Commit is saved for <strong id="suSavedMonthLabel"></strong>.</p>
         <p class="muted">A confirmation email is on its way to <span id="suSavedEmailLabel"></span>.</p>
-        <a id="suSavedTrackerLink" href="#" target="_blank" rel="noopener" class="signup-link">Open the tracker &rarr;</a>
-        <div style="margin-top:26px;">
-          <button class="secondary" id="suDoneCheckinBtn">Continue to check in &rarr;</button>
+        <div id="suDoneCheckinBlock" style="margin-top:24px;">
+          <button class="primary" id="suDoneCheckinBtn">Continue to check in &rarr;</button>
+          <p class="muted" style="margin-top:14px;text-align:left;">
+            Each day, tap <strong>I Hit it!</strong> or <strong>Missed it</strong> there, and your
+            dashboard comes up right after.
+          </p>
+          <p class="muted" style="text-align:left;">
+            That page is <strong>your personal link</strong> &mdash; bookmark it or Add to Home
+            Screen, and it will remember you, so you never have to type your name and email again.
+          </p>
         </div>
+        <p id="suDoneTrackerHelp" class="muted" style="margin-top:22px;font-size:14px;color:var(--text-faint);text-align:left;">
+          Having trouble with the check-in page? All Go30 data lives in the shared Tracker sheet
+          &mdash; you normally won't need it, but it's here:
+          <a id="suSavedTrackerLink" href="#" target="_blank" rel="noopener" style="color:var(--link);font-weight:bold;">Open the tracker &rarr;</a>
+        </p>
       </div>
 
       <div id="su-step-feedback" class="card hidden">
@@ -1292,6 +1310,32 @@
    * clearing the day selection) — without it, a PAX who opened the calendar during the brief
    * window before the live response landed would see it silently slammed shut out from under
    * them the instant reconciliation completed. */
+  // F3Go30-1f75: the params runIdentityBootstrap_ reads to decide WHICH STEP this page opens on.
+  // They describe how the PAX arrived, not who they are, so they must not survive into a URL we
+  // are telling them to bookmark — see buildBookmarkableUrl_.
+  var SIGNUP_ROUTE_PARAMS_ = ['cmd', 'targetMonth', 'autoStart'];
+
+  /** The bookmarkable check-in URL for a resolved token: this page's own URL with the token
+   * installed and the signup routing stripped, everything else (webapp, ns, contextDate) left
+   * exactly as it was. Kept separate from applyIdentifySuccess_ so the rewrite is testable
+   * without standing up the whole check-in view. */
+  function buildBookmarkableUrl_(href, token) {
+    var u = new URL(href);
+    u.searchParams.set('id', token);
+    SIGNUP_ROUTE_PARAMS_.forEach(function(p) { u.searchParams.delete(p); });
+    return u.toString();
+  }
+
+  /** Which month the su-step-choose screen preselects. A PAX who reaches that screen is usually
+   * signing up for the month ahead rather than editing the one already underway, so 'next' wins
+   * whenever it is on offer — unless they followed a link that explicitly named a month, which
+   * is what an emailed "edit your current-month goals" link does. */
+  function defaultTargetMonth_(months, urlTargetMonth) {
+    if (!months || !months.next) return 'current';
+    if (urlTargetMonth === 'current') return 'current';
+    return 'next';
+  }
+
   function applyIdentifySuccess_(res, opts) {
     opts = opts || {};
     state.f3Name = res.f3Name;
@@ -1303,11 +1347,14 @@
     // an async fetch either way, typed or token), so nothing else ever puts the token in the
     // URL. history.replaceState (not pushState) keeps this a no-op for the browser's back
     // button, same as GAS's single-page-load-per-identify model has no extra history entry.
+    //
+    // F3Go30-1f75: buildBookmarkableUrl_ also strips the signup routing params. Reaching here
+    // means the PAX is now identified into CHECK-IN, however they arrived; leaving cmd=signup on
+    // the URL meant the done card's own "bookmark this" advice produced a bookmark that reopened
+    // signup on every future launch.
     if (res.identityToken) {
       try {
-        var bookmarkUrl = new URL(location.href);
-        bookmarkUrl.searchParams.set('id', res.identityToken);
-        history.replaceState(null, '', bookmarkUrl);
+        history.replaceState(null, '', buildBookmarkableUrl_(location.href, res.identityToken));
       } catch (e) { /* not fatal — worst case the URL just isn't bookmarkable this visit */ }
     }
     $('idSignupBtn').classList.add('hidden');
@@ -2184,8 +2231,10 @@
         SAVED_IDENTITY_TOKEN = res.identityToken;
       }
       // Hidden only when there is neither a new token to spend nor an already-resolved check-in
-      // to go back to — i.e. a next-month signup by someone not registered for this month.
-      $('suDoneCheckinBtn').classList.toggle('hidden', !signupState.savedToken && !state.checkinReady);
+      // to go back to — i.e. a next-month signup by someone not registered for this month. The
+      // whole block goes, not just the button: "bookmark your personal link" is nonsense advice
+      // next to a link they have no way to reach yet (F3Go30-1f75).
+      $('suDoneCheckinBlock').classList.toggle('hidden', !signupState.savedToken && !state.checkinReady);
       showSignupStep_('done');
       // AC6 (F3Go30-k5fn.2): this save just registered the PAX for the month the calendar's
       // forward-nav signup gate was showing — mark it registered and drop its stale
@@ -2269,6 +2318,9 @@
       signupState.targetMonth = 'current';
       performSignupSave_($('suInfoNextBtn'));
     } else {
+      // Set once, on entry to the step — NOT inside renderSignupMonthChoices_, which re-runs on
+      // every option click and would keep overwriting what the PAX just picked.
+      signupState.targetMonth = defaultTargetMonth_(signupState.months, URL_TARGET_MONTH_);
       renderSignupMonthChoices_();
       showSignupStep_('choose');
     }

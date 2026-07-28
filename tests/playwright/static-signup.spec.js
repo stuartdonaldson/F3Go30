@@ -154,6 +154,21 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
     await expect(page.locator('#checkinHeading')).toContainText(STATIC_SIGNUP_PAX.f3Name);
     expect(loads).toBe(1);
+
+    // F3Go30-1f75: the done card tells the PAX to bookmark this page, so the URL they are now
+    // holding has to BE a check-in URL. It arrived here as ?cmd=signup; applyIdentifySuccess_
+    // must have installed the token and dropped the signup routing, keeping webapp intact.
+    const landed = new URL(page.url());
+    expect(landed.searchParams.get('id')).toBeTruthy();
+    expect(landed.searchParams.get('cmd')).toBeNull();
+    expect(landed.searchParams.get('targetMonth')).toBeNull();
+    expect(landed.searchParams.get('autoStart')).toBeNull();
+    expect(landed.searchParams.get('webapp')).toBe(checkinUrl);
+
+    // And the proof that matters: reloading that exact URL lands on check-in, not back on signup.
+    await page.goto(page.url());
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('#step-signup')).toBeHidden();
   });
 
   test('returning-PAX edit: identify prefills the existing registration and allows editing, no top-level navigation', async ({ page }) => {
