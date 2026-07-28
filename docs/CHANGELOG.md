@@ -27,6 +27,9 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+- If you sign up near the end of a month for next month, then use your check-in link before this
+  month is over, you're now asked whether you'd also like to join for the rest of this month —
+  instead of being dropped straight into a sign-up form as if you'd never registered at all. (v2.4.9)
 - Dark mode: check-in (both the app-hosted and static pages) now automatically matches your
   browser/OS light-or-dark preference, switching live if you flip your OS theme while the page
   is open.

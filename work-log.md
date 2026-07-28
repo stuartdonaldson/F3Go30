@@ -2230,3 +2230,17 @@ Open: `script/version.js` deliberately left uncommitted — the SIT deploy stamp
 
 ### Key Learnings:
 A live bonus-scoring test needs a type with genuine headroom in the current Sun-Sat period, or the sheet's own cap makes the write a no-op and the run is inconclusive rather than passing or failing — and the sheet's caps are not the caps `BonusTypes.js` declares (EHing FNG is capped by the sheet despite `weeklyCap: false`). Read the Tracker's per-type column back before trusting any score-movement assertion.
+
+## 2026-07-28 11:16:09
+_session 1efe2a5c-72ba-40a2-ba8a-3b80c54efdb9 · v3 · 07-28_
+
+### Objective 1: Fix confusing cross-month handoff between signup and the check-in link
+Rationale: "If someone signs up at the end of July for August... the checkin page... is not signed up for July, the current month, so it starts walking them through the signup. That's not a bad thing but we just had them sign up for July. It's a little confusing." Traced the actual code path (handleCheckinIdentify_'s PaxDB fallback, dashboardWebapp.js) and found it already resolves the data needed — the fix was to stop discarding it: compute whether the PaxDB fallback's matched month is next month vs. current, and branch the UI on that instead of always defaulting to a current-month signup wizard.
+Rejected: initially proposed landing the "No" choice on the check-in UI; the developer pointed out that doesn't work since the PAX still isn't registered for the current month and can't check in — replaced with a plain "check back next month" confirmation instead.
+Outcome [user-facing]: A PAX who already signed up for next month and then follows their bookmarkable check-in link now sees an explicit choice — "also sign up for the rest of this month" or "no, check back next month" — instead of being silently dropped into a signup wizard defaulted to a month they didn't intend.
+Outcome [developer-facing]: handleCheckinIdentify_ now returns knownPaxNextMonthRegistered/currentMonthLabel/nextMonthLabel, derived from the existing getCurrentAndNextMonths_/buildMonthNavigationPayload_ data (no new reads). New client step-nextMonthChoice interstitial in static-pages/src/index.html. Two new server tests covering the flagged/not-flagged cases. Deployed to PROD as v2.4.9 (F3Go30-ez8v).
+
+### Objective 2: Correct copy claiming the dashboard appears automatically after check-in  [accreted]
+Transition: raised mid-session while reviewing the same check-in flow: "I don't think that's true, i think they need to click the button to get to the dashboard."
+Rationale: Confirmed via code trace that submitCheckin_ only updates the status badge in place; reaching the dashboard requires tapping "Continue to Dashboard." Three places overstated automaticity: the signup done-card, the check-in identify subtitle, and the confirmation email's dashboardNote.
+Outcome [user-facing]: Corrected copy in all three places to say a "Continue to Dashboard" tap is required, rather than implying the dashboard appears on its own.
