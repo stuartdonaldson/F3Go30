@@ -65,11 +65,16 @@ function buildSignupEmailCopy_(options) {
 // (new signup, goal edit, plain reconfirm, missing) gets the same "here's how to use Go30" block.
 var CHECKIN_EMAIL_COPY_ = {
   checkinHeading: 'Record your daily scores',
-  checkinIntro: 'The Go30 check-in page is where you report your Daily Challenge each day — tap ' +
-    "I Hit it! or Missed it. This is your own personal link: bookmark it (or Add to Home Screen) " +
-    'and it will remember you, so you never have to type your name and email again.',
+  checkinIntro: 'The Go30 check-in page is where you report your Daily Challenge each day of your ' +
+    'Go30 month — tap I Hit it! or Missed it. This is your own personal link: bookmark it (or Add ' +
+    'to Home Screen) and it will remember you, so you never have to type your name and email again.',
   checkinLabel: 'Open my check-in page',
-  dashboardNote: "Right after you check in you'll see your dashboard — current streak, best 30-day " +
+  // F3Go30-1f75: the same email goes out for a next-month registration, where the page is
+  // already theirs but has nothing to record yet. Said once, plainly, rather than branching the
+  // whole email on which month was chosen.
+  notYetNote: "If you signed up for a month that hasn't started yet, the link works now — it just " +
+    "won't have anything to record until that month begins. Bookmark it either way.",
+  dashboardNote: "Once you check in you'll see your dashboard — current streak, best 30-day " +
     "streak, 7-day rolling average, your month-progress ring, your team's tile, and the full PAX " +
     'board. Tap the trophy (🏆) to log bonus points.',
   editHeading: 'Need to change something?',
@@ -98,6 +103,17 @@ function buildCheckinEmailLinks_(webAppBaseUrl, checkinSessionGuid) {
   };
 }
 
+/**
+ * buildCheckinEmailLinks_ against THIS deployment's own web app base URL — the resolution every
+ * email render already does inline. Extracted (F3Go30-1f75) so the signup save response can hand
+ * the client the very same personal check-in link the confirmation email is about to send,
+ * rather than rebuilding it and risking the two drifting apart.
+ */
+function resolveCheckinLinks_(checkinSessionGuid) {
+  var webAppBaseUrl = resolveWebAppBaseUrl_ ? resolveWebAppBaseUrl_() : '';
+  return buildCheckinEmailLinks_(webAppBaseUrl, checkinSessionGuid);
+}
+
 function renderSignupReuseEmailHtml_(options) {
   options = options || {};
   var copy = buildSignupEmailCopy_(options);
@@ -119,6 +135,7 @@ function renderSignupReuseEmailHtml_(options) {
       lines.push('<h2>' + c.checkinHeading + '</h2>');
       lines.push('<p>' + c.checkinIntro + '</p>');
       lines.push('<p><a href="' + links.checkinUrl + '">' + c.checkinLabel + '</a></p>');
+      lines.push('<p>' + c.notYetNote + '</p>');
       lines.push('<p>' + c.dashboardNote + '</p>');
     }
     // Secondary: edit registration (same session guid, signup route).
@@ -179,6 +196,8 @@ function buildSignupReuseEmailTemplate_(options) {
     bodyLines.push(c.checkinIntro);
     bodyLines.push(links.checkinUrl);
     bodyLines.push('');
+    bodyLines.push(c.notYetNote);
+    bodyLines.push('');
     bodyLines.push(c.dashboardNote);
   }
   if (links.editGoalsUrl) {
@@ -205,6 +224,9 @@ if (typeof module !== 'undefined' && module.exports) {
     buildSignupReuseEmailTemplate_: buildSignupReuseEmailTemplate_,
     renderSignupReuseEmailHtml_: renderSignupReuseEmailHtml_,
     resolveSignupEmailMode_: resolveSignupEmailMode_,
-    buildSignupEmailCopy_: buildSignupEmailCopy_
+    buildSignupEmailCopy_: buildSignupEmailCopy_,
+    buildCheckinEmailLinks_: buildCheckinEmailLinks_,
+    resolveCheckinLinks_: resolveCheckinLinks_,
+    CHECKIN_EMAIL_COPY_: CHECKIN_EMAIL_COPY_
   };
 }

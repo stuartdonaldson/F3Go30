@@ -120,6 +120,9 @@
   textarea { resize: vertical; }
   button.primary { width: 100%; padding: 14px; border: none; border-radius: 9px; background: var(--brand-bg); color: var(--brand-contrast); font-size: 18px; font-weight: bold; cursor: pointer; font-family: inherit; }
   button.secondary { width: 100%; margin-top: 10px; padding: 10px; border: none; border-radius: 9px; background: transparent; color: var(--link); font-size: 17px; cursor: pointer; font-family: inherit; }
+  /* F3Go30-1f75: the signup done card's check-in CTA is a real <a href>, not a button — it has to
+     be long-pressable, copyable and bookmarkable. Styled to read as the same primary control. */
+  a.primary { display: block; box-sizing: border-box; width: 100%; padding: 14px; border-radius: 9px; background: var(--brand-bg); color: var(--brand-contrast); font-size: 18px; font-weight: bold; font-family: inherit; text-align: center; text-decoration: none; }
   .checkin-row { display: flex; gap: 10px; margin-bottom: 8px; }
   .checkin-btn { flex: 1; padding: 16px 8px; border-radius: 10px; border: 2px solid var(--border); background: var(--input-bg); color: var(--text); font-family: inherit; font-size: 17px; font-weight: bold; cursor: pointer; text-align: center; }
   .checkin-btn.yes { color: var(--btn-yes-fg); }
@@ -467,14 +470,18 @@
         <p>Your Hard Commit is saved for <strong id="suSavedMonthLabel"></strong>.</p>
         <p class="muted">A confirmation email is on its way to <span id="suSavedEmailLabel"></span>.</p>
         <div id="suDoneCheckinBlock" style="margin-top:24px;">
-          <button class="primary" id="suDoneCheckinBtn">Continue to check in &rarr;</button>
+          <a class="primary" id="suDoneCheckinLink" href="#">Open my check-in page &rarr;</a>
           <p class="muted" style="margin-top:14px;text-align:left;">
-            Each day, tap <strong>I Hit it!</strong> or <strong>Missed it</strong> there, and your
-            dashboard comes up right after.
-          </p>
-          <p class="muted" style="text-align:left;">
             That page is <strong>your personal link</strong> &mdash; bookmark it or Add to Home
             Screen, and it will remember you, so you never have to type your name and email again.
+          </p>
+          <p class="muted" style="text-align:left;">
+            Each day of your Go30 month, tap <strong>I Hit it!</strong> or <strong>Missed it</strong>
+            there, and your dashboard comes up right after.
+          </p>
+          <p class="muted" id="suDoneNotYetNote" style="text-align:left;font-size:14px;color:var(--text-faint);">
+            Signed up for a month that hasn't started yet? The link works now &mdash; it just won't
+            have anything to record until that month begins.
           </p>
         </div>
         <p id="suDoneTrackerHelp" class="muted" style="margin-top:22px;font-size:14px;color:var(--text-faint);text-align:left;">
@@ -2040,7 +2047,6 @@
     teamType: '', team: '', who: '', what: '', how: '', phone: '', nag: false,
     targetMonth: 'current',
     feedbackRating: 0,
-    savedToken: null,
   };
 
   var SIGNUP_STEP_ORDER_ = ['intro', 'identify', 'info', 'choose', 'done'];
@@ -2072,7 +2078,6 @@
     opts = opts || {};
     hideApiError_();
     signupState.targetMonth = (targetMonth === 'next') ? 'next' : 'current';
-    signupState.savedToken = null;
     $('suIdError').classList.add('hidden');
     $('suF3Name').value = state.f3Name || '';
     $('suEmail').value = state.email || '';
@@ -2222,19 +2227,24 @@
       signupState.feedbackRating = 0;
       renderSignupFeedbackStars_();
       // A current-month save returns a session token (handleSignupSave_): the PAX can check in
-      // today. SignupApp.html spends that token on a top-level redirect into the check-in app;
-      // here it is simply stored, and "Continue to check in" resolves it in place. Storing it
-      // also means an installed cold launch resolves identity without a retype (F3Go30-833s.1).
-      signupState.savedToken = res.identityToken || null;
+      // today. Persisting it means an installed cold launch resolves identity without a retype
+      // (F3Go30-833s.1). Nothing spends it in-page any more — the done card's check-in CTA is a
+      // real navigation link now (F3Go30-1f75), so there is no in-page resolve to hand it to.
       if (res.identityToken) {
         saveTokenToStorage_(res.identityToken);
         SAVED_IDENTITY_TOKEN = res.identityToken;
       }
-      // Hidden only when there is neither a new token to spend nor an already-resolved check-in
-      // to go back to — i.e. a next-month signup by someone not registered for this month. The
-      // whole block goes, not just the button: "bookmark your personal link" is nonsense advice
-      // next to a link they have no way to reach yet (F3Go30-1f75).
-      $('suDoneCheckinBlock').classList.toggle('hidden', !signupState.savedToken && !state.checkinReady);
+      // F3Go30-1f75: the personal check-in link is offered for EVERY save the server could mint a
+      // session for, current month or next — a next-month registration's page is already theirs,
+      // it simply has nothing to record until the month starts. Keyed on checkinUrl, NOT on
+      // identityToken: that field means "spend this now" and the server withholds it for a
+      // next-month save, which is why this block used to come up empty for exactly the PAX who
+      // most needed the bookmark. The href is the server's URL, byte-identical to the one their
+      // confirmation email carries (buildSignupSaveResponse_ / buildCheckinEmailLinks_), so the
+      // bookmark they take from this card and the one they take from their inbox are one link.
+      var checkinUrl = res.checkinUrl || '';
+      $('suDoneCheckinLink').href = checkinUrl || '#';
+      $('suDoneCheckinBlock').classList.toggle('hidden', !checkinUrl);
       showSignupStep_('done');
       // AC6 (F3Go30-k5fn.2): this save just registered the PAX for the month the calendar's
       // forward-nav signup gate was showing — mark it registered and drop its stale
@@ -2250,33 +2260,6 @@
     }).catch(function(err) {
       showApiError_('save', err);
     }).finally(function() { setButtonLoading_(triggerBtn, false); });
-  }
-
-  /** The in-page replacement for SignupApp.html's post-save redirect into the check-in app:
-   * resolve the freshly-minted token through cmd=checkin's identify and paint the check-in
-   * step, without this document ever navigating. */
-  function resolveTokenIntoCheckin_(token) {
-    showStep('identify');
-    $('step-identify').classList.add('hidden');
-    $('step-tokenLoading').classList.remove('hidden');
-    callApi('identify', { token: token })
-      .then(function(res) {
-        if (res.config) applyServerConfig_(res.config);
-        if (res.matched) {
-          applyIdentifySuccess_(res);
-          saveCheckinSnapshot_(token, res);
-        } else {
-          showStep('identify');
-        }
-      })
-      .catch(function(err) {
-        showStep('signup');
-        showSignupStep_('done');
-        showApiError_('identify', err);
-      })
-      .finally(function() {
-        $('step-tokenLoading').classList.add('hidden');
-      });
   }
 
   $('suIntroNextBtn').addEventListener('click', function() { showSignupStep_('identify'); });
@@ -2327,11 +2310,6 @@
   });
 
   $('suSaveBtn').addEventListener('click', function() { performSignupSave_($('suSaveBtn')); });
-
-  $('suDoneCheckinBtn').addEventListener('click', function() {
-    if (signupState.savedToken) resolveTokenIntoCheckin_(signupState.savedToken);
-    else showStep('checkin');
-  });
 
   $('suSendFeedbackBtn').addEventListener('click', function() {
     hideApiError_();

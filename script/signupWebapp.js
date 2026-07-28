@@ -40,6 +40,12 @@ var createOrTouchCheckinSession_sw_ = (signupWebappCheckinSessionsModule_ && sig
 var resolveOrCreateCheckinSessionGuid_sw_ = (signupWebappCheckinSessionsModule_ && signupWebappCheckinSessionsModule_.resolveOrCreateCheckinSessionGuid_)
   || (typeof globalThis !== 'undefined' && globalThis.resolveOrCreateCheckinSessionGuid_);
 
+var signupWebappEmailModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./signupEmail.js')
+  : null;
+var resolveCheckinLinks_sw_ = (signupWebappEmailModule_ && signupWebappEmailModule_.resolveCheckinLinks_)
+  || (typeof globalThis !== 'undefined' && globalThis.resolveCheckinLinks_);
+
 function normalizeTeamValue_(value) {
   return String(value || '').trim();
 }
@@ -716,11 +722,31 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     : null;
 
   sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, !match, checkinSessionGuid);
+  return buildSignupSaveResponse_(targetMonth, months, checkinSessionGuid);
+}
+
+/**
+ * The save response. Extracted from handleSignupSave_ (F3Go30-1f75) so it is testable without
+ * standing up a spreadsheet, and so the two check-in fields — which mean different things — stay
+ * visibly distinct:
+ *
+ *   checkinUrl     the PAX's personal, bookmarkable check-in link. Present on EVERY save with a
+ *                  session guid, current month or next. Resolved through the same
+ *                  buildCheckinEmailLinks_ the confirmation email uses, so the link on the done
+ *                  card and the link in their inbox are one and the same. A next-month signup
+ *                  still gets this: the page is theirs, it simply has nothing to record until
+ *                  the month starts.
+ *   identityToken  "spend this now" — an installed client resolves it straight into the check-in
+ *                  view in place. Deliberately still current-month only: handing it out for a
+ *                  next-month save would send an old client into a month that does not exist yet
+ *                  (docs/OPERATIONS.md §API compatibility with installed clients).
+ */
+function buildSignupSaveResponse_(targetMonth, months, checkinSessionGuid) {
   var response = { ok: true, savedMonth: targetMonth.label, trackerUrl: targetMonth.trackerUrl };
-  // A current-month signup means this PAX can check in today — hand the client the same session
-  // guid so SignupApp.html can send them straight into the check-in app instead of leaving them
-  // on the confirmation with no obvious next step. A next-month signup has nothing to check into
-  // yet, so no handoff for that case (the emailed bookmark still works once the month starts).
+  if (checkinSessionGuid) {
+    var links = resolveCheckinLinks_sw_ ? resolveCheckinLinks_sw_(checkinSessionGuid) : null;
+    if (links && links.checkinUrl) response.checkinUrl = links.checkinUrl;
+  }
   if (checkinSessionGuid && months.current && targetMonth.sheetId === months.current.sheetId) {
     response.identityToken = checkinSessionGuid;
   }
@@ -814,6 +840,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getCurrentAndNextMonths_,
     handleSignupIdentify_,
     handleSignupSave_,
+    buildSignupSaveResponse_,
     handleSignupFeedback_,
   };
 }

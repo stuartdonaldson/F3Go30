@@ -94,4 +94,33 @@ const signupEmail = require('../script/signupEmail.js');
   delete require.cache[require.resolve('../script/signupEmail.js')];
 }
 
+// --- F3Go30-1f75: terminology that is true for a NEXT-month signup too -----------------------
+// The same confirmation email goes out whether the PAX registered for the month underway or the
+// one ahead. Copy that presumes they can check in today is wrong half the time, and the done
+// card now shares this vocabulary, so it has to hold on both surfaces.
+{
+  const copy = require('../script/signupEmail.js').CHECKIN_EMAIL_COPY_;
+
+  assert.ok(copy, 'CHECKIN_EMAIL_COPY_ must be exported so the done card can be checked against it');
+
+  var joined = [copy.checkinHeading, copy.checkinIntro, copy.checkinLabel, copy.dashboardNote].join(' ');
+  assert.doesNotMatch(joined, /\btoday\b/i,
+    'check-in copy must not say "today" — a next-month registration has nothing to record yet');
+  assert.doesNotMatch(joined, /Continue to check in/i,
+    '"continue to check in" asserts the page is usable right now, which is not always true');
+
+  assert.ok(copy.notYetNote, 'copy must explain the case where the month has not started yet');
+  assert.match(copy.notYetNote, /month/i, 'the not-yet note must name the month as what it waits on');
+
+  var msg = signupEmail.buildSignupReuseEmailTemplate_({
+    mode: 'new_signup',
+    f3Name: 'Anchor',
+    trackerUrl: 'https://tracker.example.com',
+    checkinSessionGuid: 'sess-123',
+    registrationMonth: 'August 2026',
+  });
+  assert.ok(msg.htmlBody.indexOf(copy.notYetNote) !== -1, 'HTML body carries the not-yet note');
+  assert.ok(msg.body.indexOf(copy.notYetNote) !== -1, 'plaintext body carries the not-yet note');
+}
+
 console.log('test_signup_email.js: all assertions passed');

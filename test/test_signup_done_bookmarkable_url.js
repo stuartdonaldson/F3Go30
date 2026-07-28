@@ -167,13 +167,50 @@ const BOTH_MONTHS = { current: { label: 'July 2026' }, next: { label: 'August 20
   var src = readStaticPage_();
   var card = src.match(/<div id="su-step-done"[\s\S]*?\n      <\/div>/);
   assert.ok(card, 'su-step-done card not found in index.html');
-  var checkinIdx = card[0].indexOf('suDoneCheckinBtn');
+  var checkinIdx = card[0].indexOf('suDoneCheckinLink');
   var trackerIdx = card[0].indexOf('suSavedTrackerLink');
-  assert.notEqual(checkinIdx, -1, 'the done card must still offer the check-in action');
+  assert.notEqual(checkinIdx, -1, 'the done card must offer the personal check-in link');
   assert.notEqual(trackerIdx, -1, 'the tracker link must remain available as a fallback');
-  assert.ok(checkinIdx < trackerIdx, 'the check-in action must come before the tracker link on the done card');
-  assert.match(card[0], /class="primary" id="suDoneCheckinBtn"/,
-    'check-in is the primary CTA on the done card; the tracker link is not');
+  assert.ok(checkinIdx < trackerIdx, 'the check-in link must come before the tracker link on the done card');
+})();
+
+// ── AC12: the check-in link is a NAVIGATION anchor, offered whatever month they signed up for ─
+
+(function testTheCheckinLinkIsAnAnchorNotAnInPageButton() {
+  var src = readStaticPage_();
+  var card = src.match(/<div id="su-step-done"[\s\S]*?\n      <\/div>/);
+  assert.match(card[0], /<a [^>]*id="suDoneCheckinLink"[^>]*href=/,
+    'bookmarking requires a real <a href> to the check-in page, not an in-page button');
+})();
+
+(function testTheLinkHrefIsTakenFromTheServersCheckinUrl() {
+  var src = readStaticPage_();
+  var fn = src.match(/function performSignupSave_\([\s\S]*?\n  \}/);
+  assert.ok(fn, 'performSignupSave_ not found in index.html');
+  assert.match(fn[0], /suDoneCheckinLink'\)\.href\s*=\s*[\s\S]{0,80}checkinUrl/,
+    "the link must point at the server's checkinUrl — the same URL the confirmation email sends");
+})();
+
+(function testTheBlockIsShownWheneverThereIsACheckinUrlRegardlessOfMonth() {
+  // The bug: the block keyed off identityToken, which the server withholds for a next-month
+  // save, so a next-month signup saw no link at all.
+  var src = readStaticPage_();
+  var fn = src.match(/function performSignupSave_\([\s\S]*?\n  \}/);
+  var toggle = fn[0].match(/suDoneCheckinBlock'\)\.classList\.toggle\([^;]*\);/);
+  assert.ok(toggle, 'performSignupSave_ must decide whether to show suDoneCheckinBlock');
+  assert.ok(toggle[0].indexOf('identityToken') === -1 && toggle[0].indexOf('savedToken') === -1,
+    'showing the personal link must NOT depend on identityToken/savedToken — that is current-month only');
+  assert.match(toggle[0], /checkinUrl/, 'it must depend on whether a personal check-in URL exists');
+})();
+
+(function testNoContinueToCheckInWordingSurvivesOnTheCard() {
+  // "Continue to check in" asserts the check-in page is usable right now, which is false for a
+  // next-month signup — the page is theirs, it just has nothing to record yet.
+  var src = readStaticPage_();
+  var card = src.match(/<div id="su-step-done"[\s\S]*?\n      <\/div>/);
+  var copy = card[0].replace(/\s+/g, ' ');
+  assert.doesNotMatch(copy, /Continue to check in/i,
+    'the card must not promise check-in is available today — it may not be');
 })();
 
 (function testDoneCardCarriesBookmarkGuidance() {

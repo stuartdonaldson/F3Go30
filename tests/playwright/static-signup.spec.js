@@ -50,7 +50,20 @@ const STATIC_SIGNUP_PAX = {
 // needs re-establishing — so the test below only asserts the redirect target, it never saves.
 const LATE_SIGNUP_PAX = { f3Name: 'LateSignupTest', email: 'latesignup@example.com' };
 
+// Same reasoning as static-checkin.spec.js's constant of the same name, and the same defect: the
+// 15000 waits here predate F3Go30-313u, which bounded the client transport at a 12s read timeout
+// plus one retry. A lost read now surfaces at up to 24s and RECOVERS, so 15000 reports correct
+// behaviour as a failure — and only when SIT happens to drop a request, so it flakes by load
+// rather than by code. Caught doing exactly that on the month-boundary test, 2026-07-28.
+// These are "did this wedge?" guards, not latency budgets.
+const LIVE_ROUND_TRIP_MS = 30000;
+
 test.use({ storageState: undefined, viewport: { width: 390, height: 844 }, headless: true });
+
+// File-scoped, leaving playwright.config.js's shared 120000 (sized for the slow GAS editor specs)
+// alone: these tests chain several LIVE_ROUND_TRIP_MS waits and would otherwise die as
+// "Test ended" mid-flow, relocating the same false red rather than removing it.
+test.describe.configure({ timeout: 240000 });
 
 function loadSettings() {
   const p = path.join(ROOT, 'local.settings.json');
@@ -92,7 +105,7 @@ async function saveStaticSignup(page) {
     await page.locator('.month-option[data-key="current"]').click();
     await page.locator('#suSaveBtn').click();
   }
-  await expect(page.locator('#su-step-done')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('#su-step-done')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
 }
 
 test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', () => {
@@ -129,7 +142,7 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     page.on('load', () => loads++);
 
     await page.goto(signupPageUrl());
-    await expect(page.locator('#step-signup')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-signup')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#su-step-intro')).toBeVisible();
 
     await page.locator('#suIntroNextBtn').click();
@@ -138,7 +151,7 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     await page.locator('#suF3Name').fill(STATIC_SIGNUP_PAX.f3Name);
     await page.locator('#suEmail').fill(STATIC_SIGNUP_PAX.email);
     await page.locator('#suIdentifyBtn').click();
-    await expect(page.locator('#su-step-info')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#su-step-info')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
 
     await fillStaticSignupTeamAndGoals(page, STATIC_SIGNUP_PAX);
     await saveStaticSignup(page);
@@ -147,28 +160,35 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     expect(loads).toBe(1);
     expect(new URL(page.url()).origin).toBe(staticOrigin);
 
-    // performSignupSave_'s "Continue to check in" resolves the freshly-minted token in place
-    // (resolveTokenIntoCheckin_) — the in-page replacement for SignupApp.html's post-save
-    // top-level redirect (F3Go30-833s.9) — still no navigation.
-    await page.locator('#suDoneCheckinBtn').click();
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('#checkinHeading')).toContainText(STATIC_SIGNUP_PAX.f3Name);
-    expect(loads).toBe(1);
+    // F3Go30-1f75: the done card's personal check-in link. It must be OFFERED — on SIT the block
+    // came up hidden, because it was keyed on identityToken, which the server withholds for a
+    // next-month save — and it must be a real navigation anchor carrying ?id=, since the card
+    // tells the PAX to bookmark it.
+    await expect(page.locator('#suDoneCheckinBlock')).toBeVisible();
+    const href = await page.locator('#suDoneCheckinLink').getAttribute('href');
+    expect(href).toBeTruthy();
+    const personal = new URL(href);
+    const sessionId = personal.searchParams.get('id');
+    expect(sessionId).toBeTruthy();
+    expect(personal.searchParams.get('cmd')).toBeNull();
 
-    // F3Go30-1f75: the done card tells the PAX to bookmark this page, so the URL they are now
-    // holding has to BE a check-in URL. It arrived here as ?cmd=signup; applyIdentifySuccess_
-    // must have installed the token and dropped the signup routing, keeping webapp intact.
-    const landed = new URL(page.url());
-    expect(landed.searchParams.get('id')).toBeTruthy();
-    expect(landed.searchParams.get('cmd')).toBeNull();
-    expect(landed.searchParams.get('targetMonth')).toBeNull();
-    expect(landed.searchParams.get('autoStart')).toBeNull();
-    expect(landed.searchParams.get('webapp')).toBe(checkinUrl);
+    // The card must not promise check-in is usable today — it isn't, for a next-month signup.
+    await expect(page.locator('#su-step-done')).not.toContainText(/continue to check in/i);
 
-    // And the proof that matters: reloading that exact URL lands on check-in, not back on signup.
-    await page.goto(page.url());
-    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 30000 });
+    // And the proof that matters: opening that session id on this page lands on check-in, not
+    // signup. Driven against the local origin rather than by clicking the anchor, because the
+    // server builds it against the configured GitHub Pages host, which is not where this test
+    // serves the page from.
+    await page.goto(`${staticOrigin}/index.html?webapp=${encodeURIComponent(checkinUrl)}&id=${sessionId}`);
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#step-signup')).toBeHidden();
+    await expect(page.locator('#checkinHeading')).toContainText(STATIC_SIGNUP_PAX.f3Name);
+
+    // applyIdentifySuccess_ leaves the address bar bookmarkable and free of signup routing.
+    const landed = new URL(page.url());
+    expect(landed.searchParams.get('id')).toBe(sessionId);
+    expect(landed.searchParams.get('cmd')).toBeNull();
+    expect(landed.searchParams.get('webapp')).toBe(checkinUrl);
   });
 
   test('returning-PAX edit: identify prefills the existing registration and allows editing, no top-level navigation', async ({ page }) => {
@@ -176,13 +196,13 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     page.on('load', () => loads++);
 
     await page.goto(signupPageUrl());
-    await expect(page.locator('#su-step-intro')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#su-step-intro')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await page.locator('#suIntroNextBtn').click();
 
     await page.locator('#suF3Name').fill(STATIC_SIGNUP_PAX.f3Name);
     await page.locator('#suEmail').fill(STATIC_SIGNUP_PAX.email);
     await page.locator('#suIdentifyBtn').click();
-    await expect(page.locator('#su-step-info')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#su-step-info')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
 
     // Matched: the "new signup" test above already saved this PAX — prefill must reflect it.
     await expect(page.locator('#suMatchedCallout')).toBeVisible();
@@ -229,7 +249,7 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     page.on('load', () => loads++);
 
     await page.goto(checkinPageUrl());
-    await expect(page.locator('#step-identify')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-identify')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
 
     await page.locator('#idF3Name').fill(LATE_SIGNUP_PAX.f3Name);
     await page.locator('#idEmail').fill(LATE_SIGNUP_PAX.email);
@@ -238,8 +258,8 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     // applyTypedIdentifyResult_'s knownPaxNotRegistered branch calls openSignup_('current')
     // in place — no cross-origin hop to script.google.com/…cmd=signup the way GAS's
     // attemptTopRedirect_-driven fallback needs.
-    await expect(page.locator('#step-signup')).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('#su-step-info')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#step-signup')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await expect(page.locator('#su-step-info')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#suInfoF3Name')).toContainText(LATE_SIGNUP_PAX.f3Name);
 
     expect(loads).toBe(1);
