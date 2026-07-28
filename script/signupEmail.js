@@ -74,9 +74,9 @@ var CHECKIN_EMAIL_COPY_ = {
   // whole email on which month was chosen.
   notYetNote: "If you signed up for a month that hasn't started yet, the link works now — it just " +
     "won't have anything to record until that month begins. Bookmark it either way.",
-  dashboardNote: "Once you check in you'll see your dashboard — current streak, best 30-day " +
-    "streak, 7-day rolling average, your month-progress ring, your team's tile, and the full PAX " +
-    'board. Tap the trophy (🏆) to log bonus points.',
+  dashboardNote: "After you check in, tap Continue to Dashboard to see your current streak, best " +
+    "30-day streak, 7-day rolling average, your month-progress ring, your team's tile, and the " +
+    'full PAX board. Tap the trophy (🏆) to log bonus points.',
   editHeading: 'Need to change something?',
   editIntro: 'Update your goals, team, email, or Nag setting any time — this opens your registration ' +
     'prefilled with your current details:',

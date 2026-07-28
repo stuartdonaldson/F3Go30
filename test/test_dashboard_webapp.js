@@ -553,6 +553,80 @@ var PAXDB_HEADERS_ = ['F3 Name', 'Email', 'SheetId', 'Team', 'WHO', 'WHAT', 'HOW
   assert.equal(paxDbCalled, false);
 })();
 
+// F3Go30-ez8v: tail-of-month case — a PAX who signed up for NEXT month (not current) gets
+// knownPaxNextMonthRegistered:true instead of being silently carried into a signup wizard
+// defaulted to the current month with no acknowledgement of what they already did.
+var LINKS_HEADERS_TEST_ = ['Date Modified', 'StartDate', 'SpreadsheetName', 'TrackerURL', 'SheetId'];
+function linksRow_(sheetId, startDateIso) {
+  var row = new Array(LINKS_HEADERS_TEST_.length).fill('');
+  row[LINKS_HEADERS_TEST_.indexOf('StartDate')] = startDateIso;
+  row[LINKS_HEADERS_TEST_.indexOf('SheetId')] = sheetId;
+  row[LINKS_HEADERS_TEST_.indexOf('TrackerURL')] = 'https://x/' + sheetId;
+  return row;
+}
+var EMPTY_RESPONSES_HEADERS_TEST_ = [
+  'Timestamp', 'Email Address', 'Are you currently participating in Go30?', 'F3 Name',
+  'Team type', 'Team', 'Goal or other team name', 'WHO do you ultimately want to become?',
+  'WHAT is your Go30 Challenge?', 'HOW are you going to be successful this month?',
+  'Cell Phone Number', 'NAG email?', 'Constructive Comments',
+];
+function makeFakeEmptyResponsesSheet_() {
+  return {
+    getRange: function(row) { return { getValues: function() { return row === 1 ? [EMPTY_RESPONSES_HEADERS_TEST_] : []; } }; },
+    getLastRow: function() { return 1; },
+    getLastColumn: function() { return EMPTY_RESPONSES_HEADERS_TEST_.length; },
+  };
+}
+function makeFakeCrossMonthSpreadsheet_(paxDbRows) {
+  return {
+    getSheetByName: function(name) {
+      if (name === 'TrackerDB') {
+        return makeFakeDataRangeSheet_test_([
+          LINKS_HEADERS_TEST_,
+          linksRow_('sheet-jul', new Date(2026, 6, 1)),
+          linksRow_('sheet-aug', new Date(2026, 7, 1)),
+        ]);
+      }
+      if (name === 'PaxDB') return makeFakeDataRangeSheet_test_([PAXDB_HEADERS_].concat(paxDbRows));
+      return null;
+    },
+  };
+}
+function makeFakeDataRangeSheet_test_(rows) {
+  return { getDataRange: function() { return { getValues: function() { return rows; } }; } };
+}
+
+(function testHandleCheckinIdentifyFlagsNextMonthAlreadyRegistered() {
+  global.SpreadsheetApp = { openById: function() { return { getSheetByName: function(name) { return name === 'Responses' ? makeFakeEmptyResponsesSheet_() : null; } }; } };
+  var fakeSpreadsheet = makeFakeCrossMonthSpreadsheet_([
+    ['LateSignupTest', 'latesignup@example.com', 'sheet-aug', 'Crucible', 'w', 'wh', 'ho', 'ao', '', '', ''],
+  ]);
+  var res = handleCheckinIdentify_(fakeSpreadsheet, {
+    f3Name: 'LateSignupTest', email: 'latesignup@example.com', contextDate: '2026-07-15',
+  });
+  assert.equal(res.matched, false);
+  assert.equal(res.knownPaxNotRegistered, true);
+  assert.equal(res.knownPaxNextMonthRegistered, true);
+  assert.ok(res.currentMonthLabel);
+  assert.ok(res.nextMonthLabel);
+  delete global.SpreadsheetApp;
+})();
+
+(function testHandleCheckinIdentifyDoesNotFlagWhenNotRegisteredForNextMonthEither() {
+  global.SpreadsheetApp = { openById: function() { return { getSheetByName: function(name) { return name === 'Responses' ? makeFakeEmptyResponsesSheet_() : null; } }; } };
+  // PaxDB row exists but for neither the current (July) nor next (August) month — e.g. a stale
+  // prior-month record. This must NOT trip knownPaxNextMonthRegistered.
+  var fakeSpreadsheet = makeFakeCrossMonthSpreadsheet_([
+    ['LateSignupTest', 'latesignup@example.com', 'sheet-jun', 'Crucible', 'w', 'wh', 'ho', 'ao', '', '', ''],
+  ]);
+  var res = handleCheckinIdentify_(fakeSpreadsheet, {
+    f3Name: 'LateSignupTest', email: 'latesignup@example.com', contextDate: '2026-07-15',
+  });
+  assert.equal(res.knownPaxNotRegistered, true);
+  assert.equal(res.knownPaxNextMonthRegistered, false);
+  delete global.SpreadsheetApp;
+})();
+
 console.log('test_dashboard_webapp.js: PaxDB-fallback assertions passed');
 
 // ── checkNextMonthRegistration_'s nudge-window gate (F3Go30 hardening work 2026-07) ─────────

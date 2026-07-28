@@ -358,6 +358,22 @@
       <div class="card"><p class="muted">Signing you in…</p></div>
     </div>
 
+    <!-- F3Go30-ez8v: tail-of-month case — this PAX is already signed up for NEXT month but not
+         the CURRENT one (e.g. they signed up in the last days of July for August). Rather than
+         silently dropping them into a signup wizard defaulted to the current month with no
+         acknowledgement of what they already did, ask first. -->
+    <div id="step-nextMonthChoice" class="hidden">
+      <div id="nmcChoiceCard" class="card">
+        <h2>Already signed up</h2>
+        <p id="nmcChoiceText" class="muted"></p>
+        <button class="primary" id="nmcYesBtn" style="margin-top:10px;"></button>
+        <button class="secondary" id="nmcNoBtn" style="margin-top:10px;"></button>
+      </div>
+      <div id="nmcDoneCard" class="card hidden center">
+        <p id="nmcDoneText"></p>
+      </div>
+    </div>
+
     <!-- F3Go30-833s.9: the signup flow, ported from script/SignupApp.html so it runs as a step
          of THIS document rather than a cross-origin top-level navigation to script.google.com.
          Sub-steps are driven by showSignupStep_(), not showStep() — showStep('signup') shows
@@ -477,7 +493,7 @@
           </p>
           <p class="muted" style="text-align:left;">
             Each day of your Go30 month, tap <strong>I Hit it!</strong> or <strong>Missed it</strong>
-            there, and your dashboard comes up right after.
+            there, then tap <strong>Continue to Dashboard</strong> to see your streak and progress.
           </p>
           <p class="muted" id="suDoneNotYetNote" style="text-align:left;font-size:14px;color:var(--text-faint);">
             Signed up for a month that hasn't started yet? The link works now &mdash; it just won't
@@ -508,7 +524,7 @@
     <div id="step-identify">
       <div class="card">
         <h1>Daily Check-in</h1>
-        <p class="muted">Enter your F3 name and email to check in for today and see your dashboard.</p>
+        <p class="muted">Enter your F3 name and email to check in for today, then continue to your dashboard.</p>
         <form id="identifyForm">
           <label class="field-label">F3 Name</label>
           <input type="text" id="idF3Name" name="f3Name" placeholder="e.g. Splinter">
@@ -1195,13 +1211,39 @@
   applyVersionState_(STATIC_BUILD_VERSION_, null);
 
   function showStep(name) {
-    ['identify', 'checkin', 'dashboard', 'bonus', 'signup'].forEach(function(s) {
+    ['identify', 'checkin', 'dashboard', 'bonus', 'signup', 'nextMonthChoice'].forEach(function(s) {
       $('step-' + s).classList.toggle('hidden', s !== name);
     });
     $('moreBtn').classList.toggle('hidden', name !== 'dashboard');
-    $('bonusBtn').classList.toggle('hidden', name === 'identify' || name === 'bonus' || name === 'signup');
+    $('bonusBtn').classList.toggle('hidden', name === 'identify' || name === 'bonus' || name === 'signup' || name === 'nextMonthChoice');
     if (name === 'checkin' || name === 'dashboard') state.bonusReturnStep = name;
   }
+
+  /** F3Go30-ez8v: a known PAX who's registered for NEXT month but not the current one — offer the
+   * choice instead of silently opening the signup wizard defaulted to the current month. */
+  function openNextMonthChoice_(res) {
+    saveIdentityToStorage_(res.f3Name, res.email);
+    state.f3Name = res.f3Name;
+    state.email = res.email;
+    state.nmcCurrentMonthLabel = res.currentMonthLabel || 'this month';
+    state.nmcNextMonthLabel = res.nextMonthLabel || 'next month';
+    $('nmcChoiceCard').classList.remove('hidden');
+    $('nmcDoneCard').classList.add('hidden');
+    $('nmcChoiceText').textContent = "You're signed up for " + state.nmcNextMonthLabel +
+      " already, but not for " + state.nmcCurrentMonthLabel + ' yet.';
+    $('nmcYesBtn').textContent = 'Yes, sign me up for ' + state.nmcCurrentMonthLabel;
+    $('nmcNoBtn').textContent = "No, I'll check back for " + state.nmcNextMonthLabel;
+    showStep('nextMonthChoice');
+  }
+
+  $('nmcYesBtn').addEventListener('click', function() {
+    openSignup_('current');
+  });
+  $('nmcNoBtn').addEventListener('click', function() {
+    $('nmcChoiceCard').classList.add('hidden');
+    $('nmcDoneCard').classList.remove('hidden');
+    $('nmcDoneText').textContent = 'Okay — check back for ' + state.nmcNextMonthLabel + '. See you then!';
+  });
 
   function showApiError_(action, err) {
     // F3Go30-313u AC5: a request the browser killed because this document is being torn down is
@@ -1437,10 +1479,16 @@
       // F3Go30-833s.9: this PAX is known but has no registration for the current month — open
       // the signup step in place. Previously a top-level cross-origin navigation to the GAS
       // signup page, which on an installed iOS app handed the PAX off to Safari mid-flow.
-      saveIdentityToStorage_(result.f3Name, result.email);
-      state.f3Name = result.f3Name;
-      state.email = result.email;
-      openSignup_('current');
+      // F3Go30-ez8v: unless they're already registered for NEXT month (tail-of-month signup),
+      // in which case ask first instead of dropping them straight into a current-month wizard.
+      if (result.knownPaxNextMonthRegistered) {
+        openNextMonthChoice_(result);
+      } else {
+        saveIdentityToStorage_(result.f3Name, result.email);
+        state.f3Name = result.f3Name;
+        state.email = result.email;
+        openSignup_('current');
+      }
     } else {
       $('idF3Name').value = result.submittedF3Name || '';
       $('idEmail').value = result.submittedEmail || '';
@@ -1521,11 +1569,17 @@
           // signup step in place, with their identity already in memory. openSignup_ calls
           // showStep('signup'), which also hides whatever step was up (possibly #step-checkin,
           // painted a moment earlier from the snapshot).
+          // F3Go30-ez8v: unless they're already registered for NEXT month (tail-of-month
+          // signup) — ask first instead of dropping them straight into a current-month wizard.
           clearCheckinSnapshot_();
-          saveIdentityToStorage_(res.f3Name, res.email);
-          state.f3Name = res.f3Name;
-          state.email = res.email;
-          openSignup_('current');
+          if (res.knownPaxNextMonthRegistered) {
+            openNextMonthChoice_(res);
+          } else {
+            saveIdentityToStorage_(res.f3Name, res.email);
+            state.f3Name = res.f3Name;
+            state.email = res.email;
+            openSignup_('current');
+          }
         } else {
           // matched:false (revoked/stale token) or a plain miss: clear any stale snapshot and fall
           // back to the blank identify form, even if a snapshot had just been painted.

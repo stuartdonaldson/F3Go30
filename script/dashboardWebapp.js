@@ -1656,13 +1656,26 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     // knownPaxNotRegistered to auto-carry them into signup instead of a dead-end message.
     var paxDbMatch = findPaxDbMatch_dw_(templateSpreadsheet, f3Name, email);
     if (paxDbMatch) {
-      GasLogger.log('checkinWebapp.identify.result', {
-        matched: false, knownPaxNotRegistered: true, tokenInvalid: !!payload.token, durationMs: Date.now() - t0,
-      });
       var knownPaxNav = buildMonthNavigationPayload_dw_(templateSpreadsheet, paxDbMatch.f3Name);
+      // F3Go30-ez8v: distinguish "never signed up" from "already signed up for NEXT month,
+      // just not the current one" — the latter is the confusing tail-of-month case where a PAX
+      // who just completed signup for next month follows their check-in link and would otherwise
+      // be dropped straight into a signup wizard defaulted to the current month with no context
+      // that they're already registered elsewhere. currentAndNext is purely date-driven (no PAX
+      // identity involved), so it's safe to compute even though identity.matched is false here.
+      var currentAndNext = getCurrentAndNextMonths_dw_(templateSpreadsheet, null, payload.contextDate);
+      var nextMonthKey = currentAndNext.next ? _dashboardIsoDate_(new Date(currentAndNext.next.startDate)).slice(0, 7) : null;
+      var knownPaxNextMonthRegistered = !!(nextMonthKey && knownPaxNav.registeredMonthKeys.indexOf(nextMonthKey) !== -1);
+      GasLogger.log('checkinWebapp.identify.result', {
+        matched: false, knownPaxNotRegistered: true, knownPaxNextMonthRegistered: knownPaxNextMonthRegistered,
+        tokenInvalid: !!payload.token, durationMs: Date.now() - t0,
+      });
       return {
         ok: true, matched: false, tokenInvalid: !!payload.token,
         knownPaxNotRegistered: true, f3Name: paxDbMatch.f3Name, email: paxDbMatch.email,
+        knownPaxNextMonthRegistered: knownPaxNextMonthRegistered,
+        currentMonthLabel: currentAndNext.current ? currentAndNext.current.label : null,
+        nextMonthLabel: currentAndNext.next ? currentAndNext.next.label : null,
         config: checkinClientConfig_dw_(templateSpreadsheet),
         availableMonths: knownPaxNav.availableMonths,
         registeredMonthKeys: knownPaxNav.registeredMonthKeys,
