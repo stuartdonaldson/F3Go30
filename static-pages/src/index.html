@@ -432,21 +432,17 @@
         <label class="field-label">Team type</label>
         <div class="team-type-row">
           <label class="team-type-option" id="suTtAoOption"><input type="radio" name="suTt" value="ao"> AO-based</label>
-          <label class="team-type-option" id="suTtGoalOption"><input type="radio" name="suTt" value="goal"> Goal-based</label>
-          <label class="team-type-option" id="suTtOtherOption"><input type="radio" name="suTt" value="other"> Other</label>
+          <label class="team-type-option" id="suTtOtherOption"><input type="radio" name="suTt" value="other"> Custom Team</label>
         </div>
 
         <div id="suTtAoBlock" class="hidden">
           <label class="field-label">AO Team</label>
           <select id="suTeamAoSelect"></select>
         </div>
-        <div id="suTtGoalBlock" class="hidden">
-          <label class="field-label">Goal-based Team</label>
-          <select id="suTeamGoalSelect"></select>
-        </div>
         <div id="suTtOtherBlock" class="hidden">
-          <label class="field-label">Team name</label>
-          <input type="text" id="suTeamOtherInput" placeholder="Type your team name">
+          <label class="field-label">Team name (pick a suggestion or type your own)</label>
+          <input type="text" id="suTeamOtherInput" list="suTeamSuggestions" placeholder="Type your team name">
+          <datalist id="suTeamSuggestions"></datalist>
         </div>
 
         <label class="field-label">WHO do you ultimately want to become?</label>
@@ -2166,7 +2162,7 @@
 
         signupState.wasMatched = !!res.matched;
         var d = (res.matched && res.data) ? res.data : {};
-        signupState.teamType = d.teamType || '';
+        signupState.teamType = normalizeSignupTeamType_(d.teamType);
         signupState.team = d.team || '';
         signupState.who = d.who || '';
         signupState.what = d.what || '';
@@ -2198,14 +2194,37 @@
     });
   }
 
+  function populateSignupTeamSuggestions_(list) {
+    var listEl = $('suTeamSuggestions');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    var seen = Object.create(null);
+    (list || []).forEach(function(name) {
+      var value = String(name || '').trim();
+      if (!value) return;
+      var key = value.toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      var opt = document.createElement('option');
+      opt.value = value;
+      listEl.appendChild(opt);
+    });
+  }
+
+  function normalizeSignupTeamType_(teamType) {
+    if (teamType === 'ao') return 'ao';
+    if (teamType === 'goal') return 'other';
+    if (teamType === 'other') return 'other';
+    return '';
+  }
+
   function renderSignupTeamTypeUI_() {
-    ['ao', 'goal', 'other'].forEach(function(t) {
+    ['ao', 'other'].forEach(function(t) {
       var optionEl = $('suTt' + t.charAt(0).toUpperCase() + t.slice(1) + 'Option');
       optionEl.classList.toggle('selected', signupState.teamType === t);
       optionEl.querySelector('input').checked = signupState.teamType === t;
     });
     $('suTtAoBlock').classList.toggle('hidden', signupState.teamType !== 'ao');
-    $('suTtGoalBlock').classList.toggle('hidden', signupState.teamType !== 'goal');
     $('suTtOtherBlock').classList.toggle('hidden', signupState.teamType !== 'other');
   }
 
@@ -2215,9 +2234,8 @@
     $('suInfoF3Name').textContent = state.f3Name;
     $('suInfoEmail').textContent = state.email;
     populateSignupTeamSelect_($('suTeamAoSelect'), signupState.aoList);
-    populateSignupTeamSelect_($('suTeamGoalSelect'), signupState.goalList);
+    populateSignupTeamSuggestions_(signupState.goalList);
     $('suTeamAoSelect').value = signupState.teamType === 'ao' ? signupState.team : '';
-    $('suTeamGoalSelect').value = signupState.teamType === 'goal' ? signupState.team : '';
     $('suTeamOtherInput').value = signupState.teamType === 'other' ? signupState.team : '';
     $('suWhoInput').value = signupState.who;
     $('suWhatInput').value = signupState.what;
@@ -2334,7 +2352,7 @@
     runSignupIdentify_(f3Name, email, $('suIdentifyBtn'));
   });
 
-  ['ao', 'goal', 'other'].forEach(function(t) {
+  ['ao', 'other'].forEach(function(t) {
     $('suTt' + t.charAt(0).toUpperCase() + t.slice(1) + 'Option').addEventListener('click', function() {
       signupState.teamType = t;
       signupState.team = '';
@@ -2342,7 +2360,6 @@
     });
   });
   $('suTeamAoSelect').addEventListener('change', function() { signupState.team = this.value; });
-  $('suTeamGoalSelect').addEventListener('change', function() { signupState.team = this.value; });
   $('suTeamOtherInput').addEventListener('input', function() { signupState.team = this.value; });
   $('suWhoInput').addEventListener('input', function() { signupState.who = this.value; });
   $('suWhatInput').addEventListener('input', function() { signupState.what = this.value; });
