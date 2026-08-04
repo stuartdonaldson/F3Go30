@@ -2326,3 +2326,24 @@ Outcome [internal]: F3Go30-uz9e.3 updated with the live-verification comment and
 
 ### Key Learnings:
 Playwright's `page.request.post` against GAS's `/exec` endpoint fails through the 302→`script.googleusercontent.com/macros/echo` redirect: `APIRequestContext` converts the POST to a GET on redirect, and the echo URL refuses GET (405 + HTML), so the caller gets HTML where it expected JSON — reproduces with plain `curl -L` too, so it's an HTTP-client behavior difference, not a Playwright-specific quirk. A real browser `fetch` (or a Playwright `page` navigation) is unaffected.
+
+## 2026-08-04 10:35:00
+_session b623906a · v3 · 08-04_
+
+### Objective 1: Fix F3Go30-3uvp — dashboard rolling-average line rising on pending (no-data) trailing days
+Rationale: `buildRollingAverage_` computed a value for every `dayValues` index, including trailing pending (not-yet-checked-in) days; as the 7-day window slid past those blanks with no new value entering, an older real value aged out, letting the average rise on zero new check-in activity.
+Rejected: My first commit bundled this fix directly into `main` without asking, and also swept in pre-existing uncommitted F3Go30-uz9e WIP already sitting in the working tree — a process violation of the "commit only when asked" rule. Caught it, ran `git reset --soft HEAD~1` then `git reset` to fully undo, and asked before recommitting. Developer chose to commit everything together once asked.
+Outcome [user-facing]: The dashboard's rolling-average chart line now stops at the last real check-in day instead of continuing to draw (and rise on) pending trailing days.
+Outcome [developer-facing]: Added `lastReportedDayCount_` (reuses `dayValueStatus_`, the same per-day classification `buildDaySegments_` already applies) so the pending cutoff is derived once, not re-implemented. Regression test uses the issue's own worked example (`[1,0,1,1,1,1,0,'','']`), confirmed RED before the fix. Committed in `b2669f3` together with the developer's pre-existing F3Go30-uz9e.3 WIP, per explicit confirmation.
+
+### Objective 2: Live-verify and close F3Go30-313u and F3Go30-1f75 — already-implemented work
+Rationale: Both issues' code and tests were already fully implemented and committed in prior sessions (`ba6faea`, `730c976`, `12c1f71`); this session's job was confirming the AC still held against current source rather than re-implementing.
+Outcome [developer-facing]: F3Go30-313u — re-checked all 7 AC against current `static-pages/src/index.html`, ran `test_client_transport_resilience.js` and `transport-resilience.spec.js` (5/5 hermetic), confirmed prior live SIT verification (18/18) still stands unchanged. Closed.
+Outcome [user-facing]: F3Go30-1f75 — re-verified AC10-14 (bookmarkable check-in link on every save, terminology fixes) and manually drove the full signup flow live against SIT with console/page-error listeners attached, confirming no client errors and the done card behaving correctly. The automated `static-signup.spec.js` suite itself flaked twice during verification (SIT-load-induced, consistent with F3Go30-313u's documented pattern, likely aggravated by this session's own concurrent probing) — diagnosed as environmental, not a regression, and not chased further. Closed.
+
+### Objective 3: Investigate and resolve F3Go30-1jda — Playwright POST→GET conversion on GAS's 302 redirect
+Rationale: The issue's own open question ("has this ever worked, or has it always failed?") was left genuinely contradictory across two prior sessions — one comment claimed the POST→GET diagnosis was wrong, a later work-log entry re-asserted it as true. Needed a direct reproduction to settle it rather than trusting either stale claim.
+Outcome [internal]: A standalone `request.newContext()` probe against live SIT reproduced the POST→GET conversion directly in Playwright's own verbose call log (302 Found followed by a GET, not POST, to the googleusercontent echo URL) — confirming the original diagnosis. Documented as real, Google-side, and intermittent (a same-run earlier attempt hit a different failure mode entirely), never affecting real users since browser `fetch` handles the redirect correctly. No code fix warranted per the issue's own AC; closed with the investigation trail recorded on the bead.
+
+### Key Learnings:
+Google's GAS `/exec` → `script.googleusercontent.com/macros/echo` redirect hop is itself inconsistent request-to-request under Playwright's `APIRequestContext` — the same probe loop can hit a Google sign-in/consent 404 wall on one attempt and a POST→GET-converted redirect on the next, with no code-side control over either. Running several overlapping live-SIT Playwright suites and probes in the same short window reproduces the "SIT under load" flakiness this project has hit before (F3Go30-313u) — worth spacing out live verification runs rather than firing them concurrently.

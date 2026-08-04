@@ -190,6 +190,21 @@ async function main() {
   console.error(`→ ${env.toUpperCase()}  cmd=${cmd}  ${action}`);
 
   const result = await post(url, payload);
+
+  // A non-JSON response means the request never reached the intended cmd handler — most often
+  // a transient redirect race right after `clasp deploy` updates a named deployment, where the
+  // POST lands as a stray GET on doGet and gets back its default HTML page (e.g. the "Go30 has
+  // moved" static-redirect interstitial) instead of the JSON the admin/signup/checkin handlers
+  // always return. Treat it as a failure — print a short diagnostic, not the raw HTML blob, and
+  // exit non-zero so callers like manage-deployments.js's execSyncWithRetry_ actually retry
+  // instead of silently reporting success with garbage output.
+  if (typeof result === 'string') {
+    console.error(`❌  Non-JSON response for cmd=${cmd} ${action} (likely a deployment-propagation`);
+    console.error('    race — retry usually succeeds). First 200 chars:');
+    console.error('   ', result.slice(0, 200).replace(/\s+/g, ' '));
+    process.exit(1);
+  }
+
   console.log(JSON.stringify(result, null, 2));
 
   if (result && result.ok === false) process.exit(1);

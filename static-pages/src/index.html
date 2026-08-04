@@ -2580,17 +2580,20 @@
     svg += '<text x="0" y="' + (mapY(1) + 4) + '" font-size="13" fill="#888">+1</text>';
     svg += '<text x="0" y="' + (zY - 2) + '" font-size="13" fill="#888">0</text>';
     svg += '<text x="0" y="' + (mapY(-1) + 4) + '" font-size="13" fill="#888">-1</text>';
+    var MIN_BAR_HT_ = 16; // 'missed it' (v=0) collapses to zero height at the midline — keep it
+                          // visible as a small bar straddling the line rather than invisible.
     for (var i = 0; i < currentDay; i++) {
       var status = daySegments[i];
       var color = SEGMENT_COLORS_[status] || '#d8cfbf';
       var v = SEGMENT_VALUES_[status] || 0;
       var x = mapX(i) - bw / 2, top = Math.min(zY, mapY(v)), ht = Math.abs(zY - mapY(v));
-      svg += '<rect x="' + x.toFixed(1) + '" y="' + top.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(ht, 2).toFixed(1) + '" fill="' + color + '" opacity="0.35"/>';
+      if (ht < MIN_BAR_HT_) { top = zY - MIN_BAR_HT_ / 2; ht = MIN_BAR_HT_; }
+      svg += '<rect x="' + x.toFixed(1) + '" y="' + top.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + ht.toFixed(1) + '" fill="' + color + '" opacity="0.35"/>';
     }
     var points = (rollingAverage || []).map(function(v, i) { return mapX(i).toFixed(1) + ',' + mapY(v).toFixed(1); }).join(' ');
-    svg += '<polyline points="' + points + '" fill="none" stroke="#2f5d50" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
+    svg += '<polyline points="' + points + '" fill="none" stroke="#2fe0e0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
     (rollingAverage || []).forEach(function(v, i) {
-      svg += '<circle cx="' + mapX(i).toFixed(1) + '" cy="' + mapY(v).toFixed(1) + '" r="3" fill="#2f5d50"/>';
+      svg += '<circle cx="' + mapX(i).toFixed(1) + '" cy="' + mapY(v).toFixed(1) + '" r="4" fill="#2fe0e0"/>';
     });
     svg += '</svg>';
     return svg;
