@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 // (getProperty/setProperty/deleteProperty/getKeys) the real GAS service exposes.
 function makeFakeProperties_() {
   var store = {};
-  return {
+  var self;
+  self = {
     getProperty: function(key) { return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null; },
     setProperty: function(key, value) { store[key] = value; },
     setProperties: function(properties) {
@@ -12,8 +13,14 @@ function makeFakeProperties_() {
     },
     deleteProperty: function(key) { delete store[key]; },
     getKeys: function() { return Object.keys(store); },
+    getProperties: function() {
+      self._getPropertiesCalls++;
+      return Object.assign({}, store);
+    },
     _store: store,
+    _getPropertiesCalls: 0,
   };
+  return self;
 }
 
 var fakeProps;
@@ -50,6 +57,7 @@ const {
   paxCacheNormalizeName_,
   getPaxCacheRow_,
   setPaxCacheRow_,
+  wipeAllPaxCache_,
   setPaxCacheRowsBulk_,
   deletePaxCacheRow_,
   getPaxRosterIndex_,
@@ -63,6 +71,17 @@ const {
   PAX_CACHE_PURGE_RETENTION_DAYS_,
   collectKnownTrackerSheetIds_,
   extractSheetIdFromPaxCacheKey_,
+  PAX_HISTORY_WINDOW_DAYS_,
+  paxHistoryEncodeValue_,
+  paxHistoryDecodeChar_,
+  paxHistoryDaysToValues_,
+  paxHistoryDayDiff_,
+  advancePaxHistoryEntry_,
+  anchorPaxHistoryValues_,
+  getPaxHistoryEntry_,
+  getPaxHistoryEntriesBulk_,
+  setPaxHistoryEntry_,
+  advancePaxHistoryDay_,
 } = require('../script/PaxCache.js');
 
 function resetProps_() {
@@ -318,7 +337,7 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   ]);
 
   var result = purgeStalePaxCache_(now, spreadsheet);
-  assert.deepEqual(result, { checked: 2, purged: 1, kept: 1, paxRowsPurged: 0, orphanedSheetsPurged: 0 });
+  assert.deepEqual(result, { checked: 2, purged: 1, kept: 1, paxRowsPurged: 0, orphanedSheetsPurged: 0, historyEntriesPurged: 0 });
 
   assert.equal(fakeProps.getKeys().some(function(k) { return k.indexOf('go30pax:tracker:sheet-old:') === 0; }), false);
   assert.equal(fakeProps.getKeys().some(function(k) { return k.indexOf('go30pax:responses:sheet-old:') === 0; }), false);
@@ -333,7 +352,7 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   setPaxCacheRow_('tracker', 'sheet-bad', 'PAX', ['v']);
   var spreadsheet = makeFakeTrackerDbSpreadsheet_([{ sheetId: 'sheet-bad', startDate: 'not-a-date' }]);
   var result = purgeStalePaxCache_(new Date(2026, 6, 16), spreadsheet);
-  assert.deepEqual(result, { checked: 1, purged: 0, kept: 1, paxRowsPurged: 0, orphanedSheetsPurged: 0 });
+  assert.deepEqual(result, { checked: 1, purged: 0, kept: 1, paxRowsPurged: 0, orphanedSheetsPurged: 0, historyEntriesPurged: 0 });
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheet-bad', 'PAX'), ['v']);
 })();
 
@@ -355,7 +374,7 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   );
 
   var result = purgeStalePaxCache_(now, spreadsheet);
-  assert.deepEqual(result, { checked: 1, purged: 0, kept: 1, paxRowsPurged: 2, orphanedSheetsPurged: 0 });
+  assert.deepEqual(result, { checked: 1, purged: 0, kept: 1, paxRowsPurged: 2, orphanedSheetsPurged: 0, historyEntriesPurged: 0 });
 
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheet-recent', 'Crazy Ivan'), ['active']);
   assert.equal(getPaxCacheRow_('tracker', 'sheet-recent', 'Ghost Pax'), null);
@@ -376,7 +395,7 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   var spreadsheet = makeFakeTrackerDbSpreadsheet_([{ sheetId: 'sheet-recent', startDate: recentStart }]);
 
   var result = purgeStalePaxCache_(now, spreadsheet);
-  assert.deepEqual(result, { checked: 1, purged: 0, kept: 1, paxRowsPurged: 1, orphanedSheetsPurged: 0 });
+  assert.deepEqual(result, { checked: 1, purged: 0, kept: 1, paxRowsPurged: 1, orphanedSheetsPurged: 0, historyEntriesPurged: 0 });
   assert.equal(getPaxCacheRow_('tracker', 'sheet-recent', 'Crazy Ivan'), null);
 })();
 
@@ -384,7 +403,7 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   resetProps_();
   var spreadsheet = { getSheetByName: function() { return null; } };
   var result = purgeStalePaxCache_(new Date(2026, 6, 16), spreadsheet);
-  assert.deepEqual(result, { checked: 0, purged: 0, kept: 0, paxRowsPurged: 0, orphanedSheetsPurged: 0 });
+  assert.deepEqual(result, { checked: 0, purged: 0, kept: 0, paxRowsPurged: 0, orphanedSheetsPurged: 0, historyEntriesPurged: 0 });
 })();
 
 // ── orphan sweep (F3Go30-440b.2 follow-up) ───────────────────────────────
@@ -445,7 +464,7 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   );
 
   var result = purgeStalePaxCache_(now, spreadsheet);
-  assert.deepEqual(result, { checked: 1, purged: 0, kept: 1, paxRowsPurged: 0, orphanedSheetsPurged: 1 });
+  assert.deepEqual(result, { checked: 1, purged: 0, kept: 1, paxRowsPurged: 0, orphanedSheetsPurged: 1, historyEntriesPurged: 0 });
 
   assert.equal(fakeProps.getKeys().some(function(k) { return k.indexOf('go30pax:tracker:sheet-deleted:') === 0; }), false);
   assert.equal(fakeProps.getProperty('go30idx:tracker:sheet-deleted'), null);
@@ -486,6 +505,227 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   var result = purgeStalePaxCache_(new Date(2026, 6, 16), spreadsheet);
   assert.equal(result.orphanedSheetsPurged, 0);
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheet-anything', 'Someone'), ['v']);
+})();
+
+// ── f3Name-keyed rolling history window (F3Go30-5uk2) ──────────────────────
+
+(function testHistoryEncodeDecodeRoundTrip() {
+  assert.equal(paxHistoryEncodeValue_(1), '1');
+  assert.equal(paxHistoryEncodeValue_(0), '0');
+  assert.equal(paxHistoryEncodeValue_(-1), 'X');
+  assert.equal(paxHistoryEncodeValue_(null), '.');
+  assert.equal(paxHistoryEncodeValue_(''), '.');
+  assert.deepEqual(paxHistoryDaysToValues_('10X.'), [1, 0, -1, '']);
+  assert.equal(paxHistoryDecodeChar_('1'), 1);
+  assert.equal(paxHistoryDecodeChar_('Q'), ''); // unknown char degrades to blank, never throws
+})();
+
+(function testHistoryDayDiff() {
+  assert.equal(paxHistoryDayDiff_('2026-07-31', '2026-08-01'), 1);
+  assert.equal(paxHistoryDayDiff_('2026-08-01', '2026-07-31'), -1);
+  assert.equal(paxHistoryDayDiff_('2026-08-01', '2026-08-01'), 0);
+})();
+
+(function testAdvanceEntryColdStart() {
+  var next = advancePaxHistoryEntry_(null, '2026-08-01', 1);
+  assert.deepEqual(next, { historyEndDate: '2026-08-01', days: '1' });
+})();
+
+(function testAdvanceEntrySameDayRewrite() {
+  var entry = { historyEndDate: '2026-08-01', days: '110' };
+  // A PAX correcting today's own value before month-boundary logic ever advances the day.
+  var next = advancePaxHistoryEntry_(entry, '2026-08-01', 1);
+  assert.deepEqual(next, { historyEndDate: '2026-08-01', days: '111' });
+})();
+
+(function testAdvanceEntryNextDayAppendsAndShifts() {
+  var entry = { historyEndDate: '2026-08-01', days: '110' };
+  var next = advancePaxHistoryEntry_(entry, '2026-08-02', 0);
+  assert.deepEqual(next, { historyEndDate: '2026-08-02', days: '1100' });
+})();
+
+(function testAdvanceEntryWindowCapsAtMaxLength() {
+  var days = '';
+  for (var i = 0; i < PAX_HISTORY_WINDOW_DAYS_; i++) days += '1';
+  var entry = { historyEndDate: '2026-08-01', days: days };
+  var next = advancePaxHistoryEntry_(entry, '2026-08-02', 0);
+  assert.equal(next.days.length, PAX_HISTORY_WINDOW_DAYS_);
+  assert.equal(next.days.slice(-1), '0'); // newest day retained
+  assert.equal(next.historyEndDate, '2026-08-02');
+})();
+
+(function testAdvanceEntryGapIsPaddedWithBlanks() {
+  // Nightly job missed a few runs — the gap between historyEndDate and the new day must be
+  // represented as unknown ('.'), not silently skipped (which would misalign every earlier day).
+  var entry = { historyEndDate: '2026-08-01', days: '1' };
+  var next = advancePaxHistoryEntry_(entry, '2026-08-04', -1);
+  assert.deepEqual(next, { historyEndDate: '2026-08-04', days: '1..X' });
+})();
+
+(function testAdvanceEntryPastDayEditWithinWindowPatchesInPlace() {
+  // "Yesterday" edited after today's own write already advanced the window past it.
+  var entry = { historyEndDate: '2026-08-02', days: '101' };
+  var next = advancePaxHistoryEntry_(entry, '2026-08-01', 1);
+  assert.deepEqual(next, { historyEndDate: '2026-08-02', days: '111' });
+})();
+
+(function testAdvanceEntryPastDayOlderThanWindowIsIgnored() {
+  var entry = { historyEndDate: '2026-08-02', days: '01' };
+  var next = advancePaxHistoryEntry_(entry, '2026-07-01', 1);
+  assert.deepEqual(next, entry); // outside the represented window — not silently corrupted
+})();
+
+(function testHistoryEntryRoundTripGetSet() {
+  resetProps_();
+  assert.equal(getPaxHistoryEntry_('Crazy Ivan'), null);
+  setPaxHistoryEntry_('Crazy Ivan', { historyEndDate: '2026-08-01', days: '1' });
+  assert.deepEqual(getPaxHistoryEntry_('crazy ivan'), { historyEndDate: '2026-08-01', days: '1' }); // case/space-insensitive
+})();
+
+(function testAdvancePaxHistoryDayWriteThroughIsLockGuarded() {
+  resetProps_();
+  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 1), 1);
+  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 2), 0);
+  assert.deepEqual(getPaxHistoryEntry_('Crazy Ivan'), { historyEndDate: '2026-08-02', days: '10' });
+})();
+
+(function testAdvancePaxHistoryDayLockFailureIsBestEffort() {
+  resetProps_();
+  var realLock = global.LockService;
+  global.LockService = { getScriptLock: function() { return { waitLock: function() { throw new Error('busy'); }, releaseLock: function() {} }; } };
+  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 1), 1); // must not throw
+  assert.equal(getPaxHistoryEntry_('Crazy Ivan'), null);
+  global.LockService = realLock;
+})();
+
+// wipeAllPaxCache_ (the admin invalidateAllCache action's "force a reload" escape hatch, WebApp.js)
+// must clear go30hist: entries too, not just the two original PaxCache prefixes — otherwise a
+// wrong/stale streak has no way to self-heal short of waiting out a write-through.
+(function testWipeAllPaxCacheAlsoClearsHistoryEntries() {
+  resetProps_();
+  setPaxCacheRow_('tracker', 'sheet-x', 'Someone', ['v']);
+  setPaxHistoryEntry_('Crazy Ivan', { historyEndDate: '2026-08-01', days: '1' });
+  var wiped = wipeAllPaxCache_();
+  assert.ok(wiped >= 2);
+  assert.equal(getPaxCacheRow_('tracker', 'sheet-x', 'Someone'), null);
+  assert.equal(getPaxHistoryEntry_('Crazy Ivan'), null);
+})();
+
+// ── F3Go30-uz9e.2: anchoring the stored window to the caller's context date ────────────────
+//
+// historyEndDate has been stamped on every write since F3Go30-5uk2 but was never read back, so a
+// window was silently assumed to end "now" no matter when it was last written. These cover the
+// four branches anchorPaxHistoryValues_ has to get right for the read side to mean anything.
+
+(function testAnchorHistoryValuesAtExactAnchorIsUnchanged() {
+  assert.deepEqual(anchorPaxHistoryValues_({ historyEndDate: '2026-08-02', days: '1101' }, '2026-08-02'), [1, 1, 0, 1]);
+})();
+
+(function testAnchorHistoryValuesTrimsWindowEndingAfterAnchor() {
+  // Advance check-in: the PAX pre-marked Aug 5 on Aug 2, so the write padded Aug 3-4 with '.'
+  // and stamped historyEndDate three days into the future. As of the Aug 2 context date, those
+  // three characters do not exist yet — dropping them restores the real Aug 2 window.
+  var entry = { historyEndDate: '2026-08-05', days: '1111..1' };
+  assert.deepEqual(anchorPaxHistoryValues_(entry, '2026-08-02'), [1, 1, 1, 1]);
+})();
+
+(function testAnchorHistoryValuesPadsWindowEndingBeforeAnchor() {
+  // Nothing has been written for this PAX for two days (no check-in, nightly job not yet run).
+  // Padding at the TAIL specifically is safe: computeStreak_ trims trailing blanks before
+  // counting, so "not reported yet" does not read as a broken streak.
+  var entry = { historyEndDate: '2026-08-02', days: '111' };
+  assert.deepEqual(anchorPaxHistoryValues_(entry, '2026-08-04'), [1, 1, 1, '', '']);
+})();
+
+(function testAnchorHistoryValuesReturnsNullWhenWindowCannotReachAnchor() {
+  // Every stored character would be padded away — nothing real is left to tail-align, so the
+  // caller must fall through to the tracker rather than serve an all-blank window.
+  assert.equal(anchorPaxHistoryValues_({ historyEndDate: '2026-08-02', days: '111' }, '2026-08-05'), null);
+  // Same on the other side: a June view in August. Trimming back past the start of the stored
+  // window leaves nothing.
+  assert.equal(anchorPaxHistoryValues_({ historyEndDate: '2026-08-02', days: '111' }, '2026-06-30'), null);
+  assert.equal(anchorPaxHistoryValues_(null, '2026-08-02'), null);
+  assert.equal(anchorPaxHistoryValues_({ historyEndDate: '2026-08-02', days: '' }, '2026-08-02'), null);
+})();
+
+(function testAnchorHistoryValuesNeverExceedsWindowLength() {
+  var days = '';
+  for (var i = 0; i < PAX_HISTORY_WINDOW_DAYS_; i++) days += '1';
+  var anchored = anchorPaxHistoryValues_({ historyEndDate: '2026-08-02', days: days }, '2026-08-04');
+  assert.equal(anchored.length, PAX_HISTORY_WINDOW_DAYS_);
+  assert.deepEqual(anchored.slice(-2), ['', '']);
+})();
+
+// One PropertiesService round trip for the whole roster instead of one per row — the dashboard
+// calls this once per load against a quota'd service.
+(function testGetPaxHistoryEntriesBulkIsOnePropertiesRead() {
+  resetProps_();
+  setPaxHistoryEntry_('Crazy Ivan', { historyEndDate: '2026-08-02', days: '11' });
+  setPaxHistoryEntry_('Little John', { historyEndDate: '2026-08-02', days: '10' });
+  fakeProps._getPropertiesCalls = 0;
+
+  var entries = getPaxHistoryEntriesBulk_(['Crazy Ivan', 'crazy  ivan', 'Little John', 'Never Seen']);
+  assert.equal(fakeProps._getPropertiesCalls, 1);
+  assert.deepEqual(entries['crazy ivan'], { historyEndDate: '2026-08-02', days: '11' });
+  assert.deepEqual(entries['little john'], { historyEndDate: '2026-08-02', days: '10' });
+  assert.equal(Object.prototype.hasOwnProperty.call(entries, 'never seen'), false);
+})();
+
+// Write-side clamp (F3Go30-uz9e.2, symptom 1 at source): a pre-marked FUTURE day must not
+// advance the window. Doing so pads the skipped days with '.' and shifts that many days of real
+// history off the front permanently — and the '.' gap then reads as a broken streak. The value
+// is already on the Tracker; the read side reconciles it back in when the day actually arrives.
+(function testAdvancePaxHistoryDayIgnoresFutureDays() {
+  resetProps_();
+  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 2), 1, '2026-08-02');
+  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 6), 1, '2026-08-02'); // pre-marked, 4 days out
+  assert.deepEqual(getPaxHistoryEntry_('Crazy Ivan'), { historyEndDate: '2026-08-02', days: '1' });
+})();
+
+(function testAdvancePaxHistoryDayStillWritesTodayAndPastDays() {
+  resetProps_();
+  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 1), 1, '2026-08-02');
+  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 2), 0, '2026-08-02'); // today itself
+  assert.deepEqual(getPaxHistoryEntry_('Crazy Ivan'), { historyEndDate: '2026-08-02', days: '10' });
+})();
+
+// go30hist keys carry no sheetId, so the orphan sweep (which ages entries by tracker) could never
+// see them — every name that ever checked in, including typos and retired PAX, kept a Script
+// Property forever against the 500KB quota. Reaped off the same CheckinSessions activity signal
+// the per-PAX row pass already uses.
+(function testPurgeReapsHistoryEntriesForInactiveNames() {
+  resetProps_();
+  var now = new Date(2026, 6, 16);
+  var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
+
+  setPaxHistoryEntry_('Crazy Ivan', { historyEndDate: '2026-07-15', days: '11' });
+  setPaxHistoryEntry_('Ghost Pax', { historyEndDate: '2026-05-01', days: '11' });
+
+  var spreadsheet = makeFakeTrackerDbSpreadsheet_(
+    [{ sheetId: 'sheet-recent', startDate: recentStart }],
+    ['Crazy Ivan']
+  );
+
+  var result = purgeStalePaxCache_(now, spreadsheet);
+  assert.equal(result.historyEntriesPurged, 1);
+  assert.deepEqual(getPaxHistoryEntry_('Crazy Ivan'), { historyEndDate: '2026-07-15', days: '11' });
+  assert.equal(getPaxHistoryEntry_('Ghost Pax'), null);
+})();
+
+// Same contract the per-PAX row pass already follows (testPurgePurgesEveryPaxRowWhenNoOneHasA
+// CheckinSession): a missing/empty CheckinSessions sheet means "nobody currently active", so every
+// history entry is reaped. Safe because a reaped window self-heals from the Tracker on the next
+// dashboard read — unlike the row cache, this store is derived data end to end.
+(function testPurgeReapsEveryHistoryEntryWhenNoOneHasACheckinSession() {
+  resetProps_();
+  var now = new Date(2026, 6, 16);
+  var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
+  setPaxHistoryEntry_('Ghost Pax', { historyEndDate: '2026-05-01', days: '11' });
+
+  var spreadsheet = makeFakeTrackerDbSpreadsheet_([{ sheetId: 'sheet-recent', startDate: recentStart }]);
+  var result = purgeStalePaxCache_(now, spreadsheet);
+  assert.equal(result.historyEntriesPurged, 1);
+  assert.equal(getPaxHistoryEntry_('Ghost Pax'), null);
 })();
 
 console.log('test_pax_cache.js: all assertions passed');

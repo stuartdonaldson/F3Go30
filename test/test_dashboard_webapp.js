@@ -44,9 +44,9 @@ const {
   groupByTeam_,
   firstActiveDayIndex_,
   buildDashboardPaxRow_,
+  getPaxHistoryWindowValues_,
   buildDaySegments_,
   buildRollingAverage_,
-  buildRollingAverageWithLookback_,
   getCachedTrackerLayoutOnly_,
   trackerLayoutCacheKey_,
   serializeRow3ForCache_,
@@ -352,34 +352,46 @@ const {
   assert.equal(series2[2], 0); // window ['', 0] -> only 0 counts
 })();
 
-// ── buildRollingAverageWithLookback_ ────────────────────────────────────────
-(function testBuildRollingAverageWithLookbackCrossesMonthBoundary() {
-  // Day 2 of a new month: without lookback this would only average [1, 0] (window of 2).
-  // With 5 trailing days from last month prepended, it should be a true 7-day window.
-  var priorTail = [1, 1, 1, 1, 1]; // last 5 days of the previous month, all done
-  var thisMonth = [1, 0]; // first 2 days of the new month
-  var series = buildRollingAverageWithLookback_(thisMonth, 7, priorTail);
-  assert.equal(series.length, thisMonth.length); // aligned to thisMonth, not the combined array
+// ── buildDashboardPaxRow_ rollingAverage (F3Go30-uz9e.1) ────────────────────
+// rollingAverage must be sourced from historyValues (spans the month boundary), the same way
+// maxStreak30 already is (F3Go30-5uk2) — not from dayValues (this month only), which is what
+// produced the truncated 1-3-point chart for early-month teammate/board rows.
+(function testBuildDashboardPaxRowRollingAverageCrossesMonthBoundary() {
+  // Day 2 of a new month: dayValues alone would only average [1, 0] (window of 2). historyValues
+  // carries 5 trailing days from last month ahead of that, so it should be a true 7-day window.
+  var dayValues = [1, 0]; // first 2 days of the new month
+  var historyValues = [1, 1, 1, 1, 1].concat(dayValues); // last 5 days of prior month + this month
+  var row = buildDashboardPaxRow_('Anchor', 'Crucible', 0.5, 5, 2, dayValues, 2, 2, null, historyValues);
+  assert.equal(row.rollingAverage.length, dayValues.length); // aligned to dayValues, not historyValues
   // Day 1: window = last 5 prior + day1 = [1,1,1,1,1,1] -> 1
-  assert.equal(series[0], 1);
+  assert.equal(row.rollingAverage[0], 1);
   // Day 2: window = last 5 prior + day1 + day2 = [1,1,1,1,1,1,0] (7 days) -> 6/7
-  assert.ok(Math.abs(series[1] - 6 / 7) < 1e-9);
+  assert.ok(Math.abs(row.rollingAverage[1] - 6 / 7) < 1e-9);
 })();
 
-(function testBuildRollingAverageWithLookbackNoPriorMonth() {
-  // No prior tracker (e.g. the very first month ever) — behaves exactly like buildRollingAverage_.
-  var values = [1, 0, 1];
-  assert.deepEqual(buildRollingAverageWithLookback_(values, 7, []), buildRollingAverage_(values, 7));
-  assert.deepEqual(buildRollingAverageWithLookback_(values, 7, undefined), buildRollingAverage_(values, 7));
+(function testBuildDashboardPaxRowRollingAverageFallsBackToDayValuesWithoutHistory() {
+  // A caller that doesn't pass historyValues (e.g. exercising this function directly) — matches
+  // plain buildRollingAverage_(dayValues, ...), same fallback maxStreak30 already has.
+  var dayValues = [1, 0, 1];
+  var row = buildDashboardPaxRow_('Anchor', 'Crucible', 0.5, 5, 2, dayValues, 3, 3, null, undefined);
+  assert.deepEqual(row.rollingAverage, buildRollingAverage_(dayValues, 7)); // ROLLING_AVERAGE_WINDOW_DAYS_
 })();
 
-(function testBuildRollingAverageWithLookbackOnlyUsesTrailingWindowMinusOneDays() {
-  // A long prior-month tail is trimmed to windowSize-1 — older days shouldn't leak in further
-  // than a true rolling window would ever reach.
-  var longTail = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]; // 13 days, only last 2 matter for window=3
-  var series = buildRollingAverageWithLookback_([1], 3, longTail);
-  // window = last 2 of tail ([1,1]) + [1] = [1,1,1] -> 1, not dragged down by the older 0s.
-  assert.equal(series[0], 1);
+// Every row (not just the viewer) now carries priorMonthDayValues, sourced from the same
+// historyValues rolling window — this is what lets the client-side pax-detail popup pad a
+// teammate's chart display window across a month boundary (renderPaxDetail_), mirroring what
+// the viewer's own chart already did before this fix.
+(function testBuildDashboardPaxRowPriorMonthDayValuesPopulatedForAnyRow() {
+  var dayValues = [1, 0];
+  var historyValues = [1, 1, 1, 1, 1].concat(dayValues);
+  var row = buildDashboardPaxRow_('Anchor', 'Crucible', 0.5, 5, 2, dayValues, 2, 2, null, historyValues);
+  assert.deepEqual(row.priorMonthDayValues, [1, 1, 1, 1, 1]);
+})();
+
+(function testBuildDashboardPaxRowPriorMonthDayValuesEmptyWithoutHistory() {
+  var dayValues = [1, 0, 1];
+  var row = buildDashboardPaxRow_('Anchor', 'Crucible', 0.5, 5, 2, dayValues, 3, 3, null, undefined);
+  assert.deepEqual(row.priorMonthDayValues, []);
 })();
 
 // ── getCachedTrackerLayoutOnly_ ──────────────────────────────────────────
@@ -598,6 +610,14 @@ function makeFakeDataRangeSheet_test_(rows) {
 
 (function testHandleCheckinIdentifyFlagsNextMonthAlreadyRegistered() {
   global.SpreadsheetApp = { openById: function() { return { getSheetByName: function(name) { return name === 'Responses' ? makeFakeEmptyResponsesSheet_() : null; } }; } };
+  // The module-level resolveContextDate_ stub (top of file) ignores payload.contextDate and
+  // always returns real "now" — fine for tests that don't care, but this one needs "current
+  // month" pinned to July (fixture only has a July/August TrackerDB) regardless of what day this
+  // suite happens to run on, so it must honor the override explicitly like the date-nav tests
+  // below do.
+  global.resolveContextDate_ = function(spreadsheet, contextDateOverride) {
+    return contextDateOverride ? new Date(contextDateOverride) : new Date();
+  };
   var fakeSpreadsheet = makeFakeCrossMonthSpreadsheet_([
     ['LateSignupTest', 'latesignup@example.com', 'sheet-aug', 'Crucible', 'w', 'wh', 'ho', 'ao', '', '', ''],
   ]);
@@ -610,6 +630,7 @@ function makeFakeDataRangeSheet_test_(rows) {
   assert.ok(res.currentMonthLabel);
   assert.ok(res.nextMonthLabel);
   delete global.SpreadsheetApp;
+  global.resolveContextDate_ = function() { return new Date(); };
 })();
 
 (function testHandleCheckinIdentifyDoesNotFlagWhenNotRegisteredForNextMonthEither() {
@@ -1420,6 +1441,420 @@ function makeLeanIdentityResponsesSheet_(rows) {
   delete global.DriveApp;
   delete global.SpreadsheetApp;
   global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// ── F3Go30-5uk2: f3Name-keyed rolling history window (cross-month streak for EVERY row) ────────
+
+// getPaxHistoryWindowValues_ — cache hit never consults getPriorMonthTailValues_/TrackerDB at all.
+(function testGetPaxHistoryWindowValuesCacheHitSkipsFallback() {
+  installFakePropertiesStore_();
+  var PaxCache = require('../script/PaxCache.js');
+  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-02', days: '111011' });
+
+  var throwingTemplate = { getSheetByName: function() { throw new Error('must not consult TrackerDB on a cache hit'); } };
+  var monthInfo = { sheetId: 'sheet-aug', startDate: new Date(2026, 7, 1) };
+  var values = getPaxHistoryWindowValues_('Slaw', [1, 1], monthInfo, throwingTemplate, '2026-08-02');
+  assert.deepEqual(values, [1, 1, 1, 0, 1, 1]);
+})();
+
+// getPaxHistoryWindowValues_ — cold start (no cache entry yet) self-heals via the same
+// current-month + prior-month-tail computation the old viewer-only override used to run, then
+// persists the result so a second read never touches SpreadsheetApp again.
+(function testGetPaxHistoryWindowValuesSelfHealsAndPersists() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
+  var julRow2 = ['', '', '', '', '', '', '', '', '', ''];
+  var julRow3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 6, 30), new Date(2026, 6, 31)];
+  var julTrackerRows = [['Newbie', 'Crucible', '', '', '', '', 5, 0.5, 1, 1]]; // Jul 30 + Jul 31 both done
+  installFakeSpreadsheetById_({
+    'sheet-jul': { getSheetByName: function(n) { return n === 'Tracker' ? makeFakeTrackerSheet_(julRow2, julRow3, julTrackerRows) : null; } },
+  });
+  // resolveDashboardMonth_ -> resolveTrackerForContextDate (go30tools.js) isn't required by this
+  // file (same convention as the cross-month handleCheckinSubmit_ test above) — stub it directly
+  // rather than building a full TrackerDB fixture.
+  global.resolveTrackerForContextDate = function(targetDate) {
+    if (targetDate.getFullYear() === 2026 && targetDate.getMonth() === 6) {
+      return { sheetId: 'sheet-jul', trackerUrl: 'https://x/jul', startDate: new Date(2026, 6, 1) };
+    }
+    throw new Error('no tracker for ' + targetDate);
+  };
+  global.formatRegistrationMonth_ = function() { return 'July 2026'; };
+
+  var templateSpreadsheet = {};
+  var monthInfo = { sheetId: 'sheet-aug', startDate: new Date(2026, 7, 1) };
+  var currentMonthDayValues = [1, 1]; // Aug 1 + Aug 2, both done
+
+  var values = getPaxHistoryWindowValues_('Newbie', currentMonthDayValues, monthInfo, templateSpreadsheet, '2026-08-02');
+  assert.deepEqual(values, [1, 1, 1, 1]); // Jul30, Jul31, Aug1, Aug2 — spans the month boundary
+
+  var PaxCache = require('../script/PaxCache.js');
+  assert.deepEqual(PaxCache.getPaxHistoryEntry_('Newbie'), { historyEndDate: '2026-08-02', days: '1111' });
+
+  installThrowingSpreadsheetApp_();
+  var warm = getPaxHistoryWindowValues_('Newbie', currentMonthDayValues, monthInfo, templateSpreadsheet, '2026-08-02');
+  assert.deepEqual(warm, [1, 1, 1, 1]);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+// handleCheckinDashboard_ integration — the actual bug this issue fixes: EVERY board row's
+// streak/maxStreak30 must reflect the cross-month rolling window, not just the logged-in viewer's.
+// With the old computeStreak_(dayValues) (this month's own 2 tracker columns only), a teammate's
+// streak would read 2 regardless of how long their real streak actually is.
+(function testDashboardTeamTileStreakSpansMonthBoundaryForEveryPax() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 7, 2, 9, 0); }; // "today" = Aug 2
+
+  var row2 = ['', '', '', '', '', '', '', '', '', ''];
+  var row3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 7, 1), new Date(2026, 7, 2)];
+  var paxRows = [
+    ['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 1], // rowIndex 0 — viewer
+    ['Slaw', 'Crucible', '', '', '', '', 3, 0.3, 1, 1],   // rowIndex 1 — teammate
+  ];
+  var emptyBonusSheet = { getLastRow: function() { return 1; }, getRange: function() { return { getValues: function() { return []; } }; } };
+  installFakeSpreadsheetById_({
+    'sheet-aug-team': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') return makeFakeTrackerSheet_(row2, row3, paxRows);
+        if (n === 'Bonus Tracker') return emptyBonusSheet;
+        return null;
+      },
+    },
+  });
+
+  var PaxCache = require('../script/PaxCache.js');
+  // Both PAX already carry a 7-day rolling window (write-through already folded in today's own
+  // Aug 2 check-in), the first 5 of those 7 days having landed in the prior calendar month.
+  PaxCache.setPaxHistoryEntry_('Anchor', { historyEndDate: '2026-08-02', days: '1111111' });
+  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-02', days: '1111111' });
+
+  var monthInfo = { sheetId: 'sheet-aug-team', trackerUrl: 'https://x/aug-team', label: 'August 2026', startDate: new Date(2026, 7, 1) };
+  var handle = buildResolvedContextHandle_(monthInfo, 0, 'Anchor');
+
+  var result = handleCheckinDashboard_({}, { f3Name: 'Anchor', email: 'a@x.com', dateISO: '2026-08-02', resolvedContext: handle });
+  assert.equal(result.ok, true);
+
+  var slawRow = result.myTeam.filter(function(r) { return r.name === 'Slaw'; })[0];
+  assert.ok(slawRow, 'Slaw must appear on myTeam');
+  assert.equal(slawRow.streak, 7, 'teammate streak must span the month boundary, not just this month\'s 2 tracker columns');
+  assert.equal(slawRow.maxStreak30, 7);
+
+  // The viewer's own top-level figures come from the same shared per-row computation now — no
+  // separate override block left to disagree with it (F3Go30-5uk2 AC: no regression here).
+  assert.equal(result.streak, 7);
+  assert.equal(result.maxStreak30, 7);
+
+  delete global.SpreadsheetApp;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// handleCheckinDashboard_ integration (F3Go30-uz9e.1) — the rollingAverage counterpart to the
+// streak test above: EVERY board row's 7-day rolling average must reflect the cross-month
+// history window, not just the logged-in viewer's. Uses a mixed (not all-1) history so a
+// same-month-only average (the pre-fix bug) would produce a visibly different number than the
+// cross-month one, rather than 1 either way.
+(function testDashboardTeamTileRollingAverageSpansMonthBoundaryForEveryPax() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 7, 2, 9, 0); }; // "today" = Aug 2
+
+  var row2 = ['', '', '', '', '', '', '', '', '', ''];
+  var row3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 7, 1), new Date(2026, 7, 2)];
+  var paxRows = [
+    ['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 1], // rowIndex 0 — viewer
+    ['Slaw', 'Crucible', '', '', '', '', 3, 0.3, 1, 1],   // rowIndex 1 — teammate
+  ];
+  var emptyBonusSheet = { getLastRow: function() { return 1; }, getRange: function() { return { getValues: function() { return []; } }; } };
+  installFakeSpreadsheetById_({
+    'sheet-aug-ravg': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') return makeFakeTrackerSheet_(row2, row3, paxRows);
+        if (n === 'Bonus Tracker') return emptyBonusSheet;
+        return null;
+      },
+    },
+  });
+
+  var PaxCache = require('../script/PaxCache.js');
+  // 5 missed days in late July, then Aug 1 + Aug 2 both done — a same-month-only average would
+  // read 1 (both reported days done); the true 7-day window should read well below that.
+  PaxCache.setPaxHistoryEntry_('Anchor', { historyEndDate: '2026-08-02', days: '0000011' });
+  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-02', days: '0000011' });
+
+  var monthInfo = { sheetId: 'sheet-aug-ravg', trackerUrl: 'https://x/aug-ravg', label: 'August 2026', startDate: new Date(2026, 7, 1) };
+  var handle = buildResolvedContextHandle_(monthInfo, 0, 'Anchor');
+
+  var result = handleCheckinDashboard_({}, { f3Name: 'Anchor', email: 'a@x.com', dateISO: '2026-08-02', resolvedContext: handle });
+  assert.equal(result.ok, true);
+
+  var slawRow = result.myTeam.filter(function(r) { return r.name === 'Slaw'; })[0];
+  assert.ok(slawRow, 'Slaw must appear on myTeam');
+  assert.equal(slawRow.rollingAverage.length, 2, 'aligned to this month\'s 2 reported days, not the 7-day history window');
+  // Aug 1 (history index 5): window = [0,0,0,0,0,1] (6 days available) -> 1/6
+  assert.ok(Math.abs(slawRow.rollingAverage[0] - 1 / 6) < 1e-9,
+    'teammate rollingAverage must span the month boundary, not just this month\'s 1 reported day so far');
+  // Aug 2 (history index 6): window = [0,0,0,0,0,1,1] (full 7 days) -> 2/7
+  assert.ok(Math.abs(slawRow.rollingAverage[1] - 2 / 7) < 1e-9);
+  // F3Go30-uz9e.1: the teammate's own priorMonthDayValues must also be populated — this is what
+  // lets the client-side pax-detail popup pad Slaw's chart display window across the month
+  // boundary too, not just the viewer's (the live SIT symptom this issue was reopened for).
+  assert.deepEqual(slawRow.priorMonthDayValues, [0, 0, 0, 0, 0]);
+
+  // The viewer's own top-level rollingAverage comes from the same shared per-row computation now
+  // — no separate userRollingAverage override left to disagree with it.
+  assert.equal(result.rollingAverage.length, 2);
+  assert.ok(Math.abs(result.rollingAverage[0] - 1 / 6) < 1e-9);
+  assert.ok(Math.abs(result.rollingAverage[1] - 2 / 7) < 1e-9);
+  // priorMonthDayValues (client date-nav padding) is still populated for the viewer, now sourced
+  // from the already-fetched historyValues rather than a second getPriorMonthTailValues_ call.
+  assert.deepEqual(result.priorMonthDayValues, [0, 0, 0, 0, 0]);
+
+  delete global.SpreadsheetApp;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// ── F3Go30-uz9e.2: the window is anchored to the caller's context date on read ─────────────────
+//
+// getPaxHistoryWindowValues_'s asOfIso was only ever used to stamp a cache WRITE; the hit path
+// returned whatever the last write happened to leave, then buildDashboardPaxRow_ tail-aligned it
+// against dayValues as though it ended today. These cover the read-side anchoring that makes the
+// signature's own promise true.
+
+// Symptom 1: a pre-marked future day advanced historyEndDate past today and padded the skipped
+// days with '.'. Anchoring back to the context date drops the days that haven't happened yet.
+(function testGetPaxHistoryWindowValuesTrimsPreMarkedFutureDays() {
+  installFakePropertiesStore_();
+  var PaxCache = require('../script/PaxCache.js');
+  // 7-day streak through Aug 2, then Aug 5 pre-marked: '.' for Aug 3-4, '1' for Aug 5.
+  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-05', days: '1111111..1' });
+
+  var throwingTemplate = { getSheetByName: function() { throw new Error('must not consult TrackerDB on a usable cache hit'); } };
+  var monthInfo = { sheetId: 'sheet-aug', startDate: new Date(2026, 7, 1) };
+  var values = getPaxHistoryWindowValues_('Slaw', [1, 1], monthInfo, throwingTemplate, '2026-08-02');
+  assert.deepEqual(values, [1, 1, 1, 1, 1, 1, 1]);
+  assert.equal(computeStreak_(values), 7, 'a pre-marked future day must not collapse the streak to 1');
+})();
+
+// Symptom 3: nothing has been written for this PAX for two days. Padding at the tail is correct
+// because computeStreak_ trims trailing blanks — "not reported yet" is not a broken streak — and
+// it keeps the tail-alignment against dayValues honest.
+(function testGetPaxHistoryWindowValuesPadsAStaleWindow() {
+  installFakePropertiesStore_();
+  var PaxCache = require('../script/PaxCache.js');
+  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-02', days: '11101' });
+
+  var throwingTemplate = { getSheetByName: function() { throw new Error('must not consult TrackerDB on a usable cache hit'); } };
+  var monthInfo = { sheetId: 'sheet-aug', startDate: new Date(2026, 7, 1) };
+  // dayValues covers Aug 1-4; the window's last two real days (0, 1) are Aug 1 and Aug 2, so the
+  // overlapping tail agrees and no rebuild is triggered.
+  var values = getPaxHistoryWindowValues_('Slaw', [0, 1, '', ''], monthInfo, throwingTemplate, '2026-08-04');
+  assert.deepEqual(values, [1, 1, 1, 0, 1, '', '']);
+})();
+
+// The anchor is unreachable from the stored window (symptom 2's shape: a June view loaded in
+// August). Falling through to the tracker path is the only honest answer — a tail-aligned
+// August window rendered as June figures is worse than a slower read.
+(function testGetPaxHistoryWindowValuesFallsThroughWhenAnchorUnreachable() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  var PaxCache = require('../script/PaxCache.js');
+  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-02', days: '1111111' });
+
+  // No prior tracker resolvable -> getPriorMonthTailValues_ degrades to [], so the rebuilt window
+  // is this month's own dayValues. The point is that it is NOT the cached August window.
+  var monthInfo = { sheetId: 'sheet-jun', startDate: new Date(2026, 5, 1) };
+  var values = getPaxHistoryWindowValues_('Slaw', [1, 0, 1], monthInfo, {}, '2026-06-30');
+  assert.deepEqual(values, [1, 0, 1]);
+  // The live August window must not be clobbered by a backward date-nav read.
+  assert.deepEqual(PaxCache.getPaxHistoryEntry_('Slaw'), { historyEndDate: '2026-08-02', days: '1111111' });
+})();
+
+// Reconciliation (F3Go30-uz9e.2 §B): go30hist and the Tracker row are two representations of the
+// same day values written by two independent write-through calls, with nothing checking they
+// agree. Where the overlapping tail disagrees, the sheet wins and the window is rebuilt — this is
+// also what puts a pre-marked day's real value back once that day arrives, since the nightly
+// minus-one job only ever writes EMPTY cells and would never rewrite it.
+(function testGetPaxHistoryWindowValuesRebuildsOnTrackerMismatch() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  var PaxCache = require('../script/PaxCache.js');
+  // The window has Aug 2 as unknown ('.') — e.g. it was padded past by a pre-marked Aug 3 write —
+  // but the Tracker says the PAX checked in that day.
+  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-03', days: '1.1' });
+
+  var monthInfo = { sheetId: 'sheet-aug', startDate: new Date(2026, 7, 1) };
+  var values = getPaxHistoryWindowValues_('Slaw', [1, 1, 1], monthInfo, {}, '2026-08-03');
+  assert.deepEqual(values, [1, 1, 1]);
+  assert.equal(computeStreak_(values), 3);
+  // Rebuilt and persisted, so the next read is a plain (now-correct) hit rather than a second rebuild.
+  assert.deepEqual(PaxCache.getPaxHistoryEntry_('Slaw'), { historyEndDate: '2026-08-03', days: '111' });
+
+  delete global.CacheService;
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+})();
+
+// An agreeing window must NOT trigger a rebuild — '.' (never observed) and an empty Tracker cell
+// are the same "no data" state, so a PAX with gaps must still read straight from cache.
+(function testGetPaxHistoryWindowValuesTreatsBlankAndUnobservedAsAgreeing() {
+  installFakePropertiesStore_();
+  var PaxCache = require('../script/PaxCache.js');
+  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-03', days: '11.0.' });
+
+  var throwingTemplate = { getSheetByName: function() { throw new Error('must not rebuild when cache and tracker agree'); } };
+  var monthInfo = { sheetId: 'sheet-aug', startDate: new Date(2026, 7, 1) };
+  var values = getPaxHistoryWindowValues_('Slaw', ['', 0, ''], monthInfo, throwingTemplate, '2026-08-03');
+  assert.deepEqual(values, [1, 1, '', 0, '']);
+})();
+
+// AC: end-to-end, the symptom that started this issue — a PAX who pre-marks a day 3 out must
+// keep their real streak on every team tile, not read as 1.
+(function testDashboardPreMarkedFutureDayDoesNotCollapseTeamTileStreak() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 7, 2, 9, 0); }; // "today" = Aug 2
+
+  var row2 = ['', '', '', '', '', '', '', '', '', '', '', ''];
+  var row3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score',
+    new Date(2026, 7, 1), new Date(2026, 7, 2), new Date(2026, 7, 3), new Date(2026, 7, 5)];
+  var paxRows = [
+    ['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 1, '', ''],
+    ['Slaw', 'Crucible', '', '', '', '', 3, 0.3, 1, 1, '', 1], // Aug 5 pre-marked
+  ];
+  var emptyBonusSheet = { getLastRow: function() { return 1; }, getRange: function() { return { getValues: function() { return []; } }; } };
+  installFakeSpreadsheetById_({
+    'sheet-aug-premark': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') return makeFakeTrackerSheet_(row2, row3, paxRows);
+        if (n === 'Bonus Tracker') return emptyBonusSheet;
+        return null;
+      },
+    },
+  });
+
+  var PaxCache = require('../script/PaxCache.js');
+  PaxCache.setPaxHistoryEntry_('Anchor', { historyEndDate: '2026-08-02', days: '1111111' });
+  // Slaw's window as the pre-marking write left it: Aug 3-4 padded '.', Aug 5 '1'.
+  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-05', days: '1111111..1' });
+
+  var monthInfo = { sheetId: 'sheet-aug-premark', trackerUrl: 'https://x/premark', label: 'August 2026', startDate: new Date(2026, 7, 1) };
+  var handle = buildResolvedContextHandle_(monthInfo, 0, 'Anchor');
+
+  var result = handleCheckinDashboard_({}, { f3Name: 'Anchor', email: 'a@x.com', dateISO: '2026-08-02', resolvedContext: handle });
+  assert.equal(result.ok, true);
+
+  var slawRow = result.myTeam.filter(function(r) { return r.name === 'Slaw'; })[0];
+  assert.equal(slawRow.streak, 7, 'pre-marking a future day must not collapse the streak');
+  assert.equal(slawRow.maxStreak30, 7);
+  // The month view reads the Tracker row directly and must keep showing the pre-marked day —
+  // that asymmetry is exactly what made this bug hard to spot from the UI.
+  assert.equal(slawRow.dayValues.length, 2, 'only reported (<= context date) day columns are sent');
+
+  delete global.SpreadsheetApp;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// rollingAverage must stay aligned 1:1 with dayValues/dayDates even when the history window is
+// SHORTER than the viewed month — which it always is for a 31-day month (the window caps at
+// MAX_STREAK_WINDOW_DAYS_ = 30) and for any prior-month date-nav view. Found live on SIT: a July
+// view returned 13 rolling-average points against 31 day columns.
+(function testRollingAverageStaysAlignedWhenHistoryIsShorterThanTheMonth() {
+  var dayValues = [];
+  for (var i = 0; i < 31; i++) dayValues.push(1);
+  var historyValues = dayValues.slice(-13); // a window that reaches back only part of the month
+
+  var row = buildDashboardPaxRow_('Slaw', 'Crucible', 20, 20, 5, dayValues, 31, 31, null, historyValues);
+  assert.equal(row.rollingAverage.length, dayValues.length,
+    'rollingAverage must have exactly one entry per reported day column');
+  assert.deepEqual(row.priorMonthDayValues, [], 'no prior-month lead exists in a window this short');
+  // Day 0 has only itself in its trailing window; by day 6 the full 7-day window is available.
+  assert.equal(row.rollingAverage[0], 1);
+  assert.equal(row.rollingAverage[30], 1);
+})();
+
+// AC: the window read is one batched PropertiesService call for the whole roster, not one
+// getProperty per row (the read runs inside the per-row loop on a quota'd service).
+(function testDashboardBatchesHistoryEntryReads() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 7, 2, 9, 0); };
+
+  var row2 = ['', '', '', '', '', '', '', '', '', ''];
+  var row3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 7, 1), new Date(2026, 7, 2)];
+  var paxRows = [
+    ['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 1],
+    ['Slaw', 'Crucible', '', '', '', '', 3, 0.3, 1, 1],
+    ['Splinter', 'Impala', '', '', '', '', 3, 0.3, 1, 1],
+  ];
+  var emptyBonusSheet = { getLastRow: function() { return 1; }, getRange: function() { return { getValues: function() { return []; } }; } };
+  installFakeSpreadsheetById_({
+    'sheet-aug-batch': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') return makeFakeTrackerSheet_(row2, row3, paxRows);
+        if (n === 'Bonus Tracker') return emptyBonusSheet;
+        return null;
+      },
+    },
+  });
+
+  var PaxCache = require('../script/PaxCache.js');
+  ['Anchor', 'Slaw', 'Splinter'].forEach(function(n) {
+    PaxCache.setPaxHistoryEntry_(n, { historyEndDate: '2026-08-02', days: '1111111' });
+  });
+
+  var perKeyHistoryReads = 0;
+  var realGetProperty = global.PropertiesService.getScriptProperties().getProperty;
+  var props = global.PropertiesService.getScriptProperties();
+  global.PropertiesService.getScriptProperties = function() {
+    return Object.assign({}, props, {
+      getProperty: function(k) {
+        if (String(k).indexOf('go30hist:') === 0) perKeyHistoryReads++;
+        return realGetProperty.call(props, k);
+      },
+    });
+  };
+
+  var monthInfo = { sheetId: 'sheet-aug-batch', trackerUrl: 'https://x/batch', label: 'August 2026', startDate: new Date(2026, 7, 1) };
+  var handle = buildResolvedContextHandle_(monthInfo, 0, 'Anchor');
+  var result = handleCheckinDashboard_({}, { f3Name: 'Anchor', email: 'a@x.com', dateISO: '2026-08-02', resolvedContext: handle });
+  assert.equal(result.ok, true);
+  assert.equal(perKeyHistoryReads, 0, 'history entries must come from one batched read, not one getProperty per roster row');
+
+  installFakePropertiesStore_();
+  delete global.SpreadsheetApp;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// A fresh check-in write-through (handleCheckinSubmit_) advances the PAX's history window —
+// verifies the wiring end to end, not just advancePaxHistoryDay_ in isolation (already unit
+// tested in test_pax_cache.js).
+(function testCheckinSubmitAdvancesHistoryWindow() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
+  var PaxCache = require('../script/PaxCache.js');
+  PaxCache.setPaxHistoryEntry_('Anchor', { historyEndDate: '2026-07-01', days: '1' });
+
+  var fx = makeHandleFixture_(); // 'Anchor' at rowIndex 0, sheet-jul, day columns Jul 1 + Jul 2
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
+
+  var result = handleCheckinSubmit_({}, { f3Name: 'Anchor', day: '2026-07-02', value: 1, resolvedContext: handle });
+  assert.equal(result.ok, true);
+  assert.deepEqual(PaxCache.getPaxHistoryEntry_('Anchor'), { historyEndDate: '2026-07-02', days: '11' });
+
+  delete global.SpreadsheetApp;
 })();
 
 // ── Write-through PaxCache patch on check-in submit (F3Go30-5nfj.3) ─────────────────────────────

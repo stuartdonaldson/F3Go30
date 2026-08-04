@@ -196,6 +196,12 @@ function applyMinusOneToTrackerSheet_(spreadsheet, contextDate) {
       if (values[j][0] === '' && formulas[j][0] === '' && columnAValues[j][0] !== '') {
         values[j][0] = -1;
         markedCount++;
+        // F3Go30-5uk2: write-through into the f3Name-keyed rolling history window (PaxCache.js) —
+        // the same write-through convention as the Tracker-row cache refresh below, so team-tile
+        // streak/maxStreak30 pick up this auto-mark without waiting for a self-heal read.
+        if (typeof advancePaxHistoryDay_ === 'function') {
+          advancePaxHistoryDay_(columnAValues[j][0], thresholdday, -1);
+        }
       }
     }
 

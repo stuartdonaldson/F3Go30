@@ -65,6 +65,24 @@ var paxCacheNormalizeName_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWeba
   || (typeof globalThis !== 'undefined' && globalThis.paxCacheNormalizeName_);
 var getPaxCacheRequestStats_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.getPaxCacheRequestStats_)
   || (typeof globalThis !== 'undefined' && globalThis.getPaxCacheRequestStats_);
+// f3Name-keyed rolling history window (F3Go30-5uk2) — see PaxCache.js file header.
+var getPaxHistoryEntry_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.getPaxHistoryEntry_)
+  || (typeof globalThis !== 'undefined' && globalThis.getPaxHistoryEntry_);
+var setPaxHistoryEntry_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.setPaxHistoryEntry_)
+  || (typeof globalThis !== 'undefined' && globalThis.setPaxHistoryEntry_);
+var paxHistoryDaysToValues_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.paxHistoryDaysToValues_)
+  || (typeof globalThis !== 'undefined' && globalThis.paxHistoryDaysToValues_);
+// F3Go30-uz9e.2 — read-side anchoring + the roster-wide batched entry read.
+var anchorPaxHistoryValues_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.anchorPaxHistoryValues_)
+  || (typeof globalThis !== 'undefined' && globalThis.anchorPaxHistoryValues_);
+var getPaxHistoryEntriesBulk_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.getPaxHistoryEntriesBulk_)
+  || (typeof globalThis !== 'undefined' && globalThis.getPaxHistoryEntriesBulk_);
+var paxHistoryDayDiff_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.paxHistoryDayDiff_)
+  || (typeof globalThis !== 'undefined' && globalThis.paxHistoryDayDiff_);
+var paxHistoryEncodeValue_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.paxHistoryEncodeValue_)
+  || (typeof globalThis !== 'undefined' && globalThis.paxHistoryEncodeValue_);
+var advancePaxHistoryDay_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.advancePaxHistoryDay_)
+  || (typeof globalThis !== 'undefined' && globalThis.advancePaxHistoryDay_);
 
 /** F3Go30-440b.1 — folds this execution's PaxCache hit/miss/wipe counters into the caller's own
  *  per-request GasLogger event object; {} if PaxCache isn't wired (never true in production). */
@@ -360,25 +378,6 @@ function buildRollingAverage_(dayValues, windowSize) {
   return series;
 }
 
-/**
- * Same trailing-mean series as buildRollingAverage_, but the window for the first
- * (windowSize-1) days of dayValues can reach back into priorMonthTailValues (the trailing days
- * of the previous month's tracker) instead of being artificially shortened at the month
- * boundary — e.g. day 2 of a new month sees a 2-day window today, but should see a 14-day
- * window spanning back into last month, same as any other day.
- * @param {Array<number>} dayValues This month's values (own tracker, own PAX).
- * @param {number} windowSize
- * @param {Array<number>} priorMonthTailValues Trailing values from the previous month (any
- *   length — only the last windowSize-1 are used); [] or omitted when there's no prior tracker.
- * @returns {Array<number>} Same length as dayValues, aligned 1:1 (the lookback prefix is
- *   computed against but never included in the returned series).
- */
-function buildRollingAverageWithLookback_(dayValues, windowSize, priorMonthTailValues) {
-  var tail = (priorMonthTailValues || []).slice(-(windowSize - 1));
-  var combined = tail.concat(dayValues || []);
-  return buildRollingAverage_(combined, windowSize).slice(tail.length);
-}
-
 /** Bonus pill/score computation (weekOfMonth_, computeBonusPillsAsOf_, computeBonusSeriesForPax_,
  *  annotateBonusEntryCountStatus_) lives in BonusTypes.js — see the require block above for the
  *  *_dw_ bindings used below. */
@@ -585,6 +584,7 @@ function handleCheckinPost_(e) {
     if (payload.action === 'identify') return jsonOutput_(handleCheckinIdentify_(spreadsheet, payload));
     if (payload.action === 'checkin') return jsonOutput_(handleCheckinSubmit_(spreadsheet, payload));
     if (payload.action === 'dashboard') return jsonOutput_(handleCheckinDashboard_(spreadsheet, payload));
+    if (payload.action === 'paxGoals') return jsonOutput_(handlePaxGoals_(spreadsheet, payload));
     if (payload.action === 'monthGrid') return jsonOutput_(handleMonthGrid_(spreadsheet, payload));
     if (payload.action === 'bonusList') return jsonOutput_(handleBonusList_(spreadsheet, payload));
     if (payload.action === 'bonusAdd') return jsonOutput_(handleBonusAdd_(spreadsheet, payload));
@@ -1055,9 +1055,9 @@ function buildMonthNavigationPayload_dw_(spreadsheet, f3Name) {
 }
 
 /**
- * Trailing day values (up to windowSize-1) from the PAX's *previous* month's tracker, for
- * buildRollingAverageWithLookback_ — a rolling average shouldn't reset to a truncated window
- * just because a new month started. Best-effort: returns [] (never throws) whenever there's no
+ * Trailing day values (up to windowSize-1) from the PAX's *previous* month's tracker — used by
+ * getPaxHistoryWindowValues_'s cold-start self-heal so a rolling window shouldn't reset to a
+ * truncated one just because a new month started. Best-effort: returns [] (never throws) whenever there's no
  * prior tracker, the PAX has no row there, or anything else goes wrong — a missing lookback
  * degrades to the old month-truncated behavior rather than breaking the dashboard.
  * Uses the same per-PAX PaxCache (kind 'tracker', keyed by the prior month's sheetId) as the
@@ -1871,6 +1871,12 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
   // PRE-write snapshot: that snapshot loses a concurrent check-in's day (F3Go30-xg8f) and carries
   // stale formula-computed score columns (F3Go30-s1a5). See refreshPaxCacheRowFromSheet_.
   refreshPaxCacheRowFromSheet_dw_('tracker', target.sheetId, payload.f3Name, target.trackerSheet, sheetRow);
+  // F3Go30-5uk2: write-through into the f3Name-keyed rolling history window, so team-tile
+  // streak/maxStreak30 (buildDashboardPaxRow_, via getPaxHistoryWindowValues_) reflect this
+  // check-in immediately, the same way the PaxCache tracker-row write-through above does.
+  // The context date is passed explicitly (F3Go30-uz9e.2) so the future-day clamp inside judges
+  // "future" against the same day this request resolved, not the script's raw clock.
+  if (advancePaxHistoryDay_dw_) advancePaxHistoryDay_dw_(payload.f3Name, targetDate, payload.value, _dashboardIsoDate_(today));
   GasLogger.log('checkinWebapp.checkin', { f3Name: payload.f3Name, day: payload.day, value: payload.value });
   return { ok: true };
 }
@@ -2075,26 +2081,145 @@ function firstActiveDayIndex_(dayValues) {
   return -1;
 }
 
-function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, totalDays, currentDay, bonusByType) {
+function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, totalDays, currentDay, bonusByType, historyValues) {
   var firstActiveIdx = firstActiveDayIndex_(dayValues);
   var denom = firstActiveIdx === -1 ? 0 : (currentDay - firstActiveIdx);
+  // F3Go30-uz9e.1: same historyValues (PaxCache's f3Name-keyed rolling window, spans the month
+  // boundary) already used for maxStreak30 below, now also driving rollingAverage — its leading
+  // points are computed against the real prior-month tail instead of truncating at day 1 of the
+  // month.
+  //
+  // F3Go30-uz9e.2: averaged over the prior-month LEAD plus the full dayValues, not over
+  // historyValues alone. historyValues is capped at MAX_STREAK_WINDOW_DAYS_ (30), which is SHORTER
+  // than a 31-day month and shorter still than a prior-month date-nav view — averaging over it and
+  // then slicing produced a rollingAverage with fewer entries than dayValues, silently breaking
+  // the 1:1 alignment with dayValues/dayDates that both server and client assume. Splitting the
+  // window at the overlap keeps every day of the viewed month represented, with whatever
+  // cross-month lead is available in front of it.
+  var historyForPadding = historyValues || [];
+  var overlapWithMonth = Math.min(historyForPadding.length, dayValues.length);
+  var priorMonthLead = historyForPadding.slice(0, historyForPadding.length - overlapWithMonth);
+  var averagedHistory = buildRollingAverage_(priorMonthLead.concat(dayValues), ROLLING_AVERAGE_WINDOW_DAYS_);
+  // F3Go30-uz9e.1: the prior-month tail of historyValues, same source userRollingAverage's
+  // padding used to be built from viewer-only — every board row gets it now, so the pax-detail
+  // popup's chart can pad its display window across a month boundary for ANY teammate, not just
+  // the logged-in viewer (renderPaxDetail_, CheckinApp.html/index.html).
+  var priorMonthDayValues = priorMonthLead.slice(-(DASHBOARD_DISPLAY_WINDOW_DAYS_ - 1));
   return {
     name: name,
     team: team,
     score: score,
     rawScore: rawScore,
     streak: streak,
-    maxStreak30: computeMaxStreak_(dayValues, MAX_STREAK_WINDOW_DAYS_),
+    // F3Go30-5uk2: windowed across the month boundary via historyValues (PaxCache's f3Name-keyed
+    // rolling window) when the caller has it — falls back to dayValues (this month only) for any
+    // caller that doesn't, e.g. a unit test exercising this function directly.
+    maxStreak30: computeMaxStreak_(historyValues || dayValues, MAX_STREAK_WINDOW_DAYS_),
     scorePct: denom ? Math.round((score / denom) * 100) : (score >= 0 ? 100 : 0),
     dayValues: dayValues,
     daySegments: buildDaySegments_(dayValues, totalDays),
-    rollingAverage: buildRollingAverage_(dayValues, ROLLING_AVERAGE_WINDOW_DAYS_),
+    rollingAverage: dayValues.length ? averagedHistory.slice(averagedHistory.length - dayValues.length) : [],
+    priorMonthDayValues: priorMonthDayValues,
     // F3Go30-y55y: per-PAX, same as score/streak — every board tile gets its own bonus totals,
     // not just the logged-in PAX's own stat area. Callers pass the date-scoped/capped result of
     // computeBonusPillsAsOf_, not a raw Tracker column read; the all-zero default below covers
     // a caller that omits this (e.g. a row with no Bonus Tracker entries at all).
     bonusByType: bonusByType || emptyBonusPills_dw_(),
   };
+}
+
+/**
+ * Trailing MAX_STREAK_WINDOW_DAYS_ dayValues for f3Name, spanning any month boundary — the
+ * cross-month read side of F3Go30-5uk2's PaxCache history window, used for EVERY board row
+ * (buildDashboardPaxRow_'s caller, below), not just the logged-in viewer.
+ *
+ * Cache hit: decodes the stored dense days string straight into the same 1/0/-1/'' shape
+ * computeStreak_/computeMaxStreak_ already expect from a live Tracker dayValues array.
+ *
+ * Cache miss (a PAX with no rolling-window entry yet — first read after this shipped): self-heals
+ * once by falling back to the same computation the old viewer-only override used — this month's
+ * own dayValues plus getPriorMonthTailValues_'s prior-month tail — then persists the windowed
+ * result under the new f3Name-only key so every subsequent read is a plain cache hit.
+ * @param {string} f3Name
+ * @param {Array} currentMonthDayValues This month's reported day values, in column order.
+ * @param {Object} monthInfo Resolved month (see resolveDashboardMonth_).
+ * @param {Spreadsheet} templateSpreadsheet
+ * Anchored and reconciled on read (F3Go30-uz9e.2). Two things a raw cache hit can't promise:
+ *   - It ends where the CALLER says the world ends. A stored window ends wherever its last write
+ *     left it (anchorPaxHistoryValues_, PaxCache.js) — ahead of the anchor if the PAX pre-marked a
+ *     future day, behind it if nothing has been written for a few days, a different month
+ *     entirely under date navigation. The caller tail-aligns the result against dayValues, so any
+ *     difference silently shifts every day in the window.
+ *   - It agrees with the Tracker. go30hist and the tracker-kind PaxCache row are two
+ *     representations of the same day values, written by two independent write-through calls with
+ *     nothing reconciling them — a manual sheet edit, a tracker regeneration, or an import lands
+ *     on one and not the other, and a wrong entry never self-heals (the miss path only fires on a
+ *     MISSING entry). The Tracker row is already in hand (identity.trackerValues is fetched
+ *     regardless), so checking the overlapping tail against it is free.
+ * Either check failing falls through to the same rebuild-from-sheet path a cold start takes.
+ *
+ * @param {string} anchorIso "YYYY-MM-DD" the returned window must END on — the date of the last
+ *   reported day column (dayDates[dayDates.length - 1]), NOT reportedCutoff. reportedCutoff stays
+ *   at today when navigating BACKWARD (viewDate > realToday ? viewDate : realToday), so using it
+ *   would leave a June view in August anchored in August.
+ * @param {Object=} entriesByNormName Prefetched entries from getPaxHistoryEntriesBulk_ (one
+ *   PropertiesService round trip for the whole roster). Omit to look this PAX up individually.
+ * @returns {Array} Trailing MAX_STREAK_WINDOW_DAYS_ values (or fewer, early in the program),
+ *   ending on anchorIso.
+ */
+function getPaxHistoryWindowValues_(f3Name, currentMonthDayValues, monthInfo, templateSpreadsheet, anchorIso, entriesByNormName) {
+  var entry = entriesByNormName
+    ? (entriesByNormName[paxCacheNormalizeName_dw_(f3Name)] || null)
+    : (getPaxHistoryEntry_dw_ ? getPaxHistoryEntry_dw_(f3Name) : null);
+  var anchored = anchorPaxHistoryValues_dw_ ? anchorPaxHistoryValues_dw_(entry, anchorIso) : null;
+  if (anchored && paxHistoryWindowMatchesTracker_(anchored, currentMonthDayValues)) {
+    return anchored.slice(-MAX_STREAK_WINDOW_DAYS_);
+  }
+
+  var tail = getPriorMonthTailValues_(monthInfo, f3Name, MAX_STREAK_WINDOW_DAYS_, templateSpreadsheet);
+  // No trailing-blank trim: the combined array ends on anchorIso by construction
+  // (currentMonthDayValues is the reported day columns, whose last one IS the anchor), and that
+  // is exactly what makes the stamped historyEndDate below true.
+  var windowed = tail.concat(currentMonthDayValues || []).slice(-MAX_STREAK_WINDOW_DAYS_);
+  // Don't clobber a live window with an older-anchored rebuild — a backward date-nav read
+  // legitimately computes a prior month's window, but that must not become the stored one.
+  var wouldRegress = entry && entry.historyEndDate && paxHistoryDayDiff_dw_(entry.historyEndDate, anchorIso) < 0;
+  if (windowed.length && !wouldRegress && setPaxHistoryEntry_dw_ && paxHistoryEncodeValue_dw_) {
+    var days = windowed.map(paxHistoryEncodeValue_dw_).join('');
+    // A roster row with nothing reported yet encodes to all-'.' — storing that would put one
+    // Script Property per never-active PAX in a 500KB store to say "no data", which the miss path
+    // already says for free.
+    if (/[^.]/.test(days)) {
+      var rebuilt = { historyEndDate: anchorIso, days: days };
+      setPaxHistoryEntry_dw_(f3Name, rebuilt);
+      if (entriesByNormName) entriesByNormName[paxCacheNormalizeName_dw_(f3Name)] = rebuilt;
+    }
+  }
+  return windowed;
+}
+
+/** Normalizes a day cell (Tracker) or decoded window character to one comparable value —
+ *  a blank cell and a never-observed '.' day are both "no data". */
+function paxHistoryComparableDayValue_(value) {
+  if (value === 1) return 1;
+  if (value === 0) return 0;
+  if (value === -1) return -1;
+  return '';
+}
+
+/**
+ * True when the anchored window agrees with the Tracker row everywhere the two overlap. Both end
+ * on the same day (the anchor), so the comparison walks backward from the tail of each.
+ */
+function paxHistoryWindowMatchesTracker_(historyValues, currentMonthDayValues) {
+  var dayValues = currentMonthDayValues || [];
+  var overlap = Math.min(historyValues.length, dayValues.length);
+  for (var i = 1; i <= overlap; i++) {
+    var fromWindow = paxHistoryComparableDayValue_(historyValues[historyValues.length - i]);
+    var fromSheet = paxHistoryComparableDayValue_(dayValues[dayValues.length - i]);
+    if (fromWindow !== fromSheet) return false;
+  }
+  return true;
 }
 
 function _dashboardIsoDate_(d) {
@@ -2202,27 +2327,43 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   }
   var reportedDayDates = reportedDayCols.map(function(d) { return d.date; });
 
+  // F3Go30-uz9e.2: the day every figure on this load is computed "as of" — the last reported day
+  // column, which for the current month is today and for a prior-month view is that month's last
+  // day. NOT reportedCutoffIso, which stays at today when navigating backward (see
+  // getPaxHistoryWindowValues_). dayDates is empty only for a month whose first day hasn't been
+  // reached yet; fall back to the cutoff there so the anchor is never undefined.
+  var historyAnchorIso = dayDates.length ? dayDates[dayDates.length - 1] : _dashboardIsoDate_(reportedCutoff);
+  // One PropertiesService round trip for the whole roster's history entries instead of one
+  // getProperty per row inside the loop below (F3Go30-uz9e.2) — same reasoning as
+  // getPaxCacheRowsBulk_ for the tracker rows.
+  var historyEntries = getPaxHistoryEntriesBulk_dw_
+    ? getPaxHistoryEntriesBulk_dw_(identity.trackerValues.map(function(row) { return row[TRACKER_NAME_COL_]; }))
+    : null;
   var allPaxRows = [];
   var userRow = null;
   identity.trackerValues.forEach(function(row, idx) {
     var name = row[TRACKER_NAME_COL_];
     if (!String(name || '').trim()) return;
     var dayValues = reportedDayCols.map(function(d) { return row[d.col]; });
+    // F3Go30-5uk2/uz9e.1: cross-month streak/maxStreak30/rollingAverage for EVERY row
+    // (myTeam/paxBoard), not just the logged-in viewer — see getPaxHistoryWindowValues_.
+    var historyValues = getPaxHistoryWindowValues_(name, dayValues, monthInfo, templateSpreadsheet, historyAnchorIso, historyEntries);
     var bonusSeries = computeBonusSeriesForPax_dw_(bonusEntries, paxCacheNormalizeName_dw_(name), reportedDayDates, monthInfo.startDate);
     var paxRow = buildDashboardPaxRow_(
       name,
       row[TRACKER_TEAM_COL_],
       row[TRACKER_SCORE_COL_],
       row[TRACKER_RAW_SCORE_COL_],
-      computeStreak_(dayValues),
+      computeStreak_(historyValues),
       dayValues,
       totalDays,
       currentDay,
-      bonusSeries[bonusSeries.length - 1]
+      bonusSeries[bonusSeries.length - 1],
+      historyValues
     );
     paxRow.bonusByTypeSeries = bonusSeries;
     allPaxRows.push(paxRow);
-    if (idx === identity.rowIndex) userRow = paxRow;
+    if (idx === identity.rowIndex) { userRow = paxRow; }
   });
 
   var userDayValues = reportedDayCols.map(function(d) { return identity.trackerValues[identity.rowIndex][d.col]; });
@@ -2230,33 +2371,18 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   var bonusByType = userRow.bonusByType;
   var userBonusByTypeSeries = userRow.bonusByTypeSeries;
 
-  // Early-month days would otherwise show an artificially short rolling-average window (e.g.
-  // day 2 of July only has 2 days to average) — reach into the previous month's tracker so the
-  // window is always a true ROLLING_AVERAGE_WINDOW_DAYS_ trailing mean. Fetched at the largest
-  // of the three window sizes so the same tail also covers the chart's display-window padding
-  // (see priorMonthDayValues below) and the 30-day max-streak lookback below —
-  // getPriorMonthTailValues_ trims to whatever each caller actually needs.
-  var priorMonthTail = getPriorMonthTailValues_(
-    monthInfo, payload.f3Name,
-    Math.max(ROLLING_AVERAGE_WINDOW_DAYS_, DASHBOARD_DISPLAY_WINDOW_DAYS_, MAX_STREAK_WINDOW_DAYS_),
-    templateSpreadsheet
-  );
-  var userRollingAverage = buildRollingAverageWithLookback_(userDayValues, ROLLING_AVERAGE_WINDOW_DAYS_, priorMonthTail);
+  // F3Go30-uz9e.1: userRow's rollingAverage and priorMonthDayValues (built inside the roster loop
+  // above, from the same historyValues-sourced computation every other row now gets too) already
+  // span the month boundary — no separate override/getPriorMonthTailValues_ call needed here
+  // anymore (that used to run a second, potentially cache-missing lookup for the viewer alone).
+  var userRollingAverage = userRow.rollingAverage;
+  var priorMonthTail = userRow.priorMonthDayValues;
 
-  // Same month-boundary problem as the rolling average above, applied to streak: buildDashboard
-  // PaxRow_'s streak/maxStreak30 (used for every other board row) only sees this month's own
-  // dayValues, so early in a month a real streak that started last month reads as artificially
-  // short (or a real 30-day-best gets capped at however few days have elapsed so far this
-  // month). Recompute both for the identified PAX specifically using the same prior-month tail,
-  // overriding userRow's current-month-only figures. Both figures are windowed to the same
-  // trailing MAX_STREAK_WINDOW_DAYS_ days — "current streak" is not an unbounded look-back, it's
-  // the run within that same 30-day window, exactly like "best in 30 days" is.
-  var userValuesWithLookback = priorMonthTail.concat(userDayValues);
-  var userValuesTrimmed = userValuesWithLookback.slice();
-  while (userValuesTrimmed.length && userValuesTrimmed[userValuesTrimmed.length - 1] === '') userValuesTrimmed.pop();
-  var userValuesWindowed = userValuesTrimmed.slice(-MAX_STREAK_WINDOW_DAYS_);
-  var userStreak = computeStreak_(userValuesWindowed);
-  var userMaxStreak30 = computeMaxStreak_(userValuesWindowed, MAX_STREAK_WINDOW_DAYS_);
+  // F3Go30-5uk2: userRow (built inside the roster loop above) already carries a cross-month
+  // streak/maxStreak30 via getPaxHistoryWindowValues_ — the same PaxCache history window used
+  // for every other board row, so the viewer no longer needs a separate override computation.
+  var userStreak = userRow.streak;
+  var userMaxStreak30 = userRow.maxStreak30;
 
   var userTeam = String(identity.trackerValues[identity.rowIndex][TRACKER_TEAM_COL_] || '').trim().toLowerCase();
   var myTeamMembers = allPaxRows.filter(function(r) { return String(r.team || '').trim().toLowerCase() === userTeam; })
@@ -2306,6 +2432,39 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
     myTeam: myTeamMembers,
     paxBoard: paxBoard,
   };
+}
+
+/**
+ * cmd=checkin `paxGoals` action (F3Go30 pax-detail popup): on-demand WHO/WHAT/HOW for a single
+ * teammate, looked up by name — the dashboard payload's myTeam/paxBoard rows deliberately don't
+ * carry goals (that would mean a per-PAX Responses row read for the *entire* roster on every
+ * dashboard load, most of which are never clicked into), so the pax-detail popup fetches just the
+ * one row it needs, right when a PAX taps a tile/board row to open it.
+ *
+ * Reuses the viewer's own resolvedContext handle for month resolution only (same fast path as
+ * handleCheckinDashboard_) — the handle's rowIndex/f3Name belong to the *viewer*, not the target
+ * pax, so identity itself always goes through resolveCheckinIdentityLean_(needGoals=true) rather
+ * than any handle-based shortcut.
+ */
+function handlePaxGoals_(templateSpreadsheet, payload) {
+  var targetName = payload.f3Name;
+  if (!targetName) return { ok: false, error: 'missing_f3Name' };
+
+  var realToday = resolveContextDate_(templateSpreadsheet, payload.contextDate);
+  var viewDate = payload.dateISO ? parseIsoDateLocal_(payload.dateISO) : new Date(realToday);
+  if (isNaN(viewDate.getTime())) viewDate = new Date(realToday);
+
+  var handle = payload.resolvedContext;
+  var monthInfo = (handle && handle.monthKey && String(payload.dateISO || '').slice(0, 7) === handle.monthKey)
+    ? monthInfoFromHandle_(handle)
+    : null;
+  if (!monthInfo) monthInfo = resolveDashboardMonth_(viewDate, templateSpreadsheet);
+  if (!monthInfo) return { ok: false, error: 'no_tracker_for_date' };
+
+  var identity = resolveCheckinIdentityLean_(monthInfo, targetName, null, {}, true);
+  if (!identity.matched) return { ok: false, error: 'not_found' };
+
+  return { ok: true, f3Name: targetName, goals: identity.goals };
 }
 
 /**
@@ -2436,9 +2595,9 @@ if (typeof module !== 'undefined' && module.exports) {
     groupByTeam_: groupByTeam_,
     firstActiveDayIndex_: firstActiveDayIndex_,
     buildDashboardPaxRow_: buildDashboardPaxRow_,
+    getPaxHistoryWindowValues_: getPaxHistoryWindowValues_,
     buildDaySegments_: buildDaySegments_,
     buildRollingAverage_: buildRollingAverage_,
-    buildRollingAverageWithLookback_: buildRollingAverageWithLookback_,
     resolveCheckinDayTarget_: resolveCheckinDayTarget_,
     getCachedTrackerLayoutOnly_: getCachedTrackerLayoutOnly_,
     trackerLayoutCacheKey_: trackerLayoutCacheKey_,

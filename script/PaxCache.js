@@ -330,7 +330,11 @@ function wipeAllPaxCache_() {
   try {
     var props = PropertiesService.getScriptProperties();
     props.getKeys().forEach(function(key) {
-      if (key.indexOf(PAX_CACHE_PREFIX_) === 0 || key.indexOf(PAX_CACHE_ROSTER_PREFIX_) === 0) {
+      // PAX_HISTORY_PREFIX_ (F3Go30-5uk2's f3Name-keyed rolling history window) included here too
+      // — it's the same PropertiesService store, and a wrong/stale streak needs the same "force a
+      // reload" escape hatch as every other PaxCache entry. A wipe here just means the next
+      // dashboard read for that PAX cold-starts via getPaxHistoryWindowValues_'s self-heal path.
+      if (key.indexOf(PAX_CACHE_PREFIX_) === 0 || key.indexOf(PAX_CACHE_ROSTER_PREFIX_) === 0 || key.indexOf(PAX_HISTORY_PREFIX_) === 0) {
         props.deleteProperty(key);
         wiped++;
       }
@@ -495,7 +499,7 @@ function extractSheetIdFromPaxCacheKey_(key) {
  * failure/misconfiguration must never be mistaken for "nothing is live" and wipe everything.
  * @param {Date=} now Injectable for tests; defaults to the real current time.
  * @param {Spreadsheet=} spreadsheet Injectable for tests; defaults to the active spreadsheet.
- * @returns {{checked: number, purged: number, kept: number, paxRowsPurged: number, orphanedSheetsPurged: number}}
+ * @returns {{checked: number, purged: number, kept: number, paxRowsPurged: number, orphanedSheetsPurged: number, historyEntriesPurged: number}}
  */
 function purgeStalePaxCache_(now, spreadsheet) {
   now = now || new Date();
@@ -549,7 +553,26 @@ function purgeStalePaxCache_(now, spreadsheet) {
     });
   }
 
-  var result = { checked: checked, purged: purged, kept: kept, paxRowsPurged: paxRowsPurged, orphanedSheetsPurged: orphanedSheetsPurged };
+  // Fourth pass (F3Go30-uz9e.2): go30hist entries. They carry no sheetId, so neither the
+  // tracker-age passes nor the orphan sweep above can see them at all — every name that ever
+  // checked in, including retired PAX and typos, otherwise kept a Script Property forever against
+  // the 500KB store quota. Reaped off the same CheckinSessions activity signal the per-PAX row
+  // pass uses, and safe to be aggressive about: unlike the row cache this window is derived data
+  // end to end, so a wrongly-reaped entry self-heals from the Tracker on the next dashboard read.
+  var historyEntriesPurged = 0;
+  if (activeNames) {
+    try {
+      PropertiesService.getScriptProperties().getKeys().forEach(function(key) {
+        if (key.indexOf(PAX_HISTORY_PREFIX_) !== 0) return;
+        var normName = key.slice(PAX_HISTORY_PREFIX_.length);
+        if (Object.prototype.hasOwnProperty.call(activeNames, normName)) return;
+        PropertiesService.getScriptProperties().deleteProperty(key);
+        historyEntriesPurged++;
+      });
+    } catch (e) { /* best-effort — the rest of the purge already ran */ }
+  }
+
+  var result = { checked: checked, purged: purged, kept: kept, paxRowsPurged: paxRowsPurged, orphanedSheetsPurged: orphanedSheetsPurged, historyEntriesPurged: historyEntriesPurged };
   GasLogger.log('purgeStalePaxCache_', result);
   return result;
 }
@@ -559,6 +582,257 @@ function purgeStalePaxCache() {
   return GasLogger.run('purgeStalePaxCache', function() {
     return purgeStalePaxCache_();
   });
+}
+
+// ── f3Name-keyed rolling history window (F3Go30-5uk2, PAX data model migration Slice 1) ──
+//
+// A third PaxCache entry kind, deliberately NOT namespaced by sheetId like the two above — this
+// is the first step toward a per-PAX record that spans months (docs/pax-data-model-and-contract.md
+// §3.1/§5). One entry per PAX, holding a dense trailing window of day outcomes so
+// buildDashboardPaxRow_ (dashboardWebapp.js) can compute streak/maxStreak30 correctly for every
+// PAX on the board, not just the logged-in viewer, without a month-boundary stitch.
+//
+// Shape: { historyEndDate: "YYYY-MM-DD", days: "<1-char/day string, oldest first>" }.
+// historyEndDate is the calendar day the LAST character of days represents — required, since a
+// bare day-string alone can't say which day it ends on. Every write shifts days and advances
+// historyEndDate together (advancePaxHistoryEntry_), so the anchor can never drift out of sync
+// with its data.
+var PAX_HISTORY_PREFIX_ = 'go30hist:';
+
+// ~40 days is enough for MAX_STREAK_WINDOW_DAYS_ (30, dashboardWebapp.js) plus slack.
+//
+// F3Go30-uz9e.2: this length is now load-bearing for more than maxStreak30. Since F3Go30-uz9e.1,
+// rollingAverage and priorMonthDayValues are also sourced from this window, and they need it to
+// cover a full calendar month (31) plus the client's display padding
+// (DASHBOARD_DISPLAY_WINDOW_DAYS_ - 1 = 13) — 31 + 13 = 44, which is MORE than 40. It works today
+// only because the padding is only wanted early in the month, when the current month's own
+// dayValues is still short; late in a 31-day month there is no prior-month tail left in the
+// window, and none is needed. That is coincidence, not design: raise this to 45 before relying on
+// cross-month padding at any point in the month.
+// Not the full ~400-day window a later migration slice would need for other features.
+var PAX_HISTORY_WINDOW_DAYS_ = 40;
+
+function paxHistoryKey_(f3Name) {
+  return PAX_HISTORY_PREFIX_ + paxCacheNormalizeName_(f3Name);
+}
+
+/** 1-char encoding for one day's Tracker cell value — 1/0/-1 mirror the Tracker's own values;
+ *  '.' marks a day with no data (blank cell, or a gap this window never observed). */
+function paxHistoryEncodeValue_(value) {
+  if (value === 1) return '1';
+  if (value === 0) return '0';
+  if (value === -1) return 'X';
+  return '.';
+}
+
+function paxHistoryDecodeChar_(ch) {
+  if (ch === '1') return 1;
+  if (ch === '0') return 0;
+  if (ch === 'X') return -1;
+  return '';
+}
+
+/** Decodes a stored days string back into the same 1/0/-1/'' value shape computeStreak_/
+ *  computeMaxStreak_ (dashboardWebapp.js) already expect from a Tracker dayValues array. */
+function paxHistoryDaysToValues_(days) {
+  return (days || '').split('').map(paxHistoryDecodeChar_);
+}
+
+/** Parses a "YYYY-MM-DD" string as a local-midnight Date — duplicated in miniature from
+ *  dashboardWebapp.js's parseIsoDateLocal_ rather than imported, to avoid a circular dependency
+ *  between this file and dashboardWebapp.js (same tradeoff as the CacheService key-string
+ *  duplication in wipePaxCacheAndRelatedCachesForSheet_ above). */
+function paxHistoryParseIsoLocal_(iso) {
+  var parts = String(iso).split('-').map(Number);
+  return new Date(parts[0], parts[1] - 1, parts[2]);
+}
+
+function paxHistoryFormatIsoLocal_(date) {
+  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+}
+
+/** Whole-day difference (toIso - fromIso), local-midnight to local-midnight. */
+function paxHistoryDayDiff_(fromIso, toIso) {
+  var a = paxHistoryParseIsoLocal_(fromIso);
+  var b = paxHistoryParseIsoLocal_(toIso);
+  return Math.round((b.getTime() - a.getTime()) / 86400000);
+}
+
+/**
+ * Pure state-transition function: folds one day's write {dateIso, value} into the existing
+ * {historyEndDate, days} entry (or null, for a brand-new PAX), returning the next entry. Never
+ * mutates its input. Exported separately from advancePaxHistoryDay_ so the shifting/padding rules
+ * are unit-testable without a PropertiesService/LockService fixture.
+ *   - No existing entry: starts a fresh 1-day window.
+ *   - dateIso === entry.historyEndDate: an edit to the most recent day — rewrite in place.
+ *   - dateIso after historyEndDate: advances the window, padding any skipped days with '.' (a
+ *     missed nightly run, or several days between visits), then trims to the trailing
+ *     PAX_HISTORY_WINDOW_DAYS_ characters.
+ *   - dateIso before historyEndDate but still within the stored window: an edit to an older day
+ *     (e.g. a PAX correcting yesterday after today's cell already advanced the window) — patched
+ *     in place without moving historyEndDate.
+ *   - dateIso older than the stored window: no representable slot — returned unchanged.
+ * @param {?{historyEndDate:string, days:string}} entry
+ * @param {string} dateIso "YYYY-MM-DD" day being written.
+ * @param {number|null} value 1 | 0 | -1 | null (null clears the day back to unrecorded).
+ * @returns {{historyEndDate:string, days:string}}
+ */
+function advancePaxHistoryEntry_(entry, dateIso, value) {
+  var ch = paxHistoryEncodeValue_(value);
+  if (!entry || !entry.historyEndDate || typeof entry.days !== 'string') {
+    return { historyEndDate: dateIso, days: ch };
+  }
+
+  var dayDiff = paxHistoryDayDiff_(entry.historyEndDate, dateIso);
+  if (dayDiff === 0) {
+    return { historyEndDate: entry.historyEndDate, days: entry.days.slice(0, -1) + ch };
+  }
+  if (dayDiff > 0) {
+    var pad = '';
+    for (var i = 1; i < dayDiff; i++) pad += '.';
+    var days = (entry.days + pad + ch).slice(-PAX_HISTORY_WINDOW_DAYS_);
+    return { historyEndDate: dateIso, days: days };
+  }
+
+  var idxFromEnd = -dayDiff;
+  if (idxFromEnd >= entry.days.length) return entry; // older than the stored window — not representable
+  var idx = entry.days.length - 1 - idxFromEnd;
+  return { historyEndDate: entry.historyEndDate, days: entry.days.slice(0, idx) + ch + entry.days.slice(idx + 1) };
+}
+
+/**
+ * Read-side counterpart to advancePaxHistoryEntry_ (F3Go30-uz9e.2): decodes a stored entry into
+ * day values that end EXACTLY at anchorIso, honouring the historyEndDate the write stamped.
+ *
+ * Without this, a stored window is silently assumed to end "now" — but it actually ends wherever
+ * the last write left it, which is a different day whenever the PAX pre-marked a future day
+ * (historyEndDate ahead of today), hasn't been written to for a while (behind today), or the
+ * caller is asking about an earlier month entirely. The caller then tail-aligns the result
+ * against this month's dayValues, so every day is off by that difference.
+ *
+ * Pure and clock-free, like advancePaxHistoryEntry_ — the anchor is always supplied.
+ *   - anchor after historyEndDate: pad the tail with '.' (unknown). Safe specifically at the tail,
+ *     because computeStreak_ trims trailing blanks before counting: "not reported yet" reads as
+ *     no data, not as a broken streak. A gap in the MIDDLE would break one, which is why the
+ *     write path pads gaps rather than dropping them.
+ *   - anchor before historyEndDate: drop the trailing characters for days that, as of the anchor,
+ *     have not happened yet.
+ * @param {?{historyEndDate:string, days:string}} entry
+ * @param {string} anchorIso "YYYY-MM-DD" day the returned values must end on.
+ * @returns {?Array} Decoded 1/0/-1/'' values ending at anchorIso, or null when this entry cannot
+ *   represent that day at all (every stored character would be trimmed or padded away) — the
+ *   caller must then rebuild from the Tracker rather than serve a wrongly-aligned window.
+ */
+function anchorPaxHistoryValues_(entry, anchorIso) {
+  if (!entry || !entry.historyEndDate || typeof entry.days !== 'string' || !entry.days.length) return null;
+  if (!anchorIso) return paxHistoryDaysToValues_(entry.days);
+
+  var dayDiff = paxHistoryDayDiff_(entry.historyEndDate, anchorIso);
+  if (dayDiff === 0) return paxHistoryDaysToValues_(entry.days);
+
+  if (dayDiff < 0) {
+    var trimmed = entry.days.slice(0, dayDiff);
+    return trimmed.length ? paxHistoryDaysToValues_(trimmed) : null;
+  }
+
+  if (dayDiff >= entry.days.length) return null; // padding would consume the whole window
+  var pad = '';
+  for (var i = 0; i < dayDiff; i++) pad += '.';
+  return paxHistoryDaysToValues_((entry.days + pad).slice(-PAX_HISTORY_WINDOW_DAYS_));
+}
+
+/** Returns the cached {historyEndDate, days} rolling-window entry for f3Name, or null on a miss. */
+function getPaxHistoryEntry_(f3Name) {
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty(paxHistoryKey_(f3Name));
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Bulk counterpart to getPaxHistoryEntry_ (F3Go30-uz9e.2): one whole-store getProperties() call
+ * for a whole roster instead of one getProperty() RPC per name. Same justification as
+ * getPaxCacheRowsBulk_ above — the dashboard reads a history entry inside its per-row loop, so the
+ * per-key form cost one PropertiesService round trip per PAX on every dashboard load.
+ * @param {Array<string>} f3Names
+ * @returns {Object<string, {historyEndDate:string, days:string}>} Keyed by NORMALIZED name
+ *   (paxCacheNormalizeName_); names with no stored entry are simply absent.
+ */
+function getPaxHistoryEntriesBulk_(f3Names) {
+  var entries = {};
+  var store;
+  try {
+    store = PropertiesService.getScriptProperties().getProperties() || {};
+  } catch (e) {
+    return entries;
+  }
+  (f3Names || []).forEach(function(f3Name) {
+    var norm = paxCacheNormalizeName_(f3Name);
+    if (!norm || Object.prototype.hasOwnProperty.call(entries, norm)) return;
+    var raw = store[PAX_HISTORY_PREFIX_ + norm];
+    if (!raw) return;
+    try {
+      entries[norm] = JSON.parse(raw);
+    } catch (e2) { /* unparseable entry reads as a miss, same as getPaxHistoryEntry_ */ }
+  });
+  return entries;
+}
+
+function setPaxHistoryEntry_(f3Name, entry) {
+  try {
+    PropertiesService.getScriptProperties().setProperty(paxHistoryKey_(f3Name), JSON.stringify(entry));
+  } catch (e) { /* best-effort — payload too large or Properties unavailable */ }
+}
+
+/**
+ * Write-through entry point (F3Go30-5uk2): folds one day's just-written Tracker value into
+ * f3Name's rolling history window. Call sites: handleCheckinSubmit_ (dashboardWebapp.js, the live
+ * checkin write path) and applyMinusOneToTrackerSheet_ (markMinusOne.js, the nightly -1 auto-mark
+ * path) — every write that can change a Tracker day cell.
+ *
+ * Lock-guarded read-modify-write, same LOST UPDATE justification as
+ * refreshPaxCacheRowFromSheet_ above: two nearly-simultaneous writes for the same PAX (e.g. a
+ * checkin submit racing the nightly job marking a different day) must not silently drop one
+ * write's shift by both reading the same pre-write entry.
+ * F3Go30-uz9e.2: a write for a FUTURE day is dropped rather than folded in. Advance check-in is
+ * an intended feature (handleCheckinSubmit_ accepts 1/0/null for any date with a tracker,
+ * including next month), but advancing the window to a future day pads every skipped day with '.'
+ * and shifts that many days of REAL history off the front, permanently — and the '.' gap then
+ * reads as a broken streak once those days arrive. Nothing is lost by skipping: the value is on
+ * the Tracker, and getPaxHistoryWindowValues_ reconciles the window against the Tracker row on
+ * read, so the day appears the moment it is actually in range.
+ * @param {string} f3Name
+ * @param {Date} date Calendar date the write applies to.
+ * @param {number|null} value 1 | 0 | -1 | null.
+ * @param {string=} todayIso "YYYY-MM-DD" context date to judge "future" against; defaults to the
+ *   real clock. Callers that already resolved a context date (resolveContextDate_) should pass it.
+ */
+function advancePaxHistoryDay_(f3Name, date, value, todayIso) {
+  var dateIsoForClamp = paxHistoryFormatIsoLocal_(date);
+  var anchorIso = todayIso || paxHistoryFormatIsoLocal_(new Date());
+  if (paxHistoryDayDiff_(anchorIso, dateIsoForClamp) > 0) {
+    GasLogger.log('advancePaxHistoryDay_.futureDaySkipped', { f3Name: f3Name, date: dateIsoForClamp, today: anchorIso });
+    return;
+  }
+
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch (e) {
+    GasLogger.log('advancePaxHistoryDay_.lockFailed', { f3Name: f3Name, error: e.message });
+    return;
+  }
+  try {
+    var dateIso = paxHistoryFormatIsoLocal_(date);
+    var entry = getPaxHistoryEntry_(f3Name);
+    setPaxHistoryEntry_(f3Name, advancePaxHistoryEntry_(entry, dateIso, value));
+  } catch (e2) {
+    GasLogger.log('advancePaxHistoryDay_.failed', { f3Name: f3Name, error: e2.message });
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function clearPaxCachePurgeTrigger_() {
@@ -676,5 +950,17 @@ if (typeof module !== 'undefined' && module.exports) {
     collectKnownTrackerSheetIds_: collectKnownTrackerSheetIds_,
     extractSheetIdFromPaxCacheKey_: extractSheetIdFromPaxCacheKey_,
     benchmarkPaxCacheReads_: benchmarkPaxCacheReads_,
+    PAX_HISTORY_WINDOW_DAYS_: PAX_HISTORY_WINDOW_DAYS_,
+    paxHistoryEncodeValue_: paxHistoryEncodeValue_,
+    paxHistoryDecodeChar_: paxHistoryDecodeChar_,
+    paxHistoryDaysToValues_: paxHistoryDaysToValues_,
+    paxHistoryFormatIsoLocal_: paxHistoryFormatIsoLocal_,
+    paxHistoryDayDiff_: paxHistoryDayDiff_,
+    advancePaxHistoryEntry_: advancePaxHistoryEntry_,
+    anchorPaxHistoryValues_: anchorPaxHistoryValues_,
+    getPaxHistoryEntry_: getPaxHistoryEntry_,
+    getPaxHistoryEntriesBulk_: getPaxHistoryEntriesBulk_,
+    setPaxHistoryEntry_: setPaxHistoryEntry_,
+    advancePaxHistoryDay_: advancePaxHistoryDay_,
   };
 }

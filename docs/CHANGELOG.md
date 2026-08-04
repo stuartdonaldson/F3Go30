@@ -27,6 +27,19 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+- Tap any PAX on the dashboard — your team tiles or the full PAX board — to see their goals and
+  their own progress ring/streak/score/bonus tiles and 7-day chart. Back returns you to the
+  dashboard exactly where you left it.
+- Fixed pre-marking a future day wiping out your streak. Checking in ahead for a day two or more
+  out made your streak read as 1 on every team tile (and shortened your 30-day best), even though
+  the month grid still showed all your days correctly. Streak, 30-day best and the 7-day chart are
+  now always calculated as of the day you're looking at — including when you use the date arrows
+  to look back at an earlier month.
+- Fixed the 7-day chart dropping days when you use the date arrows to look back at a full
+  earlier month — it now always plots one point per day of the month you're viewing.
+- Fixed a teammate's 7-day chart in their pax-detail popup showing only a handful of points early
+  in the month — it now shows a real trailing window padded from the end of the prior month, same
+  as your own chart already did.
 - If you sign up near the end of a month for next month, then use your check-in link before this
   month is over, you're now asked whether you'd also like to join for the rest of this month —
   instead of being dropped straight into a sign-up form as if you'd never registered at all. (v2.4.9)

@@ -194,7 +194,8 @@
   .bonus-type-code.eh { background: var(--pill-eh-bg); color: var(--pill-eh-fg); }
   .bonus-type-value { font-size: 14px; font-weight: bold; color: var(--text); min-width: 16px; }
   .team-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(120px,1fr)); gap: 10px; margin-top: 12px; }
-  .team-tile { position: relative; border-radius: 10px; padding: 12px 8px; text-align: center; border: 1.5px solid var(--border); background: var(--input-bg); display: flex; flex-direction: column; align-items: center; }
+  .team-tile { position: relative; border-radius: 10px; padding: 12px 8px; text-align: center; border: 1.5px solid var(--border); background: var(--input-bg); display: flex; flex-direction: column; align-items: center; cursor: pointer; }
+  .team-tile:active { opacity: .8; }
   .team-tile .checkin-status-badge { position: absolute; top: 6px; left: 7px; font-size: 14px; margin-right: 0; }
   .team-tile.me { border-color: var(--brand); background: var(--soft-bg); }
   .team-tile .tname { font-weight: bold; font-size: 15px; margin: 4px 0 2px; }
@@ -205,7 +206,8 @@
   .board-group { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-top: 12px; }
   .board-head { background: var(--brand-bg); color: var(--brand-contrast); padding: 9px 16px; font-size: 15px; font-weight: bold; letter-spacing: .16em; display: flex; justify-content: space-between; }
   .board-rows { padding: 6px 12px; }
-  .board-row { padding: 6px 4px; border-radius: 4px; }
+  .board-row { padding: 6px 4px; border-radius: 4px; cursor: pointer; }
+  .board-row:active { opacity: .8; }
   .board-row.me { background: var(--soft-bg); font-weight: bold; }
   .board-row-main { display: flex; align-items: center; gap: 8px; justify-content: space-between; font-size: 15px; }
   .board-row-main .bname { width: 117px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: bold; }
@@ -654,7 +656,7 @@
         <div id="howBody" class="hidden" style="padding:0 18px 20px;font-size:14px;line-height:1.6;color:var(--text);border-top:1px solid var(--border);">
           <!-- HOW-IT-WORKS:START -->
 <p class="how-section-head">THE CORE MISSION</p>
-<p style="margin:0 0 14px;">Execute a Daily Challenge that aligns with your Ultimate Goals, supported by the accountability of your fellow HIMs.</p>
+<p style="margin:0 0 14px;">Go30 is a simple way to build momentum around the habits that matter most. Each day you choose one challenge, own your effort, and let your team help keep you honest.</p>
 
 <p class="how-section-head">THREE LAYERS OF CHANGE</p>
 <p style="margin:0 0 10px;">Adapted from the Identity/Process/Outcome model in <a href="https://jamesclear.com" target="_blank" rel="noopener">James Clear</a>'s <em>Atomic Habits</em> — see also his <a href="https://drive.google.com/file/d/1QX2KSlKxmgkaijfLK4QMrtniqydSkV1L/view" target="_blank" rel="noopener">Habits Cheat Sheet</a>.</p>
@@ -676,19 +678,61 @@
 <p class="how-section-head">YOUR DAILY MISSION</p>
 <p style="margin:0 0 10px;">Each day scores one of three ways: <strong>Hit</strong> (1) if you did it, <strong>Miss</strong> (0) if you didn't, or <strong>Failed to report</strong> (&minus;1) if you forget to check in — so it always pays to report, even a miss.</p>
 <ol style="margin:0 0 14px;padding-left:18px;display:flex;flex-direction:column;gap:6px;">
-  <li><strong>Choose your challenge</strong> — small, specific, actionable (e.g. 15 min stretching, daily journaling).</li>
-  <li><strong>Record your score</strong> — tap "I Hit it!" / "Missed it" each day on the Go30 check-in page. Right after you check in you'll see your dashboard: streak, total score, weekly bonus points, and your team's board. All Go30 data lives in a shared Google Sheet called the Tracker — you never need to open it, but if you prefer, you can check in by entering <strong>1</strong> for a Hit / <strong>0</strong> for a Miss directly in its Tracker tab, or open it any time from the chart icon (&#128202;) on the check-in page — either way updates the same record.</li>
-  <li><strong>Beat the deadline</strong> — report by 10:00 AM the next day. There's a short grace period, but it expires that same day — after that the system automatically marks it a &minus;1 for you, so don't rely on it.</li>
+  <li><strong>Choose your challenge</strong> — keep it small, specific, and easy to measure.</li>
+  <li><strong>Record your score</strong> — check in each day and let the dashboard show your streak, your score, and your team's momentum.</li>
+  <li><strong>Beat the deadline</strong> — report by 10:00 AM the next day, or the system will mark it as a miss for you.</li>
 </ol>
 
 <p class="how-section-head">BONUS POINTS</p>
 <p style="margin:0 0 14px;">Beyond your daily challenge, log EHing an FNG, a Fellowship moment, taking a Q, or an Inspire moment for extra points — EHing an FNG counts most. Add these from the check-in page's Bonus Points section, or directly in the Bonus Tracker sheet. EHing FNG, Q Point, and Inspire need a link to Slack as evidence before they count.</p>
 
 <p class="how-section-head">STRENGTH IN NUMBERS</p>
-<p style="margin:0;">You can go it alone — but you won't go as far. Team up with 3–5 fellow HIMs who share your drive, usually grouped by AO since Shieldlock works best with proximity: hold each other to the standard, call out the misses, celebrate the wins. Joining a team is optional but highly encouraged — you can also participate solo.</p>
+<p style="margin:0;">You can go it alone — but you won't go as far. Team up with 3–5 fellow HIMs who share your drive, usually grouped by AO since Shieldlock works best with proximity, and let them help you stay accountable. Joining a team is optional but highly encouraged — you can also participate solo.</p>
 <p style="margin:8px 0 0;">Men who pursue hard things together become men who achieve them.</p>
 <!-- HOW-IT-WORKS:END -->
         </div>
+      </div>
+    </div>
+
+    <div id="step-paxDetail" class="hidden">
+      <div class="card-head-row">
+        <h2 id="paxDetailName" style="margin:0;"></h2>
+        <button class="secondary btn-inline" id="paxDetailBackBtn">&larr; Back</button>
+      </div>
+      <div class="section-label" style="margin-top:0;" id="paxDetailTeam"></div>
+
+      <div id="paxDetailGoals" class="hidden"></div>
+
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">MONTH PROGRESS</div>
+          <div id="pdMonthRing"></div>
+          <div class="legend" style="margin-top:8px;justify-content:center;">
+            <div class="legend-item"><div class="legend-swatch" style="background:#3f8b75;"></div>Hits</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#f7b209;"></div>Misses</div>
+            <div class="legend-item"><div class="legend-swatch" style="background:#de521c;"></div>Fails</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">STREAK</div>
+          <div class="stat-value" id="pdStreak" style="color:#2f5d50;"></div>
+          <div class="streak-best">Best (30d): <span id="pdStreakBest30"></span></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">TOTAL SCORE</div>
+          <div class="score-tile-body">
+            <div class="score-main">
+              <div class="stat-value" id="pdScore"></div>
+              <div class="stat-sub" id="pdScoreSub"></div>
+            </div>
+            <div class="score-bonus-list" id="pdBonuses"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card chart-card">
+        <div class="section-label" style="margin-top:0;">7-DAY ROLLING AVERAGE</div>
+        <div id="pdAvgChart"></div>
       </div>
     </div>
 
@@ -941,7 +985,7 @@
   // a new action is un-retried until someone states it is idempotent, which is the safe default
   // for the wrong guess. NEVER add a write — a lost response on a write may mean it landed, so
   // retrying one risks a duplicate signup, check-in or bonus row.
-  var RETRYABLE_ACTIONS_ = ['identify', 'dashboard', 'bonusList', 'monthGrid'];
+  var RETRYABLE_ACTIONS_ = ['identify', 'dashboard', 'bonusList', 'monthGrid', 'paxGoals'];
 
   var NETWORK_ERROR_MESSAGE_ = 'Couldn’t reach the server. Check your internet connection and try again.';
 
@@ -1207,11 +1251,11 @@
   applyVersionState_(STATIC_BUILD_VERSION_, null);
 
   function showStep(name) {
-    ['identify', 'checkin', 'dashboard', 'bonus', 'signup', 'nextMonthChoice'].forEach(function(s) {
+    ['identify', 'checkin', 'dashboard', 'bonus', 'signup', 'nextMonthChoice', 'paxDetail'].forEach(function(s) {
       $('step-' + s).classList.toggle('hidden', s !== name);
     });
     $('moreBtn').classList.toggle('hidden', name !== 'dashboard');
-    $('bonusBtn').classList.toggle('hidden', name === 'identify' || name === 'bonus' || name === 'signup' || name === 'nextMonthChoice');
+    $('bonusBtn').classList.toggle('hidden', name === 'identify' || name === 'bonus' || name === 'signup' || name === 'nextMonthChoice' || name === 'paxDetail');
     if (name === 'checkin' || name === 'dashboard') state.bonusReturnStep = name;
   }
 
@@ -1620,14 +1664,22 @@
     return value === 1 ? 'done' : value === 0 ? 'missed' : 'pending';
   }
 
-  function renderGoalsReminder_(goals) {
-    var el = $('goalsReminder');
-    var rows = [
+  /** Shared WHO/WHAT/HOW row markup for goals.who/what/how — blank lines dropped. Returns ''
+   * when all three are blank, so callers can hide the whole block on an empty result. */
+  function goalsRowsHtml_(goals) {
+    return [
       { label: 'WHO', value: goals && goals.who },
       { label: 'WHAT', value: goals && goals.what },
       { label: 'HOW', value: goals && goals.how },
-    ].filter(function(r) { return r.value; });
-    if (!rows.length) {
+    ].filter(function(r) { return r.value; })
+      .map(function(r) { return '<div class="goals-reminder-row"><strong>' + r.label + ':</strong> ' + escapeHtml_(r.value) + '</div>'; })
+      .join('');
+  }
+
+  function renderGoalsReminder_(goals) {
+    var el = $('goalsReminder');
+    var rowsHtml = goalsRowsHtml_(goals);
+    if (!rowsHtml) {
       el.classList.add('hidden');
       el.innerHTML = '';
       return;
@@ -1638,13 +1690,28 @@
       '<div class="goals-reminder-head">' +
         '<span class="goals-reminder-title">Your goals</span>' +
         '<button type="button" id="goalsEditBtn" class="bonus-edit-btn">Edit</button>' +
-      '</div>' +
-      rows.map(function(r) {
-        return '<div class="goals-reminder-row"><strong>' + r.label + ':</strong> ' + escapeHtml_(r.value) + '</div>';
-      }).join('') + '</div>';
+      '</div>' + rowsHtml + '</div>';
     el.classList.remove('hidden');
     // Re-bound on every render — innerHTML above replaces the button element each time.
     $('goalsEditBtn').addEventListener('click', function() { openSignup_('current'); });
+  }
+
+  /** Renders another PAX's WHO/WHAT/HOW goals in the pax-detail popup — same markup as the
+   * self reminder (goalsRowsHtml_) minus the Edit button, since a PAX can't edit a teammate's
+   * signup. Hides the block entirely when the fetch is still pending, failed, or came back
+   * with nothing to show. */
+  function renderPaxDetailGoals_(goals) {
+    var el = $('paxDetailGoals');
+    var rowsHtml = goals && goalsRowsHtml_(goals);
+    if (!rowsHtml) {
+      el.classList.add('hidden');
+      el.innerHTML = '';
+      return;
+    }
+    el.innerHTML = '<div class="goals-reminder">' +
+      '<div class="goals-reminder-head"><span class="goals-reminder-title">Goals</span></div>' +
+      rowsHtml + '</div>';
+    el.classList.remove('hidden');
   }
 
   function renderCheckinStatus_(prefix, status) {
@@ -2577,6 +2644,72 @@
     return el;
   }
 
+  /** Pax-detail popup (F3Go30 dashboard "click a PAX" feature): renders the same ring/streak/
+   * score/bonus/chart tiles the dashboard's own top section shows, but scoped to one teammate —
+   * `view` is a memberViewForIndex_ result (already scoped to whichever day the dashboard is
+   * currently showing), same shape self's own render logic in renderDashboard_ works from.
+   * Goals aren't in `view` (myTeam/paxBoard deliberately omit them — see handlePaxGoals_,
+   * dashboardWebapp.js) so they're fetched separately by openPaxDetail_ and filled in by
+   * renderPaxDetailGoals_ once the response lands. */
+  function renderPaxDetail_(view, currentDay) {
+    $('paxDetailName').textContent = view.name;
+    $('paxDetailTeam').textContent = view.team || 'Unassigned';
+
+    $('pdMonthRing').innerHTML = buildRingSvg_(
+      view.daySegments, 140, view.scorePct + '%', (view.score >= 0 ? '+' : '') + view.score + ' pts', scoreColor_(view.scorePct)
+    );
+
+    $('pdStreak').textContent = view.streak;
+    $('pdStreakBest30').textContent = view.maxStreak30;
+
+    $('pdScore').textContent = (view.score >= 0 ? '+' : '') + view.score;
+    $('pdScore').style.color = scoreColor_(view.scorePct);
+    var outcomes = countOutcomesLocal_(view.dayValues);
+    $('pdScoreSub').innerHTML = outcomes.done + ' hits<br>' + outcomes.missed + ' misses<br>' + outcomes.absent + ' fails';
+
+    var bonusesEl = $('pdBonuses');
+    bonusesEl.innerHTML = '';
+    BONUS_GRID_ORDER_.forEach(function(code) {
+      var value = (view.bonusByType && view.bonusByType[code.key]) || 0;
+      var row = document.createElement('div');
+      row.className = 'bonus-type-row';
+      row.innerHTML =
+        '<span class="bonus-type-code ' + code.key + '">' + code.label + '</span>' +
+        '<span class="bonus-type-value">' + (value >= 0 ? '+' : '') + value + '</span>';
+      bonusesEl.appendChild(row);
+    });
+
+    // Same last-DISPLAY_WINDOW_DAYS_-days windowing + prior-month padding renderDashboard_
+    // applies to the self chart (F3Go30-uz9e.1: view.priorMonthDayValues now comes from the same
+    // per-PAX rolling history window — see memberViewForIndex_/buildDashboardPaxRow_ — for every
+    // teammate, not just self, so this no longer needs a self-only special case).
+    var winStart = Math.max(0, currentDay - DISPLAY_WINDOW_DAYS_);
+    var winDaySegments = view.daySegments.slice(winStart, currentDay);
+    var winRollingAverage = view.rollingAverage.slice(winStart, currentDay);
+    var priorNeeded = DISPLAY_WINDOW_DAYS_ - winDaySegments.length;
+    if (priorNeeded > 0 && view.priorMonthDayValues && view.priorMonthDayValues.length) {
+      var priorSlice = view.priorMonthDayValues.slice(-priorNeeded);
+      winDaySegments = priorSlice.map(valueToSegmentLocal_).concat(winDaySegments);
+      winRollingAverage = buildRollingAverageLocal_(priorSlice, ROLLING_AVERAGE_WINDOW_DAYS_).concat(winRollingAverage);
+    }
+    $('pdAvgChart').innerHTML = buildAvgChartSvg_(winRollingAverage, winDaySegments, winDaySegments.length);
+  }
+
+  /** Opens the pax-detail popup for a clicked team-tile/board-row, and kicks off the goals
+   * fetch (paxGoals action, dashboardWebapp.js) in the background — the tiles render instantly
+   * from data already in the dashboard payload, goals fill in a moment later once the request
+   * lands. Back (paxDetailBackBtn) just returns to 'dashboard' (see showStep) — the dashboard's
+   * own DOM was never torn down, so scroll position and content are exactly as left. */
+  function openPaxDetail_(view, currentDay) {
+    renderPaxDetail_(view, currentDay);
+    renderPaxDetailGoals_(null);
+    showStep('paxDetail');
+    var dateISO = state.viewDate ? isoDate_(state.viewDate) : isoDate_(new Date());
+    callApi('paxGoals', { f3Name: view.name, dateISO: dateISO, resolvedContext: state.resolvedContext })
+      .then(function(res) { renderPaxDetailGoals_(res && res.ok ? res.goals : null); })
+      .catch(function() { renderPaxDetailGoals_(null); });
+  }
+
   function trimTrailingBlanks_(values) {
     var v = (values || []).slice();
     while (v.length && v[v.length - 1] === '') v.pop();
@@ -2696,6 +2829,14 @@
 
   function memberViewForIndex_(member, dayIndex, totalDays) {
     var sliced = (member.dayValues || []).slice(0, dayIndex + 1);
+    // Viewing the latest reported day (the default/no-date-nav case): sliced is the whole array,
+    // so use the server's own streak/maxStreak30 (F3Go30-5uk2 — historyValues-derived, correctly
+    // spans a month boundary) instead of recomputing from this-month-only dayValues, which would
+    // silently drop any streak that started in the prior month. Date-nav to an earlier day still
+    // falls back to the local same-month approximation below — there's no server figure for an
+    // arbitrary past day without another round trip, and that's a pre-existing, separate
+    // limitation of browsing history, not what F3Go30-5uk2 fixed.
+    var isLatest = sliced.length === (member.dayValues || []).length;
     var bonusForDay = (member.bonusByTypeSeries && member.bonusByTypeSeries[dayIndex]) || member.bonusByType;
     var score = computeScoreForDayLocal_(sliced, bonusForDay);
     return {
@@ -2703,8 +2844,15 @@
       team: member.team,
       score: score,
       scorePct: computeScorePctLocal_(score, sliced),
-      streak: computeStreakLocal_(sliced),
+      streak: isLatest ? member.streak : computeStreakLocal_(sliced),
+      maxStreak30: isLatest ? member.maxStreak30 : computeMaxStreakLocal_(sliced, MAX_STREAK_WINDOW_DAYS_),
+      dayValues: sliced,
       daySegments: buildDaySegmentsLocal_(sliced, totalDays),
+      rollingAverage: (member.rollingAverage || []).slice(0, dayIndex + 1),
+      // F3Go30-uz9e.1: passed through unsliced (it's already scoped to the prior month, not the
+      // viewed one) so renderPaxDetail_ can pad a teammate's chart across a month boundary the
+      // same way renderDashboard_ pads self's.
+      priorMonthDayValues: member.priorMonthDayValues || [],
       bonusByType: bonusForDay,
     };
   }
@@ -2742,7 +2890,16 @@
     }
     var avgWindowCount = avgDaySegments.length;
 
-    var streaks = computeWindowedStreaks_(selfValues, d.priorMonthDayValues, MAX_STREAK_WINDOW_DAYS_);
+    // F3Go30-5uk2: on the latest reported day (no date-nav truncation), d.streak/d.maxStreak30
+    // are the server's historyValues-derived figures — prefer those over recomputing locally,
+    // since computeWindowedStreaks_ below only has d.priorMonthDayValues (one month of lookback)
+    // to work with, not the full rolling window the server's PaxCache history keeps. Date-nav to
+    // an earlier day still falls back to the local approximation (no server figure exists for an
+    // arbitrary past day without another round trip).
+    var isLatestSelf = selfValues.length === (d.dayValues || []).length;
+    var streaks = isLatestSelf
+      ? { current: d.streak, best: d.maxStreak30 }
+      : computeWindowedStreaks_(selfValues, d.priorMonthDayValues, MAX_STREAK_WINDOW_DAYS_);
     $('dStreak').textContent = streaks.current;
     $('dStreakBest30').textContent = streaks.best;
 
@@ -2783,7 +2940,9 @@
     (d.myTeam || []).forEach(function(m) {
       var view = memberViewForIndex_(m, dayIndex, d.totalDays);
       var checkinStatus = yesterdayCheckinStatus_(m, yesterdayIndex);
-      myTeamEl.appendChild(renderTeamTile_(view, m.name === d.f3Name, currentDay, checkinStatus));
+      var tileEl = renderTeamTile_(view, m.name === d.f3Name, currentDay, checkinStatus);
+      tileEl.addEventListener('click', function() { openPaxDetail_(view, currentDay); });
+      myTeamEl.appendChild(tileEl);
     });
 
     var boardEl = $('dPaxBoard');
@@ -2802,6 +2961,7 @@
         var checkinStatus = yesterdayCheckinStatus_(rawMember, yesterdayIndex);
         var row = document.createElement('div');
         row.className = 'board-row' + (m.name === d.f3Name ? ' me' : '');
+        row.addEventListener('click', function() { openPaxDetail_(m, currentDay); });
         var mainEl = document.createElement('div');
         mainEl.className = 'board-row-main';
         var nameEl = document.createElement('span');
@@ -2885,6 +3045,10 @@
     var todayIso = isoDate_(new Date());
     var chain = state.dashboardPrefetchPromise || loadDashboard_(undefined, { silent: true });
     chain.then(function() {
+      // A silent revalidate that resolves means we DID reach the server, so any prior
+      // transport banner is stale and can be cleared. If revalidate fails, catch below
+      // keeps the banner up so cached rendering never masks an ongoing outage.
+      hideApiError_();
       var fresh = state.monthCache[monthKeyOf_(new Date())];
       if (fresh && fresh.dayDates.indexOf(todayIso) !== -1 &&
           state.viewDate && isoDate_(state.viewDate) === todayIso) {
@@ -3098,6 +3262,7 @@
     loadBonusList_();
   });
   $('bonusBackBtn').addEventListener('click', function() { showStep(state.bonusReturnStep); });
+  $('paxDetailBackBtn').addEventListener('click', function() { showStep('dashboard'); });
   $('bonusAddBtn').addEventListener('click', function() { openBonusForm_(null); });
   $('bonusCancelBtn').addEventListener('click', closeBonusForm_);
 
