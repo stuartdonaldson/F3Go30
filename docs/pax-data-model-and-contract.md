@@ -506,15 +506,25 @@ narrows the gap without requiring the ones after it.
 ### Slice 1 — f3Name-keyed rolling history window (streak/maxStreak30 only)
 
 The smallest real piece of `PaxProfile.history`: a new `PaxCache` kind keyed by `f3Name` alone,
-holding `{ historyEndDate, days }` — ~40 days of dense day-outcome encoding (enough padding for
-`MAX_STREAK_WINDOW_DAYS_`), anchored by `historyEndDate` exactly per §3.1 (the two fields always
+holding `{ historyEndDate, days }` — dense day-outcome encoding, one character per day, anchored
+by `historyEndDate` exactly per §3.1 (the two fields always
 move together: a new day's write advances `historyEndDate` by one and shifts `days` in the same
 operation, so the anchor can never drift out of sync with what it describes). Write-through on
 `handleCheckinSubmit_` and the nightly minus-one job; read by `buildDashboardPaxRow_` for
 **every** row (viewer and teammates alike) instead of `computeStreak_(dayValues)` off the current
 month's Tracker columns. Cold-start for a PAX with no window yet falls back once to today's
 `getPriorMonthTailValues_` logic, then persists the result under the new key with
-`historyEndDate` set to that read's own "as of" day. `getPriorMonthTailValues_` and the
+`historyEndDate` set to that read's own "as of" day.
+
+Window length is a storage cap in its own right (`PAX_HISTORY_WINDOW_DAYS_`, 400), independent of
+the displayed streak cap (`MAX_STREAK_WINDOW_DAYS_`, 30, applied by `computeStreak_` /
+`computeMaxStreak_` at the point of use). A rebuild populates back to the start of the previous
+month (`PAX_HISTORY_BACKFILL_DAYS_`, 62) — enough that a 30-day streak is computable from the
+window alone, with no prior-month spreadsheet read, throughout the following month. The two were
+originally coupled (the rebuild stored back only 30 days), which capped effective storage below
+the 44 days `rollingAverage` and `priorMonthDayValues` need; F3Go30-uz9e.3 separated them.
+
+`getPriorMonthTailValues_` and the
 viewer-only override (dashboardWebapp.js:2247-2260) delete entirely once this lands.
 
 *Fixes the streak-month-boundary bug for every teammate, not just the viewer — directly answers

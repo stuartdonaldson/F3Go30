@@ -81,6 +81,10 @@ var paxHistoryDayDiff_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPa
   || (typeof globalThis !== 'undefined' && globalThis.paxHistoryDayDiff_);
 var paxHistoryEncodeValue_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.paxHistoryEncodeValue_)
   || (typeof globalThis !== 'undefined' && globalThis.paxHistoryEncodeValue_);
+var setPaxHistoryEntriesBulk_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.setPaxHistoryEntriesBulk_)
+  || (typeof globalThis !== 'undefined' && globalThis.setPaxHistoryEntriesBulk_);
+var PAX_HISTORY_BACKFILL_DAYS_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.PAX_HISTORY_BACKFILL_DAYS_)
+  || (typeof globalThis !== 'undefined' && globalThis.PAX_HISTORY_BACKFILL_DAYS_);
 var advancePaxHistoryDay_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.advancePaxHistoryDay_)
   || (typeof globalThis !== 'undefined' && globalThis.advancePaxHistoryDay_);
 
@@ -255,10 +259,17 @@ function findTrackerRowIndexByName_(nameColumnValues, f3Name) {
 /**
  * Current streak: trims trailing not-yet-reported days (blank), then counts backward from the
  * last reported day while its value is 1, stopping at the first 0/-1.
+ *
+ * windowDays, when given, restricts the count to the trailing windowDays reported values, exactly
+ * as computeMaxStreak_ does — trimming first, then slicing, so not-yet-reported days never eat
+ * into the window. F3Go30-uz9e.3: the cap used to be incidental (getPaxHistoryWindowValues_
+ * happened to return only 30 days), which meant lengthening the history window would silently
+ * change every displayed streak. It is stated at the call site now instead.
  */
-function computeStreak_(dayValues) {
+function computeStreak_(dayValues, windowDays) {
   var values = (dayValues || []).slice();
   while (values.length && values[values.length - 1] === '') values.pop();
+  if (windowDays) values = values.slice(-windowDays);
   var streak = 0;
   for (var i = values.length - 1; i >= 0; i--) {
     if (values[i] === 1) streak++;
@@ -359,6 +370,20 @@ function buildDaySegments_(dayValues, totalDays) {
     segments.push(dayValueStatus_(values[i]));
   }
   return segments;
+}
+
+/**
+ * Count of leading dayValues entries up to and including the last non-'pending' (reported) day —
+ * i.e. dayValues trimmed of any trailing blank/pending cells. Shared by buildDashboardPaxRow_'s
+ * rollingAverage cutoff (F3Go30-3uvp) so the two never derive the pending boundary independently
+ * again; uses the same dayValueStatus_ buildDaySegments_ already classifies each day with.
+ */
+function lastReportedDayCount_(dayValues) {
+  var values = dayValues || [];
+  for (var i = values.length - 1; i >= 0; i--) {
+    if (dayValueStatus_(values[i]) !== 'pending') return i + 1;
+  }
+  return 0;
 }
 
 /**
@@ -1115,6 +1140,159 @@ function getPriorMonthTailValues_(monthInfo, f3Name, windowSize, templateSpreads
 }
 
 /**
+ * Splits a whole-Tracker read into the two shapes PaxCache stores: the {normalizedName: rowIndex}
+ * roster index and the {rawName: row} map setPaxCacheRowsBulk_ writes. First occurrence of a
+ * normalized name wins the index slot (a duplicate roster row must not shadow the original);
+ * blank names contribute nothing.
+ *
+ * F3Go30-uz9e.3: this was hand-copied at resolveCheckinIdentityFull_ and
+ * resolveFullIdentityFromHandle_, and reloadPaxCacheForCurrentAndPriorMonth_ would have made a
+ * third copy. Same shape at every site, so it lives in one place.
+ * @param {Array<Array>} trackerValues Data rows (from row 4 down), in sheet order.
+ * @returns {{rosterIndex: Object<string, number>, rowsByName: Object<string, Array>}}
+ */
+function buildRosterFromTrackerValues_(trackerValues) {
+  var rosterIndex = {};
+  var rowsByName = {};
+  (trackerValues || []).forEach(function(row, idx) {
+    var name = row[TRACKER_NAME_COL_];
+    var norm = paxCacheNormalizeName_dw_(name);
+    if (!norm) return;
+    if (!Object.prototype.hasOwnProperty.call(rosterIndex, norm)) rosterIndex[norm] = idx;
+    rowsByName[name] = row;
+  });
+  return { rosterIndex: rosterIndex, rowsByName: rowsByName };
+}
+
+/**
+ * Reads one month's Tracker and warms PaxCache's per-PAX rows + roster index for it, returning
+ * what the history rebuild needs (the day columns reported as of contextDate, plus the rows).
+ * Best-effort: a month with no tracker, no Tracker sheet, or no data rows yields null rather than
+ * throwing — the reload must never be the reason an admin action fails.
+ * @returns {?{sheetId: string, dayCols: Array, rowsByName: Object, trackerValues: Array}}
+ */
+function warmTrackerMonthIntoPaxCache_(monthInfo, contextDate) {
+  if (!monthInfo) return null;
+  try {
+    var sheet = SpreadsheetApp.openById(monthInfo.sheetId).getSheetByName('Tracker');
+    if (!sheet || sheet.getLastRow() < 4) return null;
+    var layout = getTrackerLayout_(sheet, monthInfo.sheetId);
+    var classified = classifyTrackerColumns_(layout.row2, layout.row3);
+    var trackerValues = sheet.getRange(4, 1, sheet.getLastRow() - 3, sheet.getLastColumn()).getValues();
+    var roster = buildRosterFromTrackerValues_(trackerValues);
+    setPaxCacheRowsBulk_dw_('tracker', monthInfo.sheetId, roster.rowsByName, roster.rosterIndex);
+    // Only days that have actually happened count as reported — the same rule the dashboard's own
+    // reportedDayCols applies. Including future columns would stamp a historyEndDate ahead of
+    // today and pad real history off the front, exactly what advancePaxHistoryDay_ refuses to do.
+    var dayCols = classified.dayCols.filter(function(d) { return d.date.getTime() <= contextDate.getTime(); });
+    return { sheetId: monthInfo.sheetId, dayCols: dayCols, rowsByName: roster.rowsByName, trackerValues: trackerValues };
+  } catch (e) {
+    GasLogger.log('reloadPaxCache.monthWarmFailed', { sheetId: monthInfo.sheetId, error: e.message });
+    return null;
+  }
+}
+
+/**
+ * Repopulates the cache immediately after a wholesale wipe (F3Go30-uz9e.3) — the reload half of
+ * WebApp.js's invalidateAllCache admin action.
+ *
+ * wipeAllPaxCache_ on its own leaves every PAX cold, so the first dashboard load afterwards pays a
+ * full rebuild, including a prior-month spreadsheet open per PAX for the cross-month streak. Every
+ * caller of that wipe is operator- or deploy-time (the onOpen "Invalidate Cache" menu item, the
+ * admin action, tools/manage-deployments.js's post-deploy step) and never sits on a PAX request,
+ * so the rebuild is paid here, where nobody is waiting on it.
+ *
+ * Current AND prior month, because they are jointly what a check-in read needs: the 30-day streak
+ * spans the month boundary, so warming only the current month still forces a live prior-month read
+ * on the first dashboard load of every month.
+ *
+ * LOCKING (the reason this is one guarded block rather than a loop of write-throughs): this is a
+ * read-modify-write over the same rows handleCheckinSubmit_ patches via
+ * refreshPaxCacheRowFromSheet_, and the same history entries advancePaxHistoryDay_ shifts. Taking
+ * their lock is what stops a check-in landing between this function's sheet read and its cache
+ * write and being silently overwritten by the pre-write snapshot — the LOST UPDATE documented on
+ * refreshPaxCacheRowFromSheet_, which is permanent once it happens because the roster index still
+ * looks complete. On lock-acquire failure the reload is skipped entirely: the wipe still stands
+ * and the next reader rebuilds live, which is slow but correct. Nothing is ever written unlocked.
+ * @param {Spreadsheet} templateSpreadsheet
+ * @param {Date=} contextDate Injectable for tests; defaults to the resolved context date.
+ * @returns {{skipped: boolean, months: Array<string>, paxRows: number, historyEntries: number}}
+ */
+function reloadPaxCacheForCurrentAndPriorMonth_(templateSpreadsheet, contextDate) {
+  var t0 = Date.now();
+  var today = contextDate || resolveContextDate_(templateSpreadsheet);
+  var result = { skipped: false, months: [], paxRows: 0, historyEntries: 0 };
+
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+  } catch (e) {
+    GasLogger.log('reloadPaxCache.lockFailed', { error: e.message });
+    result.skipped = true;
+    return result;
+  }
+
+  try {
+    var currentMonth = resolveDashboardMonth_(today, templateSpreadsheet);
+    var current = warmTrackerMonthIntoPaxCache_(currentMonth, today);
+    if (!current) { result.skipped = true; return result; }
+    result.months.push(current.sheetId);
+    result.paxRows += Object.keys(current.rowsByName).length;
+
+    var dayBeforeMonth = new Date(currentMonth.startDate);
+    dayBeforeMonth.setDate(dayBeforeMonth.getDate() - 1);
+    var priorMonthInfo = resolveDashboardMonth_(dayBeforeMonth, templateSpreadsheet);
+    // A first-ever month has no prior tracker; resolveDashboardMonth_ can also fall back to the
+    // same month, which would double-count its own days into the window.
+    var prior = (priorMonthInfo && priorMonthInfo.sheetId !== current.sheetId)
+      ? warmTrackerMonthIntoPaxCache_(priorMonthInfo, today)
+      : null;
+    if (prior) {
+      result.months.push(prior.sheetId);
+      result.paxRows += Object.keys(prior.rowsByName).length;
+    }
+
+    // The window must end on a real reported day for its stamped historyEndDate to mean anything.
+    // Before the current month's first day column comes due there is none, so leave the history
+    // entries for the next dashboard read to rebuild — the row cache above is still warm.
+    if (!current.dayCols.length) return result;
+    var anchorIso = _dashboardIsoDate_(current.dayCols[current.dayCols.length - 1].date);
+
+    var priorRowsByNorm = {};
+    if (prior) {
+      Object.keys(prior.rowsByName).forEach(function(name) {
+        priorRowsByNorm[paxCacheNormalizeName_dw_(name)] = prior.rowsByName[name];
+      });
+    }
+
+    var historyBatch = {};
+    Object.keys(current.rowsByName).forEach(function(name) {
+      var currentRow = current.rowsByName[name];
+      var currentDays = current.dayCols.map(function(d) { return currentRow[d.col]; });
+      var priorRow = priorRowsByNorm[paxCacheNormalizeName_dw_(name)];
+      var priorDays = (prior && priorRow) ? prior.dayCols.map(function(d) { return priorRow[d.col]; }) : [];
+      var days = priorDays.concat(currentDays).slice(-PAX_HISTORY_BACKFILL_DAYS_dw_).map(paxHistoryEncodeValue_dw_).join('');
+      // Same rule getPaxHistoryWindowValues_'s rebuild follows: an all-'.' window says "no data",
+      // which the miss path already says for free — storing it costs one Script Property per
+      // never-active PAX against a 500KB store.
+      if (!/[^.]/.test(days)) return;
+      historyBatch[name] = { historyEndDate: anchorIso, days: days };
+      result.historyEntries++;
+    });
+    if (result.historyEntries) setPaxHistoryEntriesBulk_dw_(historyBatch);
+
+    return result;
+  } catch (e2) {
+    GasLogger.log('reloadPaxCache.failed', { error: e2.message });
+    result.skipped = true;
+    return result;
+  } finally {
+    lock.releaseLock();
+    GasLogger.log('reloadPaxCache', Object.assign({ durationMs: Date.now() - t0 }, result));
+  }
+}
+
+/**
  * Full-roster identity resolution for the dashboard's team/board view, which needs every PAX's
  * Tracker row (contrast resolveCheckinIdentityLean_, used by identify/checkin-submit, which
  * only ever need one PAX's own row). The Tracker roster comes from PaxCache's per-PAX rows +
@@ -1178,20 +1356,13 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var trackerMs = Date.now() - t2;
 
   var t3 = Date.now();
-  var rosterIndex = {};
-  var rowsByName = {};
-  trackerValues.forEach(function(row, idx) {
-    var name = row[TRACKER_NAME_COL_];
-    var norm = paxCacheNormalizeName_dw_(name);
-    if (!norm) return;
-    if (!Object.prototype.hasOwnProperty.call(rosterIndex, norm)) rosterIndex[norm] = idx;
-    rowsByName[name] = row;
-  });
+  var roster = buildRosterFromTrackerValues_(trackerValues);
+  var rosterIndex = roster.rosterIndex;
   // trackerValues already came from PaxCache's own per-PAX rows + roster index — writing it back
   // would just be an unconditional PropertiesService round trip for data already stored there.
   // Only a live read (cold cache) needs this bulk repopulate.
   if (!trackerFromCache) {
-    setPaxCacheRowsBulk_dw_('tracker', monthInfo.sheetId, rowsByName, rosterIndex);
+    setPaxCacheRowsBulk_dw_('tracker', monthInfo.sheetId, roster.rowsByName, rosterIndex);
   }
   var cacheWriteMs = Date.now() - t3;
 
@@ -1379,20 +1550,13 @@ function resolveFullIdentityFromHandle_(handle) {
   var trackerMs = Date.now() - t2;
 
   var t3 = Date.now();
-  var rosterIndex = {};
-  var rowsByName = {};
-  trackerValues.forEach(function(row, idx) {
-    var name = row[TRACKER_NAME_COL_];
-    var norm = paxCacheNormalizeName_dw_(name);
-    if (!norm) return;
-    if (!Object.prototype.hasOwnProperty.call(rosterIndex, norm)) rosterIndex[norm] = idx;
-    rowsByName[name] = row;
-  });
+  var roster = buildRosterFromTrackerValues_(trackerValues);
+  var rosterIndex = roster.rosterIndex;
   // trackerValues already came from PaxCache's own per-PAX rows + roster index when trackerFromCache
   // is true — writing it back would just be an unconditional PropertiesService round trip for data
   // already stored there. Only a live read (cold cache) needs this bulk repopulate.
   if (!trackerFromCache) {
-    setPaxCacheRowsBulk_dw_('tracker', monthInfo.sheetId, rowsByName, rosterIndex);
+    setPaxCacheRowsBulk_dw_('tracker', monthInfo.sheetId, roster.rowsByName, rosterIndex);
   }
   var cacheWriteMs = Date.now() - t3;
 
@@ -2118,7 +2282,14 @@ function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, t
     scorePct: denom ? Math.round((score / denom) * 100) : (score >= 0 ? 100 : 0),
     dayValues: dayValues,
     daySegments: buildDaySegments_(dayValues, totalDays),
-    rollingAverage: dayValues.length ? averagedHistory.slice(averagedHistory.length - dayValues.length) : [],
+    // F3Go30-3uvp: the series stops at the last REPORTED day, not at dayValues.length — a
+    // pending trailing day still has no real value to plot, and continuing the window past it
+    // let an old value age out with zero new check-in activity, making the line visibly rise
+    // on no data. Shorter than dayValues on purpose: the client only draws points for entries
+    // that exist, so the line ends before the pending days rather than flattening into them.
+    rollingAverage: dayValues.length
+      ? averagedHistory.slice(averagedHistory.length - dayValues.length).slice(0, lastReportedDayCount_(dayValues))
+      : [],
     priorMonthDayValues: priorMonthDayValues,
     // F3Go30-y55y: per-PAX, same as score/streak — every board tile gets its own bonus totals,
     // not just the logged-in PAX's own stat area. Callers pass the date-scoped/capped result of
@@ -2129,9 +2300,14 @@ function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, t
 }
 
 /**
- * Trailing MAX_STREAK_WINDOW_DAYS_ dayValues for f3Name, spanning any month boundary — the
- * cross-month read side of F3Go30-5uk2's PaxCache history window, used for EVERY board row
- * (buildDashboardPaxRow_'s caller, below), not just the logged-in viewer.
+ * Trailing dayValues for f3Name, spanning any month boundary — the cross-month read side of
+ * F3Go30-5uk2's PaxCache history window, used for EVERY board row (buildDashboardPaxRow_'s
+ * caller, below), not just the logged-in viewer.
+ *
+ * Length is whatever the stored window holds, up to PAX_HISTORY_WINDOW_DAYS_; a rebuild fills it
+ * back to the start of the prior month (PAX_HISTORY_BACKFILL_DAYS_). Callers that want a bounded
+ * streak pass MAX_STREAK_WINDOW_DAYS_ to computeStreak_/computeMaxStreak_ — the window length and
+ * the displayed streak cap are independent (F3Go30-uz9e.3).
  *
  * Cache hit: decodes the stored dense days string straight into the same 1/0/-1/'' shape
  * computeStreak_/computeMaxStreak_ already expect from a live Tracker dayValues array.
@@ -2164,23 +2340,26 @@ function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, t
  *   would leave a June view in August anchored in August.
  * @param {Object=} entriesByNormName Prefetched entries from getPaxHistoryEntriesBulk_ (one
  *   PropertiesService round trip for the whole roster). Omit to look this PAX up individually.
- * @returns {Array} Trailing MAX_STREAK_WINDOW_DAYS_ values (or fewer, early in the program),
- *   ending on anchorIso.
+ * @returns {Array} Trailing day values (up to the stored window's length, or fewer early in the
+ *   program), ending on anchorIso.
  */
 function getPaxHistoryWindowValues_(f3Name, currentMonthDayValues, monthInfo, templateSpreadsheet, anchorIso, entriesByNormName) {
   var entry = entriesByNormName
     ? (entriesByNormName[paxCacheNormalizeName_dw_(f3Name)] || null)
     : (getPaxHistoryEntry_dw_ ? getPaxHistoryEntry_dw_(f3Name) : null);
   var anchored = anchorPaxHistoryValues_dw_ ? anchorPaxHistoryValues_dw_(entry, anchorIso) : null;
+  // F3Go30-uz9e.3: the WHOLE stored window is returned, not a 30-day slice of it. Its leading
+  // (prior-month) portion is what rollingAverage and priorMonthDayValues are built from; the
+  // 30-day streak cap is applied by computeStreak_/computeMaxStreak_ at the point of use.
   if (anchored && paxHistoryWindowMatchesTracker_(anchored, currentMonthDayValues)) {
-    return anchored.slice(-MAX_STREAK_WINDOW_DAYS_);
+    return anchored;
   }
 
-  var tail = getPriorMonthTailValues_(monthInfo, f3Name, MAX_STREAK_WINDOW_DAYS_, templateSpreadsheet);
+  var tail = getPriorMonthTailValues_(monthInfo, f3Name, PAX_HISTORY_BACKFILL_DAYS_dw_, templateSpreadsheet);
   // No trailing-blank trim: the combined array ends on anchorIso by construction
   // (currentMonthDayValues is the reported day columns, whose last one IS the anchor), and that
   // is exactly what makes the stamped historyEndDate below true.
-  var windowed = tail.concat(currentMonthDayValues || []).slice(-MAX_STREAK_WINDOW_DAYS_);
+  var windowed = tail.concat(currentMonthDayValues || []).slice(-PAX_HISTORY_BACKFILL_DAYS_dw_);
   // Don't clobber a live window with an older-anchored rebuild — a backward date-nav read
   // legitimately computes a prior month's window, but that must not become the stored one.
   var wouldRegress = entry && entry.historyEndDate && paxHistoryDayDiff_dw_(entry.historyEndDate, anchorIso) < 0;
@@ -2354,7 +2533,7 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
       row[TRACKER_TEAM_COL_],
       row[TRACKER_SCORE_COL_],
       row[TRACKER_RAW_SCORE_COL_],
-      computeStreak_(historyValues),
+      computeStreak_(historyValues, MAX_STREAK_WINDOW_DAYS_),
       dayValues,
       totalDays,
       currentDay,
@@ -2596,8 +2775,11 @@ if (typeof module !== 'undefined' && module.exports) {
     firstActiveDayIndex_: firstActiveDayIndex_,
     buildDashboardPaxRow_: buildDashboardPaxRow_,
     getPaxHistoryWindowValues_: getPaxHistoryWindowValues_,
+    buildRosterFromTrackerValues_: buildRosterFromTrackerValues_,
+    reloadPaxCacheForCurrentAndPriorMonth_: reloadPaxCacheForCurrentAndPriorMonth_,
     buildDaySegments_: buildDaySegments_,
     buildRollingAverage_: buildRollingAverage_,
+    lastReportedDayCount_: lastReportedDayCount_,
     resolveCheckinDayTarget_: resolveCheckinDayTarget_,
     getCachedTrackerLayoutOnly_: getCachedTrackerLayoutOnly_,
     trackerLayoutCacheKey_: trackerLayoutCacheKey_,

@@ -2312,3 +2312,17 @@ Outcome [internal]: `PAX_HISTORY_WINDOW_DAYS_ = 40` documented as load-bearing b
 
 ### Key Learnings:
 `node tools/callWebapp.js <action>` silently falls back to a GET (returning the GAS app-panel HTML instead of JSON) when `--body` is omitted or is exactly `{}` for some actions; passing any non-empty body forces the POST. Also worth knowing for live cache-state tests: `setScriptProperties` is a serviceable way to plant a specific PaxCache/go30hist entry on SIT and replay a stored-state bug that no client call can produce anymore once the write path is fixed.
+
+## 2026-08-04 09:45:00
+_session dd11297c · v3 · 08-04_
+
+### Objective 1: Live-verify F3Go30-uz9e.3 (go30hist window/streak-cap decoupling + post-wipe reload) against SIT and close it out
+Rationale: The issue's own implementation comment flagged the gap explicitly — nothing in the unit suite exercises a real `SpreadsheetApp` read, the 30s script lock, or `reloadPaxCacheForCurrentAndPriorMonth_` against a full live roster, and the deploy was already live on SIT waiting on that verification.
+Rejected: nothing designed away, but an early debugging detour was discarded — a batch of `identity-token-flow.spec.js`/`static-signup.spec.js` failures looked like a real regression (PAX stuck resolving to the prior month's tracker) until rerunning each suite in isolation showed 6/6 and 3/3 clean; the failures were an artifact of running my own repeated `invalidateAllCache` calls concurrently with those live suites, not a code defect.
+Outcome [developer-facing]: Added `tests/playwright/pax-history-reload-live-check.spec.js` (3 tests, 3/3 passing against SIT), covering AC1/AC2/AC5/AC6/AC7/AC8/AC9 live — `invalidateAllCache`'s `reloaded` block (both months warmed, real paxRows/historyEntries counts, `skipped:false`), back-to-back calls both completing cleanly (lock acquired and released, not left contended), and a live dashboard read post-reload keeping `rollingAverage.length === dayValues.length` and `priorMonthDayValues.length <= 13` with both streak figures capped at 30.
+Outcome [internal]: Measured `reloadPaxCache.durationMs` live across 5 SIT runs (47-PAX/2-month roster): 2932-6227ms, cold-start high end right after a wipe, ~3-4.5s typical — confirmed cheap enough to run synchronously inside the admin request as designed, and confirmed already-blocking (the HTTP response doesn't return until the reload finishes) and already-locked (`LockService.getScriptLock()` across the whole read+write span, `finally`-released) when asked directly.
+Outcome [developer-facing]: Full regression round on final non-overlapping runs: `npm test` (42 files) green; `identity-token-flow.spec.js` 6/6 (+1 expected skip); `static-signup.spec.js` 3/3.
+Outcome [internal]: F3Go30-uz9e.3 updated with the live-verification comment and closed. Filed F3Go30-1jda (P3) for the separate pre-existing `page.request.post`→HTML/302 issue noted in the F3Go30-313u handoff (D5) — had never been converted from a handoff note into a tracked bead.
+
+### Key Learnings:
+Playwright's `page.request.post` against GAS's `/exec` endpoint fails through the 302→`script.googleusercontent.com/macros/echo` redirect: `APIRequestContext` converts the POST to a GET on redirect, and the echo URL refuses GET (405 + HTML), so the caller gets HTML where it expected JSON — reproduces with plain `curl -L` too, so it's an HTTP-client behavior difference, not a Playwright-specific quirk. A real browser `fetch` (or a Playwright `page` navigation) is unaffected.

@@ -1,0 +1,217 @@
+================================================================================
+F3Go30 — HANDOFF: client transport resilience (F3Go30-313u)
+Written 2026-07-28 ~14:20Z. Work done 2026-07-28 04:20Z–05:31Z, plus a
+re-measurement at 14:15Z.
+================================================================================
+
+READ THIS FIRST — "is it worse than before?"
+--------------------------------------------------------------------------------
+Short answer: the SHIPPED CODE is not worse. My REPORTING made it look worse,
+and one of my two deploys genuinely was worse for about 20 minutes.
+
+Three separate things got tangled together in the last session. Untangling them:
+
+1. The intermittent transport failure is REAL and PRE-EXISTING. It caused the
+   error you originally reported (04:18:12Z, "Action: identify / Error: Failed
+   to fetch"). It was never introduced by this work.
+
+2. The first deploy (v2.4.8.1) WAS worse. I set the read timeout to 8s using
+   the wrong measurement (server-side duration instead of client round trip),
+   so it aborted healthy requests. Live: 6/8 success, 3 spurious retries,
+   median 13.1s. That build is gone — superseded 20 minutes later.
+
+3. The failing test counts I reported are mostly NOT this change. Of the 5
+   static-checkin failures, 3 are `page.request.post` receiving HTML instead of
+   JSON — Playwright's own HTTP client, which never executes any client code.
+   Those reproduce on unmodified HEAD.
+
+Current shipped build (v2.4.8.2), measured live:
+   - 2026-07-28 05:28Z (SIT under heavy test load): 12/12 succeeded
+   - 2026-07-28 14:15Z (SIT idle):                  10/10 succeeded, 0 losses
+
+IMPORTANT CORRECTION TO MY OWN EARLIER CLAIM
+--------------------------------------------------------------------------------
+Last session I told you "~8% of calls to SIT are being lost right now" and
+treated that as the steady state. Re-measured this morning on an idle SIT:
+10/10, zero losses. The ~8% figure was measured while I was hammering SIT with
+repeated live Playwright suites and probes. It is very likely load-induced (GAS
+rate limiting), NOT the chronic rate.
+
+This matters, because it changes what the remaining work is worth. The client
+hardening is still correct and still needed — your original 04:18Z failure
+happened with SIT idle, so real losses do occur — but they are RARE, not 1-in-12.
+Do not plan further work on the assumption that SIT drops 8% of requests.
+
+WHAT SHIPPED
+--------------------------------------------------------------------------------
+bd issue: F3Go30-313u (P1 bug, status in_progress, 7 frozen AC, 2 comments
+          recording verification and deploy evidence)
+
+Deployed to SIT ONLY. PROD IS UNTOUCHED — no prod deploy, no prod static build.
+   - SIT static page: v2.4.8.2 (GitHub Pages, F3Static repo, commit 90b2a23)
+   - SIT GAS:         @216, version.js stamped 2.4.8.2
+   - PROD static:     still v2.4.8.0, PROD GAS unchanged
+
+Modified: static-pages/src/index.html
+   - callApi split into fetchAttempt_ (one bounded attempt, AbortController)
+     plus callApi (retry policy). Previously: no timeout, no retry, no abort.
+   - Two timeouts: reads 12000ms, writes 25000ms. See CALIBRATION below.
+   - Exactly one retry, whitelist only:
+       RETRYABLE_ACTIONS_ = ['identify', 'dashboard', 'bonusList', 'monthGrid']
+     Writes are NEVER retried — a lost response on a write may mean it landed.
+   - Transport failures become an Error with .isTransport = true and plain text
+     ("Couldn't reach the server. Check your internet connection and try again.")
+     The raw "Failed to fetch" no longer reaches a PAX.
+   - Error banner split: #apiErrorServerGuidance vs #apiErrorNetworkGuidance,
+     plus #apiErrorHeadline. Connectivity failures hide the Site-Q contact link
+     (a dead connection is not the Site Q's problem to solve).
+   - pageIsUnloading_ flag set on pagehide; showApiError_ returns early when set,
+     so a request killed by navigation raises no banner.
+
+Modified: package.json (build counter -> 2; new test wired into `npm test`)
+Modified: script/version.js (stamped by the deploy, not hand-edited)
+
+Added: test/test_client_transport_resilience.js
+   19 assertions. Extracts the REAL transport block and showApiError_ from
+   index.html and runs them against stubbed fetch/timers — the extraction
+   pattern established by test_session_resume_refresh.js. In `npm test`.
+
+Added: tests/playwright/transport-resilience.spec.js
+   5 tests, real browser, real AbortController, failures injected by route
+   interception. Deliberately NOT live-backend-dependent, so it cannot fail
+   because SIT is having a bad minute — the exact failure mode being fixed.
+
+CALIBRATION — why 12s, and why 8s was wrong
+--------------------------------------------------------------------------------
+Do not re-derive these numbers from Axiom's durationMs. That is the SERVER-side
+figure. The client round trip includes the 302 hop to
+script.googleusercontent.com/macros/echo, which roughly doubles it. Calibrating
+on the server number is precisely the mistake I made in v2.4.8.1.
+
+Measured client-side round trip for a signup identify, no abort:
+   2026-07-28 05:24Z (SIT loaded): min 3.3s  median 4.8s  p90 6.5s  max 9.1s
+                                   + 1 of 12 lost (browser gave up at 29s)
+   2026-07-28 14:15Z (SIT idle):   min 3.5s  median 4.5s  p90/max 9.5s
+                                   + 0 of 10 lost
+
+So healthy calls reach ~9.5s. 12s sits just above that. 8s did not.
+
+Worst case for a lost read is now 12s + 12s = 24s before the banner appears.
+That is the open question below.
+
+OPEN DECISIONS — nothing here is blocked on code, only on your call
+--------------------------------------------------------------------------------
+[D1] NOTHING IS COMMITTED. Working tree at handoff time:
+        M package.json
+        M script/version.js
+        M static-pages/src/index.html
+        ?? test/test_client_transport_resilience.js
+        ?? tests/playwright/transport-resilience.spec.js
+     Last commit on main is dfbd574 (pre-existing). Note the SIT deploy already
+     pushed this code to Google and to the F3Static repo, so deployed state is
+     AHEAD of committed state. Committing is catch-up, not a new risk.
+[Stuart's Decision] ok to commit
+
+[D2] The 15s-vs-24s tension. static-checkin.spec.js waits 15s for
+     #checkinSyncingNote to clear. With a 12s timeout plus one retry, a LOST
+     request now takes up to 24s to surface. Two of its tests time out in that
+     window. That 15s was chosen when a lost request hung forever, so it never
+     meant anything for this case. Options:
+        (a) widen those specific waits to ~30s (they are asserting recovery,
+            and recovery now takes measurably longer than it used to)
+        (b) drop the retry for check-in reads, keeping worst case at 12s
+        (c) leave both alone and accept the flake
+     I did not silently widen the test timeouts — that is how real regressions
+     get hidden — so this is unresolved on purpose.
+[Stuart's Decision] explain what the consequence is of a 15s and timing out when we might not need to have timed out?
+
+[D3] script/IdentityCore.html:38 has a SECOND callApi of the same shape, serving
+     the GAS-hosted pages. It is unfixed and still has the original hang. Per the
+     project's no-duplicated-logic standard I flagged rather than hand-copied.
+     Those pages are the demoted fallback (ADR-018) on a sunset path
+     (F3Go30-90l5). If that sunset is not imminent, this needs its own issue.
+[Stuart's Decision] create a P3 bead for this
+
+[D4] PROD has none of this. Deciding to promote is a separate call.
+
+[D5] The `page.request.post` -> HTML failures in static-checkin.spec.js are a
+     REAL pre-existing test-harness problem, unrelated to this work and unfixed.
+     Playwright's APIRequest converts POST to GET when following the 302, and
+     the googleusercontent echo URL refuses GET (405 + an HTML error page). Same
+     artifact appears with curl -L. Worth its own issue.
+[Stuart's Decision] explain why this would have ever worked if it did.  or has it always failed
+
+KNOWN TEST STATE (as of 2026-07-28 05:31Z)
+--------------------------------------------------------------------------------
+GREEN:
+  npm test                                          exit 0 (all node tests)
+  tests/playwright/transport-resilience.spec.js     5/5
+  tests/playwright/static-signup.spec.js            3/3 live SIT
+  published-artifact verification (scratchpad)      9/9 behavioural checks
+
+RED (pre-existing / environmental, NOT introduced here):
+  tests/playwright/static-checkin.spec.js           5 failed, 3 passed,
+                                                    10 did not run
+     :146 typed identify lands the address bar          <- page.request.post/HTML
+     :175 page load TODAY/...                            <- page.request.post/HTML
+     :359 warm localStorage snapshot instant paint       <- 15s vs 24s (D2)
+     :392 race: write while stale identify pending       <- 15s vs 24s (D2)
+     :609 stale client update banner                     <- page.request.post/HTML
+  Verified independently: this suite also fails on unmodified HEAD source.
+
+HOW TO RE-RUN EVERYTHING
+--------------------------------------------------------------------------------
+  npm test
+  npx playwright test tests/playwright/transport-resilience.spec.js   # hermetic
+  npx playwright test tests/playwright/static-signup.spec.js          # live SIT
+  npx playwright test tests/playwright/static-checkin.spec.js         # live SIT
+
+  Axiom (SIT logs):
+    /mnt/c/dev/venvs/uv1/bin/python tools/query_axiom.py --since 2h --limit 200
+
+  Baseline comparison (does a test actually catch the old behaviour?):
+    DO NOT use `git stash` for this. I tried, the session was interrupted
+    mid-command, and the stash push had already run while the pop had not —
+    the working tree silently lost every change until I noticed a byte-count
+    mismatch. Use file copies instead:
+      cp static-pages/src/index.html /tmp/.../index.CURRENT.html
+      git show HEAD:static-pages/src/index.html > static-pages/src/index.html
+      <run tests>
+      cp /tmp/.../index.CURRENT.html static-pages/src/index.html
+
+  Redeploy SIT:  npm run deploy:sit
+    (bumps build counter, pushes GAS, builds + publishes static to F3Static,
+     git-pushes that repo. GitHub Pages took ~60-80s to serve the new build in
+     both deploys — poll STATIC_BUILD_VERSION_ at
+     https://f3go30.github.io/static-pages/dist/sit/index.html before testing,
+     or you will test the previous build and believe it.)
+
+SCRATCHPAD PROBES (throwaway, not in the repo — recreate if wanted)
+--------------------------------------------------------------------------------
+  /tmp/claude-1000/-home-stuar-proj-F3Go30/e5166795-9238-47c0-865d-044a7d40cf68/
+  scratchpad/
+     verify_published.js  — injects transport failures against the PUBLISHED
+                            GitHub Pages artifact (note: its expected version
+                            string is hardcoded to 2.4.8.1 and will "fail" that
+                            one check on any later build)
+     live_probe.js        — N identify calls through callApi against live SIT,
+                            reports retry counts
+     latency_probe.js     — N raw fetches, NO abort, reports the real round-trip
+                            distribution; this is the one that produced the
+                            calibration numbers above
+  Run with: NODE_PATH=/home/stuar/proj/F3Go30/node_modules node <script>
+
+MISTAKES I MADE, SO THEY ARE NOT REPEATED
+--------------------------------------------------------------------------------
+  1. Calibrated the timeout on server-side duration instead of client round trip,
+     shipped it to SIT, and made things worse for 20 minutes. Measure the whole
+     path before picking a timeout.
+  2. Reported "~8% loss on SIT" from data gathered while I was myself saturating
+     SIT with test traffic. Idle SIT shows zero losses in 10 calls.
+  3. Told you the working tree was untouched after an interrupted command when
+     it was not — a `git stash push` had already executed. See the baseline note
+     above.
+  4. My first diagnosis (that a page navigation aborted the fetch) was wrong.
+     The correct one — an unreliable 302 hop, failing in both directions — only
+     emerged after running the live spec and catching it in the act.
+================================================================================

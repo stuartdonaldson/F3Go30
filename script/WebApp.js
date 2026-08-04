@@ -470,8 +470,19 @@ function handleAdminPost_(e) {
       } catch (err) {
         GasLogger.log('handleAdminPost_.invalidateAllCache.layoutClearFailed', { error: err.message });
       }
-      GasLogger.log('handleAdminPost_.invalidateAllCache', { wiped: wipedCount, layoutCleared: layoutCleared });
-      return jsonOutput_({ ok: true, wiped: wipedCount, layoutCleared: layoutCleared });
+      // Reload immediately rather than leaving every PAX cold (F3Go30-uz9e.3). This action's
+      // callers are all operator/deploy-time — the onOpen "Invalidate Cache" menu item and
+      // tools/manage-deployments.js's post-deploy step — so the rebuild is paid here instead of
+      // by whichever PAX happens to load the dashboard first. Lock-guarded and best-effort: a
+      // skipped reload just means the old cold-start behavior, so it never fails the wipe.
+      var reloaded = { skipped: true };
+      try {
+        reloaded = reloadPaxCacheForCurrentAndPriorMonth_(SpreadsheetApp.getActiveSpreadsheet());
+      } catch (reloadErr) {
+        GasLogger.log('handleAdminPost_.invalidateAllCache.reloadFailed', { error: reloadErr.message });
+      }
+      GasLogger.log('handleAdminPost_.invalidateAllCache', { wiped: wipedCount, layoutCleared: layoutCleared, reloaded: reloaded });
+      return jsonOutput_({ ok: true, wiped: wipedCount, layoutCleared: layoutCleared, reloaded: reloaded });
     }
     if (payload.action === 'setWebappUrl') {
       // Sets WEBAPP_URL script property with the current webapp deployment URL.

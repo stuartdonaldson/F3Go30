@@ -599,18 +599,30 @@ function purgeStalePaxCache() {
 // with its data.
 var PAX_HISTORY_PREFIX_ = 'go30hist:';
 
-// ~40 days is enough for MAX_STREAK_WINDOW_DAYS_ (30, dashboardWebapp.js) plus slack.
+// Storage cap only — how many trailing days one stored entry may hold. Deliberately NOT tied to
+// MAX_STREAK_WINDOW_DAYS_ (30, dashboardWebapp.js).
 //
-// F3Go30-uz9e.2: this length is now load-bearing for more than maxStreak30. Since F3Go30-uz9e.1,
-// rollingAverage and priorMonthDayValues are also sourced from this window, and they need it to
-// cover a full calendar month (31) plus the client's display padding
-// (DASHBOARD_DISPLAY_WINDOW_DAYS_ - 1 = 13) — 31 + 13 = 44, which is MORE than 40. It works today
-// only because the padding is only wanted early in the month, when the current month's own
-// dayValues is still short; late in a 31-day month there is no prior-month tail left in the
-// window, and none is needed. That is coincidence, not design: raise this to 45 before relying on
-// cross-month padding at any point in the month.
-// Not the full ~400-day window a later migration slice would need for other features.
-var PAX_HISTORY_WINDOW_DAYS_ = 40;
+// It used to be 40, with the rebuild path storing back only the trailing 30, so effective storage
+// was 30 — shorter than the 44 that rollingAverage and priorMonthDayValues have needed since
+// F3Go30-uz9e.1 (a full calendar month, 31, plus the client's display padding,
+// DASHBOARD_DISPLAY_WINDOW_DAYS_ - 1 = 13). That only ever worked because the padding is wanted
+// early in the month, when the current month's own dayValues is still short.
+//
+// F3Go30-uz9e.3 decouples the two. The window is a growth surface for later migration slices
+// (docs/pax-data-model-and-contract.md §5) and costs one character per day per PAX — 400 days is
+// ~400 bytes, well inside PropertiesService's 9KB/value cap and, across a realistic roster,
+// inside the 500KB store cap. The 30-day streak cap now lives where streaks are computed
+// (computeStreak_/computeMaxStreak_'s windowDays argument), so growing this never changes a
+// displayed streak.
+var PAX_HISTORY_WINDOW_DAYS_ = 400;
+
+// How far back a REBUILD populates, as opposed to how much the window may hold. A rebuild reads
+// the prior month's tracker, so "back to the start of the previous month" is the natural stopping
+// point — 31 (prior) + 31 (current) worst case. That is exactly what lets a 30-day streak be
+// computed from the window alone, with no prior-month spreadsheet read, throughout the following
+// month. Days beyond this accumulate the ordinary way, one per write, up to
+// PAX_HISTORY_WINDOW_DAYS_.
+var PAX_HISTORY_BACKFILL_DAYS_ = 62;
 
 function paxHistoryKey_(f3Name) {
   return PAX_HISTORY_PREFIX_ + paxCacheNormalizeName_(f3Name);
@@ -787,6 +799,26 @@ function setPaxHistoryEntry_(f3Name, entry) {
 }
 
 /**
+ * Bulk counterpart to setPaxHistoryEntry_ (F3Go30-uz9e.3): one setProperties call for a whole
+ * roster's rebuilt windows instead of one setProperty RPC per PAX. Same N+1 justification as
+ * setPaxCacheRowsBulk_ — the post-wipe reload (reloadPaxCacheForCurrentAndPriorMonth_,
+ * dashboardWebapp.js) rebuilds every PAX's window in one pass and already holds them all in
+ * memory. setProperties merges, so unrelated properties are untouched.
+ * @param {Object<string, {historyEndDate:string, days:string}>} entriesByName Raw (non-normalized)
+ *   name -> entry; keys are normalized here, same as setPaxHistoryEntry_.
+ */
+function setPaxHistoryEntriesBulk_(entriesByName) {
+  try {
+    var batch = {};
+    Object.keys(entriesByName || {}).forEach(function(name) {
+      batch[paxHistoryKey_(name)] = JSON.stringify(entriesByName[name]);
+    });
+    if (!Object.keys(batch).length) return;
+    PropertiesService.getScriptProperties().setProperties(batch);
+  } catch (e) { /* best-effort — payload too large or Properties unavailable */ }
+}
+
+/**
  * Write-through entry point (F3Go30-5uk2): folds one day's just-written Tracker value into
  * f3Name's rolling history window. Call sites: handleCheckinSubmit_ (dashboardWebapp.js, the live
  * checkin write path) and applyMinusOneToTrackerSheet_ (markMinusOne.js, the nightly -1 auto-mark
@@ -951,6 +983,7 @@ if (typeof module !== 'undefined' && module.exports) {
     extractSheetIdFromPaxCacheKey_: extractSheetIdFromPaxCacheKey_,
     benchmarkPaxCacheReads_: benchmarkPaxCacheReads_,
     PAX_HISTORY_WINDOW_DAYS_: PAX_HISTORY_WINDOW_DAYS_,
+    PAX_HISTORY_BACKFILL_DAYS_: PAX_HISTORY_BACKFILL_DAYS_,
     paxHistoryEncodeValue_: paxHistoryEncodeValue_,
     paxHistoryDecodeChar_: paxHistoryDecodeChar_,
     paxHistoryDaysToValues_: paxHistoryDaysToValues_,
@@ -961,6 +994,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getPaxHistoryEntry_: getPaxHistoryEntry_,
     getPaxHistoryEntriesBulk_: getPaxHistoryEntriesBulk_,
     setPaxHistoryEntry_: setPaxHistoryEntry_,
+    setPaxHistoryEntriesBulk_: setPaxHistoryEntriesBulk_,
     advancePaxHistoryDay_: advancePaxHistoryDay_,
   };
 }

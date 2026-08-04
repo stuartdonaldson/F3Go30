@@ -75,7 +75,10 @@ const {
   paxHistoryEncodeValue_,
   paxHistoryDecodeChar_,
   paxHistoryDaysToValues_,
+  paxHistoryFormatIsoLocal_,
   paxHistoryDayDiff_,
+  PAX_HISTORY_BACKFILL_DAYS_,
+  setPaxHistoryEntriesBulk_,
   advancePaxHistoryEntry_,
   anchorPaxHistoryValues_,
   getPaxHistoryEntry_,
@@ -726,6 +729,55 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   var result = purgeStalePaxCache_(now, spreadsheet);
   assert.equal(result.historyEntriesPurged, 1);
   assert.equal(getPaxHistoryEntry_('Ghost Pax'), null);
+})();
+
+// ── F3Go30-uz9e.3: window length decoupled from the 30-day streak cap ──────────────────────
+//
+// PAX_HISTORY_WINDOW_DAYS_ was 40, and the rebuild path stored back only MAX_STREAK_WINDOW_DAYS_
+// (30) of it, so effective storage was 30 — shorter than the 44 rollingAverage/priorMonthDayValues
+// already needed (the "works today only by coincidence" note this issue resolves). The window is
+// now a storage cap in its own right, sized for later migration slices; the 30-day streak cap is
+// applied at the point streaks are computed instead.
+
+(function testHistoryWindowIsLongEnoughForPriorPlusCurrentMonth() {
+  // A rebuild populates back to the start of the previous month — 31 + 31 days, worst case.
+  assert.ok(PAX_HISTORY_BACKFILL_DAYS_ >= 62, 'backfill must cover a full prior + current month');
+  // The stored window must be able to hold at least everything a rebuild puts in it.
+  assert.ok(PAX_HISTORY_WINDOW_DAYS_ >= PAX_HISTORY_BACKFILL_DAYS_,
+    'storage cap must be at least the backfill length');
+})();
+
+(function testAdvancePaxHistoryEntryTrimsToStorageCapNotStreakCap() {
+  // Walk the window past its cap one day at a time, then confirm the trim landed on
+  // PAX_HISTORY_WINDOW_DAYS_ — not on 30 (the streak cap) or 40 (the old value).
+  var entry = { historyEndDate: '2026-01-01', days: '1' };
+  var day = new Date(2026, 0, 1);
+  for (var i = 0; i < PAX_HISTORY_WINDOW_DAYS_ + 10; i++) {
+    day.setDate(day.getDate() + 1);
+    entry = advancePaxHistoryEntry_(entry, paxHistoryFormatIsoLocal_(day), 1);
+  }
+  assert.equal(entry.days.length, PAX_HISTORY_WINDOW_DAYS_);
+  assert.equal(entry.historyEndDate, paxHistoryFormatIsoLocal_(day));
+})();
+
+// Bulk history write — the post-wipe reload rebuilds a window for every PAX on the roster at
+// once, and one setProperty RPC per PAX is exactly the N+1 pattern setPaxCacheRowsBulk_ already
+// exists to avoid (same PropertiesService round-trip cost, see getPaxCacheRowsBulk_'s docstring).
+(function testSetPaxHistoryEntriesBulkIsOneWrite() {
+  resetProps_();
+  var setPropertyCalls = 0;
+  var realSetProperty = fakeProps.setProperty;
+  fakeProps.setProperty = function() { setPropertyCalls++; return realSetProperty.apply(this, arguments); };
+
+  setPaxHistoryEntriesBulk_({
+    'Crazy Ivan': { historyEndDate: '2026-08-02', days: '111' },
+    'Little John': { historyEndDate: '2026-08-02', days: '101' },
+  });
+
+  assert.equal(setPropertyCalls, 0); // went through setProperties, not per-key setProperty
+  assert.deepEqual(getPaxHistoryEntry_('Crazy Ivan'), { historyEndDate: '2026-08-02', days: '111' });
+  assert.deepEqual(getPaxHistoryEntry_('crazy ivan'), { historyEndDate: '2026-08-02', days: '111' });
+  assert.deepEqual(getPaxHistoryEntry_('Little John'), { historyEndDate: '2026-08-02', days: '101' });
 })();
 
 console.log('test_pax_cache.js: all assertions passed');
