@@ -88,6 +88,19 @@ var PAX_HISTORY_BACKFILL_DAYS_dw_ = (dashboardWebappPaxCacheModule_ && dashboard
 var advancePaxHistoryDay_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.advancePaxHistoryDay_)
   || (typeof globalThis !== 'undefined' && globalThis.advancePaxHistoryDay_);
 
+/**
+ * go30hist scopeId (DR-01, 2026-08-04 design review) — the namespace identity every history
+ * read/write is keyed on, so two namespaces sharing this script project's PropertiesService store
+ * (ADR-014) never collide on the same PAX name. templateSpreadsheet is always a resolved
+ * Spreadsheet in production (resolveTemplateSpreadsheet_, go30tools.js, guarantees this — absent
+ * an ns it falls back to the bound spreadsheet, never null), so this never throws in practice; the
+ * guard exists only so a history-window lookup can never abort an otherwise-successful
+ * checkin/dashboard request.
+ */
+function paxHistoryScopeId_dw_(templateSpreadsheet) {
+  try { return templateSpreadsheet.getId(); } catch (e) { return ''; }
+}
+
 /** F3Go30-440b.1 — folds this execution's PaxCache hit/miss/wipe counters into the caller's own
  *  per-request GasLogger event object; {} if PaxCache isn't wired (never true in production). */
 function paxCacheStatsForLog_dw_() {
@@ -170,8 +183,6 @@ var resolveCheckinSession_dw_ = (dashboardWebappCheckinSessionsModule_ && dashbo
   || (typeof globalThis !== 'undefined' && globalThis.resolveCheckinSession_);
 var createOrTouchCheckinSession_dw_ = (dashboardWebappCheckinSessionsModule_ && dashboardWebappCheckinSessionsModule_.createOrTouchCheckinSession_)
   || (typeof globalThis !== 'undefined' && globalThis.createOrTouchCheckinSession_);
-var getCachedCheckinSessionTitle_dw_ = (dashboardWebappCheckinSessionsModule_ && dashboardWebappCheckinSessionsModule_.getCachedCheckinSessionTitle_)
-  || (typeof globalThis !== 'undefined' && globalThis.getCachedCheckinSessionTitle_);
 
 var dashboardWebappBonusTypesModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./BonusTypes.js')
@@ -412,127 +423,19 @@ function buildRollingAverage_(dayValues, windowSize) {
 // verified against the live TEST_APP deployment, same boundary as signupWebapp.js).
 // ─────────────────────────────────────────────────────────────────────────
 
-// Hosted from the f3go30/static-pages GitHub Pages repo rather than Apps Script itself —
-// HtmlService has no static asset hosting for binary files, clasp push only syncs .gs/.html/
-// manifest sources, and HtmlOutput.setFaviconUrl() explicitly requires an external URL (favicon
-// <link> tags written directly in an Apps Script HTML file are documented as ignored). Same PNG
-// the static check-in page uses as its own favicon (static-pages/src/assets/Go30-Logo.png,
-// tools/build-static-pages.js copies it alongside index.html) — consolidated onto one hosted
-// copy so this URL and the static page's favicon can't drift.
-var CHECKIN_PAGE_FAVICON_URL_ = 'https://f3go30.github.io/static-pages/dist/prod/assets/Go30-Logo.png';
-
 /**
- * Renders the cmd=checkin HTML page.
- * @param {Object=} e The doGet request event — needed for e.parameter.id (a saved-link
- *   check-in session guid, see CheckinSessions.js). NOTE: the served page's own client-side JS cannot
- *   read the request's query string itself — Apps Script injects the page content into a
- *   nested sandbox iframe whose own src carries no query string at all (confirmed live via
- *   Playwright frame inspection, 2026-07-04), so a deep-link param only reaches the client if
- *   it's read here, server-side, and templated in explicitly (savedIdentityTokenJson below).
- *   The page <title> has the same constraint — client-side document.title changes inside that
- *   sandboxed iframe don't reach the top-level (bookmarkable) document, so a personal-link
- *   token's f3Name is looked up here, server-side, purely to make the title/bookmark name
- *   recognizable per-PAX. That lookup is a CacheService-only read (CheckinSessions.js's
- *   getCachedCheckinSessionTitle_) — it never opens the CheckinSessions sheet on this
- *   first-paint path (F3Go30-qi26.3, doGet server think was 3.6s with the sheet open in the
- *   critical path). A cache miss (expired, or a legacy pre-rollout token) just serves the
- *   generic namespace title instead of failing or falling back to a sheet open.
- */
-/**
- * Shared CheckinApp.html template builder for both entry points that can serve this page:
- * a plain doGet (optionally carrying a saved-link token) and a real top-level form POST from
- * the typed-identify button (renderCheckinPageForTypedIdentify_ below). Baking a pre-resolved
- * typedIdentifyResult into the page — instead of returning JSON for client-side script to act
- * on — is what lets the typed-identify button be a genuine <form target="_top"> submission: a
- * real user-gesture navigation the browser always honors, rather than a script-triggered
- * redirect after an async round trip (see attemptTopRedirect_'s history, F3Go30 hardening
- * work 2026-07).
- * @param {?string} savedToken A saved-link token to auto-apply client-side (doGet path), or
- *   null. Ignored when typedIdentifyResult is given (that result already carries its own
- *   session guid).
- * @param {?Object} typedIdentifyResult The exact object handleCheckinIdentify_ returns, or
- *   null for the plain doGet path.
- * @param {string} formGuid The session guid to embed in the identify form's own `action` URL
- *   (raw, not JSON — see CheckinApp.html) — always present, even when nothing has resolved yet,
- *   since it's what makes a subsequent typed-identify POST land on a fixed, already-correct
- *   address bar in one interaction (see CheckinSessions.js's file header).
- * @param {Object} spreadsheet The already-resolved target Template spreadsheet (see
- *   resolveTemplateSpreadsheet_, ADR-014 D1) — callers resolve this once from the request's ns
- *   parameter and pass it through, rather than this function re-deriving it.
- * @param {?string} ns The request's raw ns value (ADR-014 D3), templated into the page so
- *   CheckinApp.html's client-side callApi() can echo it back on every subsequent POST — the
- *   sandboxed iframe carries no query string, so this is the only way it reaches the client.
- * @param {?string} contextDate The request's raw contextDate value (F3Go30-31w5.1), templated
- *   in for the same reason as ns — lets a developer pin a whole check-in session to one test
- *   date for month-boundary fallback testing.
- * @param {?Object} tokenIdentifyResult The exact object handleCheckinIdentify_ returns for a
- *   saved-link `id` token resolved server-side inside this same doGet (F3Go30-5nfj.1), or null
- *   for a fresh visit with no token. Same gotcha as typedIdentifyResult: callers must pass
- *   savedToken as null whenever this is given, or the client's async SAVED_IDENTITY_TOKEN
- *   branch re-fires identify(token) in parallel and clobbers this baked-in result.
- */
-function buildCheckinPageOutput_(savedToken, typedIdentifyResult, formGuid, spreadsheet, ns, contextDate, tokenIdentifyResult) {
-  var template = HtmlService.createTemplateFromFile('CheckinApp');
-  var webAppUrl = ScriptApp.getService().getUrl();
-  template.webAppUrl = JSON.stringify(webAppUrl);
-  template.webAppUrlRaw = webAppUrl;
-  template.formGuid = formGuid;
-  template.appVersion = APP_VERSION;
-  template.savedIdentityTokenJson = JSON.stringify(savedToken || null);
-  template.typedIdentifyResultJson = JSON.stringify(typedIdentifyResult || null);
-  template.tokenIdentifyResultJson = JSON.stringify(tokenIdentifyResult || null);
-  template.urlNsJson = JSON.stringify(ns || null);
-  template.urlContextDateJson = JSON.stringify(contextDate || null);
-  // Static signup base for this page's own signup deep links (signupDeepLinkUrl_,
-  // CheckinApp.html) — already carries ?cmd=signup, so the client only appends
-  // &targetMonth=&autoStart=1. '' when the static host isn't configured (e.g. Node tests), in
-  // which case CheckinApp.html falls back to the GAS ?cmd=signup page itself.
-  template.staticSignupBaseUrlJson = JSON.stringify(
-    (typeof buildStaticSignupUrl_ === 'function' && buildStaticSignupUrl_(webAppUrl, {
-      ns: ns || undefined,
-      contextDate: contextDate || undefined,
-    })) || ''
-  );
-  template.bonusTypesJson = JSON.stringify(bonusTypeClientRules_dw_());
-  template.bonusTypeCodesJson = JSON.stringify(bonusTypeDisplayList_dw_());
-  // Site Q contact info for the client's "something went wrong" error banner — same Config
-  // sheet row (bound/template spreadsheet, not any month's own tracker) that CreateNewTracker.js
-  // and Utilities.js's policy loader already read for admin/nag emails.
-  var siteQConfig = getConfigValue_(spreadsheet, 'Site Q', null) || {};
-  template.siteQName = siteQConfig.primary || 'Site Q';
-  template.siteQEmail = siteQConfig.secondary || '';
-  var nameSpaceConfig = getConfigValue_(spreadsheet, 'NameSpace', null) || {};
-  var nameSpace = nameSpaceConfig.primary || 'F3 Go30';
-  template.nameSpace = nameSpace;
-  // savedToken's title comes from cache only (see this function's docstring) — never
-  // resolveCheckinToken_dw_ here, since that opens the CheckinSessions sheet and would put the
-  // spreadsheet open right back on this first-paint path.
-  var titleF3Name = (typedIdentifyResult && typedIdentifyResult.f3Name) ||
-    (tokenIdentifyResult && tokenIdentifyResult.f3Name) ||
-    (savedToken && getCachedCheckinSessionTitle_dw_(savedToken));
-  var pageTitle = titleF3Name ? (nameSpace + ': ' + titleF3Name) : nameSpace;
-  // HtmlService serves this inside an IFRAME-sandboxed wrapper that does not honor a
-  // <meta name="viewport"> tag written in the template's own <head> — it must be set via
-  // addMetaTag, or mobile browsers render the desktop layout zoomed out instead of fitting
-  // the device width.
-  return template.evaluate()
-    .setTitle(pageTitle)
-    .setFaviconUrl(CHECKIN_PAGE_FAVICON_URL_)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
-}
-
-/**
- * Serves the cmd=checkin page for a plain doGet, optionally carrying a saved-link `id` token
- * (F3Go30-5nfj.1). When `id` is present, resolves it via handleCheckinIdentify_ synchronously
- * and bakes the result into the page render exactly like renderCheckinPageForTypedIdentify_
- * does for a typed-identify POST — this is what lets doGet return an already-populated
- * check-in page instead of an empty shell that the client then has to identify(token) against
- * over a second /exec round trip.
+ * Serves the cmd=checkin route. DR-04/F3Go30-wjpu (2026-08-04): the GAS-rendered check-in page
+ * (formerly CheckinApp.html, built via a now-removed buildCheckinPageOutput_) is gone — every
+ * arrival, legacy or fresh, is handed to the static front end (static-pages/src/index.html,
+ * wrapping this webapp as its API backend) via the same query-preserving redirect
+ * renderHomePage_/renderSignupPage_ use (buildStaticCheckinRedirectUrl_, Utilities.js;
+ * renderStaticRedirect_, WebApp.js) — see ADR-019/ADR-020 and this repo's design-review DR-04
+ * for why no PAX-facing flow keeps a working GAS-rendered fallback. If the static host can't be
+ * resolved (STATIC_PAGES_BASE_URL_ unconfigured — only happens under Node tests, never in a
+ * real deployment), this returns a minimal explanatory page rather than reintroducing that
+ * removed template.
  */
 function renderCheckinPage_(e) {
-  // Legacy ?cmd=checkin arrivals (saved links, bookmarks, PWA shortcuts) carry across to the
-  // static check-in front end instead — same shared mechanics as renderSignupPage_'s redirect
-  // (buildStaticRedirectUrl_, Utilities.js; renderStaticRedirect_, WebApp.js), F3Go30-ubwl.2.
   var staticCheckinUrl = (typeof buildStaticCheckinRedirectUrl_ === 'function')
     ? buildStaticCheckinRedirectUrl_(ScriptApp.getService().getUrl(), (e && e.parameter) || {})
     : '';
@@ -540,59 +443,7 @@ function renderCheckinPage_(e) {
     logStaticRedirect_(e, 'renderCheckinPage_', 'check-in');
     return renderStaticRedirect_(staticCheckinUrl, { bodyLabel: 'Go30 check-in', title: 'Go30 Check-In' });
   }
-
-  var savedToken = (e && e.parameter && e.parameter.id) || null;
-  // A fresh visit (no incoming id) still needs a guid to bake into the identify form's action
-  // URL — see CheckinSessions.js's file header. Reusing an incoming-but-unresolvable id here
-  // (rather than always minting a new one) is harmless: it just gets bound on the next typed
-  // identify instead of being wasted.
-  var formGuid = savedToken || Utilities.getUuid();
-  var ns = (e && e.parameter && e.parameter.ns) || null;
-  var contextDate = (e && e.parameter && e.parameter.contextDate) || null;
-  var spreadsheet = resolveTemplateSpreadsheet_(e);
-  var tokenResult = savedToken
-    ? handleCheckinIdentify_(spreadsheet, { token: savedToken, contextDate: contextDate })
-    : null;
-  // savedToken (1st arg) is deliberately null whenever tokenResult is baked in — passing it
-  // too would also make the client's SAVED_IDENTITY_TOKEN branch fire, re-running an async
-  // identify(token) call in parallel with TOKEN_IDENTIFY_RESULT's own handling and clobbering
-  // it once that second call resolves (same documented gotcha as
-  // renderCheckinPageForTypedIdentify_ below). The guid still reaches the client via
-  // tokenResult.identityToken.
-  return buildCheckinPageOutput_(null, null, formGuid, spreadsheet, ns, contextDate, tokenResult);
-}
-
-/**
- * Serves the cmd=checkin page for a real <form target="_top"> POST from the typed-identify
- * button (as opposed to handleCheckinPost_'s JSON action dispatch, used by the token-auto-apply
- * and in-page calls). Resolving identity synchronously and baking the result into the page
- * render means the button click IS the navigation — no script-triggered redirect afterward that
- * could silently fail to fire (see F3Go30 hardening work 2026-07, Crazy Ivan's repeated-identify
- * reports). Reuses handleCheckinIdentify_ wholesale so PaxDB fallthrough / session-binding-on-
- * match behavior never drifts between the JSON and form-POST entry points.
- */
-function renderCheckinPageForTypedIdentify_(e) {
-  var spreadsheet = resolveTemplateSpreadsheet_(e);
-  var f3Name = (e.parameter && e.parameter.f3Name) || '';
-  var email = (e.parameter && e.parameter.email) || '';
-  // The form's own action URL already carries this exact guid (see CheckinApp.html /
-  // renderCheckinPage_'s formGuid) — that's what makes the resulting address bar correct in
-  // one interaction, with nothing left to redirect to afterward.
-  var guid = (e.parameter && e.parameter.id) || Utilities.getUuid();
-  var contextDate = (e.parameter && e.parameter.contextDate) || null;
-  var result = handleCheckinIdentify_(spreadsheet, { f3Name: f3Name, email: email, guid: guid, contextDate: contextDate });
-  // Echoed back only for the not-matched case, so the identify form can be re-populated with
-  // what was just typed — a fresh page render doesn't otherwise know what the PAX entered.
-  result.submittedF3Name = f3Name;
-  result.submittedEmail = email;
-  // savedToken (first arg) is deliberately null here, even on a match — passing it would also
-  // make the client's SAVED_IDENTITY_TOKEN branch fire, re-running an async identify(token) call
-  // in parallel with TYPED_IDENTIFY_RESULT's own handling and clobbering its saveLinkNote UI
-  // once that second call resolves (confirmed live during the 2026-07 SIT verification of this
-  // change). The guid still reaches the client via typedIdentifyResult.identityToken, which is
-  // all saveLinkNote/saveLinkAnchor need — and the form's action already used it for the URL.
-  var ns = (e.parameter && e.parameter.ns) || null;
-  return buildCheckinPageOutput_(null, result, guid, spreadsheet, ns, contextDate);
+  return renderStaticUnavailable_('Go30 Check-In');
 }
 
 /** Dispatches a cmd=checkin doPost JSON body ({action, ...}) to the matching handler. */
@@ -1279,7 +1130,7 @@ function reloadPaxCacheForCurrentAndPriorMonth_(templateSpreadsheet, contextDate
       historyBatch[name] = { historyEndDate: anchorIso, days: days };
       result.historyEntries++;
     });
-    if (result.historyEntries) setPaxHistoryEntriesBulk_dw_(historyBatch);
+    if (result.historyEntries) setPaxHistoryEntriesBulk_dw_(paxHistoryScopeId_dw_(templateSpreadsheet), historyBatch);
 
     return result;
   } catch (e2) {
@@ -1731,12 +1582,11 @@ function resolveCheckinToken_dw_(spreadsheet, token) {
 }
 
 /**
- * Site-config payload for check-in front ends: bonus type rules/labels, Site Q contact, the
- * namespace label, and the current app version — the same values buildCheckinPageOutput_ bakes
- * into the GAS-hosted CheckinApp.html via server templating. Attached to every
- * handleCheckinIdentify_ response (F3Go30-5nfj.2 follow-up: static-pages/index.html has no
- * server-render step to bake these into, so it reads them from here instead) — one function so
- * the two front ends' config values can't drift apart.
+ * Site-config payload for the check-in front end: bonus type rules/labels, Site Q contact, the
+ * namespace label, and the current app version. Attached to every handleCheckinIdentify_
+ * response (F3Go30-5nfj.2: static-pages/src/index.html has no server-render step to bake these
+ * into — unlike the removed GAS-hosted CheckinApp.html template (DR-04, 2026-08-04) — so it
+ * reads them from here instead).
  */
 function checkinClientConfig_dw_(spreadsheet) {
   // Best-effort: a Config-sheet lookup hiccup must never break identify itself (the config
@@ -1924,7 +1774,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     // True exactly when this session has never been resolved before this request (a precise
     // createdAt-vs-lastUsedAt comparison, not a time-window guess — see
     // resolveCheckinToken_dw_) — the "Welcome" vs "Welcome back" heading and the "go bookmark
-    // this" nudge are both driven by this one field (CheckinApp.html).
+    // this" nudge are both driven by this one field (static-pages/src/index.html).
     firstUse: firstUse,
     // Resolved-context handle (F3Go30-qi26.1) — the client echoes this back on its follow-up
     // checkin/dashboard POSTs so those handlers skip resolveMonths + the identity re-lookup and
@@ -1935,7 +1785,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     // before submission; token path: the one just being re-verified) — never re-minted, unlike
     // the old signed token, so a bookmark stays valid under the same URL for as long as
     // CheckinSessions keeps its row alive. Client embeds this in the "save your check-in page"
-    // link (CheckinApp.html); see CheckinSessions.js for why this replaced IdentityToken.js here.
+    // link (static-pages/src/index.html); see CheckinSessions.js for why this replaced IdentityToken.js here.
     identityToken: sessionGuid,
   };
 }
@@ -2040,7 +1890,7 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
   // check-in immediately, the same way the PaxCache tracker-row write-through above does.
   // The context date is passed explicitly (F3Go30-uz9e.2) so the future-day clamp inside judges
   // "future" against the same day this request resolved, not the script's raw clock.
-  if (advancePaxHistoryDay_dw_) advancePaxHistoryDay_dw_(payload.f3Name, targetDate, payload.value, _dashboardIsoDate_(today));
+  if (advancePaxHistoryDay_dw_) advancePaxHistoryDay_dw_(paxHistoryScopeId_dw_(templateSpreadsheet), payload.f3Name, targetDate, payload.value, _dashboardIsoDate_(today));
   GasLogger.log('checkinWebapp.checkin', { f3Name: payload.f3Name, day: payload.day, value: payload.value });
   return { ok: true };
 }
@@ -2219,7 +2069,7 @@ function handleBonusEdit_(templateSpreadsheet, payload) {
 }
 
 // Averaging period (the N in the trailing N-day mean) — not the same thing as how many days of
-// that averaged trend the client displays at once (CheckinApp.html's DISPLAY_WINDOW_DAYS_).
+// that averaged trend the client displays at once (static-pages/src/index.html's DISPLAY_WINDOW_DAYS_).
 // 7 days matches Go30's natural weekly cadence (most PAX have a weekday-AO/weekend-gap
 // pattern) — responsive enough to show a real trend shift within days, without being so short
 // a single missed day swings it, and without being so long (14, 30) that it's still "warming
@@ -2228,7 +2078,7 @@ var ROLLING_AVERAGE_WINDOW_DAYS_ = 7;
 
 var MAX_STREAK_WINDOW_DAYS_ = 30;
 
-// Mirrors CheckinApp.html's DISPLAY_WINDOW_DAYS_ (kept in sync manually — client-only display
+// Mirrors static-pages/src/index.html's DISPLAY_WINDOW_DAYS_ (kept in sync manually — client-only display
 // concern, not worth threading through a shared config just for one constant) — how many
 // trailing days getPriorMonthTailValues_ needs to hand back so the rolling-average *chart*
 // (bars + line), not just the averaged value, can pad its display window across a month
@@ -2267,7 +2117,7 @@ function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, t
   // F3Go30-uz9e.1: the prior-month tail of historyValues, same source userRollingAverage's
   // padding used to be built from viewer-only — every board row gets it now, so the pax-detail
   // popup's chart can pad its display window across a month boundary for ANY teammate, not just
-  // the logged-in viewer (renderPaxDetail_, CheckinApp.html/index.html).
+  // the logged-in viewer (renderPaxDetail_, static-pages/src/index.html).
   var priorMonthDayValues = priorMonthLead.slice(-(DASHBOARD_DISPLAY_WINDOW_DAYS_ - 1));
   return {
     name: name,
@@ -2344,9 +2194,10 @@ function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, t
  *   program), ending on anchorIso.
  */
 function getPaxHistoryWindowValues_(f3Name, currentMonthDayValues, monthInfo, templateSpreadsheet, anchorIso, entriesByNormName) {
+  var scopeId = paxHistoryScopeId_dw_(templateSpreadsheet);
   var entry = entriesByNormName
     ? (entriesByNormName[paxCacheNormalizeName_dw_(f3Name)] || null)
-    : (getPaxHistoryEntry_dw_ ? getPaxHistoryEntry_dw_(f3Name) : null);
+    : (getPaxHistoryEntry_dw_ ? getPaxHistoryEntry_dw_(scopeId, f3Name) : null);
   var anchored = anchorPaxHistoryValues_dw_ ? anchorPaxHistoryValues_dw_(entry, anchorIso) : null;
   // F3Go30-uz9e.3: the WHOLE stored window is returned, not a 30-day slice of it. Its leading
   // (prior-month) portion is what rollingAverage and priorMonthDayValues are built from; the
@@ -2370,7 +2221,7 @@ function getPaxHistoryWindowValues_(f3Name, currentMonthDayValues, monthInfo, te
     // already says for free.
     if (/[^.]/.test(days)) {
       var rebuilt = { historyEndDate: anchorIso, days: days };
-      setPaxHistoryEntry_dw_(f3Name, rebuilt);
+      setPaxHistoryEntry_dw_(scopeId, f3Name, rebuilt);
       if (entriesByNormName) entriesByNormName[paxCacheNormalizeName_dw_(f3Name)] = rebuilt;
     }
   }
@@ -2407,7 +2258,7 @@ function _dashboardIsoDate_(d) {
 
 /**
  * Parses a "YYYY-MM-DD" string as a local-midnight Date, matching the client's parseIsoDate_
- * (CheckinApp.html). The native `new Date("YYYY-MM-DD")` constructor parses date-only strings
+ * (static-pages/src/index.html). The native `new Date("YYYY-MM-DD")` constructor parses date-only strings
  * as UTC midnight, which shifts to the previous calendar day once compared/rendered in any
  * timezone behind UTC — breaking sameCalendarDate_ against Tracker day columns (local-midnight
  * Date objects from getValues()) and defeating the "default to today in the PAX's local
@@ -2516,7 +2367,7 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   // getProperty per row inside the loop below (F3Go30-uz9e.2) — same reasoning as
   // getPaxCacheRowsBulk_ for the tracker rows.
   var historyEntries = getPaxHistoryEntriesBulk_dw_
-    ? getPaxHistoryEntriesBulk_dw_(identity.trackerValues.map(function(row) { return row[TRACKER_NAME_COL_]; }))
+    ? getPaxHistoryEntriesBulk_dw_(paxHistoryScopeId_dw_(templateSpreadsheet), identity.trackerValues.map(function(row) { return row[TRACKER_NAME_COL_]; }))
     : null;
   var allPaxRows = [];
   var userRow = null;
@@ -2812,8 +2663,6 @@ if (typeof module !== 'undefined' && module.exports) {
     monthInfoFromHandle_: monthInfoFromHandle_,
     resolveLeanIdentityFromHandle_: resolveLeanIdentityFromHandle_,
     resolveFullIdentityFromHandle_: resolveFullIdentityFromHandle_,
-    buildCheckinPageOutput_: buildCheckinPageOutput_,
     renderCheckinPage_: renderCheckinPage_,
-    renderCheckinPageForTypedIdentify_: renderCheckinPageForTypedIdentify_,
   };
 }

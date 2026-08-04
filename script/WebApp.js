@@ -50,16 +50,6 @@ function jsonOutput_(obj) {
 }
 
 /**
- * Inlines an HtmlService-served file's raw content — used by templates rendered via
- * createTemplateFromFile (SignupApp/CheckinApp) to pull in a shared <script>-only fragment
- * with `<?!= include_('IdentityCore') ?>`, so identity/HTTP client plumbing shared by both
- * apps lives in one file (script/IdentityCore.html) instead of being copy-pasted per page.
- */
-function include_(filename) {
-  return HtmlService.createHtmlOutputFromFile(filename).getContent();
-}
-
-/**
  * Renders the default (no-cmd) landing page: links to Sign Up, Dashboard/Check-in, and the
  * current month's tracker spreadsheet. Replaces the old bare {"status":"ok"} JSON response.
  */
@@ -98,15 +88,6 @@ function renderHomePage_(e) {
 }
 
 /**
- * Renders the cmd=signup HTML page, injecting live ListDB/Links data server-side.
- * @param {Object=} e The doGet request event — needed for e.parameter.targetMonth/autoStart
- *   (the check-in app's "not registered yet" deep link). NOTE: the served page's own
- *   client-side JS cannot read the request's query string itself — Apps Script injects page
- *   content into a nested sandbox iframe whose own src carries no query string at all
- *   (confirmed live via Playwright frame inspection, 2026-07-04) — so these must be read here,
- *   server-side, and templated in explicitly, exactly like CheckinApp.html's saved-link token.
- */
-/**
  * The page a legacy GAS arrival (signup, check-in, or home) actually gets: a client-side hop to
  * the static front end, carrying the original query string (buildStaticSignupRedirectUrl_ /
  * buildStaticCheckinRedirectUrl_). Generalized from the signup-only renderStaticSignupRedirect_
@@ -115,15 +96,16 @@ function renderHomePage_(e) {
  * to..." copy names).
  *
  * REDIRECT, NOT BANNER (F3Go30-833s.11 AC3). A banner would leave every old link landing on a
- * second, diverging implementation that ADR-018 intends to retire — two UIs to keep in step, and
- * PAX split across them by which link they happened to have saved. A redirect makes the old
- * links equivalent to the new ones, which is the whole point. What makes it safe is that it is
- * conditional, not destructive:
- *   - it only fires when a static URL can actually be built, so an unconfigured/unreachable
- *     static host renders the GAS page exactly as before;
- *   - `?static=0` opts out explicitly, keeping the GAS-rendered page one query parameter away
- *     rather than deleted (a developer/legacy escape hatch, not an availability guarantee —
- *     ADR-019);
+ * second, diverging implementation that ADR-018/DR-04 (design-review-2026-08-04.md) retired —
+ * two UIs to keep in step, and PAX split across them by which link they happened to have saved.
+ * A redirect makes the old links equivalent to the new ones, which is the whole point. DR-04
+ * (2026-08-04) removed the GAS-rendered SignupApp.html/CheckinApp.html/IdentityCore.html
+ * fallback templates outright — this route no longer has anything to fall back to, so the
+ * redirect fires whenever a static URL can be built at all (renderStaticUnavailable_ is the only
+ * other outcome, and only when the static host itself isn't configured):
+ *   - it only fires when a static URL can actually be built — an unconfigured/unreachable
+ *     static host gets renderStaticUnavailable_ instead of a page render, since there is no GAS
+ *     page left to serve;
  *   - the hop is an explicit tap, so it is never a dead end.
  *
  * ONE DELIBERATE TAP, NOT AN AUTO-REDIRECT. This originally also ran
@@ -198,11 +180,38 @@ function logStaticRedirect_(e, routeTag, label) {
   logActivity(activityMsg, 'GAS-to-static-redirect');
 }
 
+/**
+ * Minimal page returned in place of a static-front-end redirect when no static URL could be
+ * built — practically Node-test-only; every real deployment has STATIC_PAGES_BASE_URL_ set
+ * (version.js), so this never renders in production. DR-04 (2026-08-04) removed the
+ * GAS-rendered SignupApp.html/CheckinApp.html/IdentityCore.html fallback templates outright
+ * (see design-review-2026-08-04.md and ADR-019/ADR-020) — this route has nothing left to fall
+ * back to, only an explanation.
+ * @param {string} label What's unavailable, e.g. 'Go30 Hard Commit Signup'.
+ */
+function renderStaticUnavailable_(label) {
+  var html =
+    '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;text-align:center;' +
+    'padding:40px 20px;color:#333}h1{font-size:20px;margin:0 0 10px}' +
+    'p{font-size:15px;line-height:1.5;color:#555}</style></head><body>' +
+    '<h1>' + label + ' is unavailable</h1>' +
+    '<p>The static front end is not configured for this deployment.</p>' +
+    '</body></html>';
+  return HtmlService.createHtmlOutput(html)
+    .setTitle(label)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/**
+ * Serves the cmd=signup route. DR-04/F3Go30-wjpu (2026-08-04): the GAS-rendered signup page
+ * (formerly SignupApp.html) is gone — every arrival, legacy or fresh, is handed to the static
+ * signup front end via the same query-preserving redirect (buildStaticSignupRedirectUrl_,
+ * Utilities.js; renderStaticRedirect_ above) that already carried old ?cmd=signup links across
+ * before this removal (F3Go30-833s.11 AC5 — an old link is never a dead end). See
+ * renderStaticUnavailable_ for the one case (static host unconfigured) this doesn't redirect.
+ */
 function renderSignupPage_(e) {
-  // Old, already-distributed ?cmd=signup links (TinyURL short links, PAX bookmarks, Slack and
-  // email history) can't be rewritten where they sit, so this page carries their arrivals
-  // across to the static signup instead — see renderStaticRedirect_ for why a redirect
-  // and not a banner, and for the conditions under which it declines to fire.
   var staticSignupUrl = (typeof buildStaticSignupRedirectUrl_ === 'function')
     ? buildStaticSignupRedirectUrl_(ScriptApp.getService().getUrl(), (e && e.parameter) || {})
     : '';
@@ -210,57 +219,7 @@ function renderSignupPage_(e) {
     logStaticRedirect_(e, 'renderSignupPage_', 'signup');
     return renderStaticRedirect_(staticSignupUrl, { bodyLabel: 'Go30 signup', title: 'Go30 Hard Commit Signup' });
   }
-
-  var spreadsheet = resolveTemplateSpreadsheet_(e);
-  var lists = readTeamLists_(spreadsheet);
-  var urlContextDate = (e && e.parameter && e.parameter.contextDate) || null;
-  var months = getCurrentAndNextMonths_(spreadsheet, undefined, urlContextDate);
-
-  var template = HtmlService.createTemplateFromFile('SignupApp');
-  var signupWebAppUrl = ScriptApp.getService().getUrl();
-  template.webAppUrl = JSON.stringify(signupWebAppUrl);
-  // Static check-in front end base (no id yet — SignupApp.html appends its own &id= once one
-  // is known, exactly like it already does for the GAS fallback URL). '' if unconfigured (e.g.
-  // Node tests), in which case SignupApp.html falls back to the GAS ?cmd=checkin page itself.
-  template.staticCheckinBaseUrlJson = JSON.stringify(
-    (typeof buildStaticCheckinUrl_ === 'function' && buildStaticCheckinUrl_(signupWebAppUrl, {
-      ns: (e && e.parameter && e.parameter.ns) || undefined,
-      contextDate: urlContextDate || undefined,
-    })) || ''
-  );
-  template.aoListJson = JSON.stringify(lists.aoList);
-  template.goalListJson = JSON.stringify(lists.goalList);
-  // Only current/next are ever meant for the client — getCurrentAndNextMonths_ also returns
-  // `explicit` (an out-of-band-selected test month's sheetId, when a caller supplied one),
-  // which must never be embedded in a page anonymous users can view source on.
-  template.monthsJson = JSON.stringify({ current: months.current, next: months.next });
-  template.appVersion = APP_VERSION;
-  template.urlTargetMonthJson = JSON.stringify((e && e.parameter && e.parameter.targetMonth) || null);
-  template.urlAutoStart = !!(e && e.parameter && e.parameter.autoStart === '1');
-  // ?id=<session guid> deep link (from the confirmation email's "Update my registration" link):
-  // resolve the guid to its bound {f3Name, email} server-side — the sandboxed page can't read the
-  // query string itself (see the note above), and this is the same CheckinSessions store the
-  // check-in app uses. Handing the identity in lets SignupApp.html skip the identify form and open
-  // the goal step prefilled, exactly like ?autoStart=1 but without relying on localStorage.
-  var incomingSessionId = (e && e.parameter && e.parameter.id) || '';
-  var sessionIdentity = null;
-  if (incomingSessionId && typeof resolveCheckinSession_ === 'function') {
-    var session = resolveCheckinSession_(spreadsheet, incomingSessionId);
-    if (session && session.f3Name && session.email) {
-      sessionIdentity = { f3Name: session.f3Name, email: session.email };
-    }
-  }
-  template.urlIdentityJson = JSON.stringify(sessionIdentity);
-  // ns (ADR-014 D3): same "sandboxed iframe carries no query string" constraint as
-  // targetMonth/id above — read here server-side and echoed by SignupApp.html's callApi()
-  // POSTs (via IdentityCore.html's shared client) so a namespace-scoped request stays scoped
-  // across the whole signup flow, not just the initial page load.
-  template.urlNsJson = JSON.stringify((e && e.parameter && e.parameter.ns) || null);
-  // contextDate (F3Go30-31w5.1): same round-trip constraint as ns above — read here
-  // server-side and echoed by SignupApp.html's callApi() POSTs so a developer testing
-  // month-boundary fallback stays pinned to the same test date for the rest of the session.
-  template.urlContextDateJson = JSON.stringify(urlContextDate);
-  return template.evaluate().setTitle('Go30 Hard Commit Signup').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  return renderStaticUnavailable_('Go30 Hard Commit Signup');
 }
 
 /** Dispatches a cmd=signup doPost JSON body ({action, ...}) to the matching handler. */
@@ -723,12 +682,6 @@ function doPost(e) {
       return handleSignupPost_(e);
     }
     if (cmd === 'checkin') {
-      // A real <form target="_top"> submit from the typed-identify button (marked by the
-      // hidden formIdentify field) is form-urlencoded and must render the full page — the
-      // JSON action dispatch below is only for the page's own script-driven callApi() calls.
-      if (e && e.parameter && e.parameter.formIdentify === '1') {
-        return renderCheckinPageForTypedIdentify_(e);
-      }
       return handleCheckinPost_(e);
     }
     return jsonOutput_({ status: 'ok' });
@@ -739,6 +692,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderSignupPage_: renderSignupPage_,
     renderStaticRedirect_: renderStaticRedirect_,
+    renderStaticUnavailable_: renderStaticUnavailable_,
     logStaticRedirect_: logStaticRedirect_,
     renderHomePage_: renderHomePage_,
     handleAdminPost_: handleAdminPost_,

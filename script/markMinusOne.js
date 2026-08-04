@@ -47,7 +47,13 @@ function markEmptyCellsAsMinusOne_(contextDate) {
   var trackerRow = resolveTrackerForContextDate(thresholdDate);
   GasLogger.log('markEmptyCellsAsMinusOne.dispatch', { contextDate: today.toISOString(), targetDate: thresholdDate.toISOString(), sheetId: trackerRow.sheetId });
   var spreadsheet = SpreadsheetApp.openById(trackerRow.sheetId);
-  var markedCount = applyMinusOneToTrackerSheet_(spreadsheet, today);
+  // go30hist scopeId (DR-01) is the ACTIVE/bound spreadsheet's id, matching
+  // resolveTrackerForContextDate's own no-arg default (go30tools.js) — this trigger has no ADR-014
+  // D4 fan-out yet (DR-02), so it only ever runs against the bound spreadsheet's own TrackerDB,
+  // never a namespace copy's. NOT trackerRow.sheetId, which is the monthly tracker copy, not the
+  // namespace identity go30hist windows are keyed on.
+  var historyScopeId = SpreadsheetApp.getActiveSpreadsheet().getId();
+  var markedCount = applyMinusOneToTrackerSheet_(spreadsheet, today, historyScopeId);
   refreshPaxDbForTracker_(spreadsheet, trackerRow.sheetId, trackerRow.startDate);
   // The check-in webapp can hold BOTH the current-month and prior-month tracker cached at
   // once (getPriorMonthTailValues_, dashboardWebapp.js), so a nightly refresh must cover both
@@ -149,8 +155,11 @@ function refreshPaxCacheForCurrentAndPriorMonths_(today) {
  * column matching (contextDate - 2 days). Rows with no F3 Name (column A) are left alone.
  * @param {Spreadsheet} spreadsheet Target tracker spreadsheet, resolved via TrackerDB.
  * @param {Date|string=} contextDate Defaults to now.
+ * @param {string=} historyScopeId go30hist scopeId (DR-01) for the write-through below — the
+ *   namespace identity (resolved template spreadsheet id), not spreadsheet's own id. Omitted only
+ *   by tests that don't exercise the write-through path.
  */
-function applyMinusOneToTrackerSheet_(spreadsheet, contextDate) {
+function applyMinusOneToTrackerSheet_(spreadsheet, contextDate, historyScopeId) {
   var sheetName = "Tracker";
   var sheet = spreadsheet.getSheetByName(sheetName);
   var markedCount = 0;
@@ -199,8 +208,8 @@ function applyMinusOneToTrackerSheet_(spreadsheet, contextDate) {
         // F3Go30-5uk2: write-through into the f3Name-keyed rolling history window (PaxCache.js) —
         // the same write-through convention as the Tracker-row cache refresh below, so team-tile
         // streak/maxStreak30 pick up this auto-mark without waiting for a self-heal read.
-        if (typeof advancePaxHistoryDay_ === 'function') {
-          advancePaxHistoryDay_(columnAValues[j][0], thresholdday, -1);
+        if (historyScopeId && typeof advancePaxHistoryDay_ === 'function') {
+          advancePaxHistoryDay_(historyScopeId, columnAValues[j][0], thresholdday, -1);
         }
       }
     }

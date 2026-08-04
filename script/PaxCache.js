@@ -444,6 +444,11 @@ function resolvePaxRowIndex_(kind, sheetId, f3Name, readNameColumn_) {
  */
 function collectKnownTrackerSheetIds_(boundSpreadsheet) {
   var known = {};
+  // The bound spreadsheet's OWN id, not just its trackers' — DR-01's go30hist entries are scoped
+  // by resolved template spreadsheet id, and requests with no ns (the parent Template itself)
+  // resolve to boundSpreadsheet (resolveTemplateSpreadsheet_, go30tools.js). Without this, every
+  // go30hist entry the parent Template ever writes for itself would look orphaned here.
+  try { known[boundSpreadsheet.getId()] = true; } catch (e) { /* best-effort */ }
   var boundRows = (readTrackerDbRowsBySheetId_pc_ ? readTrackerDbRowsBySheetId_pc_(boundSpreadsheet) : { bySheetId: {} }).bySheetId || {};
   Object.keys(boundRows).forEach(function(sheetId) { known[sheetId] = true; });
 
@@ -462,13 +467,32 @@ function collectKnownTrackerSheetIds_(boundSpreadsheet) {
   return known;
 }
 
-/** Extracts the sheetId embedded in a go30pax:/go30idx: PropertiesService key, or
- *  null for any other key (this store also holds unrelated entries — WEBAPP_URL, etc.). */
+/** Extracts the sheetId (go30pax:/go30idx:) or namespace scopeId (go30hist:, DR-01) embedded in
+ *  a PropertiesService key, or null for any other key (this store also holds unrelated entries —
+ *  WEBAPP_URL, etc.). The two prefixes place their discriminator at a different split index —
+ *  kind:sheetId:name vs scopeId:name — so this function is the one place that knows both shapes;
+ *  callers get "the sheet/namespace this key belongs to" without caring which. */
 function extractSheetIdFromPaxCacheKey_(key) {
   if (key.indexOf(PAX_CACHE_PREFIX_) === 0 || key.indexOf(PAX_CACHE_ROSTER_PREFIX_) === 0) {
     return key.split(':')[2] || null;
   }
+  if (key.indexOf(PAX_HISTORY_PREFIX_) === 0) {
+    return key.split(':')[1] || null;
+  }
   return null;
+}
+
+/** Wipes every go30hist: entry scoped to scopeId — the PAX_HISTORY_PREFIX_ counterpart of
+ *  wipePaxCacheForSheet_, used by the orphan sweep below (DR-01's scoped key makes this possible;
+ *  previously these entries carried no sheet/namespace discriminator at all). */
+function wipePaxHistoryForScope_(scopeId) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var prefix = PAX_HISTORY_PREFIX_ + scopeId + ':';
+    props.getKeys().forEach(function(key) {
+      if (key.indexOf(prefix) === 0) props.deleteProperty(key);
+    });
+  } catch (e) { /* best-effort */ }
 }
 
 /**
@@ -549,22 +573,32 @@ function purgeStalePaxCache_(now, spreadsheet) {
     Object.keys(orphanSheetIds).forEach(function(sheetId) {
       wipePaxCacheForSheet_('tracker', sheetId);
       wipePaxCacheForSheet_('responses', sheetId);
+      // DR-01: go30hist is now scoped the same way (scopeId in place of sheetId), so an orphaned
+      // scope's history entries are visible to — and reaped by — this same sweep instead of
+      // needing their own bespoke pass (see the fourth pass below, which now only has to cover
+      // per-PAX staleness WITHIN a still-live scope).
+      wipePaxHistoryForScope_(sheetId);
       orphanedSheetsPurged++;
     });
   }
 
-  // Fourth pass (F3Go30-uz9e.2): go30hist entries. They carry no sheetId, so neither the
-  // tracker-age passes nor the orphan sweep above can see them at all — every name that ever
-  // checked in, including retired PAX and typos, otherwise kept a Script Property forever against
-  // the 500KB store quota. Reaped off the same CheckinSessions activity signal the per-PAX row
-  // pass uses, and safe to be aggressive about: unlike the row cache this window is derived data
-  // end to end, so a wrongly-reaped entry self-heals from the Tracker on the next dashboard read.
+  // Fourth pass (F3Go30-uz9e.2): go30hist entries for a retired/typo'd PAX WITHIN the bound
+  // spreadsheet's own scope — a name that ever checked in but stopped, or was mistyped, would
+  // otherwise keep a Script Property forever against the 500KB store quota even though its scope
+  // is still live (so the orphan sweep above never touches it). Reaped off the same
+  // CheckinSessions activity signal the per-PAX row pass uses, and safe to be aggressive about:
+  // unlike the row cache this window is derived data end to end, so a wrongly-reaped entry
+  // self-heals from the Tracker on the next dashboard read. Scoped to the bound spreadsheet's own
+  // id (DR-01) — activeNames is itself only that scope's CheckinSessions, so reaping another
+  // scope's entries here would use the wrong activity signal for them entirely.
   var historyEntriesPurged = 0;
   if (activeNames) {
     try {
+      var boundScopeId = spreadsheet.getId();
+      var historyPrefix = PAX_HISTORY_PREFIX_ + boundScopeId + ':';
       PropertiesService.getScriptProperties().getKeys().forEach(function(key) {
-        if (key.indexOf(PAX_HISTORY_PREFIX_) !== 0) return;
-        var normName = key.slice(PAX_HISTORY_PREFIX_.length);
+        if (key.indexOf(historyPrefix) !== 0) return;
+        var normName = key.slice(historyPrefix.length);
         if (Object.prototype.hasOwnProperty.call(activeNames, normName)) return;
         PropertiesService.getScriptProperties().deleteProperty(key);
         historyEntriesPurged++;
@@ -586,11 +620,17 @@ function purgeStalePaxCache() {
 
 // ── f3Name-keyed rolling history window (F3Go30-5uk2, PAX data model migration Slice 1) ──
 //
-// A third PaxCache entry kind, deliberately NOT namespaced by sheetId like the two above — this
-// is the first step toward a per-PAX record that spans months (docs/pax-data-model-and-contract.md
-// §3.1/§5). One entry per PAX, holding a dense trailing window of day outcomes so
-// buildDashboardPaxRow_ (dashboardWebapp.js) can compute streak/maxStreak30 correctly for every
-// PAX on the board, not just the logged-in viewer, without a month-boundary stitch.
+// A third PaxCache entry kind, deliberately NOT namespaced by tracker sheetId like the two above
+// — this is the first step toward a per-PAX record that spans months
+// (docs/pax-data-model-and-contract.md §3.1/§5), so a monthly tracker rollover must not start a
+// new window. It IS namespace-scoped, though (DR-01, 2026-08-04 design review): PropertiesService
+// belongs to the executing script project, not to any one spreadsheet, so two namespaces sharing
+// that project (ADR-014) would otherwise collide on the same PAX name. The key therefore carries
+// scopeId — the resolved template spreadsheet id, stable across that namespace's monthly
+// trackers — never the tracker sheetId, which would defeat the cross-month window that is the
+// whole point of this cache. One entry per {scopeId, PAX}, holding a dense trailing window of day
+// outcomes so buildDashboardPaxRow_ (dashboardWebapp.js) can compute streak/maxStreak30 correctly
+// for every PAX on the board, not just the logged-in viewer, without a month-boundary stitch.
 //
 // Shape: { historyEndDate: "YYYY-MM-DD", days: "<1-char/day string, oldest first>" }.
 // historyEndDate is the calendar day the LAST character of days represents — required, since a
@@ -624,8 +664,10 @@ var PAX_HISTORY_WINDOW_DAYS_ = 400;
 // PAX_HISTORY_WINDOW_DAYS_.
 var PAX_HISTORY_BACKFILL_DAYS_ = 62;
 
-function paxHistoryKey_(f3Name) {
-  return PAX_HISTORY_PREFIX_ + paxCacheNormalizeName_(f3Name);
+/** @param {string} scopeId Namespace identity — the resolved template spreadsheet id. Not the
+ *  tracker sheetId (see the header comment on PAX_HISTORY_PREFIX_ above). */
+function paxHistoryKey_(scopeId, f3Name) {
+  return PAX_HISTORY_PREFIX_ + scopeId + ':' + paxCacheNormalizeName_(f3Name);
 }
 
 /** 1-char encoding for one day's Tracker cell value — 1/0/-1 mirror the Tracker's own values;
@@ -753,10 +795,11 @@ function anchorPaxHistoryValues_(entry, anchorIso) {
   return paxHistoryDaysToValues_((entry.days + pad).slice(-PAX_HISTORY_WINDOW_DAYS_));
 }
 
-/** Returns the cached {historyEndDate, days} rolling-window entry for f3Name, or null on a miss. */
-function getPaxHistoryEntry_(f3Name) {
+/** Returns the cached {historyEndDate, days} rolling-window entry for {scopeId, f3Name}, or null
+ *  on a miss. @param {string} scopeId See paxHistoryKey_. */
+function getPaxHistoryEntry_(scopeId, f3Name) {
   try {
-    var raw = PropertiesService.getScriptProperties().getProperty(paxHistoryKey_(f3Name));
+    var raw = PropertiesService.getScriptProperties().getProperty(paxHistoryKey_(scopeId, f3Name));
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
     return null;
@@ -768,11 +811,12 @@ function getPaxHistoryEntry_(f3Name) {
  * for a whole roster instead of one getProperty() RPC per name. Same justification as
  * getPaxCacheRowsBulk_ above — the dashboard reads a history entry inside its per-row loop, so the
  * per-key form cost one PropertiesService round trip per PAX on every dashboard load.
+ * @param {string} scopeId See paxHistoryKey_.
  * @param {Array<string>} f3Names
  * @returns {Object<string, {historyEndDate:string, days:string}>} Keyed by NORMALIZED name
  *   (paxCacheNormalizeName_); names with no stored entry are simply absent.
  */
-function getPaxHistoryEntriesBulk_(f3Names) {
+function getPaxHistoryEntriesBulk_(scopeId, f3Names) {
   var entries = {};
   var store;
   try {
@@ -783,7 +827,7 @@ function getPaxHistoryEntriesBulk_(f3Names) {
   (f3Names || []).forEach(function(f3Name) {
     var norm = paxCacheNormalizeName_(f3Name);
     if (!norm || Object.prototype.hasOwnProperty.call(entries, norm)) return;
-    var raw = store[PAX_HISTORY_PREFIX_ + norm];
+    var raw = store[PAX_HISTORY_PREFIX_ + scopeId + ':' + norm];
     if (!raw) return;
     try {
       entries[norm] = JSON.parse(raw);
@@ -792,9 +836,10 @@ function getPaxHistoryEntriesBulk_(f3Names) {
   return entries;
 }
 
-function setPaxHistoryEntry_(f3Name, entry) {
+/** @param {string} scopeId See paxHistoryKey_. */
+function setPaxHistoryEntry_(scopeId, f3Name, entry) {
   try {
-    PropertiesService.getScriptProperties().setProperty(paxHistoryKey_(f3Name), JSON.stringify(entry));
+    PropertiesService.getScriptProperties().setProperty(paxHistoryKey_(scopeId, f3Name), JSON.stringify(entry));
   } catch (e) { /* best-effort — payload too large or Properties unavailable */ }
 }
 
@@ -804,14 +849,15 @@ function setPaxHistoryEntry_(f3Name, entry) {
  * setPaxCacheRowsBulk_ — the post-wipe reload (reloadPaxCacheForCurrentAndPriorMonth_,
  * dashboardWebapp.js) rebuilds every PAX's window in one pass and already holds them all in
  * memory. setProperties merges, so unrelated properties are untouched.
+ * @param {string} scopeId See paxHistoryKey_.
  * @param {Object<string, {historyEndDate:string, days:string}>} entriesByName Raw (non-normalized)
  *   name -> entry; keys are normalized here, same as setPaxHistoryEntry_.
  */
-function setPaxHistoryEntriesBulk_(entriesByName) {
+function setPaxHistoryEntriesBulk_(scopeId, entriesByName) {
   try {
     var batch = {};
     Object.keys(entriesByName || {}).forEach(function(name) {
-      batch[paxHistoryKey_(name)] = JSON.stringify(entriesByName[name]);
+      batch[paxHistoryKey_(scopeId, name)] = JSON.stringify(entriesByName[name]);
     });
     if (!Object.keys(batch).length) return;
     PropertiesService.getScriptProperties().setProperties(batch);
@@ -835,13 +881,14 @@ function setPaxHistoryEntriesBulk_(entriesByName) {
  * reads as a broken streak once those days arrive. Nothing is lost by skipping: the value is on
  * the Tracker, and getPaxHistoryWindowValues_ reconciles the window against the Tracker row on
  * read, so the day appears the moment it is actually in range.
+ * @param {string} scopeId See paxHistoryKey_.
  * @param {string} f3Name
  * @param {Date} date Calendar date the write applies to.
  * @param {number|null} value 1 | 0 | -1 | null.
  * @param {string=} todayIso "YYYY-MM-DD" context date to judge "future" against; defaults to the
  *   real clock. Callers that already resolved a context date (resolveContextDate_) should pass it.
  */
-function advancePaxHistoryDay_(f3Name, date, value, todayIso) {
+function advancePaxHistoryDay_(scopeId, f3Name, date, value, todayIso) {
   var dateIsoForClamp = paxHistoryFormatIsoLocal_(date);
   var anchorIso = todayIso || paxHistoryFormatIsoLocal_(new Date());
   if (paxHistoryDayDiff_(anchorIso, dateIsoForClamp) > 0) {
@@ -858,8 +905,8 @@ function advancePaxHistoryDay_(f3Name, date, value, todayIso) {
   }
   try {
     var dateIso = paxHistoryFormatIsoLocal_(date);
-    var entry = getPaxHistoryEntry_(f3Name);
-    setPaxHistoryEntry_(f3Name, advancePaxHistoryEntry_(entry, dateIso, value));
+    var entry = getPaxHistoryEntry_(scopeId, f3Name);
+    setPaxHistoryEntry_(scopeId, f3Name, advancePaxHistoryEntry_(entry, dateIso, value));
   } catch (e2) {
     GasLogger.log('advancePaxHistoryDay_.failed', { f3Name: f3Name, error: e2.message });
   } finally {

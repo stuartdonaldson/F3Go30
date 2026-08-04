@@ -178,9 +178,9 @@ node tools/callWebapp.js getSheet --env sit --body '{"sheetName":"Tracker"}'   #
 curl -s -X POST "https://script.google.com/macros/s/<deploymentId>/exec?cmd=checkin" \
   --data-raw '{"action":"identify","f3Name":"<fixture name>","email":"<fixture email>"}'
 
-# 3. In a browser (or the Playwright identity-token-flow spec), confirm the check-in identify
-#    form auto-redirects to ?cmd=signup&targetMonth=current&autoStart=1 with the name/email
-#    prefilled, rather than showing the generic "we couldn't find you" message.
+# 3. In a browser (or tests/playwright/static-signup.spec.js's month-boundary test), confirm the
+#    check-in identify form auto-redirects to ?cmd=signup&targetMonth=current&autoStart=1 with
+#    the name/email prefilled, rather than showing the generic "we couldn't find you" message.
 ```
 
 `runScanTrackers` must have run (PaxDB is scan-derived, not written synchronously by sign-up)
@@ -207,7 +207,7 @@ node tools/callWebapp.js save --cmd signup --env sit --body \
 node tools/callWebapp.js runScanTrackers --env sit
 ```
 This PAX is intentionally left in place (same rationale as `Go30-Demo-Script.md`'s NoSadClown) —
-it's reused by both `tests/playwright/identity-token-flow.spec.js` and
+it's reused by both `tests/playwright/static-signup.spec.js`'s month-boundary test and
 `tests/playwright/demo-screenshots.spec.js`'s `06b-checkin-known-not-enrolled.png` shot. It will
 need to be re-established once "next" rolls forward into "current" (at that point it would start
 resolving as registered, breaking the fixture) — watch for that if these tests start failing
@@ -243,9 +243,15 @@ deploying or initializing anything:
 5. Registers the new environment as a row in the **destination** (`--env`) deployment's
    `NamespaceDB` sheet — `NameSpace=<folderName>`, `TemplateId=<new copy's id>`,
    `Kind=<--kind, default smoke>`. Trigger fan-out opt-in columns (`NagEnabled`,
-   `MinusOneEnabled`, `AutoGenerateEnabled`, `CleanupSessionsEnabled`) default to blank/off —
-   an operator enables them manually per D4. This is what makes the new environment addressable
-   via `ns=<folderName>` on webapp/admin requests (ADR-014 D1).
+   `MinusOneEnabled`, `AutoGenerateEnabled`, `CleanupSessionsEnabled`) default to blank/off. **Per
+   ADR-020, setting these columns to Enabled currently has no effect** — ADR-014 D4's fan-out loop
+   (parent Template + Enabled `NamespaceDB` rows, each in its own try/catch) was never
+   implemented; every time-based trigger still runs once, against the bound Template only. A
+   `smoke`-kind environment never lives long enough for this to matter. Do **not** register a
+   `regional`/`demo` tenant expecting nightly −1 marking, nag emails, monthly auto-generation, or
+   stale-session cleanup until that fan-out loop lands. This is what makes the new environment
+   addressable via `ns=<folderName>` on webapp/admin requests (ADR-014 D1) — request-driven paths
+   are unaffected by this gap.
 
 Deliberately out of scope: triggers, HC Form links, TinyURL short links, Script Properties,
 and any deployment. Bringing the new environment live (initializing triggers, deploying its own
@@ -319,19 +325,26 @@ visible only when the spreadsheet is opened by the owner account.
 > abandoned/stale check-in bookmark sessions nightly — it does not resolve a tracker, since the
 > `CheckinSessions` sheet lives on the Template itself. A fifth trigger, `purgeStalePaxCache`
 > (`PaxCache.js`, F3Go30-440b.2), also runs nightly on the Template and purges PaxCache
-> Script Properties entries (`go30pax:`/`go30idx:`) three ways: wholesale, for any
-> `TrackerDB` sheet whose tracker month started more than ~60 days ago; per-PAX, on sheets too
-> recent for that wholesale wipe, for any PAX who no longer has a row in `CheckinSessions`
-> (reusing that sheet's own nightly prune as an activity signal); and an orphan sweep, for any
-> `go30pax:`/`go30idx:` entry whose sheetId has no `TrackerDB` row anywhere at
-> all — a single deleted tracker (`cleanupTracker`) or a whole torn-down namespace
-> (`teardownEnvironment`). PaxCache's Script Properties store is shared by the one deployed
-> script regardless of which `ns` a request targeted, but `TrackerDB` is not (each namespace
-> from `copyTemplate`/ADR-014 has its own copied spreadsheet with its own `TrackerDB`), so the
-> orphan sweep first unions the bound Template's `TrackerDB` with every registered namespace's
-> own `TrackerDB` (via `NamespaceDB`) before treating a sheetId as truly gone — see PaxCache.js's
-> `purgeStalePaxCache_`/`collectKnownTrackerSheetIds_` docstrings. Callable on demand for testing
-> via the `runPaxCachePurge` admin action (`node tools/callWebapp.js runPaxCachePurge --env <env>`).
+> Script Properties entries (`go30pax:`/`go30idx:`, plus `go30hist:` — the rolling history window,
+> DR-01/ADR-020) four ways: wholesale, for any `TrackerDB` sheet whose tracker month started more
+> than ~60 days ago; per-PAX, on sheets too recent for that wholesale wipe, for any PAX who no
+> longer has a row in `CheckinSessions` (reusing that sheet's own nightly prune as an activity
+> signal, scoped to the bound spreadsheet's own `go30hist:` entries only — another namespace's
+> window is untouched by this pass); an orphan sweep, for any `go30pax:`/`go30idx:`/`go30hist:`
+> entry whose sheetId/namespace scopeId has no `TrackerDB`/`NamespaceDB` row anywhere at all — a
+> single deleted tracker (`cleanupTracker`) or a whole torn-down namespace
+> (`teardownEnvironment`); and, for `go30hist:` specifically, that same orphan sweep also catches
+> an entirely torn-down namespace's history windows now that the key carries a scope
+> discriminator (previously, per the design review, `go30hist:` entries carried no
+> sheet/namespace discriminator at all, so a torn-down namespace's windows leaked past every pass
+> until this fix). PaxCache's Script Properties store is shared by the one deployed script
+> regardless of which `ns` a request targeted, but `TrackerDB` is not (each namespace from
+> `copyTemplate`/ADR-014 has its own copied spreadsheet with its own `TrackerDB`), so the orphan
+> sweep first unions the bound Template's own id + `TrackerDB` with every registered namespace's
+> own id + `TrackerDB` (via `NamespaceDB`) before treating a sheetId/scopeId as truly gone — see
+> PaxCache.js's `purgeStalePaxCache_`/`collectKnownTrackerSheetIds_` docstrings. Callable on
+> demand for testing via the `runPaxCachePurge` admin action
+> (`node tools/callWebapp.js runPaxCachePurge --env <env>`).
 
 ### LogFile Verification (UC-5)
 
@@ -394,6 +407,7 @@ email and spreadsheet/form URLs. Do not share publicly or commit the URL to vers
 | `onFormSubmit` throws when Tracker is empty | Range error if Tracker has fewer than 4 rows | Script exits early with a log message; verify Tracker has at least one data row |
 | Auto-generate fails | Site Q receives failure email with error details and orphaned spreadsheet ID | Delete orphaned spreadsheet from Drive; run "Copy and Initialize" manually; check Config sheet for missing NameSpace or Site Q rows |
 | Email test mode blocks delivery | A mail-sending workflow logs a delivery failure and no email is sent | If `Email Test Mode` is enabled, verify the `Site Q` row has a valid email address in column C; otherwise disable `Email Test Mode` |
+| A `regional`/`demo` namespace gets no nightly −1 marking, nag emails, auto-generate, or session cleanup | `NamespaceDB`'s per-trigger opt-in columns are set to Enabled but nothing runs, silently | Expected today (ADR-020, DR-02) — ADR-014 D4's fan-out loop was never implemented; every time-based trigger still only runs against the bound Template. Implement the fan-out before relying on those columns |
 
 ---
 
@@ -498,25 +512,27 @@ the migration — bookmark, home-screen icon, Slack post, or a short URL that wa
 re-pointed — lands on the GAS origin and is answered with a query-preserving redirect to the
 equivalent static URL, carrying `id`/`ns`/`contextDate`/`targetMonth`/`autoStart` across intact.
 The destination shows a one-time "this link moved, update your bookmark" banner (triggered by
-the `from=gas` marker the redirect appends). See the next section for the opt-out, and
-`F3Go30-90l5`/`F3Go30-wjpu` for when the GAS pages are removed outright.
+the `from=gas` marker the redirect appends).
 
-### `?static=0` — GAS-side redirect opt-out (F3Go30-ubwl)
+### GAS-rendered pages removed (DR-04, 2026-08-04)
 
-Since ADR-019, a plain GET at the GAS origin — `?cmd=signup`, `?cmd=checkin`, or the bare home
-route (no `cmd`) — redirects by default to the equivalent static-page URL
+`F3Go30-90l5` decided the GAS-rendered signup/check-in UI was scheduled for removal, on a soak
+trigger (`F3Go30-wjpu`: one full tracker month of static-only use after the redirect defaults
+landed in PROD). On explicit human instruction the same day this finding was reviewed, that soak
+period was skipped and the removal executed immediately — see `design-review-2026-08-04.md`'s
+DR-04 for the full record. `script/SignupApp.html`, `script/CheckinApp.html`, and
+`script/IdentityCore.html` are deleted; `?static=0` (the developer/legacy opt-out that used to
+render them, ADR-019 — since superseded by ADR-021) is gone too, since there is nothing left to
+opt into. A plain GET at the GAS origin — `?cmd=signup`, `?cmd=checkin`, or the bare home route
+(no `cmd`) — now **always** redirects to the equivalent static-page URL
 (`buildStaticRedirectUrl_`/`renderStaticRedirect_`, one shared implementation behind all three
-routes, script/Utilities.js + script/WebApp.js). `?static=0` on the request suppresses that
-redirect and renders the GAS-hosted page directly instead — useful when developing/debugging the
-GAS page itself, or when driving a Playwright spec against the GAS-hosted UI on purpose (see
-`tests/playwright/identity-token-flow.spec.js`'s two describes, one of which forces `static=0` on
-every navigation for exactly this reason).
+routes, script/Utilities.js + script/WebApp.js). The `?cmd=admin`/`?cmd=signup`/`?cmd=checkin`
+JSON `doPost` API — the static front end's own backend — is unaffected; only the GAS **doGet**
+HTML rendering was removed.
 
-**What `?static=0` does NOT provide:** an unreachable-static-host fallback for a real PAX. Per
-`F3Go30-ys15`'s resolved decision (ADR-019), no PAX-facing guarantee depends on the GAS front end
-being reachable if the static origin (GitHub Pages) is down — `?static=0` is a developer/legacy
-escape hatch, not an availability contract. A PAX whose bookmarked GAS link redirects into an
-unreachable static host has no GAS-side fallback to fall back to.
+If a static URL genuinely can't be built (STATIC_PAGES_BASE_URL_ unconfigured — practically
+Node-test-only; every real deployment has one), the route renders `renderStaticUnavailable_`
+(`WebApp.js`) — a minimal "unavailable" page — rather than reintroducing the removed template.
 
 ### Testing month-boundary fallback (contextDate override, F3Go30-31w5.1)
 

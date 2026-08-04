@@ -99,7 +99,7 @@ Columns B, C, D, E are hidden from PAX view but drive all Tracker scoring:
 | Column | Label | Formula |
 |--------|-------|---------|
 | B | Period | `=VLOOKUP($G2:$G892, Periods!B:C, 2, 0)` — looks up the date in column G and returns the week-within-month period number (1–5). This determines which Bonus column in the Tracker gets credited. |
-| C | Uncapped Points | Shows the point value only for bonus types flagged as uncapped (EHing FNG). For capped types, this is blank. |
+| C | Uncapped Points | For uncapped types (EHing FNG) this is the entry's Slack Link (column I), not a point value — its job is to make the row distinct from another submission for `UNIQUE()` (see below), not to hold a score. For capped types, this is blank. **Effect:** two entries for the same PAX/period/type that also share the identical Slack Link collapse into one counted row — correct, intentional duplicate-evidence protection, not a weekly cap (confirmed live 2026-08-04, F3Go30-fkox/design-review-2026-08-04.md DR-03). A different link for each entry is never capped. |
 | D | Multiplier | `=VLOOKUP(F, Controls!A:B, 2, FALSE)` — the point value for this bonus type, from the Controls sheet. |
 | E | Complete | `TRUE` if all requirements for this bonus type are satisfied. For types that require a link, `Complete = TRUE` only when column I (Slack Link) is non-blank. For types with no link requirement (Fellowship), `Complete = TRUE` whenever column A is non-empty. |
 
@@ -107,7 +107,7 @@ Columns B, C, D, E are hidden from PAX view but drive all Tracker scoring:
 
 | Bonus Type | Points | Link Required? | Capped per period? | Notes |
 |------------|--------|----------------|--------------------|-------|
-| EHing FNG | 5 | Yes | No (uncapped) | Must provide a Slack link as evidence. Can claim multiple per week — every FNG you bring earns 5 points. |
+| EHing FNG | 5 | Yes | No (uncapped) | Must provide a Slack link as evidence. Can claim multiple per week — every FNG you bring earns 5 points, as long as each entry's Slack Link differs from every other entry for that PAX/period (see column C above). |
 | Fellowship | 1 | No | Yes | No evidence link needed. Capped — one per period maximum (enforced by the capped/uncapped logic). |
 | Q Point | 1 | Yes | Yes | Must provide a link to the backblast for the Q you led. One Q per week maximum. |
 | Inspire | 1 | Yes | Yes | Must provide a link to a post or share. Capped per period. |

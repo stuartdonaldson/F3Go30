@@ -2,22 +2,18 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// F3Go30-giqm: static-pages/src/index.html is a "faithful port" of CheckinApp.html +
-// IdentityCore.html (per static-checkin.spec.js's header) — same client-side invariants that
-// test_context_date_client_roundtrip.js / test_ns_client_roundtrip.js / test_checkin_monthcache_
-// invalidation.js / test_checkin_token_inline_identify.js already assert against the GAS HTML
-// source, but nothing previously read this file at all, so a regression here only surfaces in
-// the live-browser Playwright spec, which doesn't run in npm test. This harness re-asserts the
-// same static-shape invariants against the static page's single inlined script, plus the
-// documented divergences (no include boundary, no attemptTopRedirect_, per-call `cmd`) so they
-// are asserted rather than assumed.
+// F3Go30-giqm: static-pages/src/index.html was originally built as a "faithful port" of the
+// GAS-hosted CheckinApp.html + IdentityCore.html (per static-checkin.spec.js's header). DR-04
+// (2026-08-04, design-review-2026-08-04.md) removed those GAS templates outright — static-pages/
+// src/index.html is now the only client — so the invariants below assert against it alone,
+// covering what test_checkin_monthcache_invalidation.js/test_client_streak_display.js/
+// test_bonus_save_notice.js each also assert for their own slice of behavior. This harness
+// covers callApi's ns/contextDate/clientVersion plumbing, the per-call `cmd` override (a
+// documented divergence from the retired IdentityCore.html's single-dispatcher shape, kept as a
+// historical note in the test below), and the calendar-nav/banner blocks executed for real.
 
 function readStaticPage_() {
   return fs.readFileSync(path.join(__dirname, '..', 'static-pages', 'src', 'index.html'), 'utf8');
-}
-
-function readScript_(name) {
-  return fs.readFileSync(path.join(__dirname, '..', 'script', name), 'utf8');
 }
 
 // ── NS_ / CONTEXT_DATE_ round trip (mirrors test_ns_client_roundtrip.js / ────────────────────
@@ -83,31 +79,23 @@ function readScript_(name) {
     "performSignupSave_ must call callApi(...,'signup') so NS_/CONTEXT_DATE_ echo onto the signup step's save request");
 })();
 
-// ── Documented divergence: callApi takes a per-call `cmd` override on this page (one page, two ─
-//    server dispatchers — handleCheckinPost_ vs handleSignupPost_), where the GAS callApi always
-//    posts to the page-level CMD_ constant. Asserted rather than assumed (AC 3).
+// ── callApi takes a per-call `cmd` override on this page (one page, two server dispatchers — ──
+//    handleCheckinPost_ vs handleSignupPost_). Historical note: the retired GAS IdentityCore.html
+//    include (DR-04, 2026-08-04) posted to a single page-level CMD_ constant instead, since each
+//    GAS page only ever dispatched to one of the two — this page can't make that assumption.
 
-(function testStaticPageCallApiAcceptsPerCallCmdDivergingFromGasIdentityCore() {
+(function testStaticPageCallApiAcceptsPerCallCmdOverride() {
   var staticSrc = readStaticPage_();
   var staticFnMatch = staticSrc.match(/function callApi\([\s\S]*?\n  \}/);
   assert.ok(staticFnMatch, 'callApi function body not found in index.html');
   assert.match(staticFnMatch[0], /function callApi\(action, payload, cmd\)/, 'index.html callApi must accept a per-call cmd override');
   assert.match(staticFnMatch[0], /\?cmd=' \+ \(cmd \|\| CMD_\)/, 'index.html callApi must fall back to CMD_ when no per-call cmd is given');
-
-  var gasSrc = readScript_('IdentityCore.html');
-  var gasFnMatch = gasSrc.match(/function callApi\([\s\S]*?\n  \}/);
-  assert.ok(gasFnMatch, 'callApi function body not found in IdentityCore.html');
-  assert.match(gasFnMatch[0], /function callApi\(action, payload\)/, 'IdentityCore.html callApi must NOT take a per-call cmd (only one dispatcher per page)');
 })();
 
-// ── Documented divergence: attemptTopRedirect_ exists in the GAS shared include (escapes the ──
-//    HtmlService sandbox iframe) but is deliberately omitted from the static page, which is
-//    already the top-level document.
+// ── attemptTopRedirect_ was a GAS sandbox-iframe escape (retired IdentityCore.html, DR-04) — ────
+//    this page is already the top-level document, so it must never define or call one.
 
-(function testStaticPageOmitsAttemptTopRedirectPresentInGasIdentityCore() {
-  var gasSrc = readScript_('IdentityCore.html');
-  assert.match(gasSrc, /function attemptTopRedirect_\(/, 'IdentityCore.html must still define attemptTopRedirect_ (GAS sandbox-iframe escape)');
-
+(function testStaticPageOmitsAttemptTopRedirect() {
   var staticSrc = readStaticPage_();
   assert.doesNotMatch(staticSrc, /function attemptTopRedirect_\(/, 'index.html must not define attemptTopRedirect_ — this document is already top-level');
   // index.html's own comments reference the name while documenting the omission (not a call),

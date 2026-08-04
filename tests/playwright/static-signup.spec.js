@@ -1,18 +1,14 @@
 /**
- * Static signup front end — E2E twin of identity-token-flow.spec.js's signup coverage
- * (F3Go30-833s.12).
+ * Static signup front end (F3Go30-833s.12).
  *
- * F3Go30-833s.9 made static-pages/src/index.html's in-page signup step (#step-signup, ported
- * from script/SignupApp.html) the PRIMARY signup UI (ADR-018) — identity-token-flow.spec.js
- * only drives the GAS SignupApp.html fallback, which after .9 is no longer the path most PAX
- * take. Without a twin here the primary path shipped with less coverage than the demoted
- * fallback. Follows static-checkin.spec.js's precedent: same local-static-server pattern
- * (a genuinely different origin from script.google.com, same class of cross-origin boundary
- * a real CDN-hosted deployment would have), same live-SIT backend, locator-for-locator parity
- * with the flow it twins wherever the two front ends share behavior.
- *
- * Per F3Go30-90l5 (SignupApp.html sunset decision), identity-token-flow.spec.js's GAS-signup
- * coverage is a HOLDING ACTION and is NOT touched here — this file only adds the static twin.
+ * F3Go30-833s.9 made static-pages/src/index.html's in-page signup step (#step-signup, originally
+ * ported from the GAS-hosted script/SignupApp.html) the PRIMARY signup UI (ADR-018). DR-04
+ * (2026-08-04, design-review-2026-08-04.md; F3Go30-wjpu) then removed SignupApp.html outright,
+ * retiring tests/playwright/identity-token-flow.spec.js's GAS-signup coverage this file used to
+ * twin — this is now the only signup E2E coverage. Follows static-checkin.spec.js's precedent:
+ * same local-static-server pattern (a genuinely different origin from script.google.com, same
+ * class of cross-origin boundary a real CDN-hosted deployment would have), same live-SIT
+ * backend.
  *
  * AC 2: every test below tracks the page's 'load' event count (fires only for a genuine
  * top-level/full-document navigation, never for history.replaceState or a fetch) and asserts
@@ -96,8 +92,7 @@ async function fillStaticSignupTeamAndGoals(page, pax) {
   await page.locator('#suHowInput').fill(pax.how);
 }
 
-/** Drives su-step-choose -> su-step-done, same "keep current selected if the step appears"
- * pattern identity-token-flow.spec.js uses for SignupApp.html's step-choose. */
+/** Drives su-step-choose -> su-step-done: keep "current" selected if the step appears. */
 async function saveStaticSignup(page) {
   await page.locator('#suInfoNextBtn').click();
   const chooseVisible = await page.locator('#su-step-choose').isVisible().catch(() => false);

@@ -6,8 +6,10 @@ const path = require('node:path');
 // myTeam/paxBoard row, but memberViewForIndex_ (and renderDashboard_'s self-tile equivalent) used
 // to silently discard that and recompute from this-month-only dayValues, undoing the server fix
 // for anything actually rendered on screen. Extracts the REAL memberViewForIndex_ (not a
-// re-implementation) from both live copies of the dashboard client — same extraction pattern as
-// test_client_transport_resilience.js (callApi) and test_session_resume_refresh.js.
+// re-implementation) from the dashboard client — same extraction pattern as
+// test_client_transport_resilience.js (callApi) and test_session_resume_refresh.js. DR-04
+// (2026-08-04) retired the GAS-hosted CheckinApp.html this loop used to also cover — the static
+// front end (static-pages/src/index.html) is the only remaining copy.
 
 function extractMemberViewBlock_(src, label) {
   var startIdx = src.indexOf('function trimTrailingBlanks_');
@@ -28,7 +30,6 @@ function loadMemberViewForIndex_(filePath, label) {
 
 [
   { file: path.join(__dirname, '..', 'static-pages', 'src', 'index.html'), label: 'static-pages/src/index.html' },
-  { file: path.join(__dirname, '..', 'script', 'CheckinApp.html'), label: 'script/CheckinApp.html' },
 ].forEach(function(target) {
   var memberViewForIndex_ = loadMemberViewForIndex_(target.file, target.label);
 

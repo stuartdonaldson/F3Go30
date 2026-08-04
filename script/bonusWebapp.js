@@ -29,7 +29,8 @@ var bonusTypeClientRules_bw_ = (bonusWebappBonusTypesModule_ && bonusWebappBonus
   || (typeof globalThis !== 'undefined' && globalThis.bonusTypeClientRules_);
 
 /** {typeName: {multiplier, requiresLink}} — kept as a plain object (not a function call) since
- *  this is also what's sent to the check-in client as-is (CheckinApp.html's bonusTypesJson). */
+ *  this is also what's sent to the check-in client as-is (static-pages/src/index.html's
+ *  bonusTypeRules/bonusTypes JSON field). */
 var BONUS_TYPE_RULES_ = bonusTypeClientRules_bw_();
 
 var BONUS_TRACKER_HEADER_ROW_ = 1;

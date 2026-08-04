@@ -6,7 +6,7 @@ const path = require('node:path');
 // weekly period — the "Crazy Ivan" scenario in this issue's WHY) must tell the PAX immediately
 // that it added no points, not just show up subdued in the list on next glance. This extracts
 // the real hideBonusSaveNotice_/showBonusSaveNotice_/reportBonusSaveOutcome_ block out of
-// index.html and CheckinApp.html and runs it in a same-realm `Function` sandbox (same technique
+// index.html and runs it in a same-realm `Function` sandbox (same technique
 // test_static_page_client_invariants.js uses for the cal-nav block) so these tests execute the
 // SAME source the browser does, not just pattern-match tokens.
 
@@ -113,6 +113,5 @@ function runNoticeTests_(label, src) {
 }
 
 runNoticeTests_('index.html', readSrc_(path.join('static-pages', 'src', 'index.html')));
-runNoticeTests_('CheckinApp.html', readSrc_(path.join('script', 'CheckinApp.html')));
 
 console.log('test_bonus_save_notice.js OK');

@@ -18,19 +18,6 @@ global.PropertiesService = { getScriptProperties: function() { return fakeProps;
 global.LockService = { getScriptLock: function() { return { waitLock: function() {}, releaseLock: function() {} }; } };
 global.GasLogger = { log: function() {}, run: function(name, fn) { return fn(); } };
 
-// In-memory stand-in for CacheService.getScriptCache() — same contract as test_dashboard_webapp.js's
-// fake (put/get only, no TTL enforcement needed for these tests).
-function makeFakeScriptCache_() {
-  var store = {};
-  return {
-    get: function(key) { return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null; },
-    put: function(key, value) { store[key] = value; },
-    remove: function(key) { delete store[key]; },
-  };
-}
-var fakeCache_ = makeFakeScriptCache_();
-global.CacheService = { getScriptCache: function() { return fakeCache_; } };
-
 // A GUID-only stand-in for Utilities.getUuid() so tests can assert on predictable values where
 // needed — CheckinSessions.js itself never calls Utilities directly (callers pass their own
 // guid in), so this is only here in case a future test needs it.
@@ -115,7 +102,6 @@ const {
   findCheckinSessionByIdentity_,
   deleteCheckinSessionsByIdentity_,
   resolveOrCreateCheckinSessionGuid_,
-  getCachedCheckinSessionTitle_,
   listActiveCheckinSessionF3Names_,
 } = require('../script/CheckinSessions.js');
 
@@ -306,28 +292,6 @@ const {
   assert.equal(resolveOrCreateCheckinSessionGuid_(ss, '', 'x@example.com'), null);
   assert.equal(resolveOrCreateCheckinSessionGuid_(ss, 'X', ''), null);
   assert.equal(sheet._rows.length, 2, 'missing identity must not create a row');
-}
-
-// createOrTouchCheckinSession_ writes the guid->f3Name title cache on both the new-row and
-// touch paths, and getCachedCheckinSessionTitle_ reads it back without any spreadsheet access
-// at all (F3Go30-qi26.3 — this is what lets a doGet skip the CheckinSessions sheet open).
-{
-  fakeProps = makeFakeProperties_();
-  fakeCache_ = makeFakeScriptCache_();
-  global.CacheService = { getScriptCache: function() { return fakeCache_; } };
-  var sheet = makeFakeSessionsSheet_([]);
-  var ss = makeFakeSpreadsheet_(sheet);
-
-  assert.equal(getCachedCheckinSessionTitle_('guid-cache'), null, 'nothing cached yet');
-
-  createOrTouchCheckinSession_(ss, 'guid-cache', 'Anchor', 'anchor@example.com');
-  assert.equal(getCachedCheckinSessionTitle_('guid-cache'), 'Anchor');
-
-  // A later touch (existing row) must refresh the cache too, e.g. after a corrected/re-typed name.
-  createOrTouchCheckinSession_(ss, 'guid-cache', 'Anchor Renamed', 'anchor@example.com');
-  assert.equal(getCachedCheckinSessionTitle_('guid-cache'), 'Anchor Renamed');
-
-  assert.equal(getCachedCheckinSessionTitle_(''), null, 'no guid is always a miss');
 }
 
 // listActiveCheckinSessionF3Names_ (F3Go30-440b.2) — normalized {name: true} set from whatever

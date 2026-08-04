@@ -24,7 +24,7 @@
  * mintedAtMs also lets a caller tell "this token was just generated and the PAX is looking at
  * it for the first time" apart from "this is an old bookmark/Home Screen icon being reopened" —
  * without needing any client-side storage to remember which case it is (see
- * handleCheckinIdentify_'s recentlyMinted and CheckinApp.html's bookmark-prompt logic).
+ * handleCheckinIdentify_'s recentlyMinted and static-pages/src/index.html's bookmark-prompt logic).
  */
 
 var IDENTITY_TOKEN_SECRET_PROPERTY_ = 'IDENTITY_TOKEN_SECRET';

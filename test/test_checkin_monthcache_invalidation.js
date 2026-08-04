@@ -10,32 +10,32 @@ const path = require('node:path');
 // already-cached payload or in state.pendingSelfWrites for loadDashboard_ to apply the moment its
 // own in-flight fetch resolves — closing the race regardless of arrival order. A failed write
 // reverts via revertOwnDayWrite_, which still uses invalidateMonthCacheFor_ (a real fetch is
-// safest after an unknown-state failure). No jsdom harness exists for this GAS-templated
-// <script> file (see test_ns_client_roundtrip.js's precedent), so this is a static-shape check.
+// safest after an unknown-state failure). No jsdom harness exists for this <script> file (see
+// test_static_page_client_invariants.js's precedent), so this is a static-shape check.
 
 function readHtml_(name) {
-  return fs.readFileSync(path.join(__dirname, '..', 'script', name), 'utf8');
+  return fs.readFileSync(path.join(__dirname, '..', 'static-pages', 'src', name), 'utf8');
 }
 
 (function testInvalidateMonthCacheForDropsTheAffectedMonthKey() {
-  var src = readHtml_('CheckinApp.html');
+  var src = readHtml_('index.html');
   var fnMatch = src.match(/function invalidateMonthCacheFor_\([\s\S]*?\n  \}/);
-  assert.ok(fnMatch, 'invalidateMonthCacheFor_ not found in CheckinApp.html');
+  assert.ok(fnMatch, 'invalidateMonthCacheFor_ not found in static-pages/src/index.html');
   assert.match(fnMatch[0], /delete state\.monthCache\[/, 'invalidateMonthCacheFor_ must delete the affected monthCache entry');
 })();
 
 (function testApplyOwnDayWritePatchesCacheOrQueuesPending() {
-  var src = readHtml_('CheckinApp.html');
+  var src = readHtml_('index.html');
   var fnMatch = src.match(/function applyOwnDayWrite_\([\s\S]*?\n  \}/);
-  assert.ok(fnMatch, 'applyOwnDayWrite_ not found in CheckinApp.html');
+  assert.ok(fnMatch, 'applyOwnDayWrite_ not found in static-pages/src/index.html');
   assert.match(fnMatch[0], /patchOwnDayIntoPayload_\(/, 'applyOwnDayWrite_ must patch an already-cached payload');
   assert.match(fnMatch[0], /state\.pendingSelfWrites\[dateIso\] = value/, 'applyOwnDayWrite_ must queue the write when no month is cached yet');
 })();
 
 (function testSubmitCheckinAppliesWriteThroughBeforeCallApiAndRevertsOnFailure() {
-  var src = readHtml_('CheckinApp.html');
+  var src = readHtml_('index.html');
   var fnMatch = src.match(/function submitCheckin_\([\s\S]*?\n  \}/);
-  assert.ok(fnMatch, 'submitCheckin_ not found in CheckinApp.html');
+  assert.ok(fnMatch, 'submitCheckin_ not found in static-pages/src/index.html');
   var body = fnMatch[0];
   var applyIdx = body.indexOf('applyOwnDayWrite_(dateIso, value)');
   var callApiIdx = body.indexOf('callApi(');
@@ -48,9 +48,9 @@ function readHtml_(name) {
 })();
 
 (function testSubmitSelectionCheckinAppliesWriteThroughBeforeCallApiAndRevertsOnFailure() {
-  var src = readHtml_('CheckinApp.html');
+  var src = readHtml_('index.html');
   var fnMatch = src.match(/function submitSelectionCheckin_\([\s\S]*?\n  \}/);
-  assert.ok(fnMatch, 'submitSelectionCheckin_ not found in CheckinApp.html');
+  assert.ok(fnMatch, 'submitSelectionCheckin_ not found in static-pages/src/index.html');
   var body = fnMatch[0];
   var applyIdx = body.indexOf('applyOwnDayWrite_(dateIso, value)');
   var callApiIdx = body.indexOf('callApi(');

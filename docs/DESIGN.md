@@ -26,6 +26,17 @@ Properties (Axiom token, GasLogger config, URL-shortener keys) are configured on
 Template, and are visible to every dispatched operation — they previously had to be re-entered
 per copy because `SpreadsheetApp.copy()` never duplicates Script Properties.
 
+**Namespace-scoped environments (ADR-014)** let a request redirect its spreadsheet resolution to
+a registered `NamespaceDB` template copy instead of the bound Template — this is what
+`tools/smokeTestNamespace.js` provisions today. Request-driven paths (signup, check-in, admin)
+follow the namespace; the four time-based triggers above do **not** — each still runs once
+against the bound Template only. ADR-014 D4 decided a per-namespace opt-in fan-out for those
+triggers, but ADR-020 records that it was never built: the `NamespaceDB` opt-in columns
+(`NagEnabled`/`MinusOneEnabled`/`AutoGenerateEnabled`/`CleanupSessionsEnabled`) exist and can be
+set, but have no effect until that fan-out loop lands. Safe today because every registered
+namespace is a short-lived smoke environment; becomes a real gap the day a `regional`/`demo`
+tenant (ADR-014 D7) is registered expecting its own nightly maintenance.
+
 ---
 
 ## Runtime Architecture
@@ -74,7 +85,7 @@ class BG1,BG3 lightgreen
 | Tracker Lifecycle | `CreateNewTracker.js`, `CopyTemplate.js`, `addResponseOnSubmit.js`, `markMinusOne.js`, `nag.js` | Copy-and-init workflow, template-copy mechanics, form-submit handler, nightly miss marking, daily reminder email workflow — all triggers installed once on the Template and dispatching by `TrackerDB` lookup (ADR-010) |
 | Dispatch / TrackerDB | `go30tools.js` | `TrackerDB`/`PaxDB` schema, cross-tracker aggregation, and (per ADR-010) the context-date → target-spreadsheet resolution used by every centrally-dispatched function |
 | Static Front End (PRIMARY) | `static-pages/src/index.html` | The PAX-facing front end since ADR-019: one GitHub Pages document carrying every PAX flow — sign-up, daily check-in, dashboard, bonus entries, and the month calendar — as in-page steps, over the same `cmd=signup`/`cmd=checkin` JSON API the GAS pages post to. Reached directly by its own URL (`buildStaticSignupUrl_`/`buildStaticCheckinUrl_`, `Utilities.js`); the build stamps each env's own GAS deployment URL in as the page's default backend (F3Go30-6bl6), so generated links no longer need to carry it as `?webapp=` (F3Go30-9jsa) — that param still works as a client-side override for older bookmarked links or the unbuilt page in local testing |
-| Web Apps (JSON API + redirect) | `WebApp.js`, `signupWebapp.js`, `SignupApp.html`, `dashboardWebapp.js`, `CheckinApp.html`, `IdentityCore.html`, `HomeApp.html`, `bonusWebapp.js` | `doGet`/`doPost` dispatcher by `cmd` query param (`signup`, `checkin`, `admin`). **`doPost` is the JSON API for both origins** — `signupWebapp.js` = HC sign-up; `dashboardWebapp.js` = daily check-in + PAX dashboard, reading/writing the current month's Tracker sheet directly (no separate data store); `bonusWebapp.js` = bonus-list/add/edit actions under the same `checkin` cmd. **`doGet` is redirect-only** since ADR-019: `?cmd=signup`, `?cmd=checkin`, and the bare home route answer with a query-preserving redirect to the equivalent static URL. The `HtmlService` pages behind them (`SignupApp.html`, `CheckinApp.html`, `HomeApp.html`, plus the `IdentityCore.html` identity/HTTP partial they share via `include_()`) still render, but only under `?static=0` or when the static host can't be resolved — they are a not-yet-deleted capability, not a live requirement (`F3Go30-90l5`/`F3Go30-wjpu`) |
+| Web Apps (JSON API + redirect) | `WebApp.js`, `signupWebapp.js`, `dashboardWebapp.js`, `HomeApp.html`, `bonusWebapp.js` | `doGet`/`doPost` dispatcher by `cmd` query param (`signup`, `checkin`, `admin`). **`doPost` is the JSON API** — `signupWebapp.js` = HC sign-up; `dashboardWebapp.js` = daily check-in + PAX dashboard, reading/writing the current month's Tracker sheet directly (no separate data store); `bonusWebapp.js` = bonus-list/add/edit actions under the same `checkin` cmd — this is the one surface the static front end and any legacy client both call. **`doGet` is redirect-only** since ADR-019, and unconditionally so since DR-04 (2026-08-04, `design-review-2026-08-04.md`; ADR-021 supersedes ADR-019's `?static=0` claim): `?cmd=signup`, `?cmd=checkin`, and the bare home route answer with a query-preserving redirect to the equivalent static URL. `SignupApp.html`/`CheckinApp.html`/`IdentityCore.html` — the `HtmlService` pages DR-04 removed — no longer exist; there is no opt-out and nothing left to render them. `HomeApp.html` is unaffected (out of DR-04's scope) and still renders when no static URL can be built (practically Node-test-only) |
 | Identity / Check-in | `CheckinSessions.js`, `IdentityToken.js` | Bookmarkable check-in link — `CheckinSessions.js` mints/resolves a server-stored GUID session so a returning PAX can reload the check-in/dashboard page without re-entering F3 Name + Email each visit; `IdentityToken.js`'s signed-token verify path is kept only to honor links minted before the rollout (see the decision below) |
 | Bonus Rules | `BonusTypes.js` | Centralized bonus-type registry (rule definitions: points, link requirement, cap) consumed by `dashboardWebapp.js`/`bonusWebapp.js` chip rendering and validation |
 | Email | `onboardingEmail.js`, `responseSettingsEmail.js`, `signupEmail.js`, `signupReuse.js` + matching `*Template.html` files | Site-Q onboarding email, response-settings confirmation email, sign-up confirmation email, and repeat-signup detection/reuse |
@@ -142,9 +153,10 @@ the Tracker's bonus/score formulas with it (`refreshTrackerRowAfterBonusWrite_`,
 `dashboardWebapp.js`). A cross-month bonus edit refreshes both months' rows —
 the entry leaves one tracker and arrives in the other.
 
-Nine caches make up the PAX/token-data caching surface today (originally
-catalogued as ten in `docs/staging/caching-consolidation-review.md`; the
-`asOf` marker row from that review no longer exists):
+Ten caches make up the PAX/token-data caching surface today (nine of these
+were originally catalogued as ten in `docs/staging/caching-consolidation-
+review.md`, then nine once that review's `asOf` marker row was removed; #10
+below is the rolling history window, never catalogued in either count):
 
 | # | Cache | Backing store | Granularity | Populated by | Invalidated by |
 |---|-------|---------------|-------------|--------------|----------------|
@@ -157,6 +169,7 @@ catalogued as ten in `docs/staging/caching-consolidation-review.md`; the
 | 7 | Responses full-roster values | CacheService `go30dash:responsesValues:` | whole sheet | full read | `invalidateFullRosterCache_`; onEdit wipe |
 | 8 | Bonus entries (pill shape) | CacheService `go30dash:bonusEntries:` | whole sheet | `getAllBonusEntriesCached_` | `invalidateBonusEntriesCache_`; onEdit wipe |
 | 9 | Bonus rows (client shape) | CacheService `go30dash:bonusRows:` | whole sheet | `getAllBonusRowsCached_` | `invalidateBonusEntriesCache_`; onEdit wipe |
+| 10 | PAX rolling history window (streak/rollingAverage source, F3Go30-5uk2) | PropertiesService `go30hist:` | one `{namespace, PAX}` window | check-in/-1 write-through (`advancePaxHistoryDay_`), dashboard rebuild-on-miss/mismatch | `paxHistoryWindowMatchesTracker_` reconcile-on-read; nightly purge (per-scope inactivity pass + cross-namespace orphan sweep) |
 
 Four invalidation vocabularies touch these nine caches
 (`invalidateFullRosterCache_`, `invalidateBonusEntriesCache_`,
@@ -401,36 +414,41 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
     the static page is already the top-level document, so from there it could only navigate the
     installed app away.
 
-  `SignupApp.html` is unchanged and stays live only to serve the legacy-link redirect route
-  (ADR-019) — it is **not** an availability fallback, and no PAX-facing flow is entitled to it
-  rendering. Both front ends keep sharing one set of JSON handlers, so this adds no server-side
-  divergence. Trade-off: the signup UI now exists twice, and the two copies can drift (the
-  static one is re-expressed against this page's CSS custom properties, so it renders in
-  light/dark where the GAS page is hardcoded light). Retiring the GAS signup page is a separate
-  decision (`F3Go30-90l5` decides the posture, `F3Go30-wjpu` executes), deferred until the
-  static path has a month of real use.
+  At the time this decision was made, `SignupApp.html` stayed live only to serve the legacy-link
+  redirect route (ADR-019) — not an availability fallback, with no PAX-facing flow entitled to it
+  rendering. Retiring it was tracked as a separate decision (`F3Go30-90l5` decides the posture,
+  `F3Go30-wjpu` executes), deferred until the static path had a month of real use. DR-04
+  (2026-08-04, design-review-2026-08-04.md) closed that gap early on an explicit human call
+  rather than waiting out the soak period — `SignupApp.html`, `CheckinApp.html`, and
+  `IdentityCore.html` are gone; see the redirect-only bullet below for the current state.
 
-- **GAS reduced to redirect-only, all three routes (F3Go30-ubwl) — DECIDED:** ADR-019 (superseding
-  ADR-018's availability-fallback claim only, per `F3Go30-ys15`'s "unreachable-host fallback is
-  not a requirement" finding) makes the static origin primary for **every** PAX-facing front
-  end — not just signup. A plain `doGet` arrival at `?cmd=signup`, `?cmd=checkin`, or the bare
-  home route (no `cmd`) now redirects to the equivalent static URL by default; `?static=0` is the
-  one opt-out, rendering the GAS page as before (developer/legacy escape hatch, not a PAX-facing
-  availability guarantee — see docs/OPERATIONS.md's `?static=0` section).
+- **GAS reduced to redirect-only, all three routes (F3Go30-ubwl) — DECIDED, then GAS-rendered
+  pages removed outright (DR-04, 2026-08-04, superseded further by ADR-021):** ADR-019
+  (superseding ADR-018's availability-fallback claim only, per `F3Go30-ys15`'s "unreachable-host
+  fallback is not a requirement" finding) first made the static origin primary for **every**
+  PAX-facing front end, with a `?static=0` developer/legacy escape hatch that could still render
+  the GAS page. DR-04 (design-review-2026-08-04.md; F3Go30-wjpu) then removed
+  `SignupApp.html`/`CheckinApp.html`/`IdentityCore.html` outright and the `?static=0` opt-out
+  with them — a plain `doGet` arrival at `?cmd=signup`, `?cmd=checkin`, or the bare home route
+  (no `cmd`) now **always** redirects to the equivalent static URL; there is nothing left to opt
+  into.
 
   One shared mechanism serves all three routes rather than three (`buildStaticRedirectUrl_`,
   `script/Utilities.js`, generalized from signup's original `buildStaticSignupRedirectUrl_`):
   given a doGet's own `e.parameter` bag and whichever static-URL builder applies
   (`buildStaticSignupUrl_` or `buildStaticCheckinUrl_`), it forwards `id`/`ns`/`contextDate`/
-  `targetMonth`/`autoStart` onto the static URL, appends `from=gas` (below), and returns `''` —
-  meaning "render the GAS page" — when either the static host can't be resolved or `static=0` was
-  requested. `renderSignupPage_`/`renderCheckinPage_`/`renderHomePage_` (`WebApp.js` /
+  `targetMonth`/`autoStart` onto the static URL and appends `from=gas` (below). It returns `''`
+  only when the static host can't be resolved (practically Node-test-only — every real
+  deployment has one configured), in which case the caller renders `renderStaticUnavailable_`
+  (`WebApp.js`) — a minimal "unavailable" page, not the removed template.
+  `renderSignupPage_`/`renderCheckinPage_`/`renderHomePage_` (`WebApp.js` /
   `dashboardWebapp.js`) each call this once and, on a non-empty result, hand off to one shared
   renderer, `renderStaticRedirect_` (`WebApp.js`, generalized from the original
   `renderStaticSignupRedirect_`) — a "&lt;label&gt; has moved" page with a single tappable
   **Continue** button to the static URL, parameterized only by that label.
   Home reuses the check-in builder/URL rather than a third implementation: the static page's
-  default (no-`cmd`) view already *is* check-in.
+  default (no-`cmd`) view already *is* check-in. (`HomeApp.html` itself is unaffected by DR-04 —
+  out of its scope — and still renders on the rare unresolvable-static-host path.)
 
   **One deliberate tap, not an auto-redirect.** `renderStaticRedirect_` originally also fired
   `window.top.location.replace(...)` on load, with the link framed as a fallback ("Tap here if

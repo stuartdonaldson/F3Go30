@@ -40,11 +40,9 @@ Two secondary problems ride along:
 
 ## 3. Non-goals
 
-- Making the GAS pages installable. `CheckinApp.html` and `SignupApp.html` both stay, but since
-  ADR-019 only to serve the legacy-link redirect route and `?static=0`; they are not an
-  availability fallback (`F3Go30-ys15`: unreachable-host fallback is not a requirement).
-  Retiring either is decided in `F3Go30-90l5` (posture: scheduled for removal) and executed in
-  `F3Go30-wjpu`. See §7.
+- Making the GAS pages installable. Moot as of DR-04 (2026-08-04,
+  design-review-2026-08-04.md; `F3Go30-90l5`/`F3Go30-wjpu`, ADR-021) — `CheckinApp.html` and
+  `SignupApp.html` are deleted outright, not merely demoted to a redirect/opt-out route. See §7.
 - Offline **bonus** edits. The cross-month row-relocation path has a known stale-`rowIndex` bug
   class (`F3Go30-4j4o.2`) and is not safe to queue. Offline scope is day-cell check-ins only.
 - Web push in Phase 1 or 2. See §8 phasing and §10.4.
@@ -77,7 +75,7 @@ flowchart TB
 
     subgraph gas["Google Apps Script — /exec"]
         api["doPost cmd=checkin + cmd=signup<br/>JSON API"]
-        gashtml["CheckinApp + SignupApp HTML<br/>legacy-link redirect route"]
+        gashtml["doGet: redirect-only<br/>(CheckinApp/SignupApp HTML removed, DR-04)"]
     end
 
     subgraph data["Storage"]
@@ -219,22 +217,21 @@ The one server-injected value with no JSON equivalent is `urlIdentityJson` (`Web
 exists purely to carry identity across the redirect from check-in to signup. In-page, that
 handoff has nothing to carry: the problem is deleted rather than ported.
 
-**The GAS `SignupApp.html` stays**, exactly as `CheckinApp.html` does — but since ADR-019 it
-stays to serve the legacy-link redirect route, not as an availability fallback. Both front ends
-keep sharing the same JSON handlers, so this adds no divergence — it moves the *primary* signup
-path onto the static origin.
+**Superseded (DR-04, 2026-08-04):** the paragraphs below described the interim state where the
+GAS `SignupApp.html`/`CheckinApp.html` stayed live solely to serve the legacy-link redirect
+route. That page no longer exists — `F3Go30-90l5`'s scheduled-for-removal posture was executed
+early, on explicit human instruction, rather than waiting out the `F3Go30-wjpu` soak trigger (see
+design-review-2026-08-04.md's DR-04 and ADR-021). The legacy-link **route** survives unchanged
+(a query-preserving redirect to the static origin); only the rendered fallback page is gone. Kept
+below for historical context on why the interim design looked the way it did.
 
-It is **not** an install-free path. The static page already is that: an ordinary web page on
-GitHub Pages, where installing only adds a home-screen icon. What the GAS page still provides is
+It was **not** an install-free path. The static page already is that: an ordinary web page on
+GitHub Pages, where installing only adds a home-screen icon. What the GAS page provided was
 narrower still, after ADR-019 settled it: **only** the legacy-link route for already-distributed
 `?cmd=signup` URLs, which `F3Go30-833s.11` resolves into a query-preserving redirect (the route,
-not the rendered page). It is not a second origin to fall back to — `F3Go30-ys15` resolved that
-unreachable-host availability is not a requirement, so if the static host is down the flow is
-down.
-
-Retiring it is no longer undecided: `F3Go30-90l5` set the posture to scheduled-for-removal,
-gated on `F3Go30-833s.11` complete plus a month of real static-signup use in PROD. Execution is
-`F3Go30-wjpu`.
+not the rendered page). It was never a second origin to fall back to — `F3Go30-ys15` resolved
+that unreachable-host availability is not a requirement, so if the static host is down the flow
+is down.
 
 **`?cmd=signup` stays a URL contract, not a GAS address.** The static page already honours a
 param contract that mirrors GAS's — `buildStaticCheckinUrl_` (`Utilities.js:418`) documents it as
@@ -261,12 +258,14 @@ it as a constant would route signup actions into the check-in dispatcher and fai
 **Test impact is smaller than it looks, but not zero.** The bulk of `npm test` is
 front-end-neutral: `test_signup_webapp.js` and the other handler tests `require()` the
 `script/*.js` modules and exercise shared JSON handler and pure-function logic, which this change
-does not touch. Two things *are* GAS-bound and need static twins —
+does not touch. Two things *were* GAS-bound and needed static twins —
 `tests/playwright/identity-token-flow.spec.js` (the signup E2E, which would otherwise end up
 testing only the fallback) and the client-invariant tests that read `SignupApp.html` source.
-`tests/playwright/static-checkin.spec.js` is the established precedent for a static twin.
-Tracked as `F3Go30-833s.12`. Separately, no node test reads `static-pages/src/index.html` at all
-today — a pre-existing gap in check-in coverage, tracked as `F3Go30-giqm`.
+`tests/playwright/static-checkin.spec.js` was the established precedent for a static twin;
+`tests/playwright/static-signup.spec.js` became the permanent one (`F3Go30-833s.12`).
+`identity-token-flow.spec.js` itself was retired outright by DR-04 once its GAS-page coverage had
+nothing left to drive. `test_static_page_client_invariants.js` closed the "no node test reads
+static-pages/src/index.html" gap tracked as `F3Go30-giqm`.
 
 **This has value independent of the PWA.** It is what makes the static origin a complete front
 end rather than a check-in-only surface, and it is a prerequisite for the URL-token and rotation
