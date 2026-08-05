@@ -78,13 +78,17 @@ global.resolveTrackerForContextDate = function(targetDate) {
   assert.equal(targetDate.getTime(), THRESHOLD_DATE.getTime(), 'lookup is called with contextDate - 2 days, not contextDate');
   return { sheetId: FUTURE_SHEET_ID, startDate: '2028-09-01' };
 };
+// getActiveSpreadsheet() is legitimately called once now — DR-01's go30hist scopeId is the bound
+// spreadsheet's own id (matching resolveTrackerForContextDate's own no-arg default), not the
+// TRACKER's. ADR-010's actual guard — never mark/read the wrong Tracker sheet by falling back to
+// the active spreadsheet — is what the openById assertion below still enforces.
 global.SpreadsheetApp = {
   openById: function(sheetId) {
     assert.equal(sheetId, FUTURE_SHEET_ID, 'opens the SheetId resolved by the TrackerDB lookup, not the active spreadsheet');
     return fakeFutureSpreadsheet;
   },
   getActiveSpreadsheet: function() {
-    throw new Error('markEmptyCellsAsMinusOne_ must not use the active spreadsheet (ADR-010)');
+    return { getId: function() { return 'bound-spreadsheet-id'; } };
   }
 };
 
@@ -180,7 +184,9 @@ function makeFakeFullTrackerSheet(dateRow, rows) {
       if (sheetId === CURRENT_SHEET_ID) return currentSpreadsheet;
       throw new Error('openById: unexpected sheetId ' + sheetId);
     },
-    getActiveSpreadsheet: function() { throw new Error('markEmptyCellsAsMinusOne_ must not use the active spreadsheet (ADR-010)'); }
+    // See the FUTURE_CONTEXT_DATE scenario near the top of this file — legitimately called
+    // once for DR-01's go30hist scopeId, never for resolving which Tracker to mark.
+    getActiveSpreadsheet: function() { return { getId: function() { return 'bound-spreadsheet-id'; } }; }
   };
 
   const bulkWriteCalls = [];
@@ -265,7 +271,9 @@ function makeFakeFullTrackerSheet(dateRow, rows) {
       if (sheetId === CURRENT_SHEET_ID) return currentSpreadsheet;
       throw new Error('openById: unexpected sheetId ' + sheetId);
     },
-    getActiveSpreadsheet: function() { throw new Error('markEmptyCellsAsMinusOne_ must not use the active spreadsheet (ADR-010)'); }
+    // See the FUTURE_CONTEXT_DATE scenario near the top of this file — legitimately called
+    // once for DR-01's go30hist scopeId, never for resolving which Tracker to mark.
+    getActiveSpreadsheet: function() { return { getId: function() { return 'bound-spreadsheet-id'; } }; }
   };
 
   // Simulate the bulk-write helpers not being loaded (this file's own unit tests, or a script

@@ -73,11 +73,12 @@ Let's Go!
 Go30 Q, Little John
 
 <!--
-  Canonical source for the "How it Works" panel embedded in script/SignupApp.html,
-  script/CheckinApp.html, static-pages/src/index.html, and the standalone
-  static-pages/how-it-works.html page. tools/sync-how-it-works.js extracts everything between
-  the START/END markers below verbatim and injects it between matching markers in those files —
-  do not hand-edit the copies, edit here (F3Go30-e3co). This is intentionally normalized
+  Canonical source for the "How it Works" panel embedded in static-pages/src/index.html and the
+  standalone static-pages/how-it-works.html page (script/SignupApp.html and script/CheckinApp.html
+  also embedded this panel before DR-04, 2026-08-04, removed both files outright).
+  tools/sync-how-it-works.js extracts everything between the START/END markers below verbatim and
+  injects it between matching markers in those files — do not hand-edit the copies, edit here
+  (F3Go30-e3co). This is intentionally normalized
   (identical wording regardless of which page shows it) rather than a curated excerpt of the
   prose above it.
 -->

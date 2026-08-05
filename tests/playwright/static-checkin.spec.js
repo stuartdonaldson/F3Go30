@@ -8,12 +8,11 @@
  * cross-origin fetch()/response-body read didn't work, the tests below would never pass — a
  * header/CORS failure surfaces as a rejected promise, not a silently empty page.
  *
- * static-pages/src/index.html is now a faithful port of script/CheckinApp.html + IdentityCore.html
- * (same CSS, same DOM ids/classes, same client logic — see that file's own header comment) —
- * every locator below is deliberately identical to checkin-advanced-grid.spec.js's, just driven
- * directly against `page` instead of through GAS's double-nested iframe sandbox. That parity is
- * the point: this spec (and that one) exercise the same behavior surface, just reached through
- * two different front doors.
+ * static-pages/src/index.html was originally built as a faithful port of the GAS-hosted
+ * CheckinApp.html + IdentityCore.html, both removed by DR-04 (2026-08-04,
+ * design-review-2026-08-04.md; F3Go30-wjpu) — it is now the only check-in client. Every locator
+ * below is deliberately identical to checkin-advanced-grid.spec.js's, since that spec drives
+ * the same page directly against `page` rather than through a GAS iframe sandbox.
  *
  * Reuses the same NoSadClown disposable fixture PAX as checkin-advanced-grid.spec.js. This page
  * authenticates via a session guid (?id=) rather than typed f3Name/email, so beforeAll mints one
@@ -27,8 +26,7 @@
  *      applyOwnDayWrite_ synchronously, before the checkin POST's own round trip completes, so a
  *      click-then-immediately-navigate-to-dashboard sequence reflects the write on first paint
  *      regardless of whether prefetchDashboard_'s background load has landed yet.
- *   2. localStorage instant-paint + reconciliation (static-pages only — script/CheckinApp.html
- *      has its own server-side pre-render instead, no localStorage mechanism at all) — a valid,
+ *   2. localStorage instant-paint + reconciliation — a valid,
  *      non-expired, today-present snapshot in localStorage['go30CheckinSnapshot:v1'] paints
  *      #step-checkin immediately, before the live identify fetch resolves; the live response then
  *      reconciles anything not written locally this pageview, and a matched:false response clears
@@ -545,23 +543,6 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
     await expect(page.locator('#step-checkin')).toBeHidden();
     const remaining = await page.evaluate((k) => localStorage.getItem(k), 'go30CheckinSnapshot:v1');
     expect(remaining).toBeNull();
-  });
-});
-
-test.describe('Existing GAS HtmlService check-in page still works unchanged', () => {
-  test('renders and identifies via the iframe sandbox (regression guard)', async ({ page }) => {
-    const settings = loadSettings();
-    const deploymentId = settings.testDeploymentId;
-    // F3Go30-ubwl.2 made a bare `?cmd=checkin` redirect straight out to the static front end,
-    // so this guard forces the `&static=0` opt-out to keep reaching the GAS-hosted
-    // CheckinApp.html at all — same pattern identity-token-flow.spec.js adopted. Without it
-    // this lands on renderStaticRedirect_'s interstitial and never sees #step-identify.
-    const checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=checkin&static=0`;
-    await page.goto(checkinUrl, { waitUntil: 'networkidle' });
-    const dismissBtn = page.getByRole('button', { name: 'Dismiss' });
-    if (await dismissBtn.isVisible({ timeout: 8000 }).catch(() => false)) await dismissBtn.click();
-    const app = page.frameLocator('iframe').frameLocator('iframe');
-    await expect(app.locator('#step-identify')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
   });
 });
 

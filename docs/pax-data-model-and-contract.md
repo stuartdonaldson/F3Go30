@@ -219,7 +219,7 @@ reporting.
 ### 2.5 Client-side caching
 
 No `localStorage`/`sessionStorage` involvement for PAX data at all — `localStorage` is used
-**only** for the identity token (`{f3Name, email}`, `IdentityCore.html`) so a returning visitor
+**only** for the identity token (`{f3Name, email}`, static-pages/src/index.html — formerly also `IdentityCore.html`, removed by DR-04, 2026-08-04) so a returning visitor
 doesn't have to retype who they are; it holds nothing about scores, streaks, or goals.
 
 All PAX-data caching client-side is an in-memory JS object, `state.monthCache`, scoped to the
@@ -239,7 +239,7 @@ current page load:
 
 ```mermaid
 flowchart TB
-    Browser["Browser<br/>CheckinApp.html / SignupApp.html<br/>(state.monthCache, in-memory only)"]
+    Browser["Browser<br/>static-pages/src/index.html<br/>(state.monthCache, in-memory only)"]
 
     subgraph GAS["Apps Script webapp"]
         Dispatch["doPost dispatch<br/>identify / checkin / dashboard / paxGoals / monthGrid / bonus*"]
@@ -326,7 +326,7 @@ concrete.
 | Object | Contents | Written by | Read by |
 |---|---|---|---|
 | `state.monthCache[monthKey]` | The full `dashboard` response payload for a visited month | `prefetchDashboard_` (populate), `patchOwnDayIntoPayload_` (write-through on own checkin) | `renderDashboard_`, date-nav arrows (cache-hit fast path) |
-| `localStorage[IDENTITY_STORAGE_KEY]` | `{f3Name, email}` only — identity prefill, nothing about scores/streaks/goals | `IdentityCore.html` on successful identify | Return-visit prefill on both `CheckinApp.html`/`SignupApp.html` |
+| `localStorage[IDENTITY_STORAGE_KEY]` | `{f3Name, email}` only — identity prefill, nothing about scores/streaks/goals | static-pages/src/index.html on successful identify | Return-visit prefill on the static front end |
 | (none) | Teammate goals (`paxGoals` response) | — | Fetched fresh from the server on every pax-detail popup open, never cached |
 
 ---
@@ -417,7 +417,7 @@ If/when a real datastore (Firestore-style document store, or a KV store) is avai
   a hand-rolled name→row index.
 - The contract (§1) still doesn't need to change for this migration — it was already designed
   around "the server resolves whatever it needs and returns the same shape," so swapping what's
-  behind `PaxCache.js` is invisible to `CheckinApp.html`/`SignupApp.html` either way. The
+  behind `PaxCache.js` is invisible to the static front end either way. The
   migration risk lives entirely in the write paths' consistency guarantees (Sheets' single-writer
   lock semantics vs. a datastore's own transaction model), not in the client contract.
 
@@ -425,7 +425,7 @@ If/when a real datastore (Firestore-style document store, or a KV store) is avai
 
 ```mermaid
 flowchart TB
-    Browser["Browser<br/>CheckinApp.html / SignupApp.html<br/>(state.monthCache, + goals cache)"]
+    Browser["Browser<br/>static-pages/src/index.html<br/>(state.monthCache, + goals cache)"]
 
     subgraph GAS["Apps Script webapp"]
         Dispatch["doPost dispatch<br/>identify / checkin / dashboard / paxGoals / monthGrid / bonus*"]

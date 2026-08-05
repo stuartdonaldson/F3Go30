@@ -2,10 +2,13 @@
 /**
  * Syncs the "How it Works" content (F3Go30-e3co) from its single canonical source,
  * docs/Go30-Intro.md, out to every place it's duplicated:
- *   - script/SignupApp.html, script/CheckinApp.html, and static-pages/src/index.html's
- *     #howBody panels (in place)
+ *   - static-pages/src/index.html's #howBody panel (in place)
  *   - static-pages/src/how-it-works.html (a standalone page, no SIT/PROD split — see its own
  *     header comment)
+ *
+ * DR-04 (2026-08-04, design-review-2026-08-04.md; F3Go30-wjpu) removed the GAS-rendered
+ * script/SignupApp.html and script/CheckinApp.html this used to also sync into — static-pages/
+ * src/index.html is now the only live check-in/signup client.
  *
  * The canonical content lives in docs/Go30-Intro.md between HOW-IT-WORKS:START/END marker
  * comments. It is intentionally normalized — identical wording regardless of which page shows
@@ -15,7 +18,8 @@
  *
  * Run directly to sync locally, or via `npm run sync:how-it-works`. Also invoked automatically
  * by tools/manage-deployments.js's deploy() before every clasp push, so any edit to
- * Go30-Intro.md's fragment lands in both GAS apps on the next deploy without a manual step.
+ * Go30-Intro.md's fragment lands in the static front end on the next deploy without a manual
+ * step.
  *
  * Usage:
  *   node tools/sync-how-it-works.js
@@ -25,8 +29,6 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const INTRO_MD_PATH = path.join(ROOT, 'docs', 'Go30-Intro.md');
-const SIGNUP_HTML_PATH = path.join(ROOT, 'script', 'SignupApp.html');
-const CHECKIN_HTML_PATH = path.join(ROOT, 'script', 'CheckinApp.html');
 const PWA_INDEX_HTML_PATH = path.join(ROOT, 'static-pages', 'src', 'index.html');
 const STATIC_PAGE_PATH = path.join(ROOT, 'static-pages', 'src', 'how-it-works.html');
 
@@ -92,15 +94,13 @@ function main() {
   const introMd = fs.readFileSync(INTRO_MD_PATH, 'utf8');
   const fragment = extractFragment_(introMd);
 
-  for (const targetPath of [SIGNUP_HTML_PATH, CHECKIN_HTML_PATH, PWA_INDEX_HTML_PATH]) {
-    const before = fs.readFileSync(targetPath, 'utf8');
-    const after = replaceMarkers_(before, fragment);
-    if (after !== before) {
-      fs.writeFileSync(targetPath, after, 'utf8');
-      console.log(`synced: ${path.relative(ROOT, targetPath)}`);
-    } else {
-      console.log(`up to date: ${path.relative(ROOT, targetPath)}`);
-    }
+  const before = fs.readFileSync(PWA_INDEX_HTML_PATH, 'utf8');
+  const after = replaceMarkers_(before, fragment);
+  if (after !== before) {
+    fs.writeFileSync(PWA_INDEX_HTML_PATH, after, 'utf8');
+    console.log(`synced: ${path.relative(ROOT, PWA_INDEX_HTML_PATH)}`);
+  } else {
+    console.log(`up to date: ${path.relative(ROOT, PWA_INDEX_HTML_PATH)}`);
   }
 
   fs.mkdirSync(path.dirname(STATIC_PAGE_PATH), { recursive: true });

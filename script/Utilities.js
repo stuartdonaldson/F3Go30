@@ -462,12 +462,10 @@ function buildStaticCheckinUrl_(webAppBaseUrl, opts) {
  * (static-pages/src/index.html), same GitHub Pages host resolved by
  * resolveStaticCheckinBaseUrl_ (signup is a step within that one page, not a second static
  * page), just opened with `cmd=signup` instead of defaulting to check-in. No `webapp=` param
- * (F3Go30-9jsa) — see buildStaticCheckinUrl_ for why. Returns '' under the
- * same conditions buildStaticCheckinUrl_ does (static host or webAppBaseUrl unavailable), so
- * callers can fall back to emitting the GAS ?cmd=signup URL. Note that is a build-time fallback
- * for an unconfigured static host, NOT a PAX-facing availability guarantee — per ADR-019 the GAS
- * page exists for the legacy-link redirect route, not to keep signup reachable if the static
- * origin is down.
+ * (F3Go30-9jsa) — see buildStaticCheckinUrl_ for why. Returns '' under the same conditions
+ * buildStaticCheckinUrl_ does (static host or webAppBaseUrl unavailable) — practically Node-test
+ * only, since every real deployment has both configured (DR-04, 2026-08-04, removed the
+ * GAS-rendered SignupApp.html fallback that used to absorb this case).
  * @param {string} webAppBaseUrl
  * @param {{id: string=, ns: string=, contextDate: string=, targetMonth: string=, autoStart: boolean=}=} opts
  */
@@ -496,23 +494,22 @@ function buildStaticSignupUrl_(webAppBaseUrl, opts) {
  * not the same one. buildStaticCheckinUrl_ simply ignores the signup-only targetMonth/autoStart
  * fields it doesn't read.
  *
- * Returns '' — meaning "render the GAS page, don't redirect" — in exactly two cases:
- *   1. staticUrlBuilder can't build a URL (static host unconfigured, or no webapp URL);
- *   2. the request opted out with `?static=0`.
- * (2) keeps the GAS-rendered page reachable for developers and legacy links: it is never deleted
- * or made unreachable by this redirect, only bypassed by default. Per ADR-019 that is an escape
- * hatch, not a PAX-facing availability guarantee.
+ * Returns '' — meaning "no static URL could be built" (static host unconfigured, or no webapp
+ * URL) — only under Node tests in practice; every real deployment has both. DR-04 (2026-08-04)
+ * removed the GAS-rendered SignupApp.html/CheckinApp.html/IdentityCore.html fallback templates
+ * these routes used to render on '', along with the `?static=0` opt-out that used to keep that
+ * fallback reachable — there is no GAS page left to opt into, so the caller's only remaining
+ * option on '' is renderStaticUnavailable_ (WebApp.js).
  *
  * Every non-empty result carries `from=gas` (F3Go30-ubwl §Marker param) so the static page can
  * render the bookmark advisory (F3Go30-ubwl.3).
  * @param {function(string, Object=): string} staticUrlBuilder buildStaticSignupUrl_ or buildStaticCheckinUrl_
  * @param {string} webAppBaseUrl
  * @param {Object=} parameter A doGet event's `e.parameter` bag.
- * @returns {string} The static URL to send the arrival to, or '' to stay on GAS.
+ * @returns {string} The static URL to send the arrival to, or '' if it can't be built.
  */
 function buildStaticRedirectUrl_(staticUrlBuilder, webAppBaseUrl, parameter) {
   parameter = parameter || {};
-  if (parameter.static === '0') return '';
   if (typeof staticUrlBuilder !== 'function') return '';
   var url = staticUrlBuilder(webAppBaseUrl, {
     id: parameter.id || undefined,

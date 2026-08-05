@@ -20,7 +20,7 @@
  * @typedef {Object} BonusTypeDef
  * @property {string} name Exact "Type" string as entered in the Bonus Tracker sheet.
  * @property {string} pillKey Short code used in dashboard pill/score-breakdown objects.
- * @property {string} label Short display text for the pill chip (CheckinApp.html) — distinct
+ * @property {string} label Short display text for the pill chip (static-pages/src/index.html) — distinct
  *   from pillKey, which also doubles as an object key and CSS class name.
  * @property {number} multiplier Points awarded per counted entry.
  * @property {boolean} requiresLink Whether a Slack link is required for the entry to be "Complete".
@@ -29,9 +29,9 @@
  */
 
 /** @type {Array<BonusTypeDef>} Add a new bonus type by adding one entry here — every consumer
- *  (validation, client rules payload, pill/score computation, default pill shape, CheckinApp.html's
+ *  (validation, client rules payload, pill/score computation, default pill shape, static-pages/src/index.html's
  *  pill chips) derives from this list. The one thing that still needs a manual touch is the new
- *  pillKey's CSS color (CheckinApp.html's .bonus-type-code.<pillKey> rule) — chip color isn't a
+ *  pillKey's CSS color (static-pages/src/index.html's .bonus-type-code.<pillKey> rule) — chip color isn't a
  *  fact this registry can express, so it stays a by-hand style choice. */
 var BONUS_TYPE_DEFS_ = [
   { name: 'Fellowship', pillKey: 'fe', label: 'FE', multiplier: 1, requiresLink: false, weeklyCap: true },
@@ -77,8 +77,8 @@ function bonusTypePillKey_(name) {
 
 /**
  * {typeName: {multiplier, requiresLink}} — the shape the check-in client's BONUS_TYPE_RULES_ has
- * always been sent as (CheckinApp.html's bonusTypesJson template var), kept identical here so the
- * client needs no changes.
+ * always been sent as (the dashboard/monthGrid JSON payload's bonusTypeRules/bonusTypes field,
+ * static-pages/src/index.html), kept identical here so the client needs no changes.
  * @returns {Object<string,{multiplier:number,requiresLink:boolean}>}
  */
 function bonusTypeClientRules_() {
@@ -90,7 +90,7 @@ function bonusTypeClientRules_() {
 }
 
 /**
- * {key, label} per registered type, in registry order — CheckinApp.html's self-tile/board-tile
+ * {key, label} per registered type, in registry order — static-pages/src/index.html's self-tile/board-tile
  * pill chips render from this instead of a hardcoded local mirror of pillKey+label+order.
  * @returns {Array<{key:string,label:string}>}
  */

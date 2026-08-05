@@ -6,28 +6,22 @@
  * fixture PAX as demo-screenshots.spec.js (an idempotent signup with a real current-month
  * Tracker row).
  *
- * TARGET (F3Go30-ubwl.2 follow-up): this spec drives the STATIC front end, not the GAS-hosted
- * CheckinApp.html it originally targeted. Once a bare `?cmd=checkin` began redirecting out to
- * the static page, the grid a real PAX actually touches is the static one — so that is what
- * this coverage is worth having against. The static page ships the identical grid markup
- * (#advancedGrid / #advancedToggleBtn / .cal-cell …, static-pages/src/index.html), so every
- * assertion below is unchanged; only the setup differs. Two consequences:
+ * TARGET (F3Go30-ubwl.2 follow-up; DR-04/F3Go30-wjpu, 2026-08-04, removed the GAS-hosted page
+ * entirely): this spec drives the STATIC front end, the only remaining check-in client. Once a
+ * bare `?cmd=checkin` began redirecting out to the static page, the grid a real PAX actually
+ * touches is the static one — so that is what this coverage is worth having against. The static
+ * page ships the grid markup (#advancedGrid / #advancedToggleBtn / .cal-cell …,
+ * static-pages/src/index.html), so every assertion below exercises real, live behavior. Two
+ * consequences of targeting this page directly rather than a GAS-nested iframe:
  *   - no sandboxed iframe, so `app` is just the page itself rather than a nested frameLocator;
  *   - the page authenticates by `?id=<guid>` (minted once in beforeAll, same call the typed
  *     identify form makes) instead of re-typing name+email and riding a form POST per test.
- * The GAS fallback page keeps its own coverage in static-checkin.spec.js's `?static=0`
- * regression guard and identity-token-flow.spec.js's fallback describe (ADR-018).
  *
  * Served from an ephemeral 127.0.0.1 origin exactly as static-checkin.spec.js does, which also
  * keeps the cross-origin call path honest — the page fetches the real SIT /exec endpoint.
  *
- * Client tests write only to days OTHER than today/yesterday (an explicit past day fixture and
- * a future day near month-end) so they never fight demo-screenshots.spec.js's own today/
- * yesterday assertions, and each write test restores the cell to its original value afterwards
- * so re-running this spec (or the whole suite) never accumulates state.
- *
  * Server-contract tests (describe block below) hit the deployed web app directly over HTTP,
- * bypassing the browser entirely — same request shape as IdentityCore.html's callApi().
+ * bypassing the browser entirely — same request shape as the static page's own callApi().
  *
  * Usage:
  *   npx playwright test tests/playwright/checkin-advanced-grid.spec.js

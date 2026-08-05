@@ -1476,7 +1476,7 @@ function makeLeanIdentityResponsesSheet_(rows) {
 (function testGetPaxHistoryWindowValuesCacheHitSkipsFallback() {
   installFakePropertiesStore_();
   var PaxCache = require('../script/PaxCache.js');
-  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-02', days: '111011' });
+  PaxCache.setPaxHistoryEntry_('', 'Slaw', { historyEndDate: '2026-08-02', days: '111011' });
 
   var throwingTemplate = { getSheetByName: function() { throw new Error('must not consult TrackerDB on a cache hit'); } };
   var monthInfo = { sheetId: 'sheet-aug', startDate: new Date(2026, 7, 1) };
@@ -1517,7 +1517,7 @@ function makeLeanIdentityResponsesSheet_(rows) {
   assert.deepEqual(values, [1, 1, 1, 1]); // Jul30, Jul31, Aug1, Aug2 — spans the month boundary
 
   var PaxCache = require('../script/PaxCache.js');
-  assert.deepEqual(PaxCache.getPaxHistoryEntry_('Newbie'), { historyEndDate: '2026-08-02', days: '1111' });
+  assert.deepEqual(PaxCache.getPaxHistoryEntry_('', 'Newbie'), { historyEndDate: '2026-08-02', days: '1111' });
 
   installThrowingSpreadsheetApp_();
   var warm = getPaxHistoryWindowValues_('Newbie', currentMonthDayValues, monthInfo, templateSpreadsheet, '2026-08-02');
@@ -1558,8 +1558,8 @@ function makeLeanIdentityResponsesSheet_(rows) {
   var PaxCache = require('../script/PaxCache.js');
   // Both PAX already carry a 7-day rolling window (write-through already folded in today's own
   // Aug 2 check-in), the first 5 of those 7 days having landed in the prior calendar month.
-  PaxCache.setPaxHistoryEntry_('Anchor', { historyEndDate: '2026-08-02', days: '1111111' });
-  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-02', days: '1111111' });
+  PaxCache.setPaxHistoryEntry_('', 'Anchor', { historyEndDate: '2026-08-02', days: '1111111' });
+  PaxCache.setPaxHistoryEntry_('', 'Slaw', { historyEndDate: '2026-08-02', days: '1111111' });
 
   var monthInfo = { sheetId: 'sheet-aug-team', trackerUrl: 'https://x/aug-team', label: 'August 2026', startDate: new Date(2026, 7, 1) };
   var handle = buildResolvedContextHandle_(monthInfo, 0, 'Anchor');
@@ -1612,8 +1612,8 @@ function makeLeanIdentityResponsesSheet_(rows) {
   var PaxCache = require('../script/PaxCache.js');
   // 5 missed days in late July, then Aug 1 + Aug 2 both done — a same-month-only average would
   // read 1 (both reported days done); the true 7-day window should read well below that.
-  PaxCache.setPaxHistoryEntry_('Anchor', { historyEndDate: '2026-08-02', days: '0000011' });
-  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-02', days: '0000011' });
+  PaxCache.setPaxHistoryEntry_('', 'Anchor', { historyEndDate: '2026-08-02', days: '0000011' });
+  PaxCache.setPaxHistoryEntry_('', 'Slaw', { historyEndDate: '2026-08-02', days: '0000011' });
 
   var monthInfo = { sheetId: 'sheet-aug-ravg', trackerUrl: 'https://x/aug-ravg', label: 'August 2026', startDate: new Date(2026, 7, 1) };
   var handle = buildResolvedContextHandle_(monthInfo, 0, 'Anchor');
@@ -1660,7 +1660,7 @@ function makeLeanIdentityResponsesSheet_(rows) {
   installFakePropertiesStore_();
   var PaxCache = require('../script/PaxCache.js');
   // 7-day streak through Aug 2, then Aug 5 pre-marked: '.' for Aug 3-4, '1' for Aug 5.
-  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-05', days: '1111111..1' });
+  PaxCache.setPaxHistoryEntry_('', 'Slaw', { historyEndDate: '2026-08-05', days: '1111111..1' });
 
   var throwingTemplate = { getSheetByName: function() { throw new Error('must not consult TrackerDB on a usable cache hit'); } };
   var monthInfo = { sheetId: 'sheet-aug', startDate: new Date(2026, 7, 1) };
@@ -1675,7 +1675,7 @@ function makeLeanIdentityResponsesSheet_(rows) {
 (function testGetPaxHistoryWindowValuesPadsAStaleWindow() {
   installFakePropertiesStore_();
   var PaxCache = require('../script/PaxCache.js');
-  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-02', days: '11101' });
+  PaxCache.setPaxHistoryEntry_('', 'Slaw', { historyEndDate: '2026-08-02', days: '11101' });
 
   var throwingTemplate = { getSheetByName: function() { throw new Error('must not consult TrackerDB on a usable cache hit'); } };
   var monthInfo = { sheetId: 'sheet-aug', startDate: new Date(2026, 7, 1) };
@@ -1693,7 +1693,7 @@ function makeLeanIdentityResponsesSheet_(rows) {
   fakeScriptCache_ = makeFakeScriptCache_();
   global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
   var PaxCache = require('../script/PaxCache.js');
-  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-02', days: '1111111' });
+  PaxCache.setPaxHistoryEntry_('', 'Slaw', { historyEndDate: '2026-08-02', days: '1111111' });
 
   // No prior tracker resolvable -> getPriorMonthTailValues_ degrades to [], so the rebuilt window
   // is this month's own dayValues. The point is that it is NOT the cached August window.
@@ -1701,7 +1701,7 @@ function makeLeanIdentityResponsesSheet_(rows) {
   var values = getPaxHistoryWindowValues_('Slaw', [1, 0, 1], monthInfo, {}, '2026-06-30');
   assert.deepEqual(values, [1, 0, 1]);
   // The live August window must not be clobbered by a backward date-nav read.
-  assert.deepEqual(PaxCache.getPaxHistoryEntry_('Slaw'), { historyEndDate: '2026-08-02', days: '1111111' });
+  assert.deepEqual(PaxCache.getPaxHistoryEntry_('', 'Slaw'), { historyEndDate: '2026-08-02', days: '1111111' });
 })();
 
 // Reconciliation (F3Go30-uz9e.2 §B): go30hist and the Tracker row are two representations of the
@@ -1716,14 +1716,14 @@ function makeLeanIdentityResponsesSheet_(rows) {
   var PaxCache = require('../script/PaxCache.js');
   // The window has Aug 2 as unknown ('.') — e.g. it was padded past by a pre-marked Aug 3 write —
   // but the Tracker says the PAX checked in that day.
-  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-03', days: '1.1' });
+  PaxCache.setPaxHistoryEntry_('', 'Slaw', { historyEndDate: '2026-08-03', days: '1.1' });
 
   var monthInfo = { sheetId: 'sheet-aug', startDate: new Date(2026, 7, 1) };
   var values = getPaxHistoryWindowValues_('Slaw', [1, 1, 1], monthInfo, {}, '2026-08-03');
   assert.deepEqual(values, [1, 1, 1]);
   assert.equal(computeStreak_(values), 3);
   // Rebuilt and persisted, so the next read is a plain (now-correct) hit rather than a second rebuild.
-  assert.deepEqual(PaxCache.getPaxHistoryEntry_('Slaw'), { historyEndDate: '2026-08-03', days: '111' });
+  assert.deepEqual(PaxCache.getPaxHistoryEntry_('', 'Slaw'), { historyEndDate: '2026-08-03', days: '111' });
 
   delete global.CacheService;
   fakeScriptCache_ = makeFakeScriptCache_();
@@ -1735,7 +1735,7 @@ function makeLeanIdentityResponsesSheet_(rows) {
 (function testGetPaxHistoryWindowValuesTreatsBlankAndUnobservedAsAgreeing() {
   installFakePropertiesStore_();
   var PaxCache = require('../script/PaxCache.js');
-  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-03', days: '11.0.' });
+  PaxCache.setPaxHistoryEntry_('', 'Slaw', { historyEndDate: '2026-08-03', days: '11.0.' });
 
   var throwingTemplate = { getSheetByName: function() { throw new Error('must not rebuild when cache and tracker agree'); } };
   var monthInfo = { sheetId: 'sheet-aug', startDate: new Date(2026, 7, 1) };
@@ -1770,9 +1770,9 @@ function makeLeanIdentityResponsesSheet_(rows) {
   });
 
   var PaxCache = require('../script/PaxCache.js');
-  PaxCache.setPaxHistoryEntry_('Anchor', { historyEndDate: '2026-08-02', days: '1111111' });
+  PaxCache.setPaxHistoryEntry_('', 'Anchor', { historyEndDate: '2026-08-02', days: '1111111' });
   // Slaw's window as the pre-marking write left it: Aug 3-4 padded '.', Aug 5 '1'.
-  PaxCache.setPaxHistoryEntry_('Slaw', { historyEndDate: '2026-08-05', days: '1111111..1' });
+  PaxCache.setPaxHistoryEntry_('', 'Slaw', { historyEndDate: '2026-08-05', days: '1111111..1' });
 
   var monthInfo = { sheetId: 'sheet-aug-premark', trackerUrl: 'https://x/premark', label: 'August 2026', startDate: new Date(2026, 7, 1) };
   var handle = buildResolvedContextHandle_(monthInfo, 0, 'Anchor');
@@ -1837,7 +1837,7 @@ function makeLeanIdentityResponsesSheet_(rows) {
 
   var PaxCache = require('../script/PaxCache.js');
   ['Anchor', 'Slaw', 'Splinter'].forEach(function(n) {
-    PaxCache.setPaxHistoryEntry_(n, { historyEndDate: '2026-08-02', days: '1111111' });
+    PaxCache.setPaxHistoryEntry_('', n, { historyEndDate: '2026-08-02', days: '1111111' });
   });
 
   var perKeyHistoryReads = 0;
@@ -1872,14 +1872,14 @@ function makeLeanIdentityResponsesSheet_(rows) {
   global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
 
   var PaxCache = require('../script/PaxCache.js');
-  PaxCache.setPaxHistoryEntry_('Anchor', { historyEndDate: '2026-07-01', days: '1' });
+  PaxCache.setPaxHistoryEntry_('', 'Anchor', { historyEndDate: '2026-07-01', days: '1' });
 
   var fx = makeHandleFixture_(); // 'Anchor' at rowIndex 0, sheet-jul, day columns Jul 1 + Jul 2
   var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
 
   var result = handleCheckinSubmit_({}, { f3Name: 'Anchor', day: '2026-07-02', value: 1, resolvedContext: handle });
   assert.equal(result.ok, true);
-  assert.deepEqual(PaxCache.getPaxHistoryEntry_('Anchor'), { historyEndDate: '2026-07-02', days: '11' });
+  assert.deepEqual(PaxCache.getPaxHistoryEntry_('', 'Anchor'), { historyEndDate: '2026-07-02', days: '11' });
 
   delete global.SpreadsheetApp;
 })();
@@ -2838,7 +2838,7 @@ console.log('test_dashboard_webapp.js: bonus write-through cache assertions pass
   installFakePropertiesStore_();
   var PaxCache = require('../script/PaxCache.js');
   var days = new Array(45).fill('1').join('');
-  PaxCache.setPaxHistoryEntry_('Longtimer', { historyEndDate: '2026-08-02', days: days });
+  PaxCache.setPaxHistoryEntry_('', 'Longtimer', { historyEndDate: '2026-08-02', days: days });
 
   var throwingTemplate = { getSheetByName: function() { throw new Error('must not consult TrackerDB on a cache hit'); } };
   var monthInfo = { sheetId: 'sheet-aug', startDate: new Date(2026, 7, 1) };
@@ -2881,7 +2881,7 @@ console.log('test_dashboard_webapp.js: bonus write-through cache assertions pass
   });
 
   var PaxCache = require('../script/PaxCache.js');
-  PaxCache.setPaxHistoryEntry_('Longtimer', { historyEndDate: '2026-08-02', days: new Array(45).fill('1').join('') });
+  PaxCache.setPaxHistoryEntry_('', 'Longtimer', { historyEndDate: '2026-08-02', days: new Array(45).fill('1').join('') });
 
   var monthInfo = { sheetId: 'sheet-aug-long', trackerUrl: 'https://x/aug', label: 'August 2026', startDate: new Date(2026, 7, 1) };
   var handle = buildResolvedContextHandle_(monthInfo, 0, 'Longtimer');
@@ -2924,7 +2924,7 @@ console.log('test_dashboard_webapp.js: bonus write-through cache assertions pass
   assert.equal(values.length, 33, 'all 31 prior-month days plus Aug 1-2, not a 30-day truncation');
 
   var PaxCache = require('../script/PaxCache.js');
-  var stored = PaxCache.getPaxHistoryEntry_('Newbie');
+  var stored = PaxCache.getPaxHistoryEntry_('', 'Newbie');
   assert.equal(stored.days.length, 33, 'the rebuild must STORE the full backfill, not a 30-day slice');
   assert.equal(stored.historyEndDate, '2026-08-02');
 
@@ -3009,13 +3009,13 @@ function teardownReloadFixture_() {
   assert.ok(PaxCache.getPaxCacheRow_('tracker', 'sheet-jul-r', 'Anchor'));
 
   // History window spans the boundary: all 31 July days + Aug 1-2.
-  var entry = PaxCache.getPaxHistoryEntry_('Anchor');
+  var entry = PaxCache.getPaxHistoryEntry_('', 'Anchor');
   assert.equal(entry.historyEndDate, '2026-08-02');
   assert.equal(entry.days, new Array(33).fill('1').join(''));
 
   // AC9: a PAX with nothing reported anywhere encodes to all-'.', which the miss path already
   // says for free — storing it would cost one Script Property per never-active PAX.
-  assert.equal(PaxCache.getPaxHistoryEntry_('Ghost'), null);
+  assert.equal(PaxCache.getPaxHistoryEntry_('', 'Ghost'), null);
 
   // A dashboard read straight afterwards must be a pure cache hit — no spreadsheet opens at all.
   installThrowingSpreadsheetApp_();
@@ -3038,7 +3038,7 @@ function teardownReloadFixture_() {
   var result = reloadPaxCacheForCurrentAndPriorMonth_({}, new Date(2026, 7, 2, 9, 0));
   assert.equal(result.skipped, true);
   assert.equal(PaxCache.getPaxRosterIndex_('tracker', 'sheet-aug-r'), null, 'nothing may be written without the lock');
-  assert.equal(PaxCache.getPaxHistoryEntry_('Anchor'), null);
+  assert.equal(PaxCache.getPaxHistoryEntry_('', 'Anchor'), null);
 
   teardownReloadFixture_();
 })();
@@ -3065,7 +3065,7 @@ function teardownReloadFixture_() {
   assert.equal(result.skipped, false);
   var PaxCache = require('../script/PaxCache.js');
   assert.deepEqual(PaxCache.getPaxRosterIndex_('tracker', 'sheet-aug-only'), { anchor: 0 });
-  assert.deepEqual(PaxCache.getPaxHistoryEntry_('Anchor'), { historyEndDate: '2026-08-02', days: '11' });
+  assert.deepEqual(PaxCache.getPaxHistoryEntry_('', 'Anchor'), { historyEndDate: '2026-08-02', days: '11' });
 
   teardownReloadFixture_();
 })();

@@ -278,7 +278,11 @@ function makeFakeTrackerDbSheet_(rows) {
 // {namespace, templateId, rows}; when present, a NamespaceDB sheet is added and
 // global.SpreadsheetApp.openById is wired to resolve each templateId to its own fake spreadsheet
 // carrying just its own TrackerDB (F3Go30-440b.2 follow-up: cross-namespace orphan-sweep tests).
-function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
+// boundId defaults to a fixed value — DR-01's go30hist scopeId is the bound spreadsheet's OWN id
+// (collectKnownTrackerSheetIds_, purgeStalePaxCache_'s fourth pass), so tests writing
+// setPaxHistoryEntry_(scopeId, ...) against a purge fixture must use the same value.
+var TEST_BOUND_SCOPE_ID_ = 'bound-scope';
+function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId) {
   var trackerDbSheet = makeFakeTrackerDbSheet_(rows);
 
   var checkinSessionsSheet = null;
@@ -313,6 +317,7 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   }
 
   return {
+    getId: function() { return boundId || TEST_BOUND_SCOPE_ID_; },
     getSheetByName: function(name) {
       if (name === 'TrackerDB') return trackerDbSheet;
       if (name === 'CheckinSessions') return checkinSessionsSheet;
@@ -413,6 +418,9 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
 (function testExtractSheetIdFromPaxCacheKeyParsesBothPrefixes() {
   assert.equal(extractSheetIdFromPaxCacheKey_('go30pax:tracker:sheet1:crazy ivan'), 'sheet1');
   assert.equal(extractSheetIdFromPaxCacheKey_('go30idx:responses:sheet2'), 'sheet2');
+  // go30hist: (DR-01) places its discriminator one segment earlier than go30pax:/go30idx: —
+  // scopeId:name, not kind:sheetId:name.
+  assert.equal(extractSheetIdFromPaxCacheKey_('go30hist:tmpl-scope-1:crazy ivan'), 'tmpl-scope-1');
   assert.equal(extractSheetIdFromPaxCacheKey_('WEBAPP_URL'), null);
 })();
 
@@ -423,7 +431,7 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
     [{ namespace: 'sit-smoke', templateId: 'ns-tmpl-1', rows: [{ sheetId: 'ns-tracker-1', startDate: new Date(2026, 6, 1) }] }]
   );
   var known = collectKnownTrackerSheetIds_(spreadsheet);
-  assert.deepEqual(known, { 'bound-tracker': true, 'ns-tmpl-1': true, 'ns-tracker-1': true });
+  assert.deepEqual(known, { 'bound-scope': true, 'bound-tracker': true, 'ns-tmpl-1': true, 'ns-tracker-1': true });
   delete global.SpreadsheetApp;
 })();
 
@@ -440,7 +448,7 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   var known = collectKnownTrackerSheetIds_(spreadsheet);
   // The unreachable namespace's own templateId is still recorded as known (it was registered),
   // but nothing further can be discovered about its trackers — never throws the whole run.
-  assert.deepEqual(known, { 'bound-tracker': true, 'ns-tmpl-gone': true });
+  assert.deepEqual(known, { 'bound-scope': true, 'bound-tracker': true, 'ns-tmpl-gone': true });
   assert.ok(logged.some(function(l) { return l.name === 'purgeStalePaxCache_.namespaceUnreachable'; }));
 
   global.GasLogger.log = realLog;
@@ -578,26 +586,43 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   assert.deepEqual(next, entry); // outside the represented window — not silently corrupted
 })();
 
+// Namespace scope id used by the tests below that don't exercise purge (any two distinct
+// namespaces' windows must never collide — DR-01) — purge-specific tests use
+// TEST_BOUND_SCOPE_ID_ instead, since the fourth pass now scopes by the bound spreadsheet's id.
+var SCOPE_A_ = 'scope-a';
+var SCOPE_B_ = 'scope-b';
+
 (function testHistoryEntryRoundTripGetSet() {
   resetProps_();
-  assert.equal(getPaxHistoryEntry_('Crazy Ivan'), null);
-  setPaxHistoryEntry_('Crazy Ivan', { historyEndDate: '2026-08-01', days: '1' });
-  assert.deepEqual(getPaxHistoryEntry_('crazy ivan'), { historyEndDate: '2026-08-01', days: '1' }); // case/space-insensitive
+  assert.equal(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), null);
+  setPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan', { historyEndDate: '2026-08-01', days: '1' });
+  assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'crazy ivan'), { historyEndDate: '2026-08-01', days: '1' }); // case/space-insensitive
+})();
+
+// Two namespaces sharing the same PropertiesService store (ADR-014) must never collide on the
+// same PAX name — the defect DR-01 fixes.
+(function testHistoryEntryIsScopedByNamespaceNotJustName() {
+  resetProps_();
+  setPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan', { historyEndDate: '2026-08-01', days: '1' });
+  assert.equal(getPaxHistoryEntry_(SCOPE_B_, 'Crazy Ivan'), null);
+  setPaxHistoryEntry_(SCOPE_B_, 'Crazy Ivan', { historyEndDate: '2026-08-01', days: '0' });
+  assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), { historyEndDate: '2026-08-01', days: '1' });
+  assert.deepEqual(getPaxHistoryEntry_(SCOPE_B_, 'Crazy Ivan'), { historyEndDate: '2026-08-01', days: '0' });
 })();
 
 (function testAdvancePaxHistoryDayWriteThroughIsLockGuarded() {
   resetProps_();
-  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 1), 1);
-  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 2), 0);
-  assert.deepEqual(getPaxHistoryEntry_('Crazy Ivan'), { historyEndDate: '2026-08-02', days: '10' });
+  advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 1), 1);
+  advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 2), 0);
+  assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), { historyEndDate: '2026-08-02', days: '10' });
 })();
 
 (function testAdvancePaxHistoryDayLockFailureIsBestEffort() {
   resetProps_();
   var realLock = global.LockService;
   global.LockService = { getScriptLock: function() { return { waitLock: function() { throw new Error('busy'); }, releaseLock: function() {} }; } };
-  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 1), 1); // must not throw
-  assert.equal(getPaxHistoryEntry_('Crazy Ivan'), null);
+  advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 1), 1); // must not throw
+  assert.equal(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), null);
   global.LockService = realLock;
 })();
 
@@ -607,11 +632,11 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
 (function testWipeAllPaxCacheAlsoClearsHistoryEntries() {
   resetProps_();
   setPaxCacheRow_('tracker', 'sheet-x', 'Someone', ['v']);
-  setPaxHistoryEntry_('Crazy Ivan', { historyEndDate: '2026-08-01', days: '1' });
+  setPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan', { historyEndDate: '2026-08-01', days: '1' });
   var wiped = wipeAllPaxCache_();
   assert.ok(wiped >= 2);
   assert.equal(getPaxCacheRow_('tracker', 'sheet-x', 'Someone'), null);
-  assert.equal(getPaxHistoryEntry_('Crazy Ivan'), null);
+  assert.equal(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), null);
 })();
 
 // ── F3Go30-uz9e.2: anchoring the stored window to the caller's context date ────────────────
@@ -663,15 +688,25 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
 // calls this once per load against a quota'd service.
 (function testGetPaxHistoryEntriesBulkIsOnePropertiesRead() {
   resetProps_();
-  setPaxHistoryEntry_('Crazy Ivan', { historyEndDate: '2026-08-02', days: '11' });
-  setPaxHistoryEntry_('Little John', { historyEndDate: '2026-08-02', days: '10' });
+  setPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan', { historyEndDate: '2026-08-02', days: '11' });
+  setPaxHistoryEntry_(SCOPE_A_, 'Little John', { historyEndDate: '2026-08-02', days: '10' });
   fakeProps._getPropertiesCalls = 0;
 
-  var entries = getPaxHistoryEntriesBulk_(['Crazy Ivan', 'crazy  ivan', 'Little John', 'Never Seen']);
+  var entries = getPaxHistoryEntriesBulk_(SCOPE_A_, ['Crazy Ivan', 'crazy  ivan', 'Little John', 'Never Seen']);
   assert.equal(fakeProps._getPropertiesCalls, 1);
   assert.deepEqual(entries['crazy ivan'], { historyEndDate: '2026-08-02', days: '11' });
   assert.deepEqual(entries['little john'], { historyEndDate: '2026-08-02', days: '10' });
   assert.equal(Object.prototype.hasOwnProperty.call(entries, 'never seen'), false);
+})();
+
+// Bulk read must not leak another namespace's entry for the same name (DR-01).
+(function testGetPaxHistoryEntriesBulkIsScopedByNamespace() {
+  resetProps_();
+  setPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan', { historyEndDate: '2026-08-02', days: '11' });
+  setPaxHistoryEntry_(SCOPE_B_, 'Crazy Ivan', { historyEndDate: '2026-08-02', days: '00' });
+
+  var entries = getPaxHistoryEntriesBulk_(SCOPE_A_, ['Crazy Ivan']);
+  assert.deepEqual(entries['crazy ivan'], { historyEndDate: '2026-08-02', days: '11' });
 })();
 
 // Write-side clamp (F3Go30-uz9e.2, symptom 1 at source): a pre-marked FUTURE day must not
@@ -680,16 +715,16 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
 // is already on the Tracker; the read side reconciles it back in when the day actually arrives.
 (function testAdvancePaxHistoryDayIgnoresFutureDays() {
   resetProps_();
-  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 2), 1, '2026-08-02');
-  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 6), 1, '2026-08-02'); // pre-marked, 4 days out
-  assert.deepEqual(getPaxHistoryEntry_('Crazy Ivan'), { historyEndDate: '2026-08-02', days: '1' });
+  advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 2), 1, '2026-08-02');
+  advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 6), 1, '2026-08-02'); // pre-marked, 4 days out
+  assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), { historyEndDate: '2026-08-02', days: '1' });
 })();
 
 (function testAdvancePaxHistoryDayStillWritesTodayAndPastDays() {
   resetProps_();
-  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 1), 1, '2026-08-02');
-  advancePaxHistoryDay_('Crazy Ivan', new Date(2026, 7, 2), 0, '2026-08-02'); // today itself
-  assert.deepEqual(getPaxHistoryEntry_('Crazy Ivan'), { historyEndDate: '2026-08-02', days: '10' });
+  advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 1), 1, '2026-08-02');
+  advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 2), 0, '2026-08-02'); // today itself
+  assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), { historyEndDate: '2026-08-02', days: '10' });
 })();
 
 // go30hist keys carry no sheetId, so the orphan sweep (which ages entries by tracker) could never
@@ -701,8 +736,10 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   var now = new Date(2026, 6, 16);
   var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
 
-  setPaxHistoryEntry_('Crazy Ivan', { historyEndDate: '2026-07-15', days: '11' });
-  setPaxHistoryEntry_('Ghost Pax', { historyEndDate: '2026-05-01', days: '11' });
+  // The fourth pass scopes to the bound spreadsheet's own id (TEST_BOUND_SCOPE_ID_, DR-01) — the
+  // same id makeFakeTrackerDbSpreadsheet_'s default getId() returns.
+  setPaxHistoryEntry_(TEST_BOUND_SCOPE_ID_, 'Crazy Ivan', { historyEndDate: '2026-07-15', days: '11' });
+  setPaxHistoryEntry_(TEST_BOUND_SCOPE_ID_, 'Ghost Pax', { historyEndDate: '2026-05-01', days: '11' });
 
   var spreadsheet = makeFakeTrackerDbSpreadsheet_(
     [{ sheetId: 'sheet-recent', startDate: recentStart }],
@@ -711,8 +748,8 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
 
   var result = purgeStalePaxCache_(now, spreadsheet);
   assert.equal(result.historyEntriesPurged, 1);
-  assert.deepEqual(getPaxHistoryEntry_('Crazy Ivan'), { historyEndDate: '2026-07-15', days: '11' });
-  assert.equal(getPaxHistoryEntry_('Ghost Pax'), null);
+  assert.deepEqual(getPaxHistoryEntry_(TEST_BOUND_SCOPE_ID_, 'Crazy Ivan'), { historyEndDate: '2026-07-15', days: '11' });
+  assert.equal(getPaxHistoryEntry_(TEST_BOUND_SCOPE_ID_, 'Ghost Pax'), null);
 })();
 
 // Same contract the per-PAX row pass already follows (testPurgePurgesEveryPaxRowWhenNoOneHasA
@@ -723,12 +760,56 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   resetProps_();
   var now = new Date(2026, 6, 16);
   var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
-  setPaxHistoryEntry_('Ghost Pax', { historyEndDate: '2026-05-01', days: '11' });
+  setPaxHistoryEntry_(TEST_BOUND_SCOPE_ID_, 'Ghost Pax', { historyEndDate: '2026-05-01', days: '11' });
 
   var spreadsheet = makeFakeTrackerDbSpreadsheet_([{ sheetId: 'sheet-recent', startDate: recentStart }]);
   var result = purgeStalePaxCache_(now, spreadsheet);
   assert.equal(result.historyEntriesPurged, 1);
-  assert.equal(getPaxHistoryEntry_('Ghost Pax'), null);
+  assert.equal(getPaxHistoryEntry_(TEST_BOUND_SCOPE_ID_, 'Ghost Pax'), null);
+})();
+
+// DR-01 regression: a namespace's history entries must not be reaped by the BOUND spreadsheet's
+// activity signal — only the fourth pass's own scope, or the orphan sweep once that scope is
+// actually torn down (see testPurgeOrphanSweepAlsoReapsHistoryForDeletedScope below).
+(function testPurgeFourthPassDoesNotTouchAnotherScopesHistoryEntries() {
+  resetProps_();
+  var now = new Date(2026, 6, 16);
+  var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
+  setPaxHistoryEntry_('other-namespace-scope', 'Ghost Pax', { historyEndDate: '2026-05-01', days: '11' });
+
+  // "other-namespace-scope" must be a KNOWN, still-live namespace here (registered in
+  // NamespaceDB) — this test isolates the fourth pass's own scoping from the orphan sweep, which
+  // has its own coverage below (testPurgeOrphanSweepAlsoReapsHistoryForDeletedScope).
+  var spreadsheet = makeFakeTrackerDbSpreadsheet_(
+    [{ sheetId: 'sheet-recent', startDate: recentStart }],
+    null,
+    [{ namespace: 'other-ns', templateId: 'other-namespace-scope', rows: [] }]
+  );
+  var result = purgeStalePaxCache_(now, spreadsheet);
+  assert.equal(result.historyEntriesPurged, 0);
+  assert.deepEqual(getPaxHistoryEntry_('other-namespace-scope', 'Ghost Pax'), { historyEndDate: '2026-05-01', days: '11' });
+  delete global.SpreadsheetApp;
+})();
+
+// The orphan sweep (third pass) now sees go30hist entries too, since the scoped key gives it a
+// discriminator to check against collectKnownTrackerSheetIds_ — a namespace torn down entirely
+// (its templateId no longer in NamespaceDB) no longer leaves its history windows behind forever.
+(function testPurgeOrphanSweepAlsoReapsHistoryForDeletedScope() {
+  resetProps_();
+  var now = new Date(2026, 6, 16);
+  var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
+
+  // "torn-down-scope" has a go30pax entry (so the orphan sweep's scan even notices the id exists)
+  // and a go30hist entry, but no TrackerDB/NamespaceDB row anywhere — as if teardownEnvironment
+  // already ran.
+  setPaxCacheRow_('tracker', 'torn-down-scope', 'Old Pax', ['gone']);
+  setPaxRosterIndex_('tracker', 'torn-down-scope', { 'old pax': 0 });
+  setPaxHistoryEntry_('torn-down-scope', 'Old Pax', { historyEndDate: '2026-05-01', days: '11' });
+
+  var spreadsheet = makeFakeTrackerDbSpreadsheet_([{ sheetId: 'sheet-recent', startDate: recentStart }]);
+  var result = purgeStalePaxCache_(now, spreadsheet);
+  assert.equal(result.orphanedSheetsPurged, 1);
+  assert.equal(getPaxHistoryEntry_('torn-down-scope', 'Old Pax'), null);
 })();
 
 // ── F3Go30-uz9e.3: window length decoupled from the 30-day streak cap ──────────────────────
@@ -769,15 +850,15 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces) {
   var realSetProperty = fakeProps.setProperty;
   fakeProps.setProperty = function() { setPropertyCalls++; return realSetProperty.apply(this, arguments); };
 
-  setPaxHistoryEntriesBulk_({
+  setPaxHistoryEntriesBulk_(SCOPE_A_, {
     'Crazy Ivan': { historyEndDate: '2026-08-02', days: '111' },
     'Little John': { historyEndDate: '2026-08-02', days: '101' },
   });
 
   assert.equal(setPropertyCalls, 0); // went through setProperties, not per-key setProperty
-  assert.deepEqual(getPaxHistoryEntry_('Crazy Ivan'), { historyEndDate: '2026-08-02', days: '111' });
-  assert.deepEqual(getPaxHistoryEntry_('crazy ivan'), { historyEndDate: '2026-08-02', days: '111' });
-  assert.deepEqual(getPaxHistoryEntry_('Little John'), { historyEndDate: '2026-08-02', days: '101' });
+  assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), { historyEndDate: '2026-08-02', days: '111' });
+  assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'crazy ivan'), { historyEndDate: '2026-08-02', days: '111' });
+  assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Little John'), { historyEndDate: '2026-08-02', days: '101' });
 })();
 
 console.log('test_pax_cache.js: all assertions passed');
