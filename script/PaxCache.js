@@ -596,11 +596,12 @@ function purgeStalePaxCache_(now, spreadsheet) {
     try {
       var boundScopeId = spreadsheet.getId();
       var historyPrefix = PAX_HISTORY_PREFIX_ + boundScopeId + ':';
-      PropertiesService.getScriptProperties().getKeys().forEach(function(key) {
+      var scriptProps = PropertiesService.getScriptProperties();
+      scriptProps.getKeys().forEach(function(key) {
         if (key.indexOf(historyPrefix) !== 0) return;
         var normName = key.slice(historyPrefix.length);
         if (Object.prototype.hasOwnProperty.call(activeNames, normName)) return;
-        PropertiesService.getScriptProperties().deleteProperty(key);
+        scriptProps.deleteProperty(key);
         historyEntriesPurged++;
       });
     } catch (e) { /* best-effort — the rest of the purge already ran */ }

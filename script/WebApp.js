@@ -190,12 +190,16 @@ function logStaticRedirect_(e, routeTag, label) {
  * @param {string} label What's unavailable, e.g. 'Go30 Hard Commit Signup'.
  */
 function renderStaticUnavailable_(label) {
+  var escapedLabel = String(label)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
   var html =
     '<!DOCTYPE html><html><head><meta charset="utf-8">' +
     '<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;text-align:center;' +
     'padding:40px 20px;color:#333}h1{font-size:20px;margin:0 0 10px}' +
     'p{font-size:15px;line-height:1.5;color:#555}</style></head><body>' +
-    '<h1>' + label + ' is unavailable</h1>' +
+    '<h1>' + escapedLabel + ' is unavailable</h1>' +
     '<p>The static front end is not configured for this deployment.</p>' +
     '</body></html>';
   return HtmlService.createHtmlOutput(html)
