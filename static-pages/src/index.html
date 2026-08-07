@@ -214,6 +214,7 @@
   .board-row-main .bstatus { width: 20px; flex-shrink: 0; text-align: center; }
   .board-row-main .bpct { width: 30px; flex-shrink: 0; text-align: right; font-family: monospace; font-weight: bold; }
   .checkin-status-badge { margin-right: 3px; display: inline-block; }
+  .checkin-status-badge.done { color: #3f8b75; font-weight: bold; font-size: 1.05em; line-height: 1; }
   .checkin-status-badge.urgent { color: var(--urgent); font-weight: bold; font-size: 1.15em; line-height: 1; }
   .board-row-bonuses { display: flex; gap: 3px; margin-top: 3px; padding-left: 4px; }
   .board-row-bonuses .bonus-type-code { font-size: 10px; padding: 0 4px; }
@@ -304,9 +305,15 @@
 </head>
 <body>
   <div class="header">
-    <div id="headerLeft">
-      <div class="header-name" id="headerName"></div>
-      <div class="header-sub" id="headerSub"></div>
+    <div id="headerLeft" style="display:flex;align-items:center;gap:10px;">
+      <!-- Persistent-header back button (F3Go30 dashboard/paxDetail nav) — shown/wired per step
+           by showStep()/HEADER_BACK_TARGET_ rather than a per-card Back button, so it survives
+           whichever step is on screen instead of being torn down and rebuilt with each. -->
+      <button id="headerBackBtn" class="more-btn hidden" title="Back">&larr;</button>
+      <div>
+        <div class="header-name" id="headerName"></div>
+        <div class="header-sub" id="headerSub"></div>
+      </div>
     </div>
     <div class="header-right">
       <!-- F3Go30-5nfj.5: lives in the persistent header (never hidden by showStep()) so it
@@ -696,12 +703,11 @@
 
     <div id="step-paxDetail" class="hidden">
       <div class="card-head-row">
-        <h2 id="paxDetailName" style="margin:0;"></h2>
-        <button class="secondary btn-inline" id="paxDetailBackBtn">&larr; Back</button>
+        <button id="paxDetailPrevBtn" class="date-nav-btn" title="Previous teammate"><svg viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <h2 id="paxDetailName" style="margin:0;flex:1;text-align:center;"></h2>
+        <button id="paxDetailNextBtn" class="date-nav-btn" title="Next teammate"><svg viewBox="0 0 24 24" fill="none"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
       <div class="section-label" style="margin-top:0;" id="paxDetailTeam"></div>
-
-      <div id="paxDetailGoals" class="hidden"></div>
 
       <div class="stats-row">
         <div class="stat-card">
@@ -734,6 +740,10 @@
         <div class="section-label" style="margin-top:0;">7-DAY ROLLING AVERAGE</div>
         <div id="pdAvgChart"></div>
       </div>
+
+      <div id="paxDetailGoals" class="hidden"></div>
+
+      <div id="paxDetailBonusEntries" class="hidden"></div>
     </div>
 
     <div id="step-bonus" class="hidden">
@@ -1157,6 +1167,14 @@
     calMonthKey: null,
     calGridCache: {},
     calLoading: false,
+    // Pax-detail popup (F3Go30 "click a PAX" feature): "f3Name|YYYY-MM" -> goals/bonus-entries
+    // payload, so cycling prev/next through a team with stepPaxDetail_ re-shows an already-
+    // fetched teammate instantly instead of re-paying the round trip every time. Same
+    // stale-while-revalidate shape as monthCache/calGridCache above: a cache hit paints
+    // immediately, then a background refetch still runs and repaints if it lands while that same
+    // PAX is still the one on screen.
+    paxGoalsCache: {},
+    paxBonusCache: {},
     // F3Go30-833s.9: true once an identify has actually painted the check-in step this
     // pageview. The signup step reads it to decide whether there is a check-in to offer a way
     // back to — notably false on the month-boundary path, where identity resolves but the
@@ -1250,10 +1268,17 @@
 
   applyVersionState_(STATIC_BUILD_VERSION_, null);
 
+  // Steps whose Back now lives in the persistent header (headerBackBtn) instead of a per-card
+  // button, keyed to their fixed destination step. 'bonus' isn't listed here — its Back target
+  // is dynamic (state.bonusReturnStep, set below) and stays on bonusBackBtn.
+  var HEADER_BACK_TARGET_ = { dashboard: 'checkin', paxDetail: 'dashboard' };
+
   function showStep(name) {
     ['identify', 'checkin', 'dashboard', 'bonus', 'signup', 'nextMonthChoice', 'paxDetail'].forEach(function(s) {
       $('step-' + s).classList.toggle('hidden', s !== name);
     });
+    state.currentStep = name;
+    $('headerBackBtn').classList.toggle('hidden', !HEADER_BACK_TARGET_[name]);
     $('moreBtn').classList.toggle('hidden', name !== 'dashboard');
     $('bonusBtn').classList.toggle('hidden', name === 'identify' || name === 'bonus' || name === 'signup' || name === 'nextMonthChoice' || name === 'paxDetail');
     if (name === 'checkin' || name === 'dashboard') state.bonusReturnStep = name;
@@ -1698,10 +1723,18 @@
 
   /** Renders another PAX's WHO/WHAT/HOW goals in the pax-detail popup — same markup as the
    * self reminder (goalsRowsHtml_) minus the Edit button, since a PAX can't edit a teammate's
-   * signup. Hides the block entirely when the fetch is still pending, failed, or came back
-   * with nothing to show. */
+   * signup. `goals === undefined` means the fetch is still in flight (no cached copy either) —
+   * render a "Loading…" placeholder. `goals === null` means the fetch settled empty/failed, or
+   * there's genuinely nothing to show — hide the block. */
   function renderPaxDetailGoals_(goals) {
     var el = $('paxDetailGoals');
+    if (goals === undefined) {
+      el.innerHTML = '<div class="goals-reminder">' +
+        '<div class="goals-reminder-head"><span class="goals-reminder-title">Goals</span></div>' +
+        '<div class="goals-reminder-row">Loading…</div></div>';
+      el.classList.remove('hidden');
+      return;
+    }
     var rowsHtml = goals && goalsRowsHtml_(goals);
     if (!rowsHtml) {
       el.classList.add('hidden');
@@ -1711,6 +1744,52 @@
     el.innerHTML = '<div class="goals-reminder">' +
       '<div class="goals-reminder-head"><span class="goals-reminder-title">Goals</span></div>' +
       rowsHtml + '</div>';
+    el.classList.remove('hidden');
+  }
+
+  /** Shared `.bonus-entry` inner markup — one entry's type/date/message/counted-badge, used by
+   * both the self bonus list (renderBonusList_, editable) and the pax-detail popup's read-only
+   * teammate view (renderPaxDetailBonusEntries_) so the two never drift out of shape. */
+  function bonusEntryInnerHtml_(entry, editable) {
+    var dateLabel = entry.whenIso ? formatNavDate_(parseIsoDate_(entry.whenIso)) : '';
+    var isExtra = !!entry.complete && entry.counts === false;
+    var badgeClass = !entry.complete ? 'pending' : (isExtra ? 'extra' : 'complete');
+    var badgeText = !entry.complete ? 'Needs link' : (isExtra ? 'Logged (extra)' : '✓ Counted');
+    return '<div class="bonus-entry-top">' +
+        '<span class="bonus-entry-type">' + escapeHtml_(entry.type) + '</span>' +
+        '<span class="bonus-entry-date">' + escapeHtml_(dateLabel) + '</span>' +
+      '</div>' +
+      '<div class="bonus-entry-message">' + escapeHtml_(entry.message) + '</div>' +
+      (isExtra
+        ? '<div class="bonus-entry-note">Great job getting out there! Only one ' + escapeHtml_(entry.type) +
+          ' counts per week, so this one won’t add extra points — keep up the good work.</div>'
+        : '') +
+      '<div class="bonus-entry-bottom">' +
+        '<span class="bonus-badge ' + badgeClass + '">' + badgeText + '</span>' +
+        (editable ? '<button class="bonus-edit-btn" data-row="' + entry.rowIndex + '">Edit</button>' : '') +
+      '</div>';
+  }
+
+  /** Read-only counterpart of renderBonusList_ for the pax-detail popup — same `.bonus-entry`
+   * markup minus the Edit button (a PAX can't edit a teammate's bonus log), and `undefined` vs
+   * `null`/empty gets the same Loading/hidden treatment renderPaxDetailGoals_ uses. */
+  function renderPaxDetailBonusEntries_(entries) {
+    var el = $('paxDetailBonusEntries');
+    if (entries === undefined) {
+      el.innerHTML = '<div class="section-label" style="margin-top:0;">Bonus Entries</div>' +
+        '<p class="muted" style="margin:10px 0 0;">Loading…</p>';
+      el.classList.remove('hidden');
+      return;
+    }
+    if (!entries || !entries.length) {
+      el.classList.add('hidden');
+      el.innerHTML = '';
+      return;
+    }
+    var rowsHtml = entries.map(function(entry) {
+      return '<div class="bonus-entry">' + bonusEntryInnerHtml_(entry, false) + '</div>';
+    }).join('');
+    el.innerHTML = '<div class="section-label" style="margin-top:0;">Bonus Entries</div>' + rowsHtml;
     el.classList.remove('hidden');
   }
 
@@ -1726,7 +1805,7 @@
     } else if (status === 'pending' && prefix === 'today') {
       text = 'How did you do today?';
     } else if (status === 'pending' && prefix === 'yesterday') {
-      // Same before/after-10am split as yesterdayCheckinStatus_'s board-tile badge, applied here
+      // Same before/after-10am split as checkinBadgeStatus_'s board-tile badge, applied here
       // to the YESTERDAY status line itself instead of a team-tile badge.
       late = new Date().getHours() >= YESTERDAY_CHECKIN_WARNING_HOUR_;
       warn = !late;
@@ -2614,14 +2693,27 @@
     return (dayDates || []).indexOf(iso);
   }
 
-  function yesterdayCheckinStatus_(rawMember, yesterdayIndex) {
-    if (yesterdayIndex < 0) return null;
-    var v = (rawMember.dayValues || [])[yesterdayIndex];
-    if (v === 1 || v === 0 || v === -1) return null;
-    return new Date().getHours() < YESTERDAY_CHECKIN_WARNING_HOUR_ ? 'warning' : 'urgent';
+  /** Team-tile/board-row badge: 'warning'/'urgent' key off yesterday being overdue (the
+   * reporting deadline is 10am the day after) and take priority when both apply — that's the
+   * more actionable state. Otherwise 'done' (green check) requires TODAY itself to already
+   * carry a submitted value (1/0); today and yesterday are reported independently (separate
+   * TODAY/YESTERDAY blocks), so a PAX can be caught up on today while still overdue on
+   * yesterday, or vice versa. */
+  function checkinBadgeStatus_(rawMember, todayIndex, yesterdayIndex) {
+    if (yesterdayIndex >= 0) {
+      var yv = (rawMember.dayValues || [])[yesterdayIndex];
+      if (yv !== 1 && yv !== 0 && yv !== -1) {
+        return new Date().getHours() < YESTERDAY_CHECKIN_WARNING_HOUR_ ? 'warning' : 'urgent';
+      }
+    }
+    var todayValue = todayIndex >= 0 ? (rawMember.dayValues || [])[todayIndex] : undefined;
+    return (todayValue === 1 || todayValue === 0) ? 'done' : null;
   }
 
   function checkinStatusBadgeHtml_(status) {
+    // Plain U+2713 (no emoji variation selector) — unlike ✅/✔️ it carries no built-in color, so
+    // the .done CSS color rule actually applies.
+    if (status === 'done') return '<span class="checkin-status-badge done" title="Checked in today">&#10003;</span>';
     if (status === 'warning') return '<span class="checkin-status-badge warning" title="Yesterday not checked in yet">⚠️</span>';
     if (status === 'urgent') return '<span class="checkin-status-badge urgent" title="Yesterday not checked in">Ⓧ</span>';
     return '';
@@ -2698,19 +2790,72 @@
     $('pdAvgChart').innerHTML = buildAvgChartSvg_(winRollingAverage, winDaySegments, winDaySegments.length);
   }
 
-  /** Opens the pax-detail popup for a clicked team-tile/board-row, and kicks off the goals
-   * fetch (paxGoals action, dashboardWebapp.js) in the background — the tiles render instantly
-   * from data already in the dashboard payload, goals fill in a moment later once the request
-   * lands. Back (paxDetailBackBtn) just returns to 'dashboard' (see showStep) — the dashboard's
-   * own DOM was never torn down, so scroll position and content are exactly as left. */
-  function openPaxDetail_(view, currentDay) {
+  // Tracks the list (raw members — either d.myTeam or one paxBoard group's members) and index
+  // the pax-detail popup is currently showing, so paxDetailPrevBtn/paxDetailNextBtn can step
+  // through it and loop at the ends. Null while the popup isn't open / between dashboard loads.
+  var paxDetailNav_ = null;
+
+  /** "f3Name|YYYY-MM" — the key both paxGoalsCache and paxBonusCache are keyed on (goals/bonus
+   * entries are month-scoped: which sheet they're read from depends on the viewed date). */
+  function paxDetailCacheKey_(f3Name, dateISO) {
+    return f3Name + '|' + dateISO.slice(0, 7);
+  }
+
+  /** Opens the pax-detail popup for a clicked team-tile/board-row. The tiles render instantly
+   * from data already in the dashboard payload; goals (paxGoals action) and bonus entries
+   * (bonusList action, reused here for a teammate's name rather than just self) are fetched
+   * separately. Same stale-while-revalidate shape as the dashboardBtn cached-month path above:
+   * a cache hit (state.paxGoalsCache/paxBonusCache) paints immediately with no wait, then a
+   * background refetch still runs and repaints in place once it lands — the `stillShowing`
+   * check guards against a slow response for a teammate the PAX has since stepped away from
+   * (via prev/next) clobbering whoever's on screen now. Back (headerBackBtn) always returns to
+   * 'dashboard' (see showStep) — the dashboard's own DOM was never torn down, so scroll position
+   * and content are exactly as left. `list`/`idx` are the raw-member array the tile/row came
+   * from and this PAX's position in it (F3Go30 pax-detail prev/next) — stepPaxDetail_ loops
+   * within that same list, wrapping at either end. */
+  function openPaxDetail_(list, idx, dayIndex, totalDays) {
+    var len = list.length;
+    idx = ((idx % len) + len) % len;
+    paxDetailNav_ = { list: list, idx: idx, dayIndex: dayIndex, totalDays: totalDays };
+    var rawMember = list[idx];
+    var view = memberViewForIndex_(rawMember, dayIndex, totalDays);
+    var currentDay = dayIndex + 1;
     renderPaxDetail_(view, currentDay);
-    renderPaxDetailGoals_(null);
+    $('paxDetailPrevBtn').classList.toggle('hidden', len < 2);
+    $('paxDetailNextBtn').classList.toggle('hidden', len < 2);
     showStep('paxDetail');
+
+    function stillShowing() {
+      return paxDetailNav_ && paxDetailNav_.list === list && paxDetailNav_.idx === idx;
+    }
+
     var dateISO = state.viewDate ? isoDate_(state.viewDate) : isoDate_(new Date());
+    var cacheKey = paxDetailCacheKey_(view.name, dateISO);
+
+    var cachedGoals = state.paxGoalsCache[cacheKey];
+    renderPaxDetailGoals_(cachedGoals !== undefined ? cachedGoals : undefined);
     callApi('paxGoals', { f3Name: view.name, dateISO: dateISO, resolvedContext: state.resolvedContext })
-      .then(function(res) { renderPaxDetailGoals_(res && res.ok ? res.goals : null); })
-      .catch(function() { renderPaxDetailGoals_(null); });
+      .then(function(res) { return (res && res.ok) ? res.goals : null; })
+      .catch(function() { return null; })
+      .then(function(goals) {
+        state.paxGoalsCache[cacheKey] = goals;
+        if (stillShowing()) renderPaxDetailGoals_(goals);
+      });
+
+    var cachedBonus = state.paxBonusCache[cacheKey];
+    renderPaxDetailBonusEntries_(cachedBonus !== undefined ? cachedBonus : undefined);
+    callApi('bonusList', { f3Name: view.name, dateISO: dateISO })
+      .then(function(res) { return (res && res.ok) ? (res.entries || []) : null; })
+      .catch(function() { return null; })
+      .then(function(entries) {
+        state.paxBonusCache[cacheKey] = entries;
+        if (stillShowing()) renderPaxDetailBonusEntries_(entries);
+      });
+  }
+
+  function stepPaxDetail_(delta) {
+    if (!paxDetailNav_) return;
+    openPaxDetail_(paxDetailNav_.list, paxDetailNav_.idx + delta, paxDetailNav_.dayIndex, paxDetailNav_.totalDays);
   }
 
   function trimTrailingBlanks_(values) {
@@ -2934,17 +3079,19 @@
 
     $('dTeamName').textContent = d.team || 'Unassigned';
 
+    var todayIndex = findDayIndex_(d.dayDates, isoDate_(new Date()));
     var yesterdayReal = new Date();
     yesterdayReal.setDate(yesterdayReal.getDate() - 1);
     var yesterdayIndex = findDayIndex_(d.dayDates, isoDate_(yesterdayReal));
 
+    var myTeamList = d.myTeam || [];
     var myTeamEl = $('dMyTeam');
     myTeamEl.innerHTML = '';
-    (d.myTeam || []).forEach(function(m) {
+    myTeamList.forEach(function(m, idx) {
       var view = memberViewForIndex_(m, dayIndex, d.totalDays);
-      var checkinStatus = yesterdayCheckinStatus_(m, yesterdayIndex);
+      var checkinStatus = checkinBadgeStatus_(m, todayIndex, yesterdayIndex);
       var tileEl = renderTeamTile_(view, m.name === d.f3Name, currentDay, checkinStatus);
-      tileEl.addEventListener('click', function() { openPaxDetail_(view, currentDay); });
+      tileEl.addEventListener('click', function() { openPaxDetail_(myTeamList, idx, dayIndex, d.totalDays); });
       myTeamEl.appendChild(tileEl);
     });
 
@@ -2959,12 +3106,13 @@
       groupEl.appendChild(head);
       var rowsEl = document.createElement('div');
       rowsEl.className = 'board-rows';
-      group.members.forEach(function(rawMember) {
+      var groupMembers = group.members || [];
+      groupMembers.forEach(function(rawMember, idx) {
         var m = memberViewForIndex_(rawMember, dayIndex, d.totalDays);
-        var checkinStatus = yesterdayCheckinStatus_(rawMember, yesterdayIndex);
+        var checkinStatus = checkinBadgeStatus_(rawMember, todayIndex, yesterdayIndex);
         var row = document.createElement('div');
         row.className = 'board-row' + (m.name === d.f3Name ? ' me' : '');
-        row.addEventListener('click', function() { openPaxDetail_(m, currentDay); });
+        row.addEventListener('click', function() { openPaxDetail_(groupMembers, idx, dayIndex, d.totalDays); });
         var mainEl = document.createElement('div');
         mainEl.className = 'board-row-main';
         var nameEl = document.createElement('span');
@@ -3135,24 +3283,7 @@
     state.bonusEntries.forEach(function(entry) {
       var row = document.createElement('div');
       row.className = 'bonus-entry';
-      var dateLabel = entry.whenIso ? formatNavDate_(parseIsoDate_(entry.whenIso)) : '';
-      var isExtra = !!entry.complete && entry.counts === false;
-      var badgeClass = !entry.complete ? 'pending' : (isExtra ? 'extra' : 'complete');
-      var badgeText = !entry.complete ? 'Needs link' : (isExtra ? 'Logged (extra)' : '✓ Counted');
-      row.innerHTML =
-        '<div class="bonus-entry-top">' +
-          '<span class="bonus-entry-type">' + escapeHtml_(entry.type) + '</span>' +
-          '<span class="bonus-entry-date">' + escapeHtml_(dateLabel) + '</span>' +
-        '</div>' +
-        '<div class="bonus-entry-message">' + escapeHtml_(entry.message) + '</div>' +
-        (isExtra
-          ? '<div class="bonus-entry-note">Great job getting out there! Only one ' + escapeHtml_(entry.type) +
-            ' counts per week, so this one won’t add extra points — keep up the good work.</div>'
-          : '') +
-        '<div class="bonus-entry-bottom">' +
-          '<span class="bonus-badge ' + badgeClass + '">' + badgeText + '</span>' +
-          '<button class="bonus-edit-btn" data-row="' + entry.rowIndex + '">Edit</button>' +
-        '</div>';
+      row.innerHTML = bonusEntryInnerHtml_(entry, true);
       el.appendChild(row);
     });
     Array.prototype.forEach.call(el.querySelectorAll('.bonus-edit-btn'), function(btn) {
@@ -3265,7 +3396,12 @@
     loadBonusList_();
   });
   $('bonusBackBtn').addEventListener('click', function() { showStep(state.bonusReturnStep); });
-  $('paxDetailBackBtn').addEventListener('click', function() { showStep('dashboard'); });
+  $('paxDetailPrevBtn').addEventListener('click', function() { stepPaxDetail_(-1); });
+  $('paxDetailNextBtn').addEventListener('click', function() { stepPaxDetail_(1); });
+  $('headerBackBtn').addEventListener('click', function() {
+    var target = HEADER_BACK_TARGET_[state.currentStep];
+    if (target) showStep(target);
+  });
   $('bonusAddBtn').addEventListener('click', function() { openBonusForm_(null); });
   $('bonusCancelBtn').addEventListener('click', closeBonusForm_);
 

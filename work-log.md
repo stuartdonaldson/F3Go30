@@ -2363,3 +2363,22 @@ Open: work is staged but not committed/pushed, pending developer review; whether
 
 ### Key Learnings:
 Apps Script's per-project trigger quota (`ScriptApp.newTrigger`) can be exhausted by orphaned `onEdit` triggers left behind by earlier interrupted namespace-smoke-test runs, surfacing as a `copyTemplate` provisioning failure ("This script has too many triggers") on an unrelated later run — cleared via the existing `deleteOrphanedTriggers` admin action. Separately, the `copyTemplate` action's Drive-copy work can outlast the HTTP client's patience even though the server-side operation completes and registers the namespace — confirmable via a direct `getSheet` read on `NamespaceDB` before assuming a hang means failure.
+
+## 2026-08-05 06:15:00
+_session 59ad3b57 · v3 · 08-04→08-05_
+
+### Objective 1: Land the remove-gas-rendered-pages branch as a reviewed PR
+Rationale: The DR-04 removal (deleting the GAS-rendered SignupApp.html/CheckinApp.html/IdentityCore.html) had been committed to a pushed branch but never opened as a PR — GitHub's compare-view banner was mistaken for an actual open PR, so it sat unreviewed. Also cleaned up branch hygiene: `dashboard-tool` was confirmed stale (already reviewed earlier, its useful doc/tool content already extracted) and fully merged branches (`f3go30-833s-pwa-design`, `master`) were identified for later deletion.
+Outcome [developer-facing]: Opened PR #6 for remove-gas-rendered-pages → main; deleted the stale `dashboard-tool` remote branch.
+Outcome [developer-facing]: Addressed both Copilot automated review comments on PR #6 — escaped `label` in `renderStaticUnavailable_` (script/WebApp.js) to close a latent XSS footgun for future reuse, and hoisted the repeated `PropertiesService.getScriptProperties()` call out of the go30hist purge loop in `purgeStalePaxCache_` (script/PaxCache.js). Verified via `test_signup_link_migration.js` and `test_pax_cache.js`, pushed as commit 34971a0.
+Outcome [developer-facing]: Squash-merged PR #6 into main, remote branch auto-deleted, local main fast-forwarded and local branch pruned.
+
+## 2026-08-07 03:15:00
+_session d184e3ac · v3 · 08-06→08-07_
+
+### Objective 1: Diagnose "pax details bonus entries disappear" on SIT and restore them
+Rationale: User reported that opening a teammate's pax-detail popup briefly showed bonus entries before they vanished, and suspected a stale cache left over from a manual Bonus Tracker sheet edit made before the last deploy. Traced the Axiom log (`handleTrackerEdit_`) and found PROD's onEdit invalidation firing correctly on Bonus Tracker edits, but zero such events ever logged for SIT — `syncTrackerTriggers --env sit` confirmed the current-month SIT tracker (`1x5Z4740...`, 2026-08-F3-Go30x-SIT) had no `handleTrackerEdit_` onEdit trigger installed at all, so the manual edit never invalidated `go30dash:bonusEntries`/`go30dash:bonusRows`. User explained the actual cause once surfaced: "we ran into test problems with the timed triggers on sit so i think we removed all triggers and should have just removed the timed ones" — an operational side effect of manually clearing SIT's Apps Script triggers, not a code defect.
+Rejected: No code fix was pursued — `syncTrackerTriggers` (existing admin action, F3Go30-440b.5) already exists as the correct self-heal for exactly this gap and only manages per-tracker installable triggers, never touching time-based ones, so it can't reintroduce the original timed-trigger problem.
+Outcome [user-facing]: Ran `syncTrackerTriggers` (backfilled the missing onEdit trigger on the August SIT tracker) then `invalidateAllCache` twice against SIT; confirmed live via `bonusList` API calls that Blue Steel's manually-edited EHing FNG bonus entry now returns correctly. User confirmed the pax-detail popup shows entries correctly now.
+Outcome [internal]: Saved a project memory (`sit-triggers-wiped-2026-08-06` via `bd remember`) documenting the SIT trigger gap and the `syncTrackerTriggers` self-heal, so a future session doesn't re-diagnose this as a caching code bug.
+Open: Not tracked as a bd issue — this was an operational/environment-state gap the developer already understood the cause of, not a code change. No further action identified.
