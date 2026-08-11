@@ -104,6 +104,22 @@ function readStaticPage_() {
   assert.equal(callSites.length, 0, 'index.html must never call attemptTopRedirect_');
 })();
 
+// ── Snapshot-replay must never paint the announcement splash (F3Go30-g9bi) ──────────────────────
+//    Regex-level, not the extracted harness above: proves the actual call SITE passes isLive:false
+//    on the snapshot-replay path specifically, not just that applyServerConfig_ supports the param.
+
+(function testSnapshotReplayCallSitePassesIsLiveFalse() {
+  var src = readStaticPage_();
+  assert.match(src, /applyServerConfig_\(checkinSnapshot_\.config, false\)/,
+    'the cached/replayed snapshot must call applyServerConfig_ with isLive:false so the announcement splash never paints off stale cached data');
+})();
+
+(function testLiveIdentifyCallSitesDoNotSuppressTheAnnouncement() {
+  var src = readStaticPage_();
+  var liveCallSites = src.match(/applyServerConfig_\((?:result|res)\.config\)/g) || [];
+  assert.ok(liveCallSites.length >= 3, 'expected the typed-identify/token-identify/resume-refresh call sites to all call applyServerConfig_ with no isLive override (defaults live)');
+})();
+
 // ── Month-cache write-through (mirrors test_checkin_monthcache_invalidation.js) ────────────────
 
 (function testStaticPageInvalidateMonthCacheForDropsTheAffectedMonthKey() {
@@ -315,7 +331,7 @@ function makeBannerHarness_(fromGas, opts) {
   var elements = {};
   // Both banners ship hidden in the markup (asserted below), so the stand-ins start hidden too —
   // otherwise "was never shown" and "was explicitly shown" would be indistinguishable.
-  var INITIALLY_HIDDEN_ = { gasMovedBanner: true, updateBanner: true };
+  var INITIALLY_HIDDEN_ = { gasMovedBanner: true, updateBanner: true, announcementModal: true };
   function fakeEl_(id) {
     if (!elements[id]) {
       var classes = INITIALLY_HIDDEN_[id] ? { hidden: true } : {};
@@ -338,6 +354,11 @@ function makeBannerHarness_(fromGas, opts) {
     getItem: function(k) { return Object.prototype.hasOwnProperty.call(storage, k) ? storage[k] : null; },
     setItem: function(k, v) { storage[k] = v; },
   };
+  var sessionStore = Object.assign({}, opts.sessionStorage || {});
+  var fakeSessionStorage = {
+    getItem: function(k) { return Object.prototype.hasOwnProperty.call(sessionStore, k) ? sessionStore[k] : null; },
+    setItem: function(k, v) { sessionStore[k] = v; },
+  };
   var replaceStateCalls = [];
   var fakeHistory = { replaceState: function(state, title, url) { replaceStateCalls.push(String(url)); } };
   var reloadCallCount = 0;
@@ -346,18 +367,19 @@ function makeBannerHarness_(fromGas, opts) {
     reload: function() { reloadCallCount++; },
   };
 
-  var factory = new Function('FROM_GAS_', 'STATIC_BUILD_VERSION_', '$', 'localStorage', 'history', 'location', 'URL',
-    extractBannerBlock_() + '\nreturn { applyVersionState_: applyVersionState_ };'
+  var factory = new Function('FROM_GAS_', 'STATIC_BUILD_VERSION_', '$', 'localStorage', 'sessionStorage', 'history', 'location', 'URL',
+    extractBannerBlock_() + '\nreturn { applyVersionState_: applyVersionState_, applyAnnouncementState_: applyAnnouncementState_ };'
   );
   var fns = factory(
     fromGas,
     Object.prototype.hasOwnProperty.call(opts, 'buildVersion') ? opts.buildVersion : null,
-    fakeEl_, fakeLocalStorage, fakeHistory, fakeLocation, URL
+    fakeEl_, fakeLocalStorage, fakeSessionStorage, fakeHistory, fakeLocation, URL
   );
   return {
     fns: fns,
     elements: elements,
     storage: storage,
+    sessionStore: sessionStore,
     replaceStateCalls: replaceStateCalls,
     reloadCallCount: function() { return reloadCallCount; },
     // Convenience: what the footer reads and whether the update banner is up, after an identify
@@ -370,6 +392,10 @@ function makeBannerHarness_(fromGas, opts) {
     },
     footerText: function() { return fakeEl_('versionFooter').textContent; },
     updateBannerHidden: function() { return fakeEl_('updateBanner').classList.has('hidden'); },
+    announcementModalHidden: function() { return fakeEl_('announcementModal').classList.has('hidden'); },
+    announcementTitle: function() { return fakeEl_('announcementTitle').textContent; },
+    // The real code sets .innerHTML (F3Go30-g9bi follow-up: the body may carry links/formatting).
+    announcementHtml: function() { return fakeEl_('announcementText').innerHTML; },
   };
 }
 
@@ -494,6 +520,106 @@ function makeBannerHarness_(fromGas, opts) {
   h.applyServerVersion('2.4.7');
   assert.equal(h.footerText(), 'v2.4.7 (server)',
     'with no client build to report, the footer must say the version it shows came from the server');
+})();
+
+// ── F3Go30-g9bi: Config-driven announcement splash ──────────────────────────────────────────
+//    Same extracted/executed-for-real harness as the banner tests above (applyAnnouncementState_
+//    lives in the same source block). Covers show/hide-unconditionally, value-keyed dismissal,
+//    and the remind-later sessionStorage snooze re-checking the live announcement on wake.
+
+(function testAnnouncementModalShipsHiddenInTheMarkup() {
+  var src = readStaticPage_();
+  var tagMatch = src.match(/<div id="announcementModal"[^>]*>/);
+  assert.ok(tagMatch, 'announcementModal element not found in index.html');
+  assert.match(tagMatch[0], /class="[^"]*\bhidden\b/, 'announcementModal must ship hidden in the markup');
+})();
+
+(function testAnnouncementModalShowsTitleAndHtmlBodyForALiveAnnouncement() {
+  // F3Go30-g9bi follow-up: title (Config column B) is a plain-text heading; body (column C) is
+  // rendered as HTML so an admin can include links/formatting — deliberately innerHTML, not
+  // textContent, verified here by asserting an actual <a> tag survives into the rendered markup.
+  var h = makeBannerHarness_(false);
+  h.fns.applyAnnouncementState_({ day: 11, title: 'HC Moved', message: 'Moved to <a href="https://example.com">Saturday</a> this week' });
+  assert.equal(h.announcementModalHidden(), false);
+  assert.equal(h.announcementTitle(), 'HC Moved');
+  assert.equal(h.announcementHtml(), 'Moved to <a href="https://example.com">Saturday</a> this week');
+})();
+
+(function testAnnouncementModalHandlesABlankBodyAlongsideATitle() {
+  // A title-only announcement (blank Config column C) must not throw or render "undefined".
+  var h = makeBannerHarness_(false);
+  h.fns.applyAnnouncementState_({ day: 11, title: 'Heads up', message: '' });
+  assert.equal(h.announcementModalHidden(), false);
+  assert.equal(h.announcementTitle(), 'Heads up');
+  assert.equal(h.announcementHtml(), '');
+})();
+
+(function testAnnouncementModalHidesUnconditionallyWhenAnnouncementIsCleared() {
+  // F3Go30-g9bi: applyAnnouncementState_ must hide even when nothing was ever dismissed — an
+  // admin clearing/expiring the notice server-side must actively close an already-open splash,
+  // not just suppress future opens (mirrors updateBanner_'s show-if-applicable/else-hide shape).
+  var h = makeBannerHarness_(false);
+  h.fns.applyAnnouncementState_({ day: 11, title: 'HC Moved', message: 'HC moved to Saturday' });
+  assert.equal(h.announcementModalHidden(), false, 'sanity: shown first');
+  h.fns.applyAnnouncementState_(null);
+  assert.equal(h.announcementModalHidden(), true, 'a cleared announcement must actively hide an already-open modal');
+})();
+
+(function testAnnouncementDismissalIsValueKeyedByFingerprintNotJustDay() {
+  var h = makeBannerHarness_(false);
+  h.fns.applyAnnouncementState_({ day: 11, title: 'HC Moved', message: 'HC moved to Saturday' });
+  h.elements.announcementDismissBtn.click();
+  assert.equal(h.announcementModalHidden(), true, 'dismiss button must hide the modal');
+  var recordedFingerprint = h.storage.go30AnnouncementDismissed;
+  assert.ok(recordedFingerprint && recordedFingerprint.indexOf('11:') === 0, 'dismissal must be recorded against a day-prefixed fingerprint, not a bare flag');
+
+  var same = makeBannerHarness_(false, { storage: { go30AnnouncementDismissed: recordedFingerprint } });
+  same.fns.applyAnnouncementState_({ day: 11, title: 'HC Moved', message: 'HC moved to Saturday' });
+  assert.equal(same.announcementModalHidden(), true, 'the exact same dismissed announcement must not prompt again');
+
+  var later = makeBannerHarness_(false, { storage: { go30AnnouncementDismissed: recordedFingerprint } });
+  later.fns.applyAnnouncementState_({ day: 14, title: 'Month End', message: 'Month-end reminder' });
+  assert.equal(later.announcementModalHidden(), false, "dismissing day 11's notice must not suppress day 14's");
+
+  // F3Go30-g9bi follow-up: a Site Q editing the SAME day's message after a PAX already dismissed
+  // it must re-prompt — content is part of the dismissal identity, not just the day number.
+  var edited = makeBannerHarness_(false, { storage: { go30AnnouncementDismissed: recordedFingerprint } });
+  edited.fns.applyAnnouncementState_({ day: 11, title: 'HC Moved', message: 'Actually, HC is cancelled entirely' });
+  assert.equal(edited.announcementModalHidden(), false, 'editing an already-dismissed day\'s content must re-surface it');
+})();
+
+(function testAnnouncementRemindLaterSnoozesWithoutRecordingADismissal() {
+  var h = makeBannerHarness_(false);
+  h.fns.applyAnnouncementState_({ day: 11, title: 'HC Moved', message: 'HC moved to Saturday' });
+  h.elements.announcementRemindLaterBtn.click();
+  assert.equal(h.announcementModalHidden(), true, 'remind-later must hide the modal immediately');
+  assert.equal(h.storage.go30AnnouncementDismissed, undefined, 'remind-later must NOT record a localStorage dismissal');
+  assert.ok(h.sessionStore.go30AnnouncementRemindWakeAt, 'remind-later must record a sessionStorage wake-time');
+
+  // Still within the snooze window: the SAME live announcement must stay suppressed.
+  var stillSnoozed = makeBannerHarness_(false, { sessionStorage: h.sessionStore });
+  stillSnoozed.fns.applyAnnouncementState_({ day: 11, title: 'HC Moved', message: 'HC moved to Saturday' });
+  assert.equal(stillSnoozed.announcementModalHidden(), true, 'must stay suppressed until the wake-time passes');
+
+  // But an edit to the content during the snooze window must surface immediately, same rationale
+  // as the dismissal case above — the snooze was for a specific notice, not "day 11 forever".
+  var editedDuringSnooze = makeBannerHarness_(false, { sessionStorage: h.sessionStore });
+  editedDuringSnooze.fns.applyAnnouncementState_({ day: 11, title: 'HC Moved', message: 'Actually, HC is cancelled entirely' });
+  assert.equal(editedDuringSnooze.announcementModalHidden(), false, 'an edited announcement must not stay suppressed by an old snooze');
+})();
+
+(function testAnnouncementRemindLaterRechecksTheLiveAnnouncementOnWake() {
+  // F3Go30-g9bi: firing must re-check the LIVE config.announcement, not replay what was cached at
+  // click-time — it may have been cleared or changed since.
+  var pastWithFingerprint = String(Date.now() - 1000) + '|11:abc123';
+  var expiredWake = makeBannerHarness_(false, { sessionStorage: { go30AnnouncementRemindWakeAt: pastWithFingerprint } });
+  expiredWake.fns.applyAnnouncementState_(null); // the notice was cleared server-side while snoozed
+  assert.equal(expiredWake.announcementModalHidden(), true, 'a cleared live announcement must not reappear just because the snooze expired');
+
+  var changedWake = makeBannerHarness_(false, { sessionStorage: { go30AnnouncementRemindWakeAt: pastWithFingerprint } });
+  changedWake.fns.applyAnnouncementState_({ day: 14, title: 'Different Notice', message: 'A different, newer notice' });
+  assert.equal(changedWake.announcementModalHidden(), false, 'an expired snooze must surface whatever is live now');
+  assert.equal(changedWake.announcementTitle(), 'Different Notice');
 })();
 
 console.log('test_static_page_client_invariants.js: all assertions passed');

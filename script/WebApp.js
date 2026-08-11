@@ -473,6 +473,44 @@ function handleAdminPost_(e) {
       GasLogger.log('handleAdminPost_.setContextDate', { ns: payload.ns || null, contextDate: payload.contextDate || null });
       return jsonOutput_({ ok: true, contextDate: payload.contextDate || null });
     }
+    if (payload.action === 'setConfigValue') {
+      // F3Go30-g9bi: generic dev/test-support Config-sheet write, generalizing setContextDate's
+      // shape (same PROD guard, same resolveTemplateSpreadsheet_/openConfigSheet path) — needed
+      // to live-verify Config-driven features (e.g. Announce.<day> splash rows) against a real
+      // SIT tracker without hand-editing the sheet. Same PROD refusal rationale as setContextDate:
+      // failing loudly here beats a silent no-op write.
+      if (typeof APP_DEPLOY_TARGET !== 'undefined' && APP_DEPLOY_TARGET === 'TEMPLATE') {
+        return jsonOutput_({ ok: false, error: 'forbidden_in_prod' });
+      }
+      if (!payload.key) {
+        return jsonOutput_({ ok: false, error: 'key is required' });
+      }
+      var setConfigSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+      var setConfigSheet = openConfigSheet(setConfigSpreadsheet);
+      if (!setConfigSheet) {
+        return jsonOutput_({ ok: false, error: 'config_sheet_not_found' });
+      }
+      setConfigSheet.upsertValue(payload.key, payload.primary || '', payload.secondary || '');
+      GasLogger.log('handleAdminPost_.setConfigValue', { ns: payload.ns || null, key: payload.key });
+      return jsonOutput_({ ok: true, key: payload.key });
+    }
+    if (payload.action === 'getConfigValue') {
+      // F3Go30-g9bi: read-only counterpart to setConfigValue — lets a live-check script capture a
+      // Config row's current value BEFORE overwriting it for a test, so it can restore the exact
+      // original afterward instead of blindly blanking a row that might carry real, human-authored
+      // content (e.g. an active Announce.<day> notice). No PROD guard: this is a plain read, same
+      // risk class as getSheet (also unguarded) — nothing here can mutate state.
+      if (!payload.key) {
+        return jsonOutput_({ ok: false, error: 'key is required' });
+      }
+      var getConfigSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+      var getConfigSheet = openConfigSheet(getConfigSpreadsheet);
+      if (!getConfigSheet) {
+        return jsonOutput_({ ok: false, error: 'config_sheet_not_found' });
+      }
+      var found = getConfigSheet.getPair(payload.key);
+      return jsonOutput_({ ok: true, key: payload.key, found: !!found, primary: found ? found.primary : null, secondary: found ? found.secondary : null });
+    }
     if (payload.action === 'resetCheckinSession') {
       // Test-support only (F3Go30 identity-token-flow.spec.js): removes every CheckinSessions
       // row bound to {f3Name, email} so a Playwright spec asserting exact "first use"

@@ -53,6 +53,7 @@
     --btn-fail-fg: #b8390f; --btn-fail-hover-border: #b8390f; --btn-fail-hover-bg: #fbe4db;
 
     --score-divider: #ede9df;
+    --tooltip-bg: #2b2b2b; --tooltip-fg: #f8f4ea;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -98,6 +99,7 @@
       --btn-fail-fg: #e2795c; --btn-fail-hover-border: #e2795c; --btn-fail-hover-bg: #3a2015;
 
       --score-divider: #33403a;
+      --tooltip-bg: #ece7dc; --tooltip-fg: #20241f;
     }
   }
   body { margin: 0; min-height: 100vh; background: var(--bg); font-family: Arial, Helvetica, sans-serif; color: var(--text); }
@@ -161,16 +163,22 @@
   .checkin-status { font-size: 15px; color: var(--text-faint); margin: -2px 0 8px; }
   .checkin-status.status-warn { color: var(--warn-fg); font-weight: bold; }
   .checkin-status.status-late { color: var(--danger); font-weight: bold; }
-  .checkin-section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: var(--brand); margin: 18px 0 8px; }
+  .checkin-section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: var(--brand); margin: 18px 0 8px; text-transform: uppercase; }
   .goals-reminder { background: var(--soft-bg); border: 1px solid var(--soft-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 4px; }
-  .goals-reminder-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
-  .goals-reminder-title { font-size: 12px; font-weight: bold; letter-spacing: .04em; text-transform: uppercase; color: var(--brand); }
+  .goals-reminder-edit-row { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+  /* F3Go30: "Your Goals"/"Goals" label promoted out of the box to match the TODAY/YESTERDAY
+     section-label style (checkin-section-label) — clicking it expands/collapses the box below. */
+  .goals-toggle-label { cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none; }
+  .goals-toggle-icon { font-size: 16px; font-weight: bold; color: var(--brand); }
   .goals-reminder-row { font-size: 15px; line-height: 1.4; margin: 3px 0; }
   .goals-reminder-row strong { color: var(--brand); }
   .error-text { font-size: 16px; color: var(--danger); margin-bottom: 8px; }
   .warning-text { font-size: 15px; color: var(--warn-fg); background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
   .hidden { display: none; }
-  .stats-row { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 12px; margin-top: 32px; align-items: stretch; }
+  /* F3Go30: Total Score's bonus points live in their own Bonus tile now (both here and in
+     pax-detail — the only two .stats-row users), so this is a 4-tile even 2x2 grid rather than
+     the old 3-wide weighted layout. */
+  .stats-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 32px; align-items: stretch; }
   .stat-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px; text-align: center; display: flex; flex-direction: column; align-items: center; }
   .stat-card-clickable { cursor: pointer; }
   .stat-card-clickable:hover, .stat-card-clickable:focus-visible { border-color: var(--brand); background: var(--soft-bg); }
@@ -181,11 +189,18 @@
   .day-mini-bar { display: flex; gap: 1.5px; align-items: center; justify-content: center; flex: 1; min-width: 0; }
   .day-mini-cell { width: 6px; height: 12px; border-radius: 1px; flex-shrink: 0; }
   .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+  /* F3Go30: the hit/miss/fail key in the space below the rolling-average chart card — a bare
+     line, not its own boxed legend, so it shouldn't read as a separate labeled section. */
+  .legend-inline { justify-content: center; margin-top: 12px; }
   .legend-item { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text-faint); }
   .legend-swatch { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
   .score-tile-body { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
   .score-main { display: flex; flex-direction: column; align-items: center; }
   .score-bonus-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; border-top: 1px solid var(--score-divider); padding-top: 8px; width: 100%; justify-items: center; }
+  /* F3Go30 Bonus tile (dashboard's #dBonusTile and pax-detail's #pdBonusTile): bonus list as
+     its own stat-card, not stacked under Total Score, so no divider/top-padding needed and a
+     single column fits the narrower tile. */
+  .score-bonus-list.standalone { border-top: none; padding-top: 0; margin-top: 4px; grid-template-columns: 1fr; }
   .bonus-type-row { display: flex; align-items: center; gap: 5px; }
   .bonus-type-code { font-family: monospace; font-weight: bold; font-size: 12px; padding: 1px 5px; border-radius: 3px; }
   .bonus-type-code.fe { background: var(--pill-fe-bg); color: var(--pill-fe-fg); }
@@ -196,7 +211,7 @@
   .team-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(120px,1fr)); gap: 10px; margin-top: 12px; }
   .team-tile { position: relative; border-radius: 10px; padding: 12px 8px; text-align: center; border: 1.5px solid var(--border); background: var(--input-bg); display: flex; flex-direction: column; align-items: center; cursor: pointer; }
   .team-tile:active { opacity: .8; }
-  .team-tile .checkin-status-badge { position: absolute; top: 6px; left: 7px; font-size: 14px; margin-right: 0; }
+  .team-tile .checkin-status-badge, #pdCheckinBadge .checkin-status-badge { position: absolute; top: 6px; left: 7px; font-size: 14px; margin-right: 0; }
   .team-tile.me { border-color: var(--brand); background: var(--soft-bg); }
   .team-tile .tname { font-weight: bold; font-size: 15px; margin: 4px 0 2px; }
   .team-tile .tscore { font-size: 21px; font-weight: bold; }
@@ -213,12 +228,27 @@
   .board-row-main .bname { width: 117px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: bold; }
   .board-row-main .bstatus { width: 20px; flex-shrink: 0; text-align: center; }
   .board-row-main .bpct { width: 30px; flex-shrink: 0; text-align: right; font-family: monospace; font-weight: bold; }
-  .checkin-status-badge { margin-right: 3px; display: inline-block; }
+  /* F3Go30 pax-detail: taps (not just hover) reveal the badge's meaning — `title` alone is a
+     no-op on touch, and the badge sits inside a clickable tile/row so a tap has to be caught and
+     stopped here before it reaches that ancestor's own click handler (see the delegated
+     `.checkin-status-badge` click listener near checkinStatusBadgeHtml_). */
+  .checkin-status-badge { position: relative; margin-right: 3px; display: inline-block; cursor: pointer; }
   .checkin-status-badge.done { color: #3f8b75; font-weight: bold; font-size: 1.05em; line-height: 1; }
   .checkin-status-badge.urgent { color: var(--urgent); font-weight: bold; font-size: 1.15em; line-height: 1; }
+  .checkin-status-badge .badge-tip {
+    position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+    background: var(--tooltip-bg); color: var(--tooltip-fg); font-size: 12px; font-weight: normal;
+    padding: 4px 9px; border-radius: 6px; white-space: nowrap; z-index: 30; pointer-events: none;
+    opacity: 0; visibility: hidden; transition: opacity .12s ease;
+  }
+  .checkin-status-badge:hover .badge-tip,
+  .checkin-status-badge:focus-visible .badge-tip,
+  .checkin-status-badge.tip-open .badge-tip { opacity: 1; visibility: visible; }
   .board-row-bonuses { display: flex; gap: 3px; margin-top: 3px; padding-left: 4px; }
   .board-row-bonuses .bonus-type-code { font-size: 10px; padding: 0 4px; }
-  .chart-card { margin-top: 12px; }
+  /* F3Go30: the chart itself (and now the legend line under it) already reads as the bottom of
+     this card — the full 22px .card padding below that reads as dead space, so trim it back. */
+  .chart-card { margin-top: 12px; padding-bottom: 12px; }
   .section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: var(--brand); margin: 22px 0 4px; }
   .api-error-banner { background: var(--error-bg); border-bottom: 3px solid var(--error-border); color: var(--error-fg); padding: 12px 18px; font-size: 17px; line-height: 1.5; }
   .api-error-banner strong { display: block; margin-bottom: 2px; }
@@ -231,6 +261,32 @@
   .page-banner-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .page-banner button { background: none; border: none; color: var(--warn-fg); text-decoration: underline; cursor: pointer; font-size: 14px; padding: 0; font-family: inherit; flex-shrink: 0; }
   .page-banner-actions { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+  .announce-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; padding: 18px; z-index: 1000; }
+  /* F3Go30-g9bi live-verify fix: .hidden{display:none} (declared earlier in this stylesheet) and
+     .announce-overlay{display:flex} above are both single-class selectors of equal specificity,
+     so source order alone decided the winner — .announce-overlay came later and always won,
+     leaving the overlay visible (and blocking clicks on the page underneath) even with the
+     hidden class applied. This two-class selector outranks both on specificity and always wins
+     regardless of declaration order. */
+  .announce-overlay.hidden { display: none; }
+  .announce-modal { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 22px; box-shadow: 0 8px 30px var(--shadow); max-width: 420px; width: 100%; }
+  .announce-modal h2 { margin: 0 0 10px; font-size: 19px; color: var(--brand); }
+  .announce-modal p { margin: 0 0 10px; font-size: 16px; line-height: 1.4; color: var(--text); white-space: pre-wrap; }
+  .announce-modal p a { color: var(--brand); }
+  /* The body is admin-authored HTML (F3Go30-g9bi follow-up) — a Site Q writing plain <p>/<ul>
+     blocks (e.g. pasted from a doc) must not get browser-default UA-stylesheet spacing stacked
+     on top of the p rule above (Chrome's default ul margin is ~1em, li has line-height-driven
+     gaps) — that reads as a wall of vertical whitespace between short lines. Tightened + the
+     modal's own trailing element loses its bottom margin so it doesn't leave a gap before the
+     action buttons. */
+  .announce-modal ul, .announce-modal ol { margin: 0 0 10px; padding-left: 20px; }
+  .announce-modal li { margin: 0 0 4px; line-height: 1.4; }
+  .announce-modal li:last-child { margin-bottom: 0; }
+  #announcementText > :last-child { margin-bottom: 0; }
+  .announce-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+  .announce-modal-actions button { font-family: inherit; font-size: 14px; padding: 9px 14px; border-radius: 8px; cursor: pointer; }
+  #announcementRemindLaterBtn { background: none; border: 1px solid var(--border); color: var(--text); }
+  #announcementDismissBtn { background: var(--brand); border: 1px solid var(--brand); color: #fff; }
   .date-nav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 18px; }
   .date-nav-btn { width: 44px; height: 44px; border-radius: 8px; border: 2px solid var(--brand); background: var(--card-bg); color: var(--brand); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
   .date-nav-btn svg { width: 20px; height: 20px; display: block; }
@@ -255,9 +311,9 @@
   .card-head-row h2 { margin: 0; white-space: nowrap; }
   .btn-inline { width: auto; margin: 0; padding: 8px 14px; flex-shrink: 0; }
   @media (max-width: 480px) {
-    .stats-row { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .header { padding: 12px; }
+    .stats-row { gap: 8px; margin-top: 18px; }
     .stat-card { padding: 10px; }
-    .stat-card:nth-child(3) { grid-column: 1 / -1; }
     .stat-label { font-size: 12px; margin-bottom: 4px; }
     .stat-value { font-size: 27px; }
     .stat-sub { font-size: 12px; }
@@ -358,6 +414,23 @@
         <button id="updateReloadBtn" type="button">Reload</button>
         <button id="updateDismissBtn" type="button">Not now</button>
       </span>
+    </div>
+  </div>
+
+  <!-- F3Go30-g9bi: Config-driven daily notice ("HC moved to Saturday", month-end reminder), see
+       applyAnnouncementState_ below. Server-computed validity window (checkinClientConfig_dw_'s
+       Announce.<day>/day+3), client-only dismissal for V1. Blocking (unlike gasMovedBanner/
+       updateBanner above) — but only ever shown in response to a live config.announcement, so a
+       Config-lookup failure on the server (best-effort there) simply never raises it; it can
+       never gate the check-in path underneath. -->
+  <div id="announcementModal" class="announce-overlay hidden">
+    <div class="announce-modal">
+      <h2 id="announcementTitle"></h2>
+      <div id="announcementText"></div>
+      <div class="announce-modal-actions">
+        <button id="announcementRemindLaterBtn" type="button">Remind me later</button>
+        <button id="announcementDismissBtn" type="button">Got it</button>
+      </div>
     </div>
   </div>
 
@@ -621,11 +694,6 @@
         <div class="stat-card stat-card-clickable" id="dMonthProgressTile" role="button" tabindex="0" title="Edit today's/yesterday's check-in">
           <div class="stat-label">MONTH PROGRESS</div>
           <div id="dMonthRing"></div>
-          <div class="legend" style="margin-top:8px;justify-content:center;">
-            <div class="legend-item"><div class="legend-swatch" style="background:#3f8b75;"></div>Hits</div>
-            <div class="legend-item"><div class="legend-swatch" style="background:#f7b209;"></div>Misses</div>
-            <div class="legend-item"><div class="legend-swatch" style="background:#de521c;"></div>Fails</div>
-          </div>
         </div>
         <div class="stat-card">
           <div class="stat-label">STREAK</div>
@@ -639,14 +707,28 @@
               <div class="stat-value" id="dScore"></div>
               <div class="stat-sub" id="dScoreSub"></div>
             </div>
-            <div class="score-bonus-list" id="dBonuses"></div>
           </div>
+        </div>
+        <!-- F3Go30: bonus points pulled out of Total Score into their own tile — clickable here
+             (self scope) to open the add/edit Bonus Points view; the pax-detail popup's Bonus
+             tile (#pdBonusTile) is read-only since it may be showing a teammate. -->
+        <div class="stat-card stat-card-clickable" id="dBonusTile" role="button" tabindex="0" title="Add/edit bonus points">
+          <div class="stat-label">BONUS</div>
+          <div class="score-bonus-list standalone" id="dBonuses"></div>
         </div>
       </div>
 
       <div class="card chart-card">
         <div class="section-label" style="margin-top:0;">7-DAY ROLLING AVERAGE</div>
         <div id="dAvgChart"></div>
+      </div>
+      <!-- F3Go30: hit/miss/fail color key, demoted from the Month Progress tile's own boxed
+           legend — a bare line below the chart card, not a labeled block, to conserve vertical
+           space. -->
+      <div class="legend legend-inline">
+        <div class="legend-item"><div class="legend-swatch" style="background:#3f8b75;"></div>Hits</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#f7b209;"></div>Misses</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#de521c;"></div>Fails</div>
       </div>
 
       <div class="section-label">MY TEAM &middot; <span id="dTeamName"></span></div>
@@ -710,14 +792,13 @@
       <div class="section-label" style="margin-top:0;" id="paxDetailTeam"></div>
 
       <div class="stats-row">
-        <div class="stat-card">
+        <!-- F3Go30 pax-detail: reuses the same .checkin-status-badge the dashboard's team-tile
+             places on this same "month progress" tile (checkinStatusBadgeHtml_/renderTeamTile_)
+             rather than a one-off pax-detail badge — see id="pdCheckinBadge" fill-in below. -->
+        <div class="stat-card" style="position:relative;">
+          <div id="pdCheckinBadge"></div>
           <div class="stat-label">MONTH PROGRESS</div>
           <div id="pdMonthRing"></div>
-          <div class="legend" style="margin-top:8px;justify-content:center;">
-            <div class="legend-item"><div class="legend-swatch" style="background:#3f8b75;"></div>Hits</div>
-            <div class="legend-item"><div class="legend-swatch" style="background:#f7b209;"></div>Misses</div>
-            <div class="legend-item"><div class="legend-swatch" style="background:#de521c;"></div>Fails</div>
-          </div>
         </div>
         <div class="stat-card">
           <div class="stat-label">STREAK</div>
@@ -731,14 +812,28 @@
               <div class="stat-value" id="pdScore"></div>
               <div class="stat-sub" id="pdScoreSub"></div>
             </div>
-            <div class="score-bonus-list" id="pdBonuses"></div>
           </div>
+        </div>
+        <!-- F3Go30: bonus points pulled out of Total Score into their own tile. Not clickable —
+             unlike the dashboard's #dBonusTile, this popup may be showing a teammate, and bonus
+             editing is always self-scoped (see openBonusManage_). -->
+        <div class="stat-card" id="pdBonusTile">
+          <div class="stat-label">BONUS</div>
+          <div class="score-bonus-list standalone" id="pdBonuses"></div>
         </div>
       </div>
 
       <div class="card chart-card">
         <div class="section-label" style="margin-top:0;">7-DAY ROLLING AVERAGE</div>
         <div id="pdAvgChart"></div>
+      </div>
+      <!-- F3Go30: hit/miss/fail color key, demoted from the Month Progress tile's own boxed
+           legend — a bare line below the chart card, not a labeled block, to conserve vertical
+           space. -->
+      <div class="legend legend-inline">
+        <div class="legend-item"><div class="legend-swatch" style="background:#3f8b75;"></div>Hits</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#f7b209;"></div>Misses</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#de521c;"></div>Fails</div>
       </div>
 
       <div id="paxDetailGoals" class="hidden"></div>
@@ -748,10 +843,7 @@
 
     <div id="step-bonus" class="hidden">
       <div class="card">
-        <div class="card-head-row">
-          <h2>Bonus Points</h2>
-          <button class="secondary btn-inline" id="bonusBackBtn">&larr; Back</button>
-        </div>
+        <h2>Bonus Points</h2>
         <div class="section-label" id="bonusMonthLabel" style="margin-top:0;"></div>
         <p class="muted">Log EHing an FNG, Fellowship, a Q, or an Inspire moment. EHing FNG, Q
           Point, and Inspire need a link to Slack as evidence before they count.</p>
@@ -1237,6 +1329,91 @@
   var updateBanner_ = makeDismissibleBanner_('updateBanner', 'updateDismissBtn', 'go30UpdateDismissed');
   $('updateReloadBtn').addEventListener('click', function() { location.reload(); });
 
+  /** F3Go30-g9bi: the announcement splash's own dismissal is value-keyed (mirrors
+   * makeDismissibleBanner_'s value-keyed pattern above), NOT built on top of it — this modal also
+   * needs a "Remind me later" snooze makeDismissibleBanner_ has no notion of, so it gets its own
+   * small wiring instead of stretching that helper's shape to fit. "Remind me later" deliberately
+   * uses sessionStorage (not localStorage) so it never outlives the browser tab/session, and on
+   * wake it must re-check whatever config.announcement is passed in live at that moment (never a
+   * value captured at click-time) — it may have changed or cleared since.
+   *
+   * The dismissal/snooze key is a fingerprint of {day, title, message} — day ALONE (the original
+   * shape) meant a Site Q editing an already-dismissed day's message on the same day left it
+   * permanently suppressed for anyone who'd already dismissed it, with no way to re-surface the
+   * edit short of the day rolling over. Content is part of the identity now, exactly like
+   * updateBanner_ keys its own dismissal on the server VERSION string, not just "an update
+   * happened" — a changed announcement is a different notice. */
+  var ANNOUNCE_DISMISS_KEY_ = 'go30AnnouncementDismissed';
+  var ANNOUNCE_REMIND_WAKE_KEY_ = 'go30AnnouncementRemindWakeAt';
+  var ANNOUNCE_REMIND_DELAY_MS_ = 30 * 60 * 1000;
+  var announceModalShownFingerprint_ = null;
+
+  // Not a security hash — only needs to change when the content does, so localStorage/
+  // sessionStorage don't have to carry the full (possibly long, HTML-bearing) message text.
+  function announceFingerprint_(announcement) {
+    var raw = announcement.day + ' ' + (announcement.title || '') + ' ' + (announcement.message || '');
+    var h = 0;
+    for (var i = 0; i < raw.length; i++) { h = (h * 31 + raw.charCodeAt(i)) | 0; }
+    return announcement.day + ':' + h.toString(36);
+  }
+  function announceDismissed_(fingerprint) {
+    try { return localStorage.getItem(ANNOUNCE_DISMISS_KEY_) === fingerprint; } catch (e) { return false; }
+  }
+  function announceSnoozed_(fingerprint) {
+    try {
+      var stored = sessionStorage.getItem(ANNOUNCE_REMIND_WAKE_KEY_);
+      if (!stored) return false;
+      var sep = stored.indexOf('|');
+      var wakeAt = Number(sep === -1 ? stored : stored.slice(0, sep));
+      var snoozedFingerprint = sep === -1 ? null : stored.slice(sep + 1);
+      // A snooze recorded against a DIFFERENT (older) fingerprint must not suppress a
+      // subsequently-edited announcement, even if the wake-time hasn't passed yet.
+      return !!wakeAt && Date.now() < wakeAt && snoozedFingerprint === fingerprint;
+    } catch (e) { return false; }
+  }
+  function hideAnnouncementModal_() {
+    announceModalShownFingerprint_ = null;
+    $('announcementModal').classList.add('hidden');
+  }
+  function showAnnouncementModal_(announcement) {
+    announceModalShownFingerprint_ = announceFingerprint_(announcement);
+    $('announcementTitle').textContent = announcement.title;
+    // innerHTML, deliberately — the body may carry links/formatting (F3Go30-g9bi follow-up).
+    // Safe here specifically because this text originates ONLY from the Config sheet, which is
+    // Site-Q/admin-edited (same trust boundary as every other Config value already rendered
+    // as-is elsewhere, e.g. siteQName) — never PAX-supplied, so there is no injection surface
+    // to sanitize against. Do not reuse this pattern for anything a PAX can type.
+    $('announcementText').innerHTML = announcement.message || '';
+    $('announcementModal').classList.remove('hidden');
+  }
+  /** Called from applyServerConfig_ on every LIVE config response — shows or hides
+   * UNCONDITIONALLY (never just gates showing) so an admin clearing an announcement, or it
+   * simply expiring server-side, actively closes an already-open splash on the PAX's next
+   * identify/dashboard/resume-refresh, mirroring applyVersionState_/updateBanner_'s
+   * show-if-applicable/else-hide shape above. */
+  function applyAnnouncementState_(announcement) {
+    var fingerprint = announcement ? announceFingerprint_(announcement) : null;
+    if (announcement && !announceDismissed_(fingerprint) && !announceSnoozed_(fingerprint)) {
+      showAnnouncementModal_(announcement);
+    } else {
+      hideAnnouncementModal_();
+    }
+  }
+  $('announcementDismissBtn').addEventListener('click', function() {
+    if (announceModalShownFingerprint_ != null) {
+      try { localStorage.setItem(ANNOUNCE_DISMISS_KEY_, announceModalShownFingerprint_); } catch (e) { /* not fatal */ }
+    }
+    hideAnnouncementModal_();
+  });
+  $('announcementRemindLaterBtn').addEventListener('click', function() {
+    if (announceModalShownFingerprint_ != null) {
+      try {
+        sessionStorage.setItem(ANNOUNCE_REMIND_WAKE_KEY_, (Date.now() + ANNOUNCE_REMIND_DELAY_MS_) + '|' + announceModalShownFingerprint_);
+      } catch (e) { /* not fatal */ }
+    }
+    hideAnnouncementModal_();
+  });
+
   /** True when this document is a BUILT client running a different version than the server
    * reports. A null clientBuild means unbuilt src/ served directly (local dev + Playwright) —
    * there is no build to be behind, so that is never staleness. */
@@ -1270,7 +1447,7 @@
 
   // Steps whose Back now lives in the persistent header (headerBackBtn) instead of a per-card
   // button, keyed to their fixed destination step. 'bonus' isn't listed here — its Back target
-  // is dynamic (state.bonusReturnStep, set below) and stays on bonusBackBtn.
+  // is dynamic (state.bonusReturnStep, set below); headerBackBtn's click handler special-cases it.
   var HEADER_BACK_TARGET_ = { dashboard: 'checkin', paxDetail: 'dashboard' };
 
   function showStep(name) {
@@ -1278,7 +1455,7 @@
       $('step-' + s).classList.toggle('hidden', s !== name);
     });
     state.currentStep = name;
-    $('headerBackBtn').classList.toggle('hidden', !HEADER_BACK_TARGET_[name]);
+    $('headerBackBtn').classList.toggle('hidden', !HEADER_BACK_TARGET_[name] && name !== 'bonus');
     $('moreBtn').classList.toggle('hidden', name !== 'dashboard');
     $('bonusBtn').classList.toggle('hidden', name === 'identify' || name === 'bonus' || name === 'signup' || name === 'nextMonthChoice' || name === 'paxDetail');
     if (name === 'checkin' || name === 'dashboard') state.bonusReturnStep = name;
@@ -1356,8 +1533,16 @@
 
   /** Applies the site-config values from an identify response's `config` field — the static
    * counterpart of GAS's server-templated bootstrap (see CheckinApp.html's equivalent vars).
-   * Idempotent: harmless to call again on every subsequent identify response. */
-  function applyServerConfig_(cfg) {
+   * Idempotent: harmless to call again on every subsequent identify response.
+   * @param {boolean=} isLive Defaults true. F3Go30-g9bi: the announcement splash must NEVER
+   *   paint off the cached/replayed instant-paint snapshot (loadCheckinSnapshot_) — only off a
+   *   live response — to avoid flashing a stale, expired, or already-cleared announcement before
+   *   the live identify lands (same staleness class the snapshot code already handles for
+   *   todayStatus/yesterdayStatus, F3Go30-833s.17). The snapshot-replay call site passes false;
+   *   every other call site (typed identify, live token identify, silentResumeRefresh_) is live
+   *   by default. Every other field here is safe to paint from a snapshot as before — only the
+   *   announcement gate is isLive-conditional. */
+  function applyServerConfig_(cfg, isLive) {
     if (!cfg) return;
     APP_VERSION = cfg.appVersion;
     BONUS_TYPE_RULES_ = cfg.bonusTypeRules || {};
@@ -1385,6 +1570,7 @@
     // painting cfg.appVersion into the footer used to make a stale client look current. The
     // client's own build stays on display; a mismatch raises the reload prompt instead.
     applyVersionState_(STATIC_BUILD_VERSION_, APP_VERSION);
+    if (isLive !== false) applyAnnouncementState_(cfg.announcement || null);
   }
 
   // ── Step: identify ────────────────────────────────────────────────────
@@ -1614,7 +1800,7 @@
       // the blocking "Signing you in..." spinner. firstUse/emailMismatch are one-shot/security
       // fields that must only ever come from a live response, so they're forced false here.
       paintedFromSnapshot_ = true;
-      if (checkinSnapshot_.config) applyServerConfig_(checkinSnapshot_.config);
+      if (checkinSnapshot_.config) applyServerConfig_(checkinSnapshot_.config, false);
       applyIdentifySuccess_(Object.assign({}, checkinSnapshot_, { firstUse: false, emailMismatch: false }));
     } else {
       $('step-identify').classList.add('hidden');
@@ -1701,6 +1887,39 @@
       .join('');
   }
 
+  /** Builds the "Your Goals"/"Goals" toggle label + collapsible box markup shared by
+   * renderGoalsReminder_ (self, on the checkin page) and renderPaxDetailGoals_ (read-only,
+   * in the pax-detail popup) — label lives outside the box, styled to match the TODAY/YESTERDAY
+   * checkin-section-label, and clicking it expands/collapses `boxInnerHtml`. `open` is the
+   * caller's current expand/collapse state (self defaults collapsed, pax-detail defaults open —
+   * see goalsSelfOpen_/goalsPaxOpen_). `labelId`/`boxId` let each caller wire its own toggle
+   * handler without colliding with the other's ids. */
+  function goalsToggleHtml_(text, labelId, boxId, open, boxInnerHtml) {
+    return '<div class="checkin-section-label goals-toggle-label" id="' + labelId + '" role="button" tabindex="0" aria-expanded="' + open + '">' +
+        text + ' <span class="goals-toggle-icon" id="' + labelId + 'Icon">' + (open ? '&#9650;' : '&#9660;') + '</span>' +
+      '</div>' +
+      '<div class="goals-reminder' + (open ? '' : ' hidden') + '" id="' + boxId + '">' + boxInnerHtml + '</div>';
+  }
+
+  function wireGoalsToggle_(labelId, boxId, getOpen, setOpen) {
+    var label = $(labelId);
+    var toggle = function() {
+      var open = !getOpen();
+      setOpen(open);
+      label.setAttribute('aria-expanded', open);
+      $(labelId + 'Icon').innerHTML = open ? '&#9650;' : '&#9660;';
+      $(boxId).classList.toggle('hidden', !open);
+    };
+    label.addEventListener('click', toggle);
+    label.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  }
+
+  // Collapsed by default on the checkin page (self) — persists across re-renders within the
+  // session so re-loading the checkin step doesn't fight a choice the PAX just made.
+  var goalsSelfOpen_ = false;
+
   function renderGoalsReminder_(goals) {
     var el = $('goalsReminder');
     var rowsHtml = goalsRowsHtml_(goals);
@@ -1711,28 +1930,35 @@
     }
     // F3Go30-833s.9: a button, not an anchor — editing goals opens the in-page signup step
     // instead of navigating this document to the GAS signup page.
-    el.innerHTML = '<div class="goals-reminder">' +
-      '<div class="goals-reminder-head">' +
-        '<span class="goals-reminder-title">Your goals</span>' +
+    var boxInnerHtml = '<div class="goals-reminder-edit-row">' +
         '<button type="button" id="goalsEditBtn" class="bonus-edit-btn">Edit</button>' +
-      '</div>' + rowsHtml + '</div>';
+      '</div>' + rowsHtml;
+    el.innerHTML = goalsToggleHtml_('Your Goals', 'goalsToggleLabel', 'goalsReminderBox', goalsSelfOpen_, boxInnerHtml);
     el.classList.remove('hidden');
-    // Re-bound on every render — innerHTML above replaces the button element each time.
+    // Re-bound on every render — innerHTML above replaces these elements each time.
     $('goalsEditBtn').addEventListener('click', function() { openSignup_('current'); });
+    wireGoalsToggle_('goalsToggleLabel', 'goalsReminderBox',
+      function() { return goalsSelfOpen_; }, function(v) { goalsSelfOpen_ = v; });
   }
 
-  /** Renders another PAX's WHO/WHAT/HOW goals in the pax-detail popup — same markup as the
-   * self reminder (goalsRowsHtml_) minus the Edit button, since a PAX can't edit a teammate's
-   * signup. `goals === undefined` means the fetch is still in flight (no cached copy either) —
-   * render a "Loading…" placeholder. `goals === null` means the fetch settled empty/failed, or
-   * there's genuinely nothing to show — hide the block. */
+  // Open by default in the pax-detail popup — reset to true each time openPaxDetail_ opens a
+  // (possibly different) teammate; see there. Persists across the Loading→loaded re-render for
+  // the same teammate so a mid-fetch collapse isn't clobbered when the fetch lands.
+  var goalsPaxOpen_ = true;
+
+  /** Renders another PAX's WHO/WHAT/HOW goals in the pax-detail popup — same collapsible
+   * label+box shape as the self reminder (goalsToggleHtml_) minus the Edit button, since a PAX
+   * can't edit a teammate's signup. `goals === undefined` means the fetch is still in flight (no
+   * cached copy either) — render a "Loading…" placeholder. `goals === null` means the fetch
+   * settled empty/failed, or there's genuinely nothing to show — hide the block. */
   function renderPaxDetailGoals_(goals) {
     var el = $('paxDetailGoals');
     if (goals === undefined) {
-      el.innerHTML = '<div class="goals-reminder">' +
-        '<div class="goals-reminder-head"><span class="goals-reminder-title">Goals</span></div>' +
-        '<div class="goals-reminder-row">Loading…</div></div>';
+      el.innerHTML = goalsToggleHtml_('Goals', 'paxGoalsToggleLabel', 'paxGoalsBox', goalsPaxOpen_,
+        '<div class="goals-reminder-row">Loading…</div>');
       el.classList.remove('hidden');
+      wireGoalsToggle_('paxGoalsToggleLabel', 'paxGoalsBox',
+        function() { return goalsPaxOpen_; }, function(v) { goalsPaxOpen_ = v; });
       return;
     }
     var rowsHtml = goals && goalsRowsHtml_(goals);
@@ -1741,10 +1967,10 @@
       el.innerHTML = '';
       return;
     }
-    el.innerHTML = '<div class="goals-reminder">' +
-      '<div class="goals-reminder-head"><span class="goals-reminder-title">Goals</span></div>' +
-      rowsHtml + '</div>';
+    el.innerHTML = goalsToggleHtml_('Goals', 'paxGoalsToggleLabel', 'paxGoalsBox', goalsPaxOpen_, rowsHtml);
     el.classList.remove('hidden');
+    wireGoalsToggle_('paxGoalsToggleLabel', 'paxGoalsBox',
+      function() { return goalsPaxOpen_; }, function(v) { goalsPaxOpen_ = v; });
   }
 
   /** Shared `.bonus-entry` inner markup — one entry's type/date/message/counted-badge, used by
@@ -2561,7 +2787,10 @@
     return pct >= 80 ? '#3f8b75' : pct >= 50 ? '#f7b209' : '#de521c';
   }
 
-  var SEGMENT_COLORS_ = { done: '#3f8b75', missed: '#f7b209', absent: '#de521c', pending: '#d8cfbf', upcoming: '#e7e2d8' };
+  // F3Go30: 'pending' (unfilled/no-value-yet) was #d8cfbf — too close to 'upcoming' (#e7e2d8,
+  // future days not yet reachable) to read as a distinct state on the ring/chart. Darkened to
+  // a clearly separate warm gray.
+  var SEGMENT_COLORS_ = { done: '#3f8b75', missed: '#f7b209', absent: '#de521c', pending: '#9c9284', upcoming: '#e7e2d8' };
   var SEGMENT_VALUES_ = { done: 1, missed: 0, absent: -1 };
   var DISPLAY_WINDOW_DAYS_ = 14;
   var ROLLING_AVERAGE_WINDOW_DAYS_ = 7;
@@ -2600,7 +2829,7 @@
     var bg = bgColor ? '<circle cx="' + cx + '" cy="' + cy + '" r="' + (size * 0.49) + '" fill="' + bgColor + '"></circle>' : '';
     var paths = '';
     for (var i = 0; i < total; i++) {
-      var color = SEGMENT_COLORS_[daySegments[i]] || '#d8cfbf';
+      var color = SEGMENT_COLORS_[daySegments[i]] || '#9c9284';
       var s0 = i * seg + gap / 2, s1 = (i + 1) * seg - gap / 2;
       if (s1 <= s0) s1 = s0 + 0.1;
       paths += '<path d="' + ringArcPath_(cx, cy, ro, ri, s0, s1) + '" fill="' + color + '"></path>';
@@ -2637,7 +2866,7 @@
     (daySegments || []).slice(0, currentDay).forEach(function(status) {
       var cell = document.createElement('div');
       cell.className = 'day-mini-cell';
-      cell.style.background = SEGMENT_COLORS_[status] || '#d8cfbf';
+      cell.style.background = SEGMENT_COLORS_[status] || '#9c9284';
       el.appendChild(cell);
     });
     return el;
@@ -2645,7 +2874,11 @@
 
   function buildAvgChartSvg_(rollingAverage, daySegments, currentDay) {
     if (!currentDay) return '<p class="muted" style="margin:0;">Not enough data yet.</p>';
-    var W = 600, H = 130, PADT = 12, PADB = 22, PADL = 28, PADR = 6;
+    // F3Go30: PADB used to leave room for x-axis day labels that were never drawn — trimmed
+    // from 22 to 10 (just enough for the "-1" label's descender) so the chart doesn't carry dead
+    // space below its bottom gridline; H shrinks by the same amount to keep the plot area (PH)
+    // unchanged.
+    var W = 600, H = 118, PADT = 12, PADB = 10, PADL = 28, PADR = 6;
     var PW = W - PADL - PADR, PH = H - PADT - PADB;
     var mapY = function(v) { return PADT + PH * (1 - (v + 1) / 2); };
     var xDenom = Math.max(currentDay - 1, 1);
@@ -2663,7 +2896,7 @@
                           // visible as a small bar straddling the line rather than invisible.
     for (var i = 0; i < currentDay; i++) {
       var status = daySegments[i];
-      var color = SEGMENT_COLORS_[status] || '#d8cfbf';
+      var color = SEGMENT_COLORS_[status] || '#9c9284';
       var v = SEGMENT_VALUES_[status] || 0;
       var x = mapX(i) - bw / 2, top = Math.min(zY, mapY(v)), ht = Math.abs(zY - mapY(v));
       if (ht < MIN_BAR_HT_) { top = zY - MIN_BAR_HT_ / 2; ht = MIN_BAR_HT_; }
@@ -2710,14 +2943,38 @@
     return (todayValue === 1 || todayValue === 0) ? 'done' : null;
   }
 
+  /** `title` alone never surfaces on touch (no hover state to simulate), so each badge carries
+   * its own `.badge-tip` bubble instead — shown on desktop :hover/:focus-visible via CSS, and
+   * toggled by tap via the delegated click listener below (which also stops the tap from
+   * reaching the tile/row's own click handler, since the badge sits inside it). */
+  function checkinStatusBadge_(cls, glyph, tipText) {
+    return '<span class="checkin-status-badge ' + cls + '" tabindex="0">' + glyph +
+      '<span class="badge-tip">' + escapeHtml_(tipText) + '</span></span>';
+  }
+
   function checkinStatusBadgeHtml_(status) {
     // Plain U+2713 (no emoji variation selector) — unlike ✅/✔️ it carries no built-in color, so
     // the .done CSS color rule actually applies.
-    if (status === 'done') return '<span class="checkin-status-badge done" title="Checked in today">&#10003;</span>';
-    if (status === 'warning') return '<span class="checkin-status-badge warning" title="Yesterday not checked in yet">⚠️</span>';
-    if (status === 'urgent') return '<span class="checkin-status-badge urgent" title="Yesterday not checked in">Ⓧ</span>';
+    if (status === 'done') return checkinStatusBadge_('done', '&#10003;', 'Checked in today');
+    if (status === 'warning') return checkinStatusBadge_('warning', '⚠️', 'Yesterday not checked in yet');
+    if (status === 'urgent') return checkinStatusBadge_('urgent', 'Ⓧ', 'Yesterday not checked in');
     return '';
   }
+
+  // Delegated (capture-phase, so it runs before the tile/row's own bubble-phase click handler
+  // and can stopPropagation in time) tap handler for every `.checkin-status-badge` on the page —
+  // badges are re-created via innerHTML on each render, so a per-element listener would need
+  // re-wiring on every repaint; this one listener covers all of them, present and future.
+  document.addEventListener('click', function(e) {
+    var badge = e.target.closest ? e.target.closest('.checkin-status-badge') : null;
+    document.querySelectorAll('.checkin-status-badge.tip-open').forEach(function(b) {
+      if (b !== badge) b.classList.remove('tip-open');
+    });
+    if (badge) {
+      e.stopPropagation();
+      badge.classList.toggle('tip-open');
+    }
+  }, true);
 
   var CHECKIN_STATUS_RING_BG_ = { warning: '#fdf1c9', urgent: '#f8d6d3' };
 
@@ -2745,10 +3002,13 @@
    * currently showing), same shape self's own render logic in renderDashboard_ works from.
    * Goals aren't in `view` (myTeam/paxBoard deliberately omit them — see handlePaxGoals_,
    * dashboardWebapp.js) so they're fetched separately by openPaxDetail_ and filled in by
-   * renderPaxDetailGoals_ once the response lands. */
-  function renderPaxDetail_(view, currentDay) {
+   * renderPaxDetailGoals_ once the response lands. `checkinStatus` reuses the exact same
+   * checkinStatusBadgeHtml_ the team-tile/board-row badge renders from (F3Go30: the popup
+   * previously had no checkin-status indicator at all). */
+  function renderPaxDetail_(view, currentDay, checkinStatus) {
     $('paxDetailName').textContent = view.name;
     $('paxDetailTeam').textContent = view.team || 'Unassigned';
+    $('pdCheckinBadge').innerHTML = checkinStatusBadgeHtml_(checkinStatus);
 
     $('pdMonthRing').innerHTML = buildRingSvg_(
       view.daySegments, 140, view.scorePct + '%', (view.score >= 0 ? '+' : '') + view.score + ' pts', scoreColor_(view.scorePct)
@@ -2812,15 +3072,19 @@
    * 'dashboard' (see showStep) — the dashboard's own DOM was never torn down, so scroll position
    * and content are exactly as left. `list`/`idx` are the raw-member array the tile/row came
    * from and this PAX's position in it (F3Go30 pax-detail prev/next) — stepPaxDetail_ loops
-   * within that same list, wrapping at either end. */
-  function openPaxDetail_(list, idx, dayIndex, totalDays) {
+   * within that same list, wrapping at either end. `todayIndex`/`yesterdayIndex` are carried
+   * through from renderDashboard_ (same values the team-tile/board-row badge was computed from)
+   * so the popup's own checkin-status badge — see renderPaxDetail_ — matches exactly. */
+  function openPaxDetail_(list, idx, dayIndex, totalDays, todayIndex, yesterdayIndex) {
     var len = list.length;
     idx = ((idx % len) + len) % len;
-    paxDetailNav_ = { list: list, idx: idx, dayIndex: dayIndex, totalDays: totalDays };
+    goalsPaxOpen_ = true; // F3Go30: Goals defaults open each time a (possibly new) teammate is shown
+    paxDetailNav_ = { list: list, idx: idx, dayIndex: dayIndex, totalDays: totalDays, todayIndex: todayIndex, yesterdayIndex: yesterdayIndex };
     var rawMember = list[idx];
     var view = memberViewForIndex_(rawMember, dayIndex, totalDays);
     var currentDay = dayIndex + 1;
-    renderPaxDetail_(view, currentDay);
+    var checkinStatus = checkinBadgeStatus_(rawMember, todayIndex, yesterdayIndex);
+    renderPaxDetail_(view, currentDay, checkinStatus);
     $('paxDetailPrevBtn').classList.toggle('hidden', len < 2);
     $('paxDetailNextBtn').classList.toggle('hidden', len < 2);
     showStep('paxDetail');
@@ -2855,7 +3119,7 @@
 
   function stepPaxDetail_(delta) {
     if (!paxDetailNav_) return;
-    openPaxDetail_(paxDetailNav_.list, paxDetailNav_.idx + delta, paxDetailNav_.dayIndex, paxDetailNav_.totalDays);
+    openPaxDetail_(paxDetailNav_.list, paxDetailNav_.idx + delta, paxDetailNav_.dayIndex, paxDetailNav_.totalDays, paxDetailNav_.todayIndex, paxDetailNav_.yesterdayIndex);
   }
 
   function trimTrailingBlanks_(values) {
@@ -3091,7 +3355,7 @@
       var view = memberViewForIndex_(m, dayIndex, d.totalDays);
       var checkinStatus = checkinBadgeStatus_(m, todayIndex, yesterdayIndex);
       var tileEl = renderTeamTile_(view, m.name === d.f3Name, currentDay, checkinStatus);
-      tileEl.addEventListener('click', function() { openPaxDetail_(myTeamList, idx, dayIndex, d.totalDays); });
+      tileEl.addEventListener('click', function() { openPaxDetail_(myTeamList, idx, dayIndex, d.totalDays, todayIndex, yesterdayIndex); });
       myTeamEl.appendChild(tileEl);
     });
 
@@ -3112,7 +3376,7 @@
         var checkinStatus = checkinBadgeStatus_(rawMember, todayIndex, yesterdayIndex);
         var row = document.createElement('div');
         row.className = 'board-row' + (m.name === d.f3Name ? ' me' : '');
-        row.addEventListener('click', function() { openPaxDetail_(groupMembers, idx, dayIndex, d.totalDays); });
+        row.addEventListener('click', function() { openPaxDetail_(groupMembers, idx, dayIndex, d.totalDays, todayIndex, yesterdayIndex); });
         var mainEl = document.createElement('div');
         mainEl.className = 'board-row-main';
         var nameEl = document.createElement('span');
@@ -3388,17 +3652,26 @@
 
   $('bonusType').addEventListener('change', updateBonusLinkVisibility_);
 
-  $('bonusBtn').addEventListener('click', function() {
+  // Bonus editing is always self-scoped (loadBonusList_ reads state.f3Name — there's no
+  // teammate-editing endpoint), so only the header bonus button and the dashboard's own Bonus
+  // tile (#dBonusTile) open this view — the pax-detail popup's Bonus tile (#pdBonusTile) may be
+  // showing a teammate and is deliberately not clickable.
+  function openBonusManage_() {
     hideApiError_();
     hideBonusSaveNotice_();
     closeBonusForm_();
     showStep('bonus');
     loadBonusList_();
+  }
+  $('bonusBtn').addEventListener('click', openBonusManage_);
+  $('dBonusTile').addEventListener('click', openBonusManage_);
+  $('dBonusTile').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBonusManage_(); }
   });
-  $('bonusBackBtn').addEventListener('click', function() { showStep(state.bonusReturnStep); });
   $('paxDetailPrevBtn').addEventListener('click', function() { stepPaxDetail_(-1); });
   $('paxDetailNextBtn').addEventListener('click', function() { stepPaxDetail_(1); });
   $('headerBackBtn').addEventListener('click', function() {
+    if (state.currentStep === 'bonus') { showStep(state.bonusReturnStep); return; }
     var target = HEADER_BACK_TARGET_[state.currentStep];
     if (target) showStep(target);
   });

@@ -84,6 +84,7 @@ secondary value.
 | `NameSpace` | Region identifier (e.g. `F3Waxhaw`) | — | `copyAndInit()`, `autoGenerateNextMonthTracker()` — drives spreadsheet name (`YYYY-MM-NameSpace`) and URL aliases |
 | `LogFile` | Drive file URL (written automatically on first use) | — | `copyAndInit()` — appends structured JSON log entries for UC-5 developer verification |
 | `Context Date` | `YYYY-MM-DD` override (optional, blank = unset) | — | `resolveContextDate_()` (go30tools.js) — namespace-scoped fallback "today" for the webapp's month-boundary/date-navigation logic (F3Go30-31w5.1); set via the `setContextDate` admin action or the Template's "Set Test Context Date..." menu item. Ignored outright on PROD. |
+| `Announce.<day>` (e.g. `Announce.11`) | Splash-notice **title** (plain text) | Splash-notice **body** (rendered as HTML — links/formatting allowed) | `checkinClientConfig_dw_` / `resolveActiveAnnouncement_dw_` (dashboardWebapp.js, F3Go30-g9bi) — pushes a blocking splash notice ("HC moved to Saturday") to the check-in app for pax. `<day>` is the integer day-of-month the notice starts on; it auto-expires after day+3 (server-computed against `resolveContextDate_`'s "today", so it honors a `Context Date` override on SIT). A **blank title** is treated as an unconfigured/empty entry and is never shown, even if the body column has leftover text — the title is the "is this row filled in" signal. The body may be blank (title-only notice) and, when present, is rendered as HTML (`innerHTML`, not escaped text) so it can include a link — safe only because this column is Site-Q/admin-edited, never PAX-supplied. Same scope as `Context Date` above — the ns/Template-resolved Config sheet, shared by every monthly tracker under that namespace, not a per-monthly-tracker-copy row. Set/clear via the `setConfigValue` admin action (e.g. `setConfigValue --body '{"key":"Announce.11","primary":"HC Moved","secondary":"Moved to <a href=\"...\">Saturday</a> this week"}'`) rather than hand-editing the sheet. If more than one row's window is active at once, the newest (highest) day wins — only one shows at a time. Dismissal is client-only (localStorage) in V1 — clearing/editing this row on an already-open PAX device closes the splash on their next identify/dashboard/resume-refresh (no manual client-side reset needed). |
 
 ### Environments
 
@@ -477,6 +478,25 @@ curl -s -L "https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec?cmd=signup" 
   --data-raw '{"action":"identify","f3Name":"Some Name","email":"some@example.com"}' \
   -H "Content-Type: text/plain"
 ```
+
+### Verifying a static-page deploy has propagated (F3Go30-g9bi)
+
+`npm run deploy:sit`/`deploy:prod` push the built static front end to the sibling `f3go30/
+static-pages` repo, which GitHub Pages serves from — but Pages/its CDN has propagation lag, so
+the public URL (`https://f3go30.github.io/static-pages/dist/<sit|prod>/`) can still answer with
+the *previous* build for a while after a deploy returns. Manually opening/screenshotting that URL
+right after a deploy without accounting for this can make a real fix look like it didn't ship.
+
+```bash
+node tools/wait-for-static-deploy.js --env sit    # polls the live page's version stamp; exits 0 once it matches the just-deployed build
+```
+
+Options: `--version X.Y.Z[.B]` (default: whatever `script/version.js` currently has, i.e. the
+build that was just stamped), `--interval <seconds>` (default 5), `--timeout <seconds>` (default
+180). Not needed before the checked-in Playwright live-check specs (`tests/playwright/
+*-live-check.spec.js`) — those serve `static-pages/src/` from a local throwaway HTTP server
+straight against the live GAS backend, bypassing GitHub Pages entirely, so staleness never
+applies to them.
 
 ### Producing a sign-up or check-in link (post-ADR-019)
 

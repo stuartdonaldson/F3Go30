@@ -135,6 +135,17 @@ Before changing a request/response shape on `handleCheckinPost_` / `handleSignup
 docs/OPERATIONS.md §API compatibility with installed clients — installed PWA clients update on
 their own schedule, so a stale client posting to a new server must keep working.
 
+GitHub Pages (the static front end's real host) has CDN propagation lag after a deploy — the
+public URL can still serve the previous build for a while. Before screenshotting/manually
+checking the live `f3go30.github.io` page right after a deploy, confirm it has actually
+propagated first:
+```
+node tools/wait-for-static-deploy.js --env sit    # polls until the live page's version stamp matches
+```
+Not needed before running the checked-in Playwright live-check specs (`tests/playwright/
+*-live-check.spec.js`) — those serve `static-pages/src/` from a local throwaway server straight
+against the live backend, bypassing GitHub Pages entirely, so they're never stale.
+
 ### Web app calls (all environments, all endpoints)
 ```
 node tools/callWebapp.js <action> [--cmd admin|signup|...] [--env sit|prod] [--body '{"key":"val"}']
@@ -144,7 +155,7 @@ injects the admin secret automatically. Default: `--cmd admin --env sit`.
 
 Common admin actions: `setScriptProperties`, `cleanupTracker`,
 `runScanTrackers`, `getSheet`, `runAutoGenerate`, `createTrackerForMonth`, `copyTemplate`,
-`teardownEnvironment`, `setContextDate`
+`teardownEnvironment`, `setContextDate`, `setConfigValue`, `getConfigValue`
 
 - `setContextDate` (F3Go30-31w5.1) persists a `{ns, contextDate}` override into the ns-resolved
   spreadsheet's Config sheet ("Context Date"), read as a fallback by every webapp entry point's
@@ -154,6 +165,16 @@ Common admin actions: `setScriptProperties`, `cleanupTracker`,
   automatically for the rest of that page's requests) always wins over the stored Config value.
   Refuses outright on PROD (`APP_DEPLOY_TARGET === 'TEMPLATE'`) — PROD always uses the real date,
   full stop, since the webapp is deployed `ANYONE_ANONYMOUS`.
+- `setConfigValue` (F3Go30-g9bi) writes an arbitrary `{ns, key, primary, secondary}` row into the
+  ns-resolved spreadsheet's Config sheet — a generic version of `setContextDate`'s write path,
+  for live-testing any Config-driven feature (e.g. `Announce.<day>` splash rows) without
+  hand-editing the sheet. Same PROD refusal as `setContextDate`.
+- `getConfigValue` (F3Go30-g9bi) reads back a single `{ns, key}` row (`{found, primary,
+  secondary}`) — read-only, no PROD guard. Use it to capture a row's current value before a
+  `setConfigValue` overwrite in a live-check script, so the script can restore the exact original
+  afterward instead of blindly clearing a key that might carry real, human-authored content (see
+  tests/playwright/announcement-splash-live-check.spec.js's SAFETY note — an earlier version of
+  that script clobbered a live Site-Q-authored announcement this way).
 
 - `runAutoGenerate` creates the tracker for **real-today's month + 1** (it's meant to run a
   few days before month-end via its own time trigger). If it's ever run late — after a month

@@ -1582,24 +1582,92 @@ function resolveCheckinToken_dw_(spreadsheet, token) {
 }
 
 /**
- * Site-config payload for the check-in front end: bonus type rules/labels, Site Q contact, the
- * namespace label, and the current app version. Attached to every handleCheckinIdentify_
- * response (F3Go30-5nfj.2: static-pages/src/index.html has no server-render step to bake these
- * into — unlike the removed GAS-hosted CheckinApp.html template (DR-04, 2026-08-04) — so it
- * reads them from here instead).
+ * F3Go30-g9bi: resolves the single active splash-notice, if any, from the Config sheet's
+ * `Announce.<day>` rows (key = literal prefix + integer day-of-month, e.g. `Announce.11`;
+ * primary/column B = the short title shown bold in the splash; secondary/column C = the body
+ * text below it). A row with a blank title is treated as unconfigured/not-active — never shown,
+ * regardless of what's in the body column — since the title is what makes a row "filled in" at
+ * a glance on the Config sheet. The body may be blank (title-only notice).
+ * A row is active when `today` falls within [day, day+3] inclusive — read off the same
+ * ns/Template-resolved Config sheet `resolveTemplateSpreadsheet_`/`Context Date` already use
+ * (live verification F3Go30-g9bi, 2026-08-11: this is NOT scoped per monthly tracker-copy
+ * spreadsheet, despite this issue's original brainstorm phrasing — `spreadsheet` here is the
+ * same ns-level Template handleCheckinIdentify_ always receives), so `day` normally names a date
+ * in the current calendar month, but the window is checked against BOTH the current month's and
+ * the prior month's candidate date (whichever actually produces an age in [0, 3]) so a
+ * day-28/29/30/31 announcement's tail end still resolves correctly for a PAX who opens the app a
+ * day or two into the following month.
+ * If more than one row's window is active at once, the newest (highest) day wins — only one
+ * announcement is ever shown at a time.
+ * @param {Array<Array<*>>} rows Pre-fetched Config sheet values (checkinClientConfig_dw_ reads
+ *   the sheet once and shares it across Site Q/NameSpace/announcement — see that function's
+ *   docstring; this must NOT call openConfigSheet/getValues() itself, each of which is its own
+ *   live Sheets API round trip).
+ * @param {Date} today Resolved via resolveContextDate_ by the caller.
+ * @returns {{day: number, title: string, message: string}|null}
  */
-function checkinClientConfig_dw_(spreadsheet) {
+function resolveActiveAnnouncement_dw_(rows, today) {
+  var active = null;
+  rows = rows || [];
+  var todayYmd = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  function ageInDays_(candidateStart) { return Math.round((todayYmd - candidateStart) / 86400000); }
+  for (var i = 0; i < rows.length; i++) {
+    var match = /^Announce\.(\d+)$/.exec(String(rows[i][0] || '').trim());
+    if (!match) continue;
+    var title = String(rows[i][1] || '').trim();
+    if (!title) continue; // blank title = blank/unconfigured entry, never active
+    var message = String(rows[i][2] || '').trim();
+    var day = parseInt(match[1], 10);
+    var ageThisMonth = ageInDays_(new Date(todayYmd.getFullYear(), todayYmd.getMonth(), day));
+    var agePriorMonth = ageInDays_(new Date(todayYmd.getFullYear(), todayYmd.getMonth() - 1, day));
+    var inWindow = (ageThisMonth >= 0 && ageThisMonth <= 3) || (agePriorMonth >= 0 && agePriorMonth <= 3);
+    if (!inWindow) continue;
+    if (!active || day > active.day) active = { day: day, title: title, message: message };
+  }
+  return active;
+}
+
+/**
+ * Site-config payload for the check-in front end: bonus type rules/labels, Site Q contact, the
+ * namespace label, the current app version, and any active splash-notice. Attached to every
+ * handleCheckinIdentify_ response (F3Go30-5nfj.2: static-pages/src/index.html has no
+ * server-render step to bake these into — unlike the removed GAS-hosted CheckinApp.html template
+ * (DR-04, 2026-08-04) — so it reads them from here instead).
+ * @param {string=} contextDateOverride payload.contextDate, if the caller has one — threaded
+ *   through to resolveContextDate_ so SIT's setContextDate override drives announcement testing
+ *   (F3Go30-g9bi) the same way it already drives todayStatus/yesterdayStatus.
+ */
+function checkinClientConfig_dw_(spreadsheet, contextDateOverride) {
   // Best-effort: a Config-sheet lookup hiccup must never break identify itself (the config
-  // payload only feeds cosmetic/secondary UI — error-banner contact info, bonus type labels —
-  // nothing on the critical identify/checkin path depends on it).
-  var siteQConfig = {}, nameSpaceConfig = {};
+  // payload only feeds cosmetic/secondary UI — error-banner contact info, bonus type labels,
+  // the announcement splash — nothing on the critical identify/checkin path depends on it).
+  //
+  // F3Go30-g9bi perf follow-up: the Config sheet is opened and read ONCE here and the resulting
+  // rows are reused for every lookup below (Site Q, NameSpace, announcement) — a live Sheets API
+  // read is a real, measurable round trip on every single identify/checkin/dashboard call, and
+  // this used to run it 2x (getConfigValue_dw_ x2, each with no pre-fetched `data`) before the
+  // announcement splash added a 3rd. A slow/dropped read here is exactly the kind of extra
+  // latency a PAX would feel as "sync taking forever" on every app open.
+  var siteQConfig = {}, nameSpaceConfig = {}, announcement = null;
+  var configRows = null;
   try {
-    siteQConfig = getConfigValue_dw_(spreadsheet, 'Site Q', null) || {};
-    nameSpaceConfig = getConfigValue_dw_(spreadsheet, 'NameSpace', null) || {};
+    var configSheet = openConfigSheet(spreadsheet);
+    configRows = configSheet ? configSheet.getValues() : [];
+  } catch (e) {
+    configRows = null; // fall through — every lookup below degrades to its own default
+  }
+  try {
+    siteQConfig = getConfigValue_dw_(spreadsheet, 'Site Q', configRows) || {};
+    nameSpaceConfig = getConfigValue_dw_(spreadsheet, 'NameSpace', configRows) || {};
   } catch (e) {
     // fall through with the {} defaults below
   }
-  return {
+  try {
+    announcement = resolveActiveAnnouncement_dw_(configRows, resolveContextDate_(spreadsheet, contextDateOverride));
+  } catch (e) {
+    // fall through with no announcement
+  }
+  var cfg = {
     appVersion: typeof APP_VERSION !== 'undefined' ? APP_VERSION : '',
     bonusTypeRules: bonusTypeClientRules_dw_(),
     bonusTypeCodes: bonusTypeDisplayList_dw_(),
@@ -1607,6 +1675,8 @@ function checkinClientConfig_dw_(spreadsheet) {
     siteQEmail: siteQConfig.secondary || '',
     nameSpace: nameSpaceConfig.primary || 'F3 Go30',
   };
+  if (announcement) cfg.announcement = announcement;
+  return cfg;
 }
 
 function handleCheckinIdentify_(templateSpreadsheet, payload) {
@@ -1654,7 +1724,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     // must stay empty rather than risk a PaxDB lookup on untrusted input (see the PaxDB-fallback
     // comment below) — availableMonths is PAX-agnostic (every TrackerDB month) so it's safe either way.
     return {
-      ok: true, matched: false, tokenInvalid: true, config: checkinClientConfig_dw_(templateSpreadsheet),
+      ok: true, matched: false, tokenInvalid: true, config: checkinClientConfig_dw_(templateSpreadsheet, payload.contextDate),
       availableMonths: buildMonthNavigationPayload_dw_(templateSpreadsheet).availableMonths,
       registeredMonthKeys: [],
     };
@@ -1690,7 +1760,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
         knownPaxNextMonthRegistered: knownPaxNextMonthRegistered,
         currentMonthLabel: currentAndNext.current ? currentAndNext.current.label : null,
         nextMonthLabel: currentAndNext.next ? currentAndNext.next.label : null,
-        config: checkinClientConfig_dw_(templateSpreadsheet),
+        config: checkinClientConfig_dw_(templateSpreadsheet, payload.contextDate),
         availableMonths: knownPaxNav.availableMonths,
         registeredMonthKeys: knownPaxNav.registeredMonthKeys,
       };
@@ -1700,7 +1770,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     // empty rather than running an unverified-name PaxDB lookup (same anti-enumeration boundary
     // as the branch above).
     return {
-      ok: true, matched: false, tokenInvalid: !!payload.token, config: checkinClientConfig_dw_(templateSpreadsheet),
+      ok: true, matched: false, tokenInvalid: !!payload.token, config: checkinClientConfig_dw_(templateSpreadsheet, payload.contextDate),
       availableMonths: buildMonthNavigationPayload_dw_(templateSpreadsheet).availableMonths,
       registeredMonthKeys: [],
     };
@@ -1750,7 +1820,7 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
   return {
     ok: true,
     matched: true,
-    config: checkinClientConfig_dw_(templateSpreadsheet),
+    config: checkinClientConfig_dw_(templateSpreadsheet, payload.contextDate),
     emailMismatch: !!identity.emailMismatch,
     f3Name: trackerRow[TRACKER_NAME_COL_],
     email: email,
@@ -2494,6 +2564,11 @@ function handlePaxGoals_(templateSpreadsheet, payload) {
   var identity = resolveCheckinIdentityLean_(monthInfo, targetName, null, {}, true);
   if (!identity.matched) return { ok: false, error: 'not_found' };
 
+  // Viewer identity comes only from the echoed resolvedContext handle (never re-resolved here) —
+  // a stale/missing handle just means "viewer unknown" in the log, not a hard failure, since this
+  // action's whole job is fetching the *target* pax's goals, not re-authenticating the viewer.
+  GasLogger.log('checkinWebapp.paxDetail', { f3Name: targetName, viewerF3Name: handle && handle.f3Name });
+
   return { ok: true, f3Name: targetName, goals: identity.goals };
 }
 
@@ -2649,6 +2724,8 @@ if (typeof module !== 'undefined' && module.exports) {
     invalidateFullRosterCache_: invalidateFullRosterCache_,
     buildTrackerValuesFromPaxCache_: buildTrackerValuesFromPaxCache_,
     handleCheckinIdentify_: handleCheckinIdentify_,
+    checkinClientConfig_dw_: checkinClientConfig_dw_,
+    resolveActiveAnnouncement_dw_: resolveActiveAnnouncement_dw_,
     checkNextMonthRegistration_: checkNextMonthRegistration_,
     buildMonthGridEntries_: buildMonthGridEntries_,
     isStrictlyPastCalendarDate_: isStrictlyPastCalendarDate_,

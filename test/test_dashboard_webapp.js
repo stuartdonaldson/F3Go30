@@ -59,6 +59,8 @@ const {
   responsesValuesCacheKey_,
   invalidateFullRosterCache_,
   handleCheckinIdentify_,
+  checkinClientConfig_dw_,
+  resolveActiveAnnouncement_dw_,
   checkNextMonthRegistration_,
   buildMonthGridEntries_,
   isStrictlyPastCalendarDate_,
@@ -3071,6 +3073,117 @@ function teardownReloadFixture_() {
 })();
 
 console.log('test_dashboard_webapp.js: post-wipe reload assertions passed');
+
+// ── Announcement splash config (F3Go30-g9bi) ────────────────────────────────────────────────
+// resolveActiveAnnouncement_dw_ takes already-fetched Config rows directly (no openConfigSheet
+// call of its own) — checkinClientConfig_dw_ is the one that reads the sheet, once, and shares
+// the rows across Site Q / NameSpace / announcement (perf follow-up, F3Go30-g9bi: 3 separate live
+// Sheets API reads per identify collapsed to 1 — see that function's docstring).
+function makeFakeConfigSheet_test_(rows) {
+  return { getValues: function() { return rows; } };
+}
+
+(function testResolveActiveAnnouncementPicksWindowDayToDayPlus3() {
+  var rows = [['Announce.11', 'HC Moved', 'HC moved to Saturday']];
+  assert.equal(resolveActiveAnnouncement_dw_(rows, new Date(2026, 7, 10)), null, 'day before the window is inactive');
+  assert.deepEqual(resolveActiveAnnouncement_dw_(rows, new Date(2026, 7, 11)), { day: 11, title: 'HC Moved', message: 'HC moved to Saturday' }, 'first day of the window is active');
+  assert.deepEqual(resolveActiveAnnouncement_dw_(rows, new Date(2026, 7, 14)), { day: 11, title: 'HC Moved', message: 'HC moved to Saturday' }, 'day+3 is still active (inclusive)');
+  assert.equal(resolveActiveAnnouncement_dw_(rows, new Date(2026, 7, 15)), null, 'day+4 has expired');
+})();
+
+(function testResolveActiveAnnouncementCrossesMonthBoundary() {
+  // A day-30 announcement viewed on the 2nd of the following month is still within its +3 window
+  // (real calendar-date arithmetic, not integer day-of-month comparison) — this is the whole
+  // point of resolving via Date objects rather than comparing bare day numbers.
+  var rows = [['Announce.30', 'Month End', 'Month-end reminder']];
+  assert.deepEqual(resolveActiveAnnouncement_dw_(rows, new Date(2026, 8, 2)), { day: 30, title: 'Month End', message: 'Month-end reminder' });
+  assert.equal(resolveActiveAnnouncement_dw_(rows, new Date(2026, 8, 3)), null);
+})();
+
+(function testResolveActiveAnnouncementNewestOverlappingDayWins() {
+  var rows = [
+    ['Announce.11', 'Older', 'Older notice'],
+    ['Announce.14', 'Newer', 'Newer notice'],
+  ];
+  // Day 14 to 17 (below); 11 to 14 (above) — the 14th is where both windows are simultaneously
+  // active, so the newer (higher) day must win, not sheet-row order.
+  assert.deepEqual(resolveActiveAnnouncement_dw_(rows, new Date(2026, 7, 14)), { day: 14, title: 'Newer', message: 'Newer notice' });
+})();
+
+(function testResolveActiveAnnouncementIgnoresBlankTitleEvenWithAMessage() {
+  // F3Go30-g9bi follow-up: the title (column B / primary) is the "is this row filled in at all"
+  // signal — a blank title must be treated as an unconfigured/empty entry and never shown, even
+  // if the body column happens to carry text (e.g. left over from before the row was cleared).
+  var rows = [
+    ['Announce.11', '', 'Stray leftover body text'],
+    ['Site Q', 'Someone', 'someone@example.com'],
+  ];
+  assert.equal(resolveActiveAnnouncement_dw_(rows, new Date(2026, 7, 12)), null);
+})();
+
+(function testResolveActiveAnnouncementAllowsBlankMessageWithATitle() {
+  // A title-only row (blank body) is still a deliberately-configured, active entry.
+  var rows = [['Announce.11', 'Heads up', '']];
+  assert.deepEqual(resolveActiveAnnouncement_dw_(rows, new Date(2026, 7, 12)), { day: 11, title: 'Heads up', message: '' });
+})();
+
+(function testResolveActiveAnnouncementToleratesMissingOrNullRows() {
+  // checkinClientConfig_dw_ passes null through when its own Config-sheet read failed/threw —
+  // must degrade to "no announcement", never throw.
+  assert.equal(resolveActiveAnnouncement_dw_(null, new Date(2026, 7, 12)), null);
+  assert.equal(resolveActiveAnnouncement_dw_([], new Date(2026, 7, 12)), null);
+})();
+
+(function testCheckinClientConfigThreadsContextDateIntoAnnouncementWindow() {
+  // resolveContextDate_ is globally stubbed (top of file) to honor an explicit override, matching
+  // the existing cross-month/date-nav tests above — proves contextDateOverride actually reaches
+  // resolveActiveAnnouncement_dw_ rather than checkinClientConfig_dw_ always using real "now".
+  global.resolveContextDate_ = function(spreadsheet, contextDateOverride) {
+    return contextDateOverride ? new Date(contextDateOverride) : new Date();
+  };
+  global.openConfigSheet = function() { return makeFakeConfigSheet_test_([['Announce.11', 'HC Moved', 'HC moved to Saturday']]); };
+  var withOverride = checkinClientConfig_dw_({}, '2026-08-12');
+  assert.deepEqual(withOverride.announcement, { day: 11, title: 'HC Moved', message: 'HC moved to Saturday' });
+  var outsideWindow = checkinClientConfig_dw_({}, '2026-08-20');
+  assert.equal(outsideWindow.announcement, undefined, 'announcement key must be omitted entirely when no window is active');
+  delete global.openConfigSheet;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+(function testCheckinClientConfigReadsTheConfigSheetExactlyOnce() {
+  // F3Go30-g9bi perf follow-up: this used to be 3 separate live Sheets API reads per identify
+  // (Site Q, NameSpace, announcement) — each is its own network round trip in real GAS, and a
+  // PAX feels that as "sync taking forever" on every app open. Must be exactly 1 now.
+  var openCalls = 0;
+  global.openConfigSheet = function() {
+    openCalls++;
+    return makeFakeConfigSheet_test_([
+      ['Site Q', 'Little John', 'lj@example.com'],
+      ['NameSpace', 'F3Test', ''],
+      ['Announce.11', 'HC Moved', 'HC moved to Saturday'],
+    ]);
+  };
+  global.resolveContextDate_ = function() { return new Date(2026, 7, 12); };
+  var cfg = checkinClientConfig_dw_({}, null);
+  assert.equal(openCalls, 1, 'checkinClientConfig_dw_ must open the Config sheet exactly once, not once per lookup');
+  assert.equal(cfg.siteQName, 'Little John');
+  assert.equal(cfg.nameSpace, 'F3Test');
+  assert.deepEqual(cfg.announcement, { day: 11, title: 'HC Moved', message: 'HC moved to Saturday' });
+  delete global.openConfigSheet;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+(function testCheckinClientConfigSurvivesConfigSheetThrow() {
+  // Best-effort contract (F3Go30-5nfj.2, extended by F3Go30-g9bi): a Config-sheet hiccup on the
+  // announcement lookup must never break identify's config payload.
+  global.openConfigSheet = function() { throw new Error('sheet API hiccup'); };
+  var cfg = checkinClientConfig_dw_({}, null);
+  assert.equal(cfg.announcement, undefined);
+  assert.ok(cfg.bonusTypeRules, 'the rest of the config payload must still be populated');
+  delete global.openConfigSheet;
+})();
+
+console.log('test_dashboard_webapp.js: announcement splash config assertions passed');
 
 console.log('test_dashboard_webapp.js: history-window/streak-cap assertions passed');
 

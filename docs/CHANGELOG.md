@@ -27,9 +27,13 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
-- Tap any PAX on the dashboard — your team tiles or the full PAX board — to see their goals and
-  their own progress ring/streak/score/bonus tiles and 7-day chart. Back returns you to the
-  dashboard exactly where you left it.
+- **Pax-detail popup** — tap any PAX on the dashboard to see their details, goals, bonus info,
+  and more.
+- **Bonus points** — tap the Bonus tile or the Trophy icon in the upper right to edit or view
+  your bonus points.
+- Your Site Q can now push a short notice to everyone's check-in app ("HC moved to Saturday", a
+  month-end reminder) — it shows once, auto-expires after a few days, and you can dismiss it or
+  ask to be reminded again in 30 minutes.
 - Fixed pre-marking a future day wiping out your streak. Checking in ahead for a day two or more
   out made your streak read as 1 on every team tile (and shortened your 30-day best), even though
   the month grid still showed all your days correctly. Streak, 30-day best and the 7-day chart are

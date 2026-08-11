@@ -103,6 +103,16 @@ month's tracker in minutes without manual sheet or trigger configuration in the 
   current tracker month, not just today/yesterday — e.g. pre-marking a day they already know
   they'll miss (planned travel), or fixing a past day recorded wrong. Failed can only be set for
   a day that's strictly in the past; Hit/Miss/No-Check-in have no date restriction
+- A Site Q can push a short blocking splash notice ("HC moved to Saturday", a month-end
+  reminder) to the check-in app by adding an `Announce.<day>` row to the Config sheet
+  (F3Go30-g9bi; same namespace-level Config sheet used by `Context Date`, shared across every
+  monthly tracker under that namespace) — a title plus an optional body that may include links
+  or other HTML formatting; a blank title leaves the entry unconfigured/inactive. The window is
+  server-computed and auto-expiring (day through day+3), so a
+  device that loses its dismissal record never resurfaces a weeks-old notice; dismissal itself
+  is client-only (localStorage) in V1. A PAX can dismiss it outright or snooze it for 30 minutes
+  ("Remind me later"), which re-checks whatever is actually live when it wakes rather than
+  replaying what was on screen at snooze time
 
 ---
 
