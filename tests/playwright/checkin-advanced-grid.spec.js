@@ -31,6 +31,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
+const { dismissAnnouncementIfPresent_, clickThroughAnnouncement_ } = require('./live-check-helpers.js');
 
 const ROOT = path.resolve(__dirname, '../..');
 const STATIC_DIR = path.join(ROOT, 'static-pages', 'src');
@@ -107,6 +108,9 @@ test.describe('Advanced calendar grid (client, live SIT)', () => {
     // Flat DOM on the static front end — no sandbox iframe to reach through.
     app = page;
     await expect(app.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    // The live identify response that just landed may carry a live announcement (F3Go30-g9bi) —
+    // dismiss it now, before any test below clicks anything underneath. See live-check-helpers.js.
+    await dismissAnnouncementIfPresent_(app);
     todayIso = isoDate(new Date());
   });
 
@@ -141,7 +145,10 @@ test.describe('Advanced calendar grid (client, live SIT)', () => {
 
   test.describe('once the calendar is open', () => {
     test.beforeEach(async () => {
-      await app.locator('#advancedToggleBtn').click();
+      // F3Go30-g9bi: the outer beforeEach's dismiss already ran, but a live announcement can pop
+      // in the gap right after — clickThroughAnnouncement_ retries through it instead of dying on
+      // "element intercepts pointer events" (see live-check-helpers.js).
+      await clickThroughAnnouncement_(app.locator('#advancedToggleBtn'));
       await expect(app.locator('#advancedGrid')).toBeVisible();
     });
 

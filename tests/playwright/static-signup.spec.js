@@ -22,6 +22,7 @@ const { test, expect } = require('@playwright/test');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const { dismissAnnouncementIfPresent_, clickThroughAnnouncement_ } = require('./live-check-helpers.js');
 
 const ROOT = path.resolve(__dirname, '../..');
 const STATIC_DIR = path.join(ROOT, 'static-pages', 'src');
@@ -94,7 +95,10 @@ async function fillStaticSignupTeamAndGoals(page, pax) {
 
 /** Drives su-step-choose -> su-step-done: keep "current" selected if the step appears. */
 async function saveStaticSignup(page) {
-  await page.locator('#suInfoNextBtn').click();
+  // F3Go30-g9bi: a live announcement can pop in the gap right after the identify response that
+  // just landed #su-step-info — clickThroughAnnouncement_ retries through it rather than dying
+  // on "element intercepts pointer events" (see live-check-helpers.js).
+  await clickThroughAnnouncement_(page.locator('#suInfoNextBtn'));
   const chooseVisible = await page.locator('#su-step-choose').isVisible().catch(() => false);
   if (chooseVisible) {
     await page.locator('.month-option[data-key="current"]').click();
@@ -147,6 +151,9 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     await page.locator('#suEmail').fill(STATIC_SIGNUP_PAX.email);
     await page.locator('#suIdentifyBtn').click();
     await expect(page.locator('#su-step-info')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    // F3Go30-g9bi: the live identify response that just landed may carry a live announcement —
+    // dismiss it now, before anything below clicks or fills a field underneath.
+    await dismissAnnouncementIfPresent_(page);
 
     await fillStaticSignupTeamAndGoals(page, STATIC_SIGNUP_PAX);
     await saveStaticSignup(page);
@@ -176,6 +183,7 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     // serves the page from.
     await page.goto(`${staticOrigin}/index.html?webapp=${encodeURIComponent(checkinUrl)}&id=${sessionId}`);
     await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
     await expect(page.locator('#step-signup')).toBeHidden();
     await expect(page.locator('#checkinHeading')).toContainText(STATIC_SIGNUP_PAX.f3Name);
 
@@ -198,6 +206,7 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     await page.locator('#suEmail').fill(STATIC_SIGNUP_PAX.email);
     await page.locator('#suIdentifyBtn').click();
     await expect(page.locator('#su-step-info')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
 
     // Matched: the "new signup" test above already saved this PAX — prefill must reflect it.
     await expect(page.locator('#suMatchedCallout')).toBeVisible();
@@ -255,6 +264,7 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     // attemptTopRedirect_-driven fallback needs.
     await expect(page.locator('#step-signup')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#su-step-info')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
     await expect(page.locator('#suInfoF3Name')).toContainText(LATE_SIGNUP_PAX.f3Name);
 
     expect(loads).toBe(1);

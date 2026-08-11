@@ -46,6 +46,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
+const { dismissAnnouncementIfPresent_, clickThroughAnnouncement_ } = require('./live-check-helpers.js');
 
 const ROOT = path.resolve(__dirname, '../..');
 const STATIC_DIR = path.join(ROOT, 'static-pages', 'src');
@@ -145,6 +146,7 @@ test.describe('Static check-in front end (client, live SIT)', () => {
     const t0 = Date.now();
     await page.goto(checkinPageUrl());
     await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
     const firstPaintMs = Date.now() - t0;
     // eslint-disable-next-line no-console
     console.log(`[F3Go30-5nfj.2] static page: ?id= -> #step-checkin visible in ${firstPaintMs}ms`);
@@ -157,6 +159,7 @@ test.describe('Static check-in front end (client, live SIT)', () => {
   test('unrecognized token falls through to the blank identify form, same as GAS', async ({ page }) => {
     await page.goto(`${staticOrigin}/index.html?webapp=${encodeURIComponent(checkinUrl)}&id=${crypto.randomUUID()}`);
     await expect(page.locator('#step-identify')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
     await expect(page.locator('#idError')).toBeHidden();
   });
 
@@ -166,12 +169,14 @@ test.describe('Static check-in front end (client, live SIT)', () => {
     // way GAS's real form POST does — applyIdentifySuccess_ must patch the URL itself instead.
     await page.goto(`${staticOrigin}/index.html?webapp=${encodeURIComponent(checkinUrl)}`);
     await expect(page.locator('#step-identify')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
     expect(new URL(page.url()).searchParams.get('id')).toBeNull();
 
     await page.locator('#idF3Name').fill(DEMO_PAX.f3Name);
     await page.locator('#idEmail').fill(DEMO_PAX.email);
     await page.locator('#identifyBtn').click();
     await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
 
     const idParam = new URL(page.url()).searchParams.get('id');
     expect(idParam).toBeTruthy();
@@ -180,6 +185,7 @@ test.describe('Static check-in front end (client, live SIT)', () => {
     // entirely — the whole point of landing on a token'd URL in the first place.
     await page.reload();
     await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
     await expect(page.locator('#headerName')).toContainText(DEMO_PAX.f3Name);
   });
 
@@ -187,6 +193,7 @@ test.describe('Static check-in front end (client, live SIT)', () => {
     test.beforeEach(async ({ page }) => {
       await page.goto(checkinPageUrl());
       await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+      await dismissAnnouncementIfPresent_(page);
     });
 
     test('page load: TODAY/YESTERDAY visible, calendar hidden', async ({ page }) => {
@@ -213,7 +220,10 @@ test.describe('Static check-in front end (client, live SIT)', () => {
 
     test.describe('once the calendar is open', () => {
       test.beforeEach(async ({ page }) => {
-        await page.locator('#advancedToggleBtn').click();
+        // F3Go30-g9bi: the outer beforeEach's dismiss already ran, but a live announcement can
+        // pop in the gap right after — clickThroughAnnouncement_ retries through it instead of
+        // dying on "element intercepts pointer events" (see live-check-helpers.js).
+        await clickThroughAnnouncement_(page.locator('#advancedToggleBtn'));
         await expect(page.locator('#advancedGrid')).toBeVisible();
       });
 
@@ -309,6 +319,7 @@ test.describe('Static check-in front end (client, live SIT)', () => {
     await page.goto(checkinPageUrl());
     await page.evaluate((k) => localStorage.clear(), 'go30CheckinSnapshot:v1');
     await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
 
     // Race the background prefetch: no waitForTimeout between these two clicks — prefetchDashboard_
     // (fired at the end of applyIdentifySuccess_, just before #step-checkin became visible above)
@@ -379,6 +390,7 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
     await page.goto(checkinPageUrl());
     await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
     const snapshotRaw = await page.evaluate((k) => localStorage.getItem(k), 'go30CheckinSnapshot:v1');
     expect(snapshotRaw).toBeTruthy();
 
@@ -411,6 +423,7 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
     await page.goto(checkinPageUrl());
     await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
 
     const snapshot = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), 'go30CheckinSnapshot:v1');
     expect(snapshot).toBeTruthy();
@@ -497,7 +510,10 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
       await page.goto(checkinPageUrl());
       await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
 
-      await page.locator('#advancedToggleBtn').click();
+      // Deliberately does not wait for the live identify to land first (that's the point of this
+      // test — reconciliation happens in place) — so a live announcement (F3Go30-g9bi) could pop
+      // in right in this gap and intercept the click. clickThroughAnnouncement_ retries through it.
+      await clickThroughAnnouncement_(page.locator('#advancedToggleBtn'));
       await expect(page.locator('#advancedGrid')).toBeVisible();
 
       // Polls (toHaveClass) until the live identify response reconciles the calendar — no manual
@@ -519,6 +535,7 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
     await page.goto(checkinPageUrl());
     await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
     const snapshot = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), 'go30CheckinSnapshot:v1');
     expect(snapshot).toBeTruthy();
 
@@ -632,6 +649,7 @@ test.describe('Stale installed client: update banner + version footer (F3Go30-83
     await serveVersion(page, '99.9.9');
     await page.goto(builtPageUrl());
     await expect(page.locator('#updateBanner')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
     expect(documentLoads).toBe(1);
 
     await page.locator('#updateReloadBtn').click();
@@ -646,6 +664,7 @@ test.describe('Stale installed client: update banner + version footer (F3Go30-83
     await serveVersion(page, '99.9.9');
     await page.goto(builtPageUrl());
     await expect(page.locator('#updateBanner')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
     await page.locator('#updateDismissBtn').click();
     await expect(page.locator('#updateBanner')).toBeHidden();
     expect(await page.evaluate((k) => localStorage.getItem(k), 'go30UpdateDismissed')).toBe('99.9.9');

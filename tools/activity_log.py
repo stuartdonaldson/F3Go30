@@ -51,6 +51,13 @@ Notes:
       bulk paste from each other at a glance. These lines are always standalone, never joined into
       a PAX's [SESSION] — the edit is a sheet-owner action, not part of that PAX's own check-in
       flow.
+    - [PAX VIEW] lines are the pax-detail popup (handlePaxGoals_, script/dashboardWebapp.js) — a
+      PAX tapping a tile/board row, or paging prev/next, to view a teammate's WHO/WHAT/HOW.
+      Grouped into the *viewer's* session, not the target's — `f3Name` on this event is who is
+      doing the looking, not who's being looked at, since it's the viewer's activity that this
+      collapses alongside VIEW CHECKIN/CHECKIN/DASHBOARD/BONUS. The viewer's identity comes only
+      from the resolvedContext handle echoed on the request (never re-resolved server-side), so a
+      stale/missing handle reports as an unknown viewer ('?') rather than being dropped.
     - [REDIRECT] lines are legacy ?cmd=checkin/?cmd=signup/home arrivals landing on the GAS
       "has moved" interstitial (logStaticRedirect_, script/WebApp.js) before the PAX taps through
       to the static front end. Never attributable to a PAX from Axiom alone (no f3Name is logged
@@ -278,6 +285,18 @@ def _classify(event: dict, entry_index: dict = None, legacy_exec_ids: set = None
         bonus_type = data.get('type', '?')
         return {'ts': epoch, 'ts_str': ts_str, 'group': _SESSION, 'f3Name': f3_name,
                 'label': 'BONUS', 'detail': f"added bonus {bonus_type}"}
+
+    # The pax-detail popup (F3Go30 pax-detail popup + prev/next teammate nav, handlePaxGoals_,
+    # script/dashboardWebapp.js) — a PAX tapping a tile/board row (or paging prev/next) to view a
+    # teammate's WHO/WHAT/HOW. Grouped into the *viewer's* session (not the target's) — it's the
+    # viewer looking around, not an activity of the pax being looked at. `viewerF3Name` is only as
+    # good as the echoed resolvedContext handle on the request; a stale/missing handle logs an
+    # unknown viewer rather than failing the lookup (see handlePaxGoals_).
+    if name == 'checkinWebapp.paxDetail':
+        target = data.get('f3Name', '?')
+        viewer = data.get('viewerF3Name') or '?'
+        return {'ts': epoch, 'ts_str': ts_str, 'group': _SESSION, 'f3Name': viewer,
+                'label': 'PAX VIEW', 'detail': f"viewed {target}'s pax-detail"}
 
     if name == 'handleTrackerEdit_.patched':
         sheet_name = data.get('sheetName', '?')
