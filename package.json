@@ -1,7 +1,7 @@
 {
   "name": "f3go30",
-  "version": "2.4.10",
-  "build": 38,
+  "version": "2.5.0",
+  "build": 0,
   "private": true,
   "scripts": {
     "push": "node tools/manage-deployments.js --deploy-template",
@@ -16,6 +16,8 @@
     "test:gaslogger": "npx playwright test tests/playwright/gaslogger.spec.js",
     "test:static-signup": "npx playwright test tests/playwright/static-signup.spec.js",
     "demo:screenshots": "npx playwright test tests/playwright/demo-screenshots.spec.js --headed",
+    "regression:sit": "npm test && npx playwright test tests/playwright/checkin-advanced-grid.spec.js tests/playwright/static-checkin.spec.js tests/playwright/static-signup.spec.js tests/playwright/gaslogger.spec.js tests/playwright/announcement-splash-live-check.spec.js tests/playwright/pax-history-reload-live-check.spec.js tests/playwright/transport-resilience.spec.js",
+    "regression:sit:copy-and-init": "npx playwright test tests/playwright/copy-and-init.spec.js tests/playwright/tracker-edit-trigger-live-check.spec.js",
     "auth": "node authenticate.js"
   },
   "devDependencies": {

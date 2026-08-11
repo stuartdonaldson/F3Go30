@@ -27,13 +27,30 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+---
+
+## v2.5 — Pax-detail popup, announcement splash, dashboard accuracy (2026-08-11)
+
+The 2.5 series rolls up everything landed since v2.4.0: a redesigned pax-detail popup (bonus
+info, prev/next teammate nav), a Site-Q-pushable announcement splash, a simplified sign-up flow,
+and a string of dashboard/streak accuracy fixes.
+
 - **Pax-detail popup** — tap any PAX on the dashboard to see their details, goals, bonus info,
-  and more.
+  and more. Prev/next arrows let you page through the rest of your team without closing the
+  popup, and a persistent back button in the header takes you out of it from wherever you are.
 - **Bonus points** — tap the Bonus tile or the Trophy icon in the upper right to edit or view
   your bonus points.
 - Your Site Q can now push a short notice to everyone's check-in app ("HC moved to Saturday", a
   month-end reminder) — it shows once, auto-expires after a few days, and you can dismiss it or
   ask to be reminded again in 30 minutes.
+- Signing up: the separate goal-based team dropdown is gone — pick "Other" and start typing your
+  team name for the same suggestions as autocomplete, instead of a second dropdown to choose
+  between.
+- Fixed the dashboard's 7-day rolling-average line drifting upward with no new check-in
+  activity — it no longer factors in days you haven't reported yet, so it now stops drawing at
+  the last day you actually checked in instead of sliding a real day out of the window as an
+  unfilled one slides in. Also brightened the line and gave near-zero bars a minimum height so a
+  "Missed it" day doesn't collapse to invisible.
 - Fixed pre-marking a future day wiping out your streak. Checking in ahead for a day two or more
   out made your streak read as 1 on every team tile (and shortened your 30-day best), even though
   the month grid still showed all your days correctly. Streak, 30-day best and the 7-day chart are
