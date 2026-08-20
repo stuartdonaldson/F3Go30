@@ -1,6 +1,5 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+const { readStaticPage_, extractTransportBlock_, extractShowApiError_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-313u: the static page's POST to the GAS /exec endpoint answers 302 ->
 // script.googleusercontent.com/macros/echo, and that second hop is observably unreliable — seen
@@ -17,27 +16,7 @@ const path = require('node:path');
 // Extracts the REAL transport block and the REAL showApiError_ (not re-implementations) and runs
 // them against injected stand-ins — same extraction pattern as test_session_resume_refresh.js
 // (silentResumeRefresh_) and test_dashboard_stale_while_revalidate.js (revalidateDashboard_).
-
-function readStaticPage_() {
-  return fs.readFileSync(path.join(__dirname, '..', 'static-pages', 'src', 'index.html'), 'utf8');
-}
-
-/** The transport block: the retry/timeout constants through the end of callApi (which sits
- * immediately above hideApiError_). */
-function extractTransportBlock_(src) {
-  var startIdx = src.indexOf('var REQUEST_TIMEOUT_MS_');
-  var endIdx = src.indexOf('function hideApiError_');
-  assert.notEqual(startIdx, -1, 'transport block start marker (var REQUEST_TIMEOUT_MS_) not found in index.html');
-  assert.notEqual(endIdx, -1, 'hideApiError_ (transport block end marker) not found in index.html');
-  assert.ok(startIdx < endIdx, 'the transport block must be declared above hideApiError_');
-  return src.slice(startIdx, endIdx);
-}
-
-function extractShowApiError_(src) {
-  var m = src.match(/function showApiError_\([\s\S]*?\n  \}/);
-  assert.ok(m, 'showApiError_ function body not found in index.html');
-  return m[0];
-}
+// (F3Go30-lem7: extraction helpers now shared via test/helpers/staticPageExtract.js.)
 
 /**
  * Runs the extracted transport block with injected stand-ins.

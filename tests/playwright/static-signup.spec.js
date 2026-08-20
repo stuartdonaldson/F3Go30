@@ -49,7 +49,20 @@ const LATE_SIGNUP_PAX = { f3Name: 'LateSignupTest', email: 'latesignup@example.c
 
 // F3Go30-9u68: a dedicated fixture, distinct from STATIC_SIGNUP_PAX above, so the validation
 // test's own save doesn't collide with (or get overwritten by) that test's fixture state.
-const VALIDATION_TEST_PAX = { f3Name: 'SignupValidationTest', email: 'signupvalidationtest@example.com' };
+//
+// F3Go30-vecg: this identity must be BRAND NEW every run, not a fixed constant. The test's own
+// happy-path tail (line ~315, "Everything filled — Continue proceeds and the flow completes
+// normally") deliberately completes the save, so once any run finishes that save, a fixed
+// f3Name/email becomes a returning PAX on SIT with team+goals already on file — every later run
+// then has identify return wasMatched:true with real data prefilled, #suInfoNextBtn just saves
+// without validating, and the #suInfoError assertions this test exists to exercise never fire
+// again (confirmed live 2026-08-19, bd memories F3Go30-signup-validation-pax-pollution). A fresh
+// random suffix per run means each run is always a genuinely new/unmatched PAX, so the blocked-
+// validation path is always actually exercised — no server-side cleanup step to forget.
+function freshValidationTestPax_() {
+  var suffix = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  return { f3Name: 'SignupValidationTest' + suffix, email: 'signupvalidationtest+' + suffix + '@example.com' };
+}
 
 // Same reasoning as static-checkin.spec.js's constant of the same name, and the same defect: the
 // 15000 waits here predate F3Go30-313u, which bounded the client transport at a 12s read timeout
@@ -276,12 +289,13 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
   });
 
   test('info step blocks Continue until team and goals are filled in, and the team info button opens its modal — F3Go30-9u68', async ({ page }) => {
+    var validationTestPax = freshValidationTestPax_();
     await page.goto(signupPageUrl());
     await expect(page.locator('#su-step-intro')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await page.locator('#suIntroNextBtn').click();
 
-    await page.locator('#suF3Name').fill(VALIDATION_TEST_PAX.f3Name);
-    await page.locator('#suEmail').fill(VALIDATION_TEST_PAX.email);
+    await page.locator('#suF3Name').fill(validationTestPax.f3Name);
+    await page.locator('#suEmail').fill(validationTestPax.email);
     await page.locator('#suIdentifyBtn').click();
     await expect(page.locator('#su-step-info')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await dismissAnnouncementIfPresent_(page);

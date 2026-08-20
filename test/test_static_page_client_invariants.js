@@ -1,6 +1,5 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+const { readStaticPage_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-giqm: static-pages/src/index.html was originally built as a "faithful port" of the
 // GAS-hosted CheckinApp.html + IdentityCore.html (per static-checkin.spec.js's header). DR-04
@@ -11,10 +10,7 @@ const path = require('node:path');
 // covers callApi's ns/contextDate/clientVersion plumbing, the per-call `cmd` override (a
 // documented divergence from the retired IdentityCore.html's single-dispatcher shape, kept as a
 // historical note in the test below), and the calendar-nav/banner blocks executed for real.
-
-function readStaticPage_() {
-  return fs.readFileSync(path.join(__dirname, '..', 'static-pages', 'src', 'index.html'), 'utf8');
-}
+// (F3Go30-lem7: readStaticPage_ now shared via test/helpers/staticPageExtract.js.)
 
 // ── NS_ / CONTEXT_DATE_ round trip (mirrors test_ns_client_roundtrip.js / ────────────────────
 //    test_context_date_client_roundtrip.js, but there is no IdentityCore include boundary on

@@ -1,6 +1,5 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+const { readStaticPage_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-833s.13: dashboardBtn used to be cache-or-wait, not cache-then-update — a cached month
 // payload for today rendered instantly ONLY when no prefetch was in flight, then returned with no
@@ -10,10 +9,7 @@ const path = require('node:path');
 // arrival. This harness extracts the REAL source (not a re-implementation) and executes it against
 // minimal $/callApi/renderDashboard_ stand-ins, the same pattern test_static_page_client_
 // invariants.js's cal-nav harness uses for k5fn.3.
-
-function readStaticPage_() {
-  return fs.readFileSync(path.join(__dirname, '..', 'static-pages', 'src', 'index.html'), 'utf8');
-}
+// (F3Go30-lem7: readStaticPage_ now shared via test/helpers/staticPageExtract.js.)
 
 function extractDashboardBtnHandlerBody_(src) {
   var startMarker = "$('dashboardBtn').addEventListener('click', function() {";

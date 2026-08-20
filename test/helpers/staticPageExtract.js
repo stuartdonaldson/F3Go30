@@ -7,8 +7,8 @@
  *
  * Extracted here (F3Go30-xyri/n40u) so a new consumer doesn't hand-copy readStaticPage_ /
  * extractTransportBlock_ / extractShowApiError_ a fifth time. The four pre-existing test files
- * above each still carry their own copy — flagged as pre-existing duplication worth folding onto
- * this helper in a later pass, not retrofitted here to avoid touching passing, unrelated tests.
+ * above were folded onto this shared helper in F3Go30-lem7 (PLAN-08-20 Stage 2) — none of them
+ * carry their own copy of these functions any more.
  */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

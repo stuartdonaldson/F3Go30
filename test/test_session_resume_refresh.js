@@ -1,6 +1,5 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+const { readStaticPage_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-833s.14: an installed PWA resumed from background keeps its page alive in memory — no
 // pageshow.persisted fires (that only covers bfcache restore) — so without a resume hook a
@@ -8,10 +7,7 @@ const path = require('node:path');
 // silentResumeRefresh_ source (not a re-implementation) and executes it against minimal
 // state/callApi/document/Date stand-ins, the same extraction pattern
 // test_dashboard_stale_while_revalidate.js uses for revalidateDashboard_.
-
-function readStaticPage_() {
-  return fs.readFileSync(path.join(__dirname, '..', 'static-pages', 'src', 'index.html'), 'utf8');
-}
+// (F3Go30-lem7: readStaticPage_ now shared via test/helpers/staticPageExtract.js.)
 
 function extractResumeRefreshBlock_(src) {
   var startMarker = 'var RESUME_REFRESH_THROTTLE_MS_';
