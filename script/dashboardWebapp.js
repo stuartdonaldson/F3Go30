@@ -977,7 +977,12 @@ function resolveDashboardMonth_(targetDate, spreadsheet) {
  * @returns {{availableMonths:Array, registeredMonthKeys:Array<string>}}
  */
 function buildMonthNavigationPayload_dw_(spreadsheet, f3Name) {
+  // F3Go30-bopt: timing split for finding #5 (bd memories F3Go30-perf-checkin-dashboard-eval) —
+  // these are the two unthrottled getDataRange().getValues() reads with no row cap suspected of
+  // explaining checkinWebapp.identify's unmeasured 2-4s.
+  var tTracker0 = Date.now();
   var bySheetId = (readTrackerDbRowsBySheetId_dw_ ? readTrackerDbRowsBySheetId_dw_(spreadsheet) : { bySheetId: {} }).bySheetId || {};
+  var trackerDbReadMs = Date.now() - tTracker0;
   var monthKeyBySheetId = {};
   var availableMonths = Object.keys(bySheetId).map(function(sheetId) {
     var row = bySheetId[sheetId];
@@ -989,8 +994,11 @@ function buildMonthNavigationPayload_dw_(spreadsheet, f3Name) {
 
   var norm = f3Name ? paxCacheNormalizeName_dw_(f3Name) : '';
   var registeredMonthKeys = [];
+  var paxDbReadMs = 0;
   if (norm) {
+    var tPax0 = Date.now();
     var paxRowsBySheetId = (readPaxDbRowsBySheetId_dw_ ? readPaxDbRowsBySheetId_dw_(spreadsheet) : { bySheetId: {} }).bySheetId || {};
+    paxDbReadMs = Date.now() - tPax0;
     var registered = {};
     Object.keys(paxRowsBySheetId).forEach(function(sheetId) {
       var monthKey = monthKeyBySheetId[sheetId];
@@ -1000,6 +1008,12 @@ function buildMonthNavigationPayload_dw_(spreadsheet, f3Name) {
     });
     registeredMonthKeys = Object.keys(registered);
   }
+
+  GasLogger.log('checkinWebapp.buildMonthNavigationPayload.timing', {
+    withF3Name: !!norm, trackerRows: Object.keys(bySheetId).length,
+    trackerDbReadMs: trackerDbReadMs, paxDbReadMs: paxDbReadMs,
+    totalMs: trackerDbReadMs + paxDbReadMs,
+  });
 
   return { availableMonths: availableMonths, registeredMonthKeys: registeredMonthKeys };
 }
@@ -2509,6 +2523,11 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
     return { ok: false, error: 'not_found' };
   }
 
+  // F3Go30-bopt: checkpoint marking the end of identity/month resolution — everything below is
+  // the "render step" that finding #4 (bd memories F3Go30-perf-checkin-dashboard-eval) found
+  // unexplained (25-30s of totalMs not accounted for by resolveMonthMs+resolveIdentityMs).
+  var tRenderStart = Date.now();
+
   var classified = classifyTrackerColumns_(identity.row2, identity.row3);
 
   // Normally realToday (the script's own clock) is the cutoff. If the PAX's local calendar
@@ -2537,11 +2556,14 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   // Cache-first (F3Go30-440b.6): only opens the spreadsheet to fetch the Bonus Tracker sheet on
   // a genuine cache miss — a fully warm dashboard load (identity + tracker roster + bonus
   // entries all cached) never calls SpreadsheetApp.openById at all.
+  var tBonus0 = Date.now();
   var bonusEntries = getCachedBonusEntriesOnly_dw_ ? getCachedBonusEntriesOnly_dw_(monthInfo.sheetId) : null;
+  var bonusCacheHit = bonusEntries !== null;
   if (bonusEntries === null) {
     var bonusSheet = identity.targetSs.get().getSheetByName('Bonus Tracker');
     bonusEntries = bonusSheet ? getAllBonusEntriesCached_dw_(bonusSheet, monthInfo.sheetId) : [];
   }
+  var bonusEntriesMs = Date.now() - tBonus0;
   var reportedDayDates = reportedDayCols.map(function(d) { return d.date; });
 
   // F3Go30-uz9e.2: the day every figure on this load is computed "as of" — the last reported day
@@ -2553,9 +2575,12 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   // One PropertiesService round trip for the whole roster's history entries instead of one
   // getProperty per row inside the loop below (F3Go30-uz9e.2) — same reasoning as
   // getPaxCacheRowsBulk_ for the tracker rows.
+  var tHistory0 = Date.now();
   var historyEntries = getPaxHistoryEntriesBulk_dw_
     ? getPaxHistoryEntriesBulk_dw_(paxHistoryScopeId_dw_(templateSpreadsheet), identity.trackerValues.map(function(row) { return row[TRACKER_NAME_COL_]; }))
     : null;
+  var historyEntriesMs = Date.now() - tHistory0;
+  var tRosterLoop0 = Date.now();
   var allPaxRows = [];
   var userRow = null;
   identity.trackerValues.forEach(function(row, idx) {
@@ -2582,6 +2607,7 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
     allPaxRows.push(paxRow);
     if (idx === identity.rowIndex) { userRow = paxRow; }
   });
+  var rosterLoopMs = Date.now() - tRosterLoop0;
 
   var userDayValues = reportedDayCols.map(function(d) { return identity.trackerValues[identity.rowIndex][d.col]; });
   var outcomes = countOutcomes_(userDayValues);
@@ -2607,9 +2633,14 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
 
   var paxBoard = groupByTeam_(allPaxRows);
 
+  // F3Go30-bopt: renderMs (tRenderStart to here) is the previously-unmeasured 25-30s gap from
+  // finding #4 — bonusEntriesMs/historyEntriesMs/rosterLoopMs split it further so a future spike
+  // points at a specific sub-step rather than "somewhere in render" again.
   GasLogger.log('checkinWebapp.dashboard', Object.assign({
     f3Name: payload.f3Name, currentDay: currentDay, totalDays: totalDays, viewDayIndex: viewDayIndex,
     paxRows: allPaxRows.length, resolveMonthMs: resolveMonthMs, resolveIdentityMs: resolveIdentityMs,
+    renderMs: Date.now() - tRenderStart, bonusEntriesMs: bonusEntriesMs, bonusCacheHit: bonusCacheHit,
+    historyEntriesMs: historyEntriesMs, rosterLoopMs: rosterLoopMs,
     totalMs: Date.now() - t0,
   }, paxCacheStatsForLog_dw_()));
 
