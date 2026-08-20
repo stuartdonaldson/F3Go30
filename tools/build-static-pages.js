@@ -32,6 +32,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const ROOT = path.resolve(__dirname, '..');
 const SRC_PATH = path.join(ROOT, 'static-pages', 'src', 'index.html');
@@ -43,6 +44,7 @@ const SETTINGS_PATH = path.join(ROOT, 'local.settings.json');
 
 const VERSION_PLACEHOLDER = 'var STATIC_BUILD_VERSION_ = null;';
 const WEBAPP_PLACEHOLDER = 'var STATIC_WEBAPP_URL_ = null;';
+const CSP_INSERT_MARKER = '<!-- CSP_META_INSERT_POINT -->';
 
 // env -> local.settings.json key holding that env's deployment ID (mirrors callWebapp.js ENVS).
 const DEPLOYMENT_ID_KEY = { sit: 'testDeploymentId', prod: 'templateDeploymentId' };
@@ -81,6 +83,72 @@ function stampSource_(src, { versionString, webAppUrl }) {
     .replace(WEBAPP_PLACEHOLDER, `var STATIC_WEBAPP_URL_ = ${JSON.stringify(webAppUrl)};`);
 }
 
+// F3Go30-ah3v: sha256-<base64> CSP hash source for one inline <script> block's exact content —
+// must match the bytes the browser actually hashes, so this only ever runs against the STAMPED
+// source (after STATIC_BUILD_VERSION_/STATIC_WEBAPP_URL_ substitution), never the raw src/ file.
+function scriptHash_(scriptContent) {
+  const digest = crypto.createHash('sha256').update(scriptContent, 'utf8').digest('base64');
+  return `'sha256-${digest}'`;
+}
+
+// Extracts each inline <script>...</script> block's content — this page ships no `src=` scripts
+// (see docs/pwa-design.md §10.2: "no CDN, no external fonts") — and returns one CSP hash source
+// per block, in document order.
+//
+// Replaces any literal NUL (U+0000) with U+FFFD before hashing: the HTML5 spec's input-stream
+// preprocessing step does that same replacement before the parser ever sees the bytes, so a
+// hash computed from the raw file (which still has the NUL) does not match what a real browser
+// actually hashes — a script block containing one is silently and permanently blocked under a
+// hash-only CSP no matter how many times the build re-hashes it. Caught live (F3Go30-ah3v AC4,
+// SIT verification): announceFingerprint_'s field delimiter is a genuine embedded NUL, not a
+// space character, despite how it renders in an editor/terminal.
+function collectScriptHashes_(stampedSrc) {
+  const hashes = [];
+  const re = /<script(\s[^>]*)?>([\s\S]*?)<\/script>/g;
+  let m;
+  while ((m = re.exec(stampedSrc))) {
+    hashes.push(scriptHash_(m[2].replace(/\u0000/g, '\uFFFD')));
+  }
+  return hashes;
+}
+
+// Builds the CSP meta tag's `content` policy string for the stamped page.
+//
+// connect-src deliberately includes BOTH the GAS /exec origin and
+// script.googleusercontent.com — not "the GAS /exec origin" alone, despite that being the
+// issue's original literal wording. callApi's doPost round trip observably 302s through
+// googleusercontent.com (see index.html's transport-block comment above REQUEST_TIMEOUT_MS_),
+// and CSP's connect-src is enforced against every hop of a redirect chain, not just the initial
+// URL — omitting the redirect target would silently break every check-in/signup call under this
+// policy. AC4 (verify SIT before PROD) is the safety net if this reasoning is ever wrong.
+//
+// style-src keeps 'unsafe-inline': several elements use inline `style="..."` attributes
+// (F3Go30-ah3v's AC only requires the inline *script* to move off unsafe-inline via a hash).
+function buildCspMeta_(stampedSrc, webAppUrl) {
+  const execOrigin = new URL(webAppUrl).origin;
+  const scriptHashes = collectScriptHashes_(stampedSrc).join(' ');
+  const policy = [
+    `default-src 'self'`,
+    `script-src 'self' ${scriptHashes}`,
+    `style-src 'self' 'unsafe-inline'`,
+    `img-src 'self' data:`,
+    `connect-src 'self' ${execOrigin} https://script.googleusercontent.com`,
+    `base-uri 'none'`,
+    `form-action 'self'`,
+  ].join('; ');
+  return `<meta http-equiv="Content-Security-Policy" content="${policy}">`;
+}
+
+// Replaces the CSP_META_INSERT_POINT marker with the real CSP meta tag. Must run AFTER
+// stampSource_ — the hashes have to match the exact bytes actually served, and version/webapp-URL
+// stamping rewrites text inside the very <script> block being hashed.
+function insertCsp_(stampedSrc, webAppUrl) {
+  if (!stampedSrc.includes(CSP_INSERT_MARKER)) {
+    throw new Error(`static-pages/src/index.html: expected marker not found: ${CSP_INSERT_MARKER}`);
+  }
+  return stampedSrc.replace(CSP_INSERT_MARKER, buildCspMeta_(stampedSrc, webAppUrl));
+}
+
 function loadSettings_() {
   if (!fs.existsSync(SETTINGS_PATH)) {
     throw new Error('local.settings.json not found at project root — copy local.settings.json.example and populate the deployment IDs.');
@@ -94,7 +162,7 @@ function buildOne(env) {
   const versionString = versionStringFor(env, pkg);
   const webAppUrl = execUrlForEnv_(env, settings);
   const src = fs.readFileSync(SRC_PATH, 'utf8');
-  const out = stampSource_(src, { versionString, webAppUrl });
+  const out = insertCsp_(stampSource_(src, { versionString, webAppUrl }), webAppUrl);
   const outDir = path.join(DIST_ROOT, env);
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'index.html'), out, 'utf8');
@@ -128,4 +196,7 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { stampSource_, execUrlForEnv_, versionStringFor, buildOne };
+module.exports = {
+  stampSource_, execUrlForEnv_, versionStringFor, buildOne,
+  buildCspMeta_, collectScriptHashes_, insertCsp_,
+};

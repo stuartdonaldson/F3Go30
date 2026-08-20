@@ -344,6 +344,61 @@ test.describe('Static check-in front end (client, live SIT)', () => {
       return checkJson.dayValues[todayIdx];
     }, { timeout: LIVE_ROUND_TRIP_MS }).toBe(originalValue);
   });
+
+  // ── F3Go30-1pqo: settings/tools menu (Stage 3: .1/.4/.5/.7/.9 + que4) ────────────────────
+  test('settings menu: How It Works / FAQ / Log Bonus Points / Send Feedback all work from the header', async ({ page }) => {
+    // This test is a direct child of the outer describe, same as "cold cache..." above it, not
+    // of the "once identified" describe (which closed at line 280) — so, like that test, it
+    // must navigate/identify itself rather than relying on a beforeEach that doesn't apply here.
+    await page.goto(checkinPageUrl());
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
+
+    await page.locator('#headerIdentityBtn').click();
+    await expect(page.locator('#settingsModal')).toBeVisible();
+    await expect(page.locator('#settingsBonusBtn')).toBeEnabled();
+    await expect(page.locator('#settingsFeedbackBtn')).toBeEnabled();
+
+    // How It Works (F3Go30-1pqo.7 + que4) — opens the standalone synced page in a new tab, same
+    // target the signup intro card already links to.
+    const [howPage] = await Promise.all([
+      page.waitForEvent('popup'),
+      page.locator('#settingsHowBtn').click(),
+    ]);
+    await howPage.waitForLoadState();
+    expect(howPage.url()).toContain('how-it-works.html');
+    await howPage.close();
+    await expect(page.locator('#settingsModal')).toBeHidden();
+
+    // FAQ (F3Go30-1pqo.5)
+    await page.locator('#headerIdentityBtn').click();
+    await page.locator('#settingsFaqBtn').click();
+    await expect(page.locator('#faqModal')).toBeVisible();
+    await expect(page.locator('.faq-list dt').first()).toBeVisible();
+    await page.locator('#faqCloseBtn').click();
+    await expect(page.locator('#faqModal')).toBeHidden();
+
+    // Log Bonus Points (F3Go30-1pqo.9) — reuses openBonusManage_, same as the header's existing
+    // trophy-icon shortcut; this just proves the menu reaches it too.
+    await page.locator('#headerIdentityBtn').click();
+    await page.locator('#settingsBonusBtn').click();
+    await expect(page.locator('#step-bonus')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await page.locator('#headerBackBtn').click();
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+
+    // Send Feedback (F3Go30-1pqo.4) — a real POST to SIT; SIT's Config "Email Test Mode" = Yes
+    // redirects delivery to the Site Q's own address, same safety net every other live-check
+    // email test in this suite relies on.
+    await page.locator('#headerIdentityBtn').click();
+    await page.locator('#settingsFeedbackBtn').click();
+    await expect(page.locator('#siteFeedbackModal')).toBeVisible();
+    await page.locator('#siteFeedbackStars button').nth(3).click(); // 4 stars
+    await page.locator('#siteFeedbackComment').fill('Playwright live-check — please ignore.');
+    await page.locator('#siteFeedbackSendBtn').click();
+    await expect(page.locator('#siteFeedbackSentNote')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await page.locator('#siteFeedbackDoneBtn').click();
+    await expect(page.locator('#siteFeedbackModal')).toBeHidden();
+  });
 });
 
 // ── F3Go30-5nfj.5: localStorage instant-paint + reconciliation (static-pages only) ──────────
@@ -679,5 +734,92 @@ test.describe('Stale installed client: update banner + version footer (F3Go30-83
     await serveVersion(page, '99.9.10');
     await page.goto(builtPageUrl());
     await expect(page.locator('#updateBanner')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+  });
+});
+
+// ── Real CSP under a real browser (F3Go30-ah3v AC4) ───────────────────────────────────────────
+// The unbuilt src/ page served everywhere else in this file carries no CSP at all — tools/
+// build-static-pages.js only computes and inserts the real <meta http-equiv="Content-Security-
+// Policy"> at build time (see build-static-pages.js's insertCsp_/buildCspMeta_, unit-tested in
+// test_build_static_pages.js). This block is the live check that policy actually promised: it
+// serves static-pages/dist/sit/ (the BUILT page, same as the F3Go30-833s.18 block above) against
+// the live SIT backend and asserts zero `securitypolicyviolation` events while driving the
+// check-in flow — a hash mismatch or an over-narrow connect-src would surface here as a caught
+// violation (or a page that never leaves #step-identify), not as a silent pass.
+test.describe('Real CSP under the live SIT policy (F3Go30-ah3v)', () => {
+  const BUILT_DIR = path.join(ROOT, 'static-pages', 'dist', 'sit');
+  let staticOrigin;
+  let server;
+  let sessionGuid;
+
+  test.beforeAll(async ({ request }) => {
+    const builtPage = path.join(BUILT_DIR, 'index.html');
+    if (!fs.existsSync(builtPage)) {
+      throw new Error(`${builtPage} not found — run: node tools/build-static-pages.js --env sit`);
+    }
+    if (!fs.readFileSync(builtPage, 'utf8').includes('Content-Security-Policy')) {
+      throw new Error(`${builtPage} carries no CSP meta — build did not insert one (insertCsp_)`);
+    }
+
+    const settings = loadSettings();
+    const deploymentId = settings.testDeploymentId;
+    const checkinApiUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
+    sessionGuid = crypto.randomUUID();
+    const res = await request.post(checkinApiUrl + '?cmd=checkin', {
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      data: JSON.stringify({ action: 'identify', f3Name: DEMO_PAX.f3Name, email: DEMO_PAX.email, guid: sessionGuid }),
+      maxRedirects: 5,
+    });
+    expect((await res.json()).matched).toBe(true);
+
+    server = await startStaticServer(BUILT_DIR);
+    staticOrigin = `http://127.0.0.1:${server.address().port}`;
+  });
+
+  test.afterAll(async () => {
+    if (server) await new Promise((resolve) => server.close(resolve));
+  });
+
+  function builtPageUrl(qs) {
+    return `${staticOrigin}/index.html?id=${sessionGuid}${qs || ''}`;
+  }
+
+  /** Collects every securitypolicyviolation the document fires, from before first navigation
+   * (addInitScript runs ahead of any of the page's own scripts). */
+  async function collectCspViolations_(page) {
+    await page.exposeFunction('__reportCspViolation', () => {});
+    const violations = [];
+    page.on('console', (msg) => {
+      if (/content security policy|refused to/i.test(msg.text())) violations.push(msg.text());
+    });
+    await page.addInitScript(() => {
+      window.__cspViolations = [];
+      document.addEventListener('securitypolicyviolation', (e) => {
+        window.__cspViolations.push(e.violatedDirective + ': ' + e.blockedURI);
+      });
+    });
+    return {
+      assertNone: async () => {
+        const fromDom = await page.evaluate(() => window.__cspViolations || []);
+        expect([...violations, ...fromDom]).toEqual([]);
+      },
+    };
+  }
+
+  test('check-in flow: no CSP violations, real inline scripts and styles all run', async ({ page }) => {
+    const csp = await collectCspViolations_(page);
+    await page.goto(builtPageUrl());
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
+    await expect(page.locator('#headerName')).toContainText(DEMO_PAX.f3Name);
+    await csp.assertNone();
+  });
+
+  test('signup flow (?cmd=signup&autoStart=1): no CSP violations, signup wizard renders', async ({ page }) => {
+    const csp = await collectCspViolations_(page);
+    await page.goto(builtPageUrl('&cmd=signup&autoStart=1&targetMonth=current'));
+    await expect(page.locator('#step-signup')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
+    await csp.assertNone();
   });
 });

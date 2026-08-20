@@ -110,6 +110,52 @@ function runNoticeTests_(label, src) {
     h.fns.reportBonusSaveOutcome_(9, '2026-07-22');
     assert.equal(h.notice.hidden, true, label + ': an incomplete entry must not trigger the capped-save notice');
   })();
+
+  // F3Go30-6faz.1: a duplicated Slack Link (e.g. an uncapped type like EHing FNG, where `counts`
+  // stays true) must still surface a "does not count" notice — the same visibility gap
+  // F3Go30-833s.16 closed for the weekly-cap case, mirrored here for the sheet's dedup case.
+  (function testDuplicateLinkSaveShowsNotice() {
+    var state = {
+      viewDate: new Date(2026, 6, 22),
+      bonusEntries: [
+        { rowIndex: 5, type: 'EHing FNG', complete: true, counts: true, duplicateLink: true },
+      ],
+    };
+    var h = makeNoticeHarness_(src, state);
+    h.fns.reportBonusSaveOutcome_(5, '2026-07-22');
+    assert.equal(h.notice.hidden, false, label + ': notice must be shown for a duplicate-link save');
+    assert.match(h.notice.text, /EHing FNG/, label + ': notice must name the bonus type');
+    assert.match(h.notice.text, /won.t add points|does not add points|no points/i, label + ': notice must say plainly it adds no points');
+  })();
+
+  // A fresh (non-duplicate) link on a normal, counting save must not show any notice.
+  (function testFreshLinkSaveHidesNotice() {
+    var state = {
+      viewDate: new Date(2026, 6, 22),
+      bonusEntries: [
+        { rowIndex: 6, type: 'EHing FNG', complete: true, counts: true, duplicateLink: false },
+      ],
+    };
+    var h = makeNoticeHarness_(src, state);
+    h.notice.hidden = false; // simulate a stale notice left over from a prior save
+    h.fns.reportBonusSaveOutcome_(6, '2026-07-22');
+    assert.equal(h.notice.hidden, true, label + ': notice must be hidden for a fresh, non-duplicate link');
+  })();
+
+  // The weekly-cap notice takes precedence when both conditions happen to be true at once, so
+  // the PAX never sees two different explanations flicker for one save.
+  (function testCappedNoticeTakesPrecedenceOverDuplicateLinkNotice() {
+    var state = {
+      viewDate: new Date(2026, 6, 22),
+      bonusEntries: [
+        { rowIndex: 7, type: 'Fellowship', complete: true, counts: false, duplicateLink: true },
+      ],
+    };
+    var h = makeNoticeHarness_(src, state);
+    h.fns.reportBonusSaveOutcome_(7, '2026-07-22');
+    assert.equal(h.notice.hidden, false, label + ': notice must still be shown');
+    assert.match(h.notice.text, /only one Fellowship counts per week/i, label + ': capped wording must win over duplicate-link wording');
+  })();
 }
 
 runNoticeTests_('index.html', readSrc_(path.join('static-pages', 'src', 'index.html')));

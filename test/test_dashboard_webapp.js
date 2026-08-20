@@ -62,6 +62,7 @@ const {
   checkinClientConfig_dw_,
   resolveActiveAnnouncement_dw_,
   checkNextMonthRegistration_,
+  resolveSignupReminder_dw_,
   buildMonthGridEntries_,
   isStrictlyPastCalendarDate_,
   validateCheckinSubmitDayValue_,
@@ -83,6 +84,7 @@ const {
   buildMonthNavigationPayload_dw_,
   handleBonusAdd_,
   handleBonusEdit_,
+  handleSiteFeedback_,
 } = require('../script/dashboardWebapp.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
@@ -715,6 +717,63 @@ console.log('test_dashboard_webapp.js: PaxDB-fallback assertions passed');
 })();
 
 console.log('test_dashboard_webapp.js: nudge-window assertions passed');
+
+// ── resolveSignupReminder_dw_ (F3Go30-xyvs: SignupReminder popup) ────────────────────────────
+// Shares checkNextMonthRegistration_'s underlying Responses lookup (resolveNextMonthRegistrationStatus_dw_)
+// but deliberately has NO day-window gate — the popup must persist for as long as next month's
+// tracker exists and the PAX hasn't signed up, not just the final few days before it starts.
+function makeFakeResponsesSheetWithF3Names_(names) {
+  var rows = names.map(function(name) {
+    var row = new Array(EMPTY_RESPONSES_HEADERS_TEST_.length).fill('');
+    row[3] = name; // F3 Name column, per EMPTY_RESPONSES_HEADERS_TEST_'s layout
+    return row;
+  });
+  return {
+    getRange: function(row) {
+      if (row === 1) return { getValues: function() { return [EMPTY_RESPONSES_HEADERS_TEST_]; } };
+      return { getValues: function() { return rows; } };
+    },
+    getLastRow: function() { return 1 + rows.length; },
+    getLastColumn: function() { return EMPTY_RESPONSES_HEADERS_TEST_.length; },
+  };
+}
+
+(function testResolveSignupReminderReturnsNullWithNoNextMonthTracker() {
+  // No SpreadsheetApp global at all — if the !months.next guard doesn't short-circuit, this
+  // throws a ReferenceError and fails loudly rather than silently.
+  assert.equal(resolveSignupReminder_dw_({ next: null }, 'Anchor'), null);
+  assert.equal(resolveSignupReminder_dw_(null, 'Anchor'), null);
+})();
+
+(function testResolveSignupReminderFiresFarInAdvanceUnlikeTheNudgeWindow() {
+  var farFuture = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000); // 20 days out — well outside
+  // checkNextMonthRegistration_'s 3-day nudge window, but this popup has no such gate.
+  global.SpreadsheetApp = {
+    openById: function() { return { getSheetByName: function(name) { return name === 'Responses' ? makeFakeEmptyResponsesSheet_() : null; } }; },
+  };
+  var result = resolveSignupReminder_dw_({ next: { sheetId: 'sheet-next', label: 'August 2026', startDate: farFuture } }, 'Anchor');
+  assert.deepEqual(result, { monthLabel: 'August 2026' });
+  delete global.SpreadsheetApp;
+})();
+
+(function testResolveSignupReminderReturnsNullWhenAlreadyRegistered() {
+  var farFuture = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000);
+  global.SpreadsheetApp = {
+    openById: function() { return { getSheetByName: function(name) { return name === 'Responses' ? makeFakeResponsesSheetWithF3Names_(['Anchor']) : null; } }; },
+  };
+  var result = resolveSignupReminder_dw_({ next: { sheetId: 'sheet-next', label: 'August 2026', startDate: farFuture } }, 'Anchor');
+  assert.equal(result, null, 'already registered for next month — nothing to remind about');
+  delete global.SpreadsheetApp;
+})();
+
+(function testResolveSignupReminderReturnsNullWithNoResponsesSheet() {
+  global.SpreadsheetApp = { openById: function() { return { getSheetByName: function() { return null; } }; } };
+  var result = resolveSignupReminder_dw_({ next: { sheetId: 'sheet-next', label: 'August 2026', startDate: new Date() } }, 'Anchor');
+  assert.equal(result, null);
+  delete global.SpreadsheetApp;
+})();
+
+console.log('test_dashboard_webapp.js: signup reminder assertions passed');
 
 // ── buildMonthGridEntries_ (F3Go30-th22.2, Decision 2) ────────────────────
 (function testBuildMonthGridEntriesMapsDayColsToStatuses() {
@@ -3182,6 +3241,77 @@ function makeFakeConfigSheet_test_(rows) {
   assert.ok(cfg.bonusTypeRules, 'the rest of the config payload must still be populated');
   delete global.openConfigSheet;
 })();
+
+// ── handleSiteFeedback_ (F3Go30-1pqo.4) ──────────────────────────────────
+// Reuses readEmailDeliveryPolicy_/sendConfiguredEmail_ (Utilities.js, already covered by
+// test_nag.js) — these tests only check handleSiteFeedback_'s own contract: validation,
+// site-Q resolution, and the email content it builds, not the delivery-policy internals.
+function makeMockConfigSheetForFeedback_test_(rows) {
+  const { ManagedConfigSheet } = require('../script/libSheets.js');
+  return new ManagedConfigSheet({ getDataRange: () => ({ getValues: () => rows }) });
+}
+
+(function testHandleSiteFeedbackSendsEmailToSiteQWithIdentityAndVersion() {
+  var sent = [];
+  global.MailApp = { sendEmail: function(msg) { sent.push(msg); } };
+  // sendConfiguredEmail_ (Utilities.js) logs the masked recipient via GasLogger.js's
+  // maskRecipientListForLog_ — a real ambient global project-wide in GAS, but Utilities.js
+  // doesn't require GasLogger.js in Node, so it must be stubbed here same as the other bare
+  // GAS globals above (see test/test_gas_logger.js for the real implementation's own tests).
+  global.maskRecipientListForLog_ = function(list) { return list; };
+  global.openConfigSheet = function() {
+    return makeMockConfigSheetForFeedback_test_([
+      ['Site Q', 'Little John', 'lj@example.com'],
+    ]);
+  };
+  global.APP_VERSION = '2.5.0.2';
+  global.APP_VERSION_DATE = '2026-08-01T00:00:00.000Z';
+
+  var res = handleSiteFeedback_({}, {
+    f3Name: 'Splinter', email: 'splinter@example.com',
+    rating: 4, comment: 'Loving the streak view.', clientVersion: '2.5.0.2',
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(sent.length, 1, 'exactly one email sent');
+  assert.equal(sent[0].to, 'lj@example.com', 'goes to the Config sheet Site Q address');
+  assert.match(sent[0].subject, /Splinter/);
+  assert.match(sent[0].body, /Splinter <splinter@example\.com>/, 'sender identity: F3 name + email');
+  assert.match(sent[0].body, /Rating: 4\/5/);
+  assert.match(sent[0].body, /Loving the streak view\./);
+  assert.match(sent[0].body, /App version: 2\.5\.0\.2 \(2026-08-01T00:00:00\.000Z\)/, 'server APP_VERSION + APP_VERSION_DATE');
+  assert.match(sent[0].body, /Client build: 2\.5\.0\.2/, 'client STATIC_BUILD_VERSION_, echoed as payload.clientVersion');
+
+  delete global.MailApp;
+  delete global.openConfigSheet;
+  delete global.APP_VERSION;
+  delete global.APP_VERSION_DATE;
+  delete global.maskRecipientListForLog_;
+})();
+
+(function testHandleSiteFeedbackRejectsEmptyFeedback() {
+  var sent = [];
+  global.MailApp = { sendEmail: function(msg) { sent.push(msg); } };
+  var res = handleSiteFeedback_({}, { f3Name: 'Splinter', email: 'splinter@example.com', rating: 0, comment: '   ' });
+  assert.equal(res.ok, false);
+  assert.equal(res.error, 'empty_feedback');
+  assert.equal(sent.length, 0, 'no rating and no comment means nothing is sent');
+  delete global.MailApp;
+})();
+
+(function testHandleSiteFeedbackFailsSafeWithNoSiteQConfigured() {
+  var sent = [];
+  global.MailApp = { sendEmail: function(msg) { sent.push(msg); } };
+  global.openConfigSheet = function() { return makeMockConfigSheetForFeedback_test_([]); };
+  var res = handleSiteFeedback_({}, { f3Name: 'Splinter', rating: 5 });
+  assert.equal(res.ok, false);
+  assert.equal(res.error, 'site_q_not_configured');
+  assert.equal(sent.length, 0);
+  delete global.MailApp;
+  delete global.openConfigSheet;
+})();
+
+console.log('test_dashboard_webapp.js: handleSiteFeedback_ assertions passed');
 
 console.log('test_dashboard_webapp.js: announcement splash config assertions passed');
 

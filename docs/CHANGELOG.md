@@ -27,6 +27,23 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+- **Automatic reconnect after a "Couldn't reach the server" banner** — the app now quietly
+  retries in the background and clears the banner itself once your connection is back, instead
+  of needing a manual refresh. If it's not back after a couple of minutes, a "Reload page" button
+  appears so you can force it yourself.
+- **Signup now requires a team and your WHO/WHAT/HOW goals** before it lets you continue, with an
+  inline explanation of why each one matters — and a new ℹ️ button next to Team type opens a quick
+  explainer on AO-based vs. custom teams.
+- **A reused Slack Link on a Bonus Tracker entry is now called out** — if you paste the same link
+  into a second entry for the week, you'll see a plain-language notice (both at save time and in
+  your bonus list) that it won't add extra points, instead of it silently not counting.
+- **New menu — tap your name** in the app header for quick access to How It Works, FAQ, Log Bonus
+  Points, and Send Feedback (a rating + note that goes straight to your Site Q, with your name and
+  app version attached so they can track it down).
+- **A "Sign up for next month?" popup** now appears once next month's tracker is ready if you
+  haven't signed up for it yet — "Sign Up" drops you straight into the signup form, already filled
+  in from this month's goals; "Remind me later" hides it until tomorrow.
+
 ---
 
 ## v2.5 — Pax-detail popup, announcement splash, dashboard accuracy (2026-08-11)

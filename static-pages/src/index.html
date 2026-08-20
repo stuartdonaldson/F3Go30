@@ -8,6 +8,18 @@
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-title" content="Go30">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<!-- F3Go30-ah3v: belt-and-braces against leaking the ?id bearer token in the URL via the
+     Referer header. Not a live concern today (default strict-origin-when-cross-origin already
+     sends only the origin to script.google.com) but free, and unlike the CSP meta below this
+     needs no build-time computation, so it's present unconditionally in the unbuilt source too. -->
+<meta name="referrer" content="no-referrer">
+<!-- F3Go30-ah3v: tools/build-static-pages.js replaces this comment with a real
+     <meta http-equiv="Content-Security-Policy"> tag, computed AFTER version/webapp-URL stamping
+     (so the script-src hashes match the exact bytes actually served) — see buildCsp_. Left as an
+     inert comment in this unbuilt source: static-pages/src/index.html is served directly (no
+     stamping) by local dev and the Playwright live-check specs, and a placeholder CSP value
+     would break every inline script there with no compensating benefit. -->
+<!-- CSP_META_INSERT_POINT -->
 <style>
   * { box-sizing: border-box; }
   :root {
@@ -261,6 +273,9 @@
   .page-banner-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .page-banner button { background: none; border: none; color: var(--warn-fg); text-decoration: underline; cursor: pointer; font-size: 14px; padding: 0; font-family: inherit; flex-shrink: 0; }
   .page-banner-actions { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+  /* F3Go30-9u68: inline info-splash trigger next to a field-label (e.g. signup's Team type) —
+     no border/background of its own so it reads as part of the label, not a separate button. */
+  .info-btn { background: none; border: none; cursor: pointer; font-size: 15px; padding: 0; margin-left: 4px; vertical-align: middle; line-height: 1; }
   .announce-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; padding: 18px; z-index: 1000; }
   /* F3Go30-g9bi live-verify fix: .hidden{display:none} (declared earlier in this stylesheet) and
      .announce-overlay{display:flex} above are both single-class selectors of equal specificity,
@@ -287,6 +302,18 @@
   .announce-modal-actions button { font-family: inherit; font-size: 14px; padding: 9px 14px; border-radius: 8px; cursor: pointer; }
   #announcementRemindLaterBtn { background: none; border: 1px solid var(--border); color: var(--text); }
   #announcementDismissBtn { background: var(--brand); border: 1px solid var(--brand); color: #fff; }
+  /* F3Go30-1pqo: settings/tools menu + its content-only sub-modals (FAQ) — all three reuse
+     .announce-overlay/.announce-modal (F3Go30-g9bi) rather than a new overlay component, per
+     the pattern established in F3Go30-9u68's #teamInfoModal (none of these ever show at once). */
+  .header-name-btn { cursor: pointer; background: none; border: none; font: inherit; color: inherit; padding: 0; text-align: left; display: flex; align-items: center; gap: 5px; }
+  .header-name-btn .header-name { display: inline; }
+  .header-name-btn .menu-caret { font-size: 12px; opacity: .7; }
+  .settings-menu-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+  .settings-menu-item { display: block; width: 100%; text-align: left; font: inherit; font-size: 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--input-bg); color: var(--text); cursor: pointer; }
+  .settings-menu-item:disabled { color: var(--text-faint); cursor: default; opacity: .6; }
+  .faq-list dt { font-weight: bold; color: var(--brand); margin: 14px 0 4px; font-size: 15px; }
+  .faq-list dt:first-child { margin-top: 0; }
+  .faq-list dd { margin: 0; font-size: 15px; line-height: 1.4; color: var(--text); }
   .date-nav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 18px; }
   .date-nav-btn { width: 44px; height: 44px; border-radius: 8px; border: 2px solid var(--brand); background: var(--card-bg); color: var(--brand); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
   .date-nav-btn svg { width: 20px; height: 20px; display: block; }
@@ -366,10 +393,19 @@
            by showStep()/HEADER_BACK_TARGET_ rather than a per-card Back button, so it survives
            whichever step is on screen instead of being torn down and rebuilt with each. -->
       <button id="headerBackBtn" class="more-btn hidden" title="Back">&larr;</button>
-      <div>
-        <div class="header-name" id="headerName"></div>
-        <div class="header-sub" id="headerSub"></div>
-      </div>
+      <!-- F3Go30-1pqo.1: settings/tools menu trigger. Wraps the existing #headerName/#headerSub
+           text nodes (left as-is — updateHeaderIdentity_/applyServerConfig_ set their
+           textContent directly and are unaffected) rather than making the bare div clickable,
+           so the trigger is a real, keyboard-reachable <button> on every step (the header is
+           sticky and outside .wrap, so this one mount point covers identify/checkin/dashboard/
+           bonus/signup without a per-step audit). -->
+      <button type="button" id="headerIdentityBtn" class="header-name-btn" title="Menu">
+        <div>
+          <div class="header-name" id="headerName"></div>
+          <div class="header-sub" id="headerSub"></div>
+        </div>
+        <span class="menu-caret">&#9662;</span>
+      </button>
     </div>
     <div class="header-right">
       <!-- F3Go30-5nfj.5: lives in the persistent header (never hidden by showStep()) so it
@@ -389,9 +425,14 @@
   <div id="apiErrorBanner" class="api-error-banner hidden">
     <strong id="apiErrorHeadline">Something went wrong.</strong>
     <span id="apiErrorServerGuidance">Please try again, or refresh the browser and try again. If the problem persists,
-      notify <span id="apiErrorSiteQName">your Site Q</span><a id="apiErrorContactLink" class="hidden" href="#">(email)</a>.</span>
+      notify <span id="apiErrorSiteQName">your Site Q</span> <a id="apiErrorContactLink" class="hidden" href="#">(email)</a>.</span>
     <span id="apiErrorNetworkGuidance" class="hidden">Check your internet connection and try again — nothing was lost.</span>
     <div id="apiErrorDetail" class="api-error-detail"></div>
+    <!-- F3Go30-n40u: shown only once a transport outage has run past
+         RECONNECT_POLL_RELOAD_OFFER_AFTER_MS_ — a full reload is the right hammer for a stuck
+         client-side cache, but it must be PAX-initiated (loses scroll/unsaved input), never
+         automatic. -->
+    <button id="apiErrorReloadBtn" class="secondary hidden" type="button" style="margin-top:8px;">Reload page</button>
   </div>
 
   <!-- F3Go30-ubwl.3: shown on arrival from a GAS redirect (?from=gas — F3Go30-ubwl §Marker
@@ -430,6 +471,127 @@
       <div class="announce-modal-actions">
         <button id="announcementRemindLaterBtn" type="button">Remind me later</button>
         <button id="announcementDismissBtn" type="button">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- F3Go30-9u68: static (not config-driven) info splash for the signup Team field — reuses
+       the announcement splash's .announce-overlay/.announce-modal markup and CSS (F3Go30-g9bi)
+       rather than a second overlay component, since the two never show at once (signup vs.
+       identify/dashboard) and the visual language should match. -->
+  <div id="teamInfoModal" class="announce-overlay hidden">
+    <div class="announce-modal">
+      <h2>Why your team matters</h2>
+      <div>
+        <p>Your team is your accountability and support structure for this Go30 month — the
+          people who notice if you go missing and cheer when you hit a milestone. Go30 works
+          because someone else knows what you committed to.</p>
+        <p><strong>AO-based team:</strong> pick your regular F3 AO (e.g. Iron Mtn, The Ranch) —
+          your teammates are the other PAX who signed up from that same AO.</p>
+        <p><strong>Custom team:</strong> not tied to one AO, or want to team up with specific
+          PAX? Type a team name (a Slack channel, a nickname your crew agrees on) — anyone who
+          types that same name lands on your team.</p>
+      </div>
+      <div class="announce-modal-actions">
+        <button id="teamInfoCloseBtn" type="button">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- F3Go30-1pqo.1: settings/tools menu, opened by tapping the PAX name in the persistent
+       header (#headerName, always present outside .wrap — see the header markup below). Only
+       the entries this stage (F3Go30-1pqo.4/.5/.7/.9 + que4) actually delivers: Theme/
+       Notifications/Logout (F3Go30-1pqo.2/.3/.8) are added in Stage 9 once their own
+       infrastructure (kgzo.5, 833s.7) lands — see PLAN-08-19.md Stage 3 handoff. -->
+  <div id="settingsModal" class="announce-overlay hidden">
+    <div class="announce-modal">
+      <h2>Menu</h2>
+      <div class="settings-menu-list">
+        <button type="button" class="settings-menu-item" id="settingsHowBtn">How It Works</button>
+        <button type="button" class="settings-menu-item" id="settingsFaqBtn">FAQ</button>
+        <button type="button" class="settings-menu-item" id="settingsBonusBtn">Log Bonus Points</button>
+        <button type="button" class="settings-menu-item" id="settingsFeedbackBtn">Send Feedback</button>
+      </div>
+      <div class="announce-modal-actions">
+        <button id="settingsCloseBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- F3Go30-1pqo.5: FAQ content lives here directly (like #teamInfoModal above) rather than a
+       synced standalone page (tools/sync-how-it-works.js's pattern) — it's shown from exactly
+       one place (this menu), so there's no second copy for a sync step to guard against
+       diverging. -->
+  <div id="faqModal" class="announce-overlay hidden">
+    <div class="announce-modal">
+      <h2>FAQ</h2>
+      <dl class="faq-list">
+        <dt>What counts as a "Hit"?</dt>
+        <dd>Doing the one daily challenge you committed to at signup. Check in every day — Hit,
+          Miss, or (if you forget) it's marked Failed to report the next morning.</dd>
+        <dt>What's the check-in deadline?</dt>
+        <dd>10:00 AM the next day. Miss that window with no check-in and the system marks it a
+          Failed to report for you — it always pays to report, even a miss.</dd>
+        <dt>How do Bonus Points work?</dt>
+        <dd>Log EHing an FNG, a Fellowship moment, taking a Q, or an Inspire moment from the
+          Bonus Points screen (Menu &rarr; Log Bonus Points). EHing FNG, Q Point, and Inspire
+          each need a Slack link as evidence before they count.</dd>
+        <dt>Can I change my team after signing up?</dt>
+        <dd>Yes — update it from the signup flow at any time; teams are just a shared name
+          (AO-based or custom), not a fixed roster.</dd>
+        <dt>I can't find my check-in page. What do I do?</dt>
+        <dd>Use Menu &rarr; Send Feedback to reach your Site Q, or open the Tracker sheet
+          directly from the dashboard's spreadsheet icon (top right) — every PAX's data lives
+          there as a fallback.</dd>
+        <dt>What does a missed check-in cost me?</dt>
+        <dd>A Miss scores 0; a Failed to report (no check-in at all) scores &minus;1 — reporting
+          a miss honestly is always better than not reporting.</dd>
+      </dl>
+      <div class="announce-modal-actions">
+        <button id="faqCloseBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- F3Go30-1pqo.4: free-text + star rating, emailed straight to the Site Q
+       (handleSiteFeedback_, dashboardWebapp.js) — reuses the signup flow's own feedback-star
+       component logic (renderStarRating_) rather than a second copy, see su-step-feedback. -->
+  <div id="siteFeedbackModal" class="announce-overlay hidden">
+    <div class="announce-modal">
+      <div id="siteFeedbackNotSent">
+        <h2>Send Feedback</h2>
+        <p class="muted">Goes straight to your Site Q, along with your name and app version.</p>
+        <label class="field-label">How is Go30 working for you?</label>
+        <div class="stars" id="siteFeedbackStars"></div>
+        <label class="field-label">Anything we can improve?</label>
+        <textarea id="siteFeedbackComment" rows="3" placeholder="Optional, but helpful"></textarea>
+        <div id="siteFeedbackError" class="error-text hidden"></div>
+        <div class="announce-modal-actions">
+          <button id="siteFeedbackCancelBtn" type="button">Cancel</button>
+          <button class="primary" id="siteFeedbackSendBtn" type="button">Send</button>
+        </div>
+      </div>
+      <div id="siteFeedbackSentNote" class="hidden center" style="padding:8px 0;color:var(--brand);font-weight:bold;font-size:16px;">
+        Thanks for the feedback!
+        <div class="announce-modal-actions" style="justify-content:center;margin-top:14px;">
+          <button id="siteFeedbackDoneBtn" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- F3Go30-xyvs: SignupReminder popup — prompts an already-identified PAX to sign up for next
+       month once that tracker exists and they haven't yet. Reuses the announcement splash's
+       .announce-overlay/.announce-modal markup/CSS (F3Go30-g9bi) rather than a fourth overlay
+       component. -->
+  <div id="signupReminderModal" class="announce-overlay hidden">
+    <div class="announce-modal">
+      <h2>Sign up for <span id="signupReminderMonthLabel"></span>?</h2>
+      <p>You're not signed up for <span id="signupReminderMonthLabel2"></span> yet — lock in your
+        goals now so you're ready when the month starts.</p>
+      <div class="announce-modal-actions">
+        <button id="signupReminderLaterBtn" type="button">Remind me later</button>
+        <button class="primary" id="signupReminderSignUpBtn" type="button">Sign Up</button>
       </div>
     </div>
   </div>
@@ -511,7 +673,7 @@
           </div>
         </div>
 
-        <label class="field-label">Team type</label>
+        <label class="field-label">Team type <button type="button" id="suTeamInfoBtn" class="info-btn" aria-label="Why does my team matter?">ℹ️</button></label>
         <div class="team-type-row">
           <label class="team-type-option" id="suTtAoOption"><input type="radio" name="suTt" value="ao"> AO-based</label>
           <label class="team-type-option" id="suTtOtherOption"><input type="radio" name="suTt" value="other"> Custom Team</label>
@@ -540,6 +702,7 @@
           Ok to send me reminder emails when it looks like I'm late.
         </label>
 
+        <div id="suInfoError" class="error-text hidden"></div>
         <button class="primary" id="suInfoNextBtn">Continue</button>
         <button class="secondary" id="suInfoBackBtn">Back</button>
       </div>
@@ -1171,14 +1334,205 @@
     }).then(function(json) {
       if (!json.ok) throw new Error(json.error || 'Server reported an error with no detail');
       return json;
+    }).then(function(json) {
+      // F3Go30-xyri: piggyback the queued-telemetry upload on any successful round trip rather
+      // than opening a dedicated connection for it — fire-and-forget, never blocks/degrades the
+      // call that triggered it. Excludes the upload action itself so a successful flush doesn't
+      // immediately try to flush its own (now-empty) queue again.
+      if (action !== 'clientTelemetry') flushClientTelemetryQueue_();
+      return json;
     }).finally(function() {
       pendingRequestCount_--;
       updateSyncingIndicator_();
     });
   }
 
+  // ── F3Go30-xyri: client-side error telemetry ──────────────────────────────────────────────
+  // Captures any client-observed error/crash into a bounded localStorage queue, uploaded
+  // opportunistically (see callApi above) once connectivity is available. See the issue's
+  // addenda for why each field is here: stack/isTransport/online/swState exist because a bare
+  // frequency count wasn't enough to root-cause the FEEDBACK-failed-to-connect.png report (the
+  // PAX's network was demonstrably fine while this app kept failing) — each field is a piece of
+  // evidence toward telling "genuinely offline" apart from "something stuck client-side."
+
+  var CLIENT_TELEMETRY_QUEUE_KEY_ = 'go30ClientTelemetryQueue:v1';
+  var CLIENT_TELEMETRY_QUEUE_MAX_ = 25;
+  var CLIENT_TELEMETRY_QUEUE_MAX_AGE_MS_ = 1000 * 60 * 60 * 24 * 7; // 7 days
+  var CLIENT_TELEMETRY_UPLOAD_BATCH_MAX_ = 10;
+
+  function makeClientTelemetryId_() {
+    return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (String(Date.now()) + '-' + Math.random().toString(16).slice(2));
+  }
+
+  function loadClientTelemetryQueue_() {
+    try {
+      var raw = localStorage.getItem(CLIENT_TELEMETRY_QUEUE_KEY_);
+      var list = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list) ? list : [];
+    } catch (e) { return []; }
+  }
+
+  function saveClientTelemetryQueue_(list) {
+    try { localStorage.setItem(CLIENT_TELEMETRY_QUEUE_KEY_, JSON.stringify(list)); } catch (e) { /* storage full/unavailable — best effort */ }
+  }
+
+  /** Bounds the queue by count and age so a client that can never reach the server doesn't grow
+   * localStorage without limit (F3Go30-xyri AC). */
+  function pruneClientTelemetryQueue_(list) {
+    var cutoff = Date.now() - CLIENT_TELEMETRY_QUEUE_MAX_AGE_MS_;
+    var pruned = list.filter(function(rec) { return rec && rec.ts && Date.parse(rec.ts) >= cutoff; });
+    if (pruned.length > CLIENT_TELEMETRY_QUEUE_MAX_) pruned = pruned.slice(pruned.length - CLIENT_TELEMETRY_QUEUE_MAX_);
+    return pruned;
+  }
+
+  /** Captures one client-observed telemetry record — an error/crash (F3Go30-xyri) or a
+   * reconnect-poll attempt/outcome (F3Go30-n40u, same stream per that issue's own text) — for
+   * later upload. Never throws: a failure here must never compound whatever it's reporting on.
+   * `extra` carries kind-specific fields (errorText/stack/isTransport for an error; attempt/
+   * elapsedMs/outcome for a poll tick).
+   * @param {string} kind - 'error' | 'reconnectPoll'.
+   * @param {string} action - The callApi action this record is about (or a source tag like
+   *   'window.onerror' for a capture with no associated action).
+   * @param {Object=} extra
+   */
+  function captureClientTelemetry_(kind, action, extra) {
+    try {
+      var record = Object.assign({
+        id: makeClientTelemetryId_(),
+        ts: new Date().toISOString(),
+        kind: kind,
+        action: action || '',
+        clientVersion: STATIC_BUILD_VERSION_,
+        ns: NS_,
+        // Reuses whatever identify already resolved client-side — same fields already logged
+        // server-side for normal requests (F3Go30-xyri addendum #2), not new PII.
+        f3Name: (typeof state !== 'undefined' && state && state.f3Name) || '',
+        online: (typeof navigator !== 'undefined' && 'onLine' in navigator) ? navigator.onLine : null,
+        swState: (typeof navigator !== 'undefined' && navigator.serviceWorker)
+          ? (navigator.serviceWorker.controller ? 'controlled' : 'no-controller')
+          : 'unsupported'
+      }, extra || {});
+      saveClientTelemetryQueue_(pruneClientTelemetryQueue_(loadClientTelemetryQueue_().concat([record])));
+    } catch (e) { /* capture must never throw */ }
+  }
+
+  /** Captures a client-observed error/crash. The transport-failure banner path (showApiError_)
+   * and the global handlers below funnel through here. */
+  function captureClientError_(action, err, extra) {
+    captureClientTelemetry_('error', action, Object.assign({
+      errorText: (err && err.message) ? err.message : String(err),
+      stack: (err && err.stack) ? String(err.stack) : '',
+      isTransport: !!(err && err.isTransport)
+    }, extra || {}));
+  }
+
+  var clientTelemetryFlushInFlight_ = false;
+
+  /** Uploads queued telemetry records once connectivity is available. Fire-and-forget: never
+   * blocks or degrades the PAX-facing flow that triggered the capture, and any upload failure is
+   * swallowed here rather than surfaced via showApiError_ — a failed background upload is not
+   * itself worth alarming the PAX about. Only removes a record from the queue once the server
+   * actually acknowledges the batch, so a lost response leaves it queued for next time. */
+  function flushClientTelemetryQueue_() {
+    if (clientTelemetryFlushInFlight_) return;
+    var queue = loadClientTelemetryQueue_();
+    if (!queue.length) return;
+    clientTelemetryFlushInFlight_ = true;
+    var batch = queue.slice(0, CLIENT_TELEMETRY_UPLOAD_BATCH_MAX_);
+    callApi('clientTelemetry', { records: batch })
+      .then(function() {
+        var sentIds = batch.map(function(rec) { return rec.id; });
+        var remaining = loadClientTelemetryQueue_().filter(function(rec) { return sentIds.indexOf(rec.id) === -1; });
+        saveClientTelemetryQueue_(remaining);
+      })
+      .catch(function() { /* stays queued, retried on the next successful callApi */ })
+      .finally(function() { clientTelemetryFlushInFlight_ = false; });
+  }
+
+  window.addEventListener('error', function(e) {
+    captureClientError_('window.onerror', e.error || new Error(e.message), { source: 'window.onerror' });
+  });
+  window.addEventListener('unhandledrejection', function(e) {
+    var reason = e.reason;
+    captureClientError_('unhandledrejection', (reason instanceof Error) ? reason : new Error(String(reason)), { source: 'unhandledrejection' });
+  });
+
+  // ── F3Go30-n40u: background reconnect poll ────────────────────────────────────────────────
+  // While the transport-failure banner is showing, silently polls a cheap read (identify,
+  // already called on load) until it succeeds, hits the attempt cap, or the banner clears some
+  // other way. Never forces a reload — see apiErrorReloadBtn's wiring below for the PAX-initiated
+  // escalation once an outage runs long.
+
+  var RECONNECT_POLL_INTERVAL_MS_ = 10000;
+  var RECONNECT_POLL_MAX_ATTEMPTS_ = 30; // ~5 minutes at the base interval, then stop escalating
+  var RECONNECT_POLL_RELOAD_OFFER_AFTER_MS_ = 120000; // 2 minutes of continuous failure
+
+  var reconnectPollState_ = null; // { attempts, startedAt, timerId } while a poll is running
+
+  function stopReconnectPoll_() {
+    if (reconnectPollState_ && reconnectPollState_.timerId) clearTimeout(reconnectPollState_.timerId);
+    reconnectPollState_ = null;
+    var reloadBtn = $('apiErrorReloadBtn');
+    if (reloadBtn) reloadBtn.classList.add('hidden');
+  }
+
+  /** Re-fetches whatever read view is currently on screen once connectivity returns — the "for
+   * read actions, silently repaints with fresh data" half of F3Go30-n40u's AC. Scoped to the
+   * currently-visible view rather than "whichever action originally failed": by the time a poll
+   * succeeds the PAX may have navigated on, and repainting a hidden view would be wasted work.
+   * Write-shaped actions (identify/checkin/save/feedback) do nothing here — their own submit
+   * control is still there and working, and a write is never auto-resubmitted. */
+  function repaintCurrentView_() {
+    if (state.currentStep === 'checkin' && state.advancedOpen && state.calMonthKey) {
+      delete state.calGridCache[state.calMonthKey];
+      loadCalMonth_(state.calMonthKey);
+    } else if (state.currentStep === 'dashboard') {
+      loadDashboard_(state.viewDate ? isoDate_(state.viewDate) : undefined);
+    } else if (state.currentStep === 'bonus') {
+      loadBonusList_();
+    }
+  }
+
+  function startReconnectPoll_() {
+    if (reconnectPollState_) return; // already running
+    reconnectPollState_ = { attempts: 0, startedAt: Date.now() };
+    scheduleNextReconnectPoll_();
+  }
+
+  function scheduleNextReconnectPoll_() {
+    if (!reconnectPollState_) return;
+    reconnectPollState_.timerId = setTimeout(runReconnectPollAttempt_, RECONNECT_POLL_INTERVAL_MS_);
+  }
+
+  function runReconnectPollAttempt_() {
+    if (!reconnectPollState_) return;
+    var pollState = reconnectPollState_;
+    pollState.attempts++;
+    var elapsedMs = Date.now() - pollState.startedAt;
+
+    callApi('identify', { f3Name: state.f3Name, email: state.email }).then(function() {
+      captureClientTelemetry_('reconnectPoll', 'identify', { attempt: pollState.attempts, elapsedMs: elapsedMs, outcome: 'recovered' });
+      stopReconnectPoll_();
+      hideApiError_();
+      repaintCurrentView_();
+    }, function() {
+      captureClientTelemetry_('reconnectPoll', 'identify', { attempt: pollState.attempts, elapsedMs: elapsedMs, outcome: 'failed' });
+      if (reconnectPollState_ !== pollState) return; // stopped meanwhile (banner cleared another way)
+      if (elapsedMs >= RECONNECT_POLL_RELOAD_OFFER_AFTER_MS_) {
+        var reloadBtn = $('apiErrorReloadBtn');
+        if (reloadBtn) reloadBtn.classList.remove('hidden');
+      }
+      if (pollState.attempts >= RECONNECT_POLL_MAX_ATTEMPTS_) {
+        stopReconnectPoll_(); // give up escalating — the reload button (if offered) is what's left
+        return;
+      }
+      scheduleNextReconnectPoll_();
+    });
+  }
+
   function hideApiError_() {
     $('apiErrorBanner').classList.add('hidden');
+    stopReconnectPoll_();
   }
 
   function setButtonLoading_(btn, isLoading, loadingText) {
@@ -1414,6 +1768,79 @@
     hideAnnouncementModal_();
   });
 
+  /** F3Go30-xyvs: SignupReminder popup — mirrors the announcement splash's mechanism above
+   * (server-driven, unconditional show/hide, F3Go30-g9bi) but its own "remind later" semantics:
+   * unlike the splash's snooze (sessionStorage, fixed delay), this one must survive an app
+   * restart/tab close and clear on the next CALENDAR DAY rather than after a fixed delay — so it
+   * uses localStorage and a wake time pinned to local midnight instead of Date.now() + delay.
+   * Keyed by monthLabel, not a content fingerprint like the splash: there's only ever one
+   * next-month target at a time, so there's no "edited content" case to distinguish. The trigger
+   * itself (res.signupReminder) is resolved server-side (resolveSignupReminder_dw_,
+   * dashboardWebapp.js) and re-evaluated on every identify/resume-refresh — this function only
+   * ever reflects what the latest LIVE response says, same isLive gate as applyAnnouncementState_
+   * (never painted from the cached instant-paint snapshot, so a stale reminder can't flash before
+   * the live identify lands). */
+  var SIGNUP_REMINDER_SNOOZE_KEY_ = 'go30SignupReminderSnoozedUntil';
+  var signupReminderShownMonthLabel_ = null;
+
+  function startOfNextLocalDay_(fromMs) {
+    var d = new Date(fromMs);
+    d.setHours(24, 0, 0, 0);
+    return d.getTime();
+  }
+  function signupReminderSnoozed_(monthLabel) {
+    try {
+      var stored = localStorage.getItem(SIGNUP_REMINDER_SNOOZE_KEY_);
+      if (!stored) return false;
+      var sep = stored.indexOf('|');
+      var wakeAt = Number(sep === -1 ? stored : stored.slice(0, sep));
+      var snoozedMonthLabel = sep === -1 ? null : stored.slice(sep + 1);
+      return !!wakeAt && Date.now() < wakeAt && snoozedMonthLabel === monthLabel;
+    } catch (e) { return false; }
+  }
+  function hideSignupReminderModal_() {
+    signupReminderShownMonthLabel_ = null;
+    $('signupReminderModal').classList.add('hidden');
+  }
+  function showSignupReminderModal_(reminder) {
+    signupReminderShownMonthLabel_ = reminder.monthLabel;
+    $('signupReminderMonthLabel').textContent = reminder.monthLabel;
+    $('signupReminderMonthLabel2').textContent = reminder.monthLabel;
+    $('signupReminderModal').classList.remove('hidden');
+  }
+  /** Called alongside applyServerConfig_ on every LIVE identify/resume-refresh response — shows
+   * or hides UNCONDITIONALLY so signing up for next month through ANY path (this popup, direct
+   * nav, admin action) clears it on the PAX's very next response, not just client-side dismissal.
+   * @param {boolean=} isLive Defaults true — see this function's docstring above. */
+  function applySignupReminderState_(reminder, isLive) {
+    if (isLive === false) return;
+    if (reminder && !signupReminderSnoozed_(reminder.monthLabel)) {
+      // Never collide with an active announcement splash — the two are mutually exclusive
+      // server-driven overlays, so let the (necessarily higher-priority, admin-authored)
+      // announcement win if both are up at once rather than stacking two modals.
+      if (!$('announcementModal').classList.contains('hidden')) return;
+      showSignupReminderModal_(reminder);
+    } else {
+      hideSignupReminderModal_();
+    }
+  }
+  $('signupReminderLaterBtn').addEventListener('click', function() {
+    if (signupReminderShownMonthLabel_ != null) {
+      try {
+        localStorage.setItem(SIGNUP_REMINDER_SNOOZE_KEY_, startOfNextLocalDay_(Date.now()) + '|' + signupReminderShownMonthLabel_);
+      } catch (e) { /* not fatal */ }
+    }
+    hideSignupReminderModal_();
+  });
+  $('signupReminderSignUpBtn').addEventListener('click', function() {
+    hideSignupReminderModal_();
+    // Already authenticated (state.f3Name/email are set — this popup only ever shows on a
+    // matched identify) and prefilled from the PAX's current-month PaxDB record, same as every
+    // other openSignup_('next') call site (F3Go30-ez8v's nmcYesBtn/openNextMonthChoice_ path) —
+    // no second prefill mechanism.
+    openSignup_('next');
+  });
+
   /** True when this document is a BUILT client running a different version than the server
    * reports. A null clientBuild means unbuilt src/ served directly (local dev + Playwright) —
    * there is no build to be behind, so that is never staleness. */
@@ -1493,6 +1920,10 @@
     // nothing. Bail before touching the DOM.
     if (pageIsUnloading_) return;
 
+    // F3Go30-xyri: every banner-worthy failure is a client-observed error worth capturing for
+    // frequency/root-cause analysis, uploaded opportunistically once connectivity returns.
+    captureClientError_(action, err);
+
     var detail =
       'Time: ' + new Date().toISOString() + '\n' +
       'Action: ' + action + '\n' +
@@ -1518,7 +1949,16 @@
     }
 
     $('apiErrorBanner').classList.remove('hidden');
+
+    // F3Go30-n40u: only a transport failure warrants a reconnect poll — a server that answered
+    // (any status, any json.ok:false) has already made its decision, and polling identify won't
+    // change that.
+    if (isTransport) startReconnectPoll_();
   }
+
+  $('apiErrorReloadBtn').addEventListener('click', function() {
+    location.reload();
+  });
 
   function updateHeaderIdentity_(f3Name, team, monthLabel) {
     var title = (NAME_SPACE || '') + (f3Name ? ': ' + f3Name : '');
@@ -1724,6 +2164,7 @@
    * result into a fresh page. */
   function applyTypedIdentifyResult_(result) {
     if (result.config) applyServerConfig_(result.config);
+    applySignupReminderState_(result.signupReminder);
     if (result.matched) {
       applyIdentifySuccess_(result);
     } else if (result.knownPaxNotRegistered) {
@@ -1809,6 +2250,7 @@
     callApi('identify', { token: SAVED_IDENTITY_TOKEN })
       .then(function(res) {
         if (res.config) applyServerConfig_(res.config);
+        applySignupReminderState_(res.signupReminder);
         if (res.matched) {
           reconcileWithLocalWrites_(res);
           applyIdentifySuccess_(res, { preserveView: paintedFromSnapshot_ });
@@ -1978,18 +2420,27 @@
    * teammate view (renderPaxDetailBonusEntries_) so the two never drift out of shape. */
   function bonusEntryInnerHtml_(entry, editable) {
     var dateLabel = entry.whenIso ? formatNavDate_(parseIsoDate_(entry.whenIso)) : '';
-    var isExtra = !!entry.complete && entry.counts === false;
+    // F3Go30-6faz.1: a duplicated Slack Link is silently dropped by the sheet's own dedup the
+    // same way a weekly-cap repeat is — treat both as the same "extra" badge/note rather than
+    // teaching the list a second visual state, only varying the note's wording by cause.
+    var isCapExtra = !!entry.complete && entry.counts === false;
+    var isDuplicateLinkExtra = !!entry.complete && !isCapExtra && entry.duplicateLink === true;
+    var isExtra = isCapExtra || isDuplicateLinkExtra;
     var badgeClass = !entry.complete ? 'pending' : (isExtra ? 'extra' : 'complete');
     var badgeText = !entry.complete ? 'Needs link' : (isExtra ? 'Logged (extra)' : '✓ Counted');
+    var extraNote = isCapExtra
+      ? 'Great job getting out there! Only one ' + escapeHtml_(entry.type) +
+        ' counts per week, so this one won’t add extra points — keep up the good work.'
+      : (isDuplicateLinkExtra
+        ? 'This Slack Link was already used for a ' + escapeHtml_(entry.type) +
+          ' entry this week, so this one won’t add extra points.'
+        : '');
     return '<div class="bonus-entry-top">' +
         '<span class="bonus-entry-type">' + escapeHtml_(entry.type) + '</span>' +
         '<span class="bonus-entry-date">' + escapeHtml_(dateLabel) + '</span>' +
       '</div>' +
       '<div class="bonus-entry-message">' + escapeHtml_(entry.message) + '</div>' +
-      (isExtra
-        ? '<div class="bonus-entry-note">Great job getting out there! Only one ' + escapeHtml_(entry.type) +
-          ' counts per week, so this one won’t add extra points — keep up the good work.</div>'
-        : '') +
+      (isExtra ? '<div class="bonus-entry-note">' + extraNote + '</div>' : '') +
       '<div class="bonus-entry-bottom">' +
         '<span class="bonus-badge ' + badgeClass + '">' + badgeText + '</span>' +
         (editable ? '<button class="bonus-edit-btn" data-row="' + entry.rowIndex + '">Edit</button>' : '') +
@@ -2601,6 +3052,7 @@
   }
 
   function fillSignupInfoStep_() {
+    $('suInfoError').classList.add('hidden');
     $('suInfoHeading').textContent = signupState.wasMatched ? 'Review your registration' : "Welcome! Let's get your info";
     $('suMatchedCallout').classList.toggle('hidden', !signupState.wasMatched);
     $('suInfoF3Name').textContent = state.f3Name;
@@ -2616,6 +3068,112 @@
     $('suNagInput').checked = signupState.nag;
     renderSignupTeamTypeUI_();
   }
+
+  /**
+   * F3Go30-9u68: team and WHO/WHAT/HOW goals are required before a signup can proceed past the
+   * info step — a PAX who abandons here (the "McLovin" case named in the issue) previously had
+   * no signal anything was missing. Returns a human-readable reason (which also explains WHY, per
+   * the issue's AC) or null when the step is complete. Checked against signupState, not the DOM,
+   * since every field already keeps signupState in sync via its own input listener above.
+   * @returns {string|null}
+   */
+  function validateSignupInfoStep_() {
+    var teamOk = !!(signupState.teamType && String(signupState.team || '').trim());
+    if (!teamOk) {
+      return 'Please choose a team before continuing — team is how F3 accountability and peer ' +
+        'support happen on Go30; without one, nobody’s watching for you to fall behind.';
+    }
+    var goalsOk = String(signupState.who || '').trim() && String(signupState.what || '').trim() &&
+      String(signupState.how || '').trim();
+    if (!goalsOk) {
+      return 'Please fill in WHO, WHAT, and HOW before continuing — naming a real goal is the ' +
+        'core Go30 mechanism for lasting change, not just a formality.';
+    }
+    return null;
+  }
+
+  function showTeamInfoModal_() { $('teamInfoModal').classList.remove('hidden'); }
+  function hideTeamInfoModal_() { $('teamInfoModal').classList.add('hidden'); }
+
+  // ── Settings/tools menu (F3Go30-1pqo.1) ─────────────────────────────────
+  // Menu trigger is #headerIdentityBtn, wrapping #headerName in the persistent header (see its
+  // markup comment). Only entries this stage delivers (F3Go30-1pqo.4/.5/.7/.9 + que4) — Theme/
+  // Notifications/Logout land in Stage 9 once kgzo.5/833s.7 exist (PLAN-08-19.md handoff).
+  function showSettingsMenu_() {
+    // Identity-dependent entries (self-scoped bonus editing, feedback attribution) have nothing
+    // to act on before identify() has ever resolved — How It Works/FAQ don't need identity, so
+    // the trigger itself stays enabled on every step rather than hidden pre-identify.
+    var hasIdentity = !!state.f3Name;
+    $('settingsBonusBtn').disabled = !hasIdentity;
+    $('settingsFeedbackBtn').disabled = !hasIdentity;
+    $('settingsModal').classList.remove('hidden');
+  }
+  function hideSettingsMenu_() { $('settingsModal').classList.add('hidden'); }
+  $('headerIdentityBtn').addEventListener('click', showSettingsMenu_);
+  $('settingsCloseBtn').addEventListener('click', hideSettingsMenu_);
+
+  // F3Go30-1pqo.7 + F3Go30-que4: the menu (present on every step via the persistent header) is
+  // the single mechanism satisfying que4's "How it Works reachable from every page view" AC —
+  // opens the same standalone page (static-pages/src/how-it-works.html, tools/sync-how-it-
+  // works.js) the signup intro card already links to, rather than a second content copy.
+  $('settingsHowBtn').addEventListener('click', function() {
+    hideSettingsMenu_();
+    window.open('how-it-works.html', '_blank', 'noopener');
+  });
+
+  // F3Go30-1pqo.5
+  $('settingsFaqBtn').addEventListener('click', function() {
+    hideSettingsMenu_();
+    $('faqModal').classList.remove('hidden');
+  });
+  $('faqCloseBtn').addEventListener('click', function() { $('faqModal').classList.add('hidden'); });
+
+  // F3Go30-1pqo.9: reuses openBonusManage_ (defined below, under Step: bonus) — the same
+  // function the header's existing trophy-icon shortcut (#bonusBtn) and the dashboard's Bonus
+  // tile (#dBonusTile) already call. This is a third entry point into the same flow, not a new
+  // one.
+  $('settingsBonusBtn').addEventListener('click', function() {
+    if ($('settingsBonusBtn').disabled) return;
+    hideSettingsMenu_();
+    openBonusManage_();
+  });
+
+  // F3Go30-1pqo.4
+  function resetSiteFeedbackForm_() {
+    siteFeedbackState_.rating = 0;
+    $('siteFeedbackComment').value = '';
+    $('siteFeedbackError').classList.add('hidden');
+    $('siteFeedbackNotSent').classList.remove('hidden');
+    $('siteFeedbackSentNote').classList.add('hidden');
+    renderSiteFeedbackStars_();
+  }
+  $('settingsFeedbackBtn').addEventListener('click', function() {
+    if ($('settingsFeedbackBtn').disabled) return;
+    hideSettingsMenu_();
+    resetSiteFeedbackForm_();
+    $('siteFeedbackModal').classList.remove('hidden');
+  });
+  $('siteFeedbackCancelBtn').addEventListener('click', function() { $('siteFeedbackModal').classList.add('hidden'); });
+  $('siteFeedbackDoneBtn').addEventListener('click', function() { $('siteFeedbackModal').classList.add('hidden'); });
+  $('siteFeedbackSendBtn').addEventListener('click', function() {
+    var comment = $('siteFeedbackComment').value.trim();
+    var rating = siteFeedbackState_.rating;
+    if (!rating && !comment) {
+      $('siteFeedbackError').textContent = 'Add a rating or a comment before sending.';
+      $('siteFeedbackError').classList.remove('hidden');
+      return;
+    }
+    $('siteFeedbackError').classList.add('hidden');
+    hideApiError_();
+    setButtonLoading_($('siteFeedbackSendBtn'), true, 'Sending…');
+    callApi('siteFeedback', { f3Name: state.f3Name, email: state.email, rating: rating, comment: comment })
+      .then(function() {
+        $('siteFeedbackNotSent').classList.add('hidden');
+        $('siteFeedbackSentNote').classList.remove('hidden');
+      })
+      .catch(function(err) { showApiError_('siteFeedback', err); })
+      .finally(function() { setButtonLoading_($('siteFeedbackSendBtn'), false); });
+  });
 
   function renderSignupMonthChoices_() {
     var months = signupState.months || {};
@@ -2638,17 +3196,33 @@
     });
   }
 
-  function renderSignupFeedbackStars_() {
+  // Shared 1-5 star-rating widget, used by both the signup flow's own feedback card
+  // (#suFeedbackStars) and the settings-menu "Send Feedback" modal (#siteFeedbackStars,
+  // F3Go30-1pqo.4) — same interaction, two independent rating values, one implementation.
+  function renderStarRating_(containerId, getRating, onSelect) {
+    var rating = getRating();
     var html = '';
     for (var n = 1; n <= 5; n++) {
-      html += '<button type="button" data-n="' + n + '">' + (n <= signupState.feedbackRating ? '★' : '☆') + '</button>';
+      html += '<button type="button" data-n="' + n + '">' + (n <= rating ? '★' : '☆') + '</button>';
     }
-    $('suFeedbackStars').innerHTML = html;
-    Array.prototype.forEach.call($('suFeedbackStars').querySelectorAll('button'), function(btn) {
-      btn.addEventListener('click', function() {
-        signupState.feedbackRating = parseInt(btn.getAttribute('data-n'), 10);
-        renderSignupFeedbackStars_();
-      });
+    $(containerId).innerHTML = html;
+    Array.prototype.forEach.call($(containerId).querySelectorAll('button'), function(btn) {
+      btn.addEventListener('click', function() { onSelect(parseInt(btn.getAttribute('data-n'), 10)); });
+    });
+  }
+
+  function renderSignupFeedbackStars_() {
+    renderStarRating_('suFeedbackStars', function() { return signupState.feedbackRating; }, function(n) {
+      signupState.feedbackRating = n;
+      renderSignupFeedbackStars_();
+    });
+  }
+
+  var siteFeedbackState_ = { rating: 0 };
+  function renderSiteFeedbackStars_() {
+    renderStarRating_('siteFeedbackStars', function() { return siteFeedbackState_.rating; }, function(n) {
+      siteFeedbackState_.rating = n;
+      renderSiteFeedbackStars_();
     });
   }
 
@@ -2739,7 +3313,17 @@
   $('suPhoneInput').addEventListener('input', function() { signupState.phone = this.value; });
   $('suNagInput').addEventListener('change', function() { signupState.nag = this.checked; });
 
+  $('suTeamInfoBtn').addEventListener('click', showTeamInfoModal_);
+  $('teamInfoCloseBtn').addEventListener('click', hideTeamInfoModal_);
+
   $('suInfoNextBtn').addEventListener('click', function() {
+    var validationError = validateSignupInfoStep_();
+    if (validationError) {
+      $('suInfoError').textContent = validationError;
+      $('suInfoError').classList.remove('hidden');
+      return;
+    }
+    $('suInfoError').classList.add('hidden');
     if (!signupState.months || !signupState.months.next) {
       signupState.targetMonth = 'current';
       performSignupSave_($('suInfoNextBtn'));
@@ -3614,6 +4198,12 @@
     if (saved && saved.complete && saved.counts === false) {
       showBonusSaveNotice_('Recorded — but it won’t add points: only one ' + saved.type +
         ' counts per week, and you already have one credited for this week.');
+    } else if (saved && saved.complete && saved.duplicateLink === true) {
+      // F3Go30-6faz.1: same signal as the weekly-cap notice above, for the case that notice
+      // doesn't cover — an uncapped type (e.g. EHing FNG) whose reused Slack Link is silently
+      // collapsed by the sheet's own UNIQUE(A:F) dedup instead of a weekly-cap rule.
+      showBonusSaveNotice_('Recorded — but it won’t add points: this Slack Link was already used for a ' +
+        saved.type + ' entry this week.');
     } else {
       hideBonusSaveNotice_();
     }
@@ -3758,6 +4348,7 @@
         // untouched; the PAX's next real action (a check-in submit) will surface the failure.
         if (!res.matched) return;
         if (res.config) applyServerConfig_(res.config);
+        applySignupReminderState_(res.signupReminder);
         reconcileWithLocalWrites_(res);
         applyIdentifySuccess_(res, { preserveView: true });
         saveCheckinSnapshot_(SAVED_IDENTITY_TOKEN, res);

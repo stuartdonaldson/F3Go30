@@ -31,6 +31,13 @@ var dashboardWebappUtilitiesModule_ = (typeof module !== 'undefined' && module.e
   : null;
 var getConfigValue_dw_ = (dashboardWebappUtilitiesModule_ && dashboardWebappUtilitiesModule_.getConfigValue_)
   || (typeof globalThis !== 'undefined' && globalThis.getConfigValue_);
+// F3Go30-1pqo.4: settings-menu "Send Feedback" reuses the same email-delivery policy/send path
+// as every other outbound email in this codebase (signupWebapp.js's confirmation email,
+// Nag.js's reminders, CreateNewTracker.js's Site Q notices) rather than a bespoke MailApp call.
+var readEmailDeliveryPolicy_dw_ = (dashboardWebappUtilitiesModule_ && dashboardWebappUtilitiesModule_.readEmailDeliveryPolicy_)
+  || (typeof globalThis !== 'undefined' && globalThis.readEmailDeliveryPolicy_);
+var sendConfiguredEmail_dw_ = (dashboardWebappUtilitiesModule_ && dashboardWebappUtilitiesModule_.sendConfiguredEmail_)
+  || (typeof globalThis !== 'undefined' && globalThis.sendConfiguredEmail_);
 
 var dashboardWebappResponseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./response_utils.js')
@@ -201,6 +208,8 @@ var computeBonusSeriesForPax_dw_ = (dashboardWebappBonusTypesModule_ && dashboar
   || (typeof globalThis !== 'undefined' && globalThis.computeBonusSeriesForPax_);
 var annotateBonusEntryCountStatus_dw_ = (dashboardWebappBonusTypesModule_ && dashboardWebappBonusTypesModule_.annotateBonusEntryCountStatus_)
   || (typeof globalThis !== 'undefined' && globalThis.annotateBonusEntryCountStatus_);
+var annotateBonusEntryDuplicateLinkStatus_dw_ = (dashboardWebappBonusTypesModule_ && dashboardWebappBonusTypesModule_.annotateBonusEntryDuplicateLinkStatus_)
+  || (typeof globalThis !== 'undefined' && globalThis.annotateBonusEntryDuplicateLinkStatus_);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Pure functions (unit-tested — test/test_dashboard_webapp.js)
@@ -465,11 +474,76 @@ function handleCheckinPost_(e) {
     if (payload.action === 'bonusList') return jsonOutput_(handleBonusList_(spreadsheet, payload));
     if (payload.action === 'bonusAdd') return jsonOutput_(handleBonusAdd_(spreadsheet, payload));
     if (payload.action === 'bonusEdit') return jsonOutput_(handleBonusEdit_(spreadsheet, payload));
+    // F3Go30-xyri/n40u: client telemetry (captured errors + reconnect-poll outcomes). Dispatched
+    // ahead of any spreadsheet-dependent work above — see ClientTelemetryLog.js — but resolving
+    // `spreadsheet` unconditionally above is harmless (resolveTemplateSpreadsheet_ fails safe to
+    // the bound spreadsheet) and keeps this dispatcher's shape uniform with every other action.
+    if (payload.action === 'clientTelemetry') return jsonOutput_(handleClientTelemetryPost_(payload));
+    // F3Go30-1pqo.4: settings-menu "Send Feedback" — see handleSiteFeedback_ below.
+    if (payload.action === 'siteFeedback') return jsonOutput_(handleSiteFeedback_(spreadsheet, payload));
     return jsonOutput_({ ok: false, error: 'unknown_action' });
   } catch (err) {
     GasLogger.logError('handleCheckinPost_.error', err, { action: payload.action });
     return jsonOutput_({ ok: false, error: 'server_error' });
   }
+}
+
+/**
+ * F3Go30-1pqo.4: settings-menu "Send Feedback" — emails the Site Q directly with the sender's
+ * identity (F3 name + email), free-text comment, star rating, and app version/build for
+ * correlating with a specific deploy. Distinct from handleSignupFeedback_ (signupWebapp.js),
+ * which only ever writes {feedbackRating, feedbackComment} onto that PAX's signup row for the
+ * month being signed up for — this one has no signup-row target (reachable any time
+ * post-identify via the settings menu, not just during signup) and its whole point IS the
+ * email, not a sheet write. Reuses readEmailDeliveryPolicy_/sendConfiguredEmail_ (Utilities.js)
+ * — the same email-delivery path every other outbound email in this codebase goes through —
+ * rather than a bespoke MailApp call.
+ * @param {Object} payload { f3Name, email, rating, comment, clientVersion } — clientVersion is
+ *   attached to every callApi() call automatically (static-pages/src/index.html's STATIC_BUILD_
+ *   VERSION_, see F3Go30-833s.15), reused here rather than inventing a second version field.
+ */
+function handleSiteFeedback_(templateSpreadsheet, payload) {
+  var comment = String((payload && payload.comment) || '').trim();
+  var rating = Number(payload && payload.rating) || 0;
+  if (!rating && !comment) return { ok: false, error: 'empty_feedback' };
+
+  var f3Name = String((payload && payload.f3Name) || '').trim() || '(unknown)';
+  var email = String((payload && payload.email) || '').trim();
+
+  var policy = readEmailDeliveryPolicy_dw_(templateSpreadsheet);
+  if (!policy.siteQEmail) {
+    GasLogger.log('dashboardWebapp.siteFeedback.skipped', { reason: 'no_site_q_email' });
+    return { ok: false, error: 'site_q_not_configured' };
+  }
+
+  var body = [
+    'Feedback from: ' + f3Name + (email ? ' <' + email + '>' : ''),
+    'Rating: ' + (rating ? rating + '/5' : '(none given)'),
+    '',
+    comment || '(no comment)',
+    '',
+    '---',
+    'App version: ' + (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '(unknown)') +
+      (typeof APP_VERSION_DATE !== 'undefined' ? ' (' + APP_VERSION_DATE + ')' : ''),
+    'Client build: ' + ((payload && payload.clientVersion) || '(unknown)')
+  ].join('\n');
+
+  try {
+    sendConfiguredEmail_dw_({
+      spreadsheet: templateSpreadsheet,
+      policy: policy,
+      recipientList: policy.siteQEmail,
+      subject: 'Go30 Feedback from ' + f3Name,
+      body: body,
+      allowPlainTextFallback: true,
+      logLabel: 'dashboardWebapp.siteFeedback'
+    });
+  } catch (e) {
+    GasLogger.logError('dashboardWebapp.siteFeedback.error', e, {});
+    return { ok: false, error: 'send_failed' };
+  }
+
+  return { ok: true };
 }
 
 var TRACKER_LAYOUT_CACHE_TTL_SECONDS_ = 21600; // CacheService's max — day/bonus column layout
@@ -1448,20 +1522,16 @@ function resolveFullIdentityFromHandle_(handle) {
 var NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_ = 3;
 
 /**
- * Checks whether f3Name has a live (non-DELETED) Responses row for months.next — surfaced to a
- * PAX who's actively checking in for the current month as a nudge that they haven't signed up
- * for the month coming next, with a link into the signup flow. Returns null when there's no
- * next-month tracker yet at all (nothing to register for), or when next month's start is still
- * more than NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_ away — either way, the caller skips the nudge.
- * Deliberately called from handleCheckinIdentify_, not the dashboard: identify() already pays
- * for months.next via getCurrentAndNextMonths_dw_ (resolveCheckinIdentityLean_), so this adds
- * one Responses lookup rather than a second TrackerDB read on every dashboard load.
+ * Whether f3Name has a live (non-DELETED) Responses row for months.next — the shared lookup
+ * behind both checkNextMonthRegistration_'s day-window-gated inline nudge and
+ * resolveSignupReminder_dw_'s always-on popup (F3Go30-xyvs); each applies its own gating on top
+ * of this, so the Sheets/PaxCache read itself lives in exactly one place. Returns null when
+ * there's no next-month tracker yet at all (nothing to register for).
+ * @returns {{registered: boolean, monthLabel: string, startDate: (string|Date), sheetId: string}|null}
  */
-function checkNextMonthRegistration_(months, f3Name) {
+function resolveNextMonthRegistrationStatus_dw_(months, f3Name) {
   if (!months || !months.next) return null;
   var nextMonth = months.next;
-  var daysUntilNextMonth = (new Date(nextMonth.startDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000);
-  if (daysUntilNextMonth > NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_) return null;
   var targetSs = SpreadsheetApp.openById(nextMonth.sheetId);
   var responsesSheet = targetSs.getSheetByName('Responses');
   if (!responsesSheet) return null;
@@ -1477,7 +1547,41 @@ function checkNextMonthRegistration_(months, f3Name) {
     });
   });
 
-  return { registered: rowIndex !== -1, monthLabel: nextMonth.label };
+  return { registered: rowIndex !== -1, monthLabel: nextMonth.label, startDate: nextMonth.startDate, sheetId: nextMonth.sheetId };
+}
+
+/**
+ * Checks whether f3Name has a live (non-DELETED) Responses row for months.next — surfaced to a
+ * PAX who's actively checking in for the current month as a nudge that they haven't signed up
+ * for the month coming next, with a link into the signup flow. Returns null when there's no
+ * next-month tracker yet at all (nothing to register for), or when next month's start is still
+ * more than NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_ away — either way, the caller skips the nudge.
+ * Deliberately called from handleCheckinIdentify_, not the dashboard: identify() already pays
+ * for months.next via getCurrentAndNextMonths_dw_ (resolveCheckinIdentityLean_), so this adds
+ * one Responses lookup rather than a second TrackerDB read on every dashboard load.
+ */
+function checkNextMonthRegistration_(months, f3Name) {
+  if (!months || !months.next) return null;
+  var daysUntilNextMonth = (new Date(months.next.startDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+  if (daysUntilNextMonth > NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_) return null;
+  var status = resolveNextMonthRegistrationStatus_dw_(months, f3Name);
+  return status && { registered: status.registered, monthLabel: status.monthLabel };
+}
+
+/**
+ * F3Go30-xyvs: SignupReminder popup trigger. Unlike checkNextMonthRegistration_'s inline nudge —
+ * gated to only the final NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_ before next month starts — this
+ * popup is meant to persist for as long as next month's tracker exists and the PAX has no record
+ * in it yet, so it reuses resolveNextMonthRegistrationStatus_dw_ with no day-window gate. Safe to
+ * call unconditionally on every matched identify: resolvePaxRowIndex_dw_ (PaxCache) means the
+ * underlying Responses row-column read only happens once per cache cycle, not on every request.
+ * @returns {{monthLabel: string}|null} null when there's nothing to remind about (no next-month
+ *   tracker yet, or the PAX is already registered for it).
+ */
+function resolveSignupReminder_dw_(months, f3Name) {
+  var status = resolveNextMonthRegistrationStatus_dw_(months, f3Name);
+  if (!status || status.registered) return null;
+  return { monthLabel: status.monthLabel };
 }
 
 /**
@@ -1794,6 +1898,10 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
   var yesterdayStatus = yesterdayAvailable ? dayValueStatus_(yesterdayTarget.value) : null;
 
   var nextMonth = checkNextMonthRegistration_(identity.months, f3Name);
+  // F3Go30-xyvs: SignupReminder popup — same trigger data as nextMonth above (next-month tracker
+  // exists, PAX has no record in it) but WITHOUT nextMonth's day-window gate, since the popup is
+  // meant to persist across the whole month rather than only the final few days before it starts.
+  var signupReminder = resolveSignupReminder_dw_(identity.months, f3Name);
   var monthNav = buildMonthNavigationPayload_dw_(templateSpreadsheet, trackerRow[TRACKER_NAME_COL_]);
 
   // Binds sessionGuid to the canonical Tracker name (not whatever variant was typed, so a
@@ -1815,7 +1923,8 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
 
   GasLogger.log('checkinWebapp.identify.result', {
     matched: true, f3Name: trackerRow[TRACKER_NAME_COL_], emailMismatch: identity.emailMismatch,
-    nextMonthRegistered: nextMonth ? nextMonth.registered : null, durationMs: Date.now() - t0,
+    nextMonthRegistered: nextMonth ? nextMonth.registered : null, signupReminder: !!signupReminder,
+    durationMs: Date.now() - t0,
   });
   return {
     ok: true,
@@ -1827,6 +1936,10 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     team: trackerRow[TRACKER_TEAM_COL_],
     monthLabel: identity.monthInfo.label,
     goals: identity.goals,
+    // F3Go30-xyvs: null when there's no next-month tracker yet, or the PAX is already signed up
+    // for it — applyServerConfig_-style unconditional show/hide on the client (never just gates
+    // showing), so signing up through ANY path clears the popup on the very next response.
+    signupReminder: signupReminder,
     todayStatus: todayStatus,
     yesterdayAvailable: yesterdayAvailable,
     yesterdayStatus: yesterdayStatus,
@@ -2034,9 +2147,13 @@ function handleBonusList_(templateSpreadsheet, payload) {
   var resolved = resolveBonusSheet_(templateSpreadsheet, payload, payload.dateISO);
   if (resolved.error) return { ok: false, error: resolved.error };
   var entries = listBonusEntriesForPax_dw_(resolved.bonusSheet, resolved.canonicalName, resolved.bonusSheet.getParent().getId());
+  // Two independent annotation passes (F3Go30-6faz.1 adds duplicateLink alongside the existing
+  // counts) — each is detection-only over the same entries and neither depends on the other.
+  entries = annotateBonusEntryCountStatus_dw_(entries, resolved.monthStart);
+  entries = annotateBonusEntryDuplicateLinkStatus_dw_(entries, resolved.monthStart);
   return {
     ok: true,
-    entries: annotateBonusEntryCountStatus_dw_(entries, resolved.monthStart),
+    entries: entries,
     bonusTypes: bonusTypeClientRules_dw_(),
   };
 }
@@ -2727,6 +2844,8 @@ if (typeof module !== 'undefined' && module.exports) {
     checkinClientConfig_dw_: checkinClientConfig_dw_,
     resolveActiveAnnouncement_dw_: resolveActiveAnnouncement_dw_,
     checkNextMonthRegistration_: checkNextMonthRegistration_,
+    resolveNextMonthRegistrationStatus_dw_: resolveNextMonthRegistrationStatus_dw_,
+    resolveSignupReminder_dw_: resolveSignupReminder_dw_,
     buildMonthGridEntries_: buildMonthGridEntries_,
     isStrictlyPastCalendarDate_: isStrictlyPastCalendarDate_,
     validateCheckinSubmitDayValue_: validateCheckinSubmitDayValue_,
@@ -2735,6 +2854,7 @@ if (typeof module !== 'undefined' && module.exports) {
     handleMonthGrid_: handleMonthGrid_,
     handleBonusAdd_: handleBonusAdd_,
     handleBonusEdit_: handleBonusEdit_,
+    handleSiteFeedback_: handleSiteFeedback_,
     buildMonthNavigationPayload_dw_: buildMonthNavigationPayload_dw_,
     buildResolvedContextHandle_: buildResolvedContextHandle_,
     monthInfoFromHandle_: monthInfoFromHandle_,

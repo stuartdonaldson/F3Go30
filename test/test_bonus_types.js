@@ -15,6 +15,7 @@ const {
   computeBonusPillsAsOf_,
   computeBonusSeriesForPax_,
   annotateBonusEntryCountStatus_,
+  annotateBonusEntryDuplicateLinkStatus_,
 } = require('../script/BonusTypes.js');
 
 // ── registry accessors ───────────────────────────────────────────────────
@@ -221,6 +222,62 @@ const {
   var annotated = annotateBonusEntryCountStatus_(entries, monthStart);
   assert.equal(annotated[0].counts, true); // incomplete — not flagged "extra", the pending badge already covers it
   assert.equal(annotated[1].counts, true); // first complete entry this period
+})();
+
+// ── annotateBonusEntryDuplicateLinkStatus_ (F3Go30-6faz.1) ──────────────────
+(function testAnnotateBonusEntryDuplicateLinkStatusFlagsRepeatedLinkSamePeriodAndType() {
+  var monthStart = new Date(2026, 6, 1); // Jul 2026, period 1 = Jul 1-4
+  var entries = [
+    { rowIndex: 2, type: 'EHing FNG', whenIso: '2026-07-01', message: 'a', link: 'https://slack.com/x', complete: true },
+    { rowIndex: 3, type: 'EHing FNG', whenIso: '2026-07-03', message: 'b', link: 'https://slack.com/x', complete: true },
+  ];
+  var annotated = annotateBonusEntryDuplicateLinkStatus_(entries, monthStart);
+  assert.equal(annotated[0].duplicateLink, false);
+  assert.equal(annotated[1].duplicateLink, true); // same link, same period+type — reused evidence
+})();
+
+(function testAnnotateBonusEntryDuplicateLinkStatusIsCaseAndWhitespaceInsensitive() {
+  var monthStart = new Date(2026, 6, 1);
+  var entries = [
+    { rowIndex: 2, type: 'Q Point', whenIso: '2026-07-01', message: 'a', link: 'https://SLACK.com/X', complete: true },
+    { rowIndex: 3, type: 'Q Point', whenIso: '2026-07-02', message: 'b', link: '  https://slack.com/x  ', complete: true },
+  ];
+  var annotated = annotateBonusEntryDuplicateLinkStatus_(entries, monthStart);
+  assert.equal(annotated[1].duplicateLink, true);
+})();
+
+(function testAnnotateBonusEntryDuplicateLinkStatusDoesNotFlagDifferentLinks() {
+  var monthStart = new Date(2026, 6, 1);
+  var entries = [
+    { rowIndex: 2, type: 'Inspire', whenIso: '2026-07-01', message: 'a', link: 'https://slack.com/x', complete: true },
+    { rowIndex: 3, type: 'Inspire', whenIso: '2026-07-02', message: 'b', link: 'https://slack.com/y', complete: true },
+  ];
+  var annotated = annotateBonusEntryDuplicateLinkStatus_(entries, monthStart);
+  assert.equal(annotated[0].duplicateLink, false);
+  assert.equal(annotated[1].duplicateLink, false);
+})();
+
+(function testAnnotateBonusEntryDuplicateLinkStatusScopesToPeriodAndType() {
+  var monthStart = new Date(2026, 6, 1); // period 1: Jul 1-4, period 2: Jul 5-11
+  var entries = [
+    { rowIndex: 2, type: 'Q Point', whenIso: '2026-07-01', message: 'a', link: 'https://slack.com/x', complete: true },
+    { rowIndex: 3, type: 'Q Point', whenIso: '2026-07-06', message: 'b', link: 'https://slack.com/x', complete: true }, // different period
+    { rowIndex: 4, type: 'Inspire', whenIso: '2026-07-01', message: 'c', link: 'https://slack.com/x', complete: true }, // different type
+  ];
+  var annotated = annotateBonusEntryDuplicateLinkStatus_(entries, monthStart);
+  assert.equal(annotated[1].duplicateLink, false);
+  assert.equal(annotated[2].duplicateLink, false);
+})();
+
+(function testAnnotateBonusEntryDuplicateLinkStatusIgnoresBlankLinks() {
+  var monthStart = new Date(2026, 6, 1);
+  var entries = [
+    { rowIndex: 2, type: 'Fellowship', whenIso: '2026-07-01', message: 'a', link: '', complete: true },
+    { rowIndex: 3, type: 'Fellowship', whenIso: '2026-07-02', message: 'b', link: '', complete: true },
+  ];
+  var annotated = annotateBonusEntryDuplicateLinkStatus_(entries, monthStart);
+  assert.equal(annotated[0].duplicateLink, false);
+  assert.equal(annotated[1].duplicateLink, false); // no link to compare — never flagged
 })();
 
 console.log('test_bonus_types.js: all assertions passed');

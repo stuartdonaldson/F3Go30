@@ -199,6 +199,10 @@ function makeCalNavHarness_(state, callApiImpl) {
           add: function(c) { classes[c] = true; },
           remove: function(c) { delete classes[c]; },
           has: function(c) { return !!classes[c]; },
+          // Real DOM's classList API — some code under test reads a hidden state directly (e.g.
+          // applySignupReminderState_'s no-collision-with-an-open-announcement check), so the
+          // fake needs both spellings.
+          contains: function(c) { return !!classes[c]; },
         },
         querySelector: function() { return null; },
       };
@@ -331,7 +335,7 @@ function makeBannerHarness_(fromGas, opts) {
   var elements = {};
   // Both banners ship hidden in the markup (asserted below), so the stand-ins start hidden too —
   // otherwise "was never shown" and "was explicitly shown" would be indistinguishable.
-  var INITIALLY_HIDDEN_ = { gasMovedBanner: true, updateBanner: true, announcementModal: true };
+  var INITIALLY_HIDDEN_ = { gasMovedBanner: true, updateBanner: true, announcementModal: true, signupReminderModal: true };
   function fakeEl_(id) {
     if (!elements[id]) {
       var classes = INITIALLY_HIDDEN_[id] ? { hidden: true } : {};
@@ -341,6 +345,10 @@ function makeBannerHarness_(fromGas, opts) {
           add: function(c) { classes[c] = true; },
           remove: function(c) { delete classes[c]; },
           has: function(c) { return !!classes[c]; },
+          // Real DOM's classList API — some code under test reads a hidden state directly (e.g.
+          // applySignupReminderState_'s no-collision-with-an-open-announcement check), so the
+          // fake needs both spellings.
+          contains: function(c) { return !!classes[c]; },
         },
         addEventListener: function(evt, fn) { listeners[evt] = fn; },
         click: function() { if (listeners.click) listeners.click(); },
@@ -368,7 +376,7 @@ function makeBannerHarness_(fromGas, opts) {
   };
 
   var factory = new Function('FROM_GAS_', 'STATIC_BUILD_VERSION_', '$', 'localStorage', 'sessionStorage', 'history', 'location', 'URL',
-    extractBannerBlock_() + '\nreturn { applyVersionState_: applyVersionState_, applyAnnouncementState_: applyAnnouncementState_ };'
+    extractBannerBlock_() + '\nreturn { applyVersionState_: applyVersionState_, applyAnnouncementState_: applyAnnouncementState_, applySignupReminderState_: applySignupReminderState_ };'
   );
   var fns = factory(
     fromGas,
@@ -396,6 +404,8 @@ function makeBannerHarness_(fromGas, opts) {
     announcementTitle: function() { return fakeEl_('announcementTitle').textContent; },
     // The real code sets .innerHTML (F3Go30-g9bi follow-up: the body may carry links/formatting).
     announcementHtml: function() { return fakeEl_('announcementText').innerHTML; },
+    signupReminderModalHidden: function() { return fakeEl_('signupReminderModal').classList.has('hidden'); },
+    signupReminderMonthLabel: function() { return fakeEl_('signupReminderMonthLabel').textContent; },
   };
 }
 
@@ -620,6 +630,79 @@ function makeBannerHarness_(fromGas, opts) {
   changedWake.fns.applyAnnouncementState_({ day: 14, title: 'Different Notice', message: 'A different, newer notice' });
   assert.equal(changedWake.announcementModalHidden(), false, 'an expired snooze must surface whatever is live now');
   assert.equal(changedWake.announcementTitle(), 'Different Notice');
+})();
+
+// ── F3Go30-xyvs: SignupReminder popup ────────────────────────────────────────────────────────
+//    Same extracted/executed-for-real harness as the banner/announcement tests above
+//    (applySignupReminderState_ lives in the same source block). Covers unconditional show/hide,
+//    the localStorage-backed (not sessionStorage) daily remind-later, and the no-collision-with-
+//    an-open-announcement rule.
+
+(function testSignupReminderModalShipsHiddenInTheMarkup() {
+  var src = readStaticPage_();
+  var tagMatch = src.match(/<div id="signupReminderModal"[^>]*>/);
+  assert.ok(tagMatch, 'signupReminderModal element not found in index.html');
+  assert.match(tagMatch[0], /class="[^"]*\bhidden\b/, 'signupReminderModal must ship hidden in the markup');
+})();
+
+(function testSignupReminderShowsMonthLabelForALiveReminder() {
+  var h = makeBannerHarness_(false);
+  h.fns.applySignupReminderState_({ monthLabel: 'August 2026' });
+  assert.equal(h.signupReminderModalHidden(), false);
+  assert.equal(h.signupReminderMonthLabel(), 'August 2026');
+})();
+
+(function testSignupReminderHidesUnconditionallyWhenCleared() {
+  // Mirrors applyAnnouncementState_'s own rule: signing up for next month through ANY path
+  // (this popup, direct nav, admin action) must close an already-open popup on the very next
+  // response, not just suppress future opens.
+  var h = makeBannerHarness_(false);
+  h.fns.applySignupReminderState_({ monthLabel: 'August 2026' });
+  assert.equal(h.signupReminderModalHidden(), false, 'sanity: shown first');
+  h.fns.applySignupReminderState_(null);
+  assert.equal(h.signupReminderModalHidden(), true, 'a cleared reminder must actively hide an already-open modal');
+})();
+
+(function testSignupReminderIsNotPaintedFromANonLiveResponse() {
+  // isLive: false is how the instant-paint snapshot path calls in — the reminder must never
+  // flash off cached/replayed data, only a live identify (same rule as the announcement splash).
+  var h = makeBannerHarness_(false);
+  h.fns.applySignupReminderState_({ monthLabel: 'August 2026' }, false);
+  assert.equal(h.signupReminderModalHidden(), true, 'a non-live call must never show the popup');
+})();
+
+(function testSignupReminderLaterSuppressesForTheRestOfTodayOnly() {
+  var h = makeBannerHarness_(false);
+  h.fns.applySignupReminderState_({ monthLabel: 'August 2026' });
+  h.elements.signupReminderLaterBtn.click();
+  assert.equal(h.signupReminderModalHidden(), true, 'remind-later must hide the modal immediately');
+  assert.ok(h.storage.go30SignupReminderSnoozedUntil, 'remind-later must persist to localStorage (survives app restart), unlike the announcement splash\'s sessionStorage snooze');
+
+  // Still "today" (per the harness's wake-time, still in the future): the same reminder stays suppressed.
+  var stillSnoozed = makeBannerHarness_(false, { storage: h.storage });
+  stillSnoozed.fns.applySignupReminderState_({ monthLabel: 'August 2026' });
+  assert.equal(stillSnoozed.signupReminderModalHidden(), true, 'must stay suppressed until the next calendar day');
+
+  // A DIFFERENT month's reminder (should never happen in practice, but proves the key is scoped,
+  // not a bare flag) must not be suppressed by an old snooze.
+  var differentMonth = makeBannerHarness_(false, { storage: h.storage });
+  differentMonth.fns.applySignupReminderState_({ monthLabel: 'September 2026' });
+  assert.equal(differentMonth.signupReminderModalHidden(), false, "snoozing August's reminder must not suppress September's");
+})();
+
+(function testSignupReminderReappearsOnceTheSnoozeWindowHasPassed() {
+  var pastWakeAt = String(Date.now() - 1000) + '|August 2026';
+  var expired = makeBannerHarness_(false, { storage: { go30SignupReminderSnoozedUntil: pastWakeAt } });
+  expired.fns.applySignupReminderState_({ monthLabel: 'August 2026' });
+  assert.equal(expired.signupReminderModalHidden(), false, 'an expired snooze must let the still-live reminder reappear');
+})();
+
+(function testSignupReminderDoesNotCollideWithAnOpenAnnouncement() {
+  var h = makeBannerHarness_(false);
+  h.fns.applyAnnouncementState_({ day: 11, title: 'HC Moved', message: 'HC moved to Saturday' });
+  h.fns.applySignupReminderState_({ monthLabel: 'August 2026' });
+  assert.equal(h.announcementModalHidden(), false, 'sanity: announcement is up');
+  assert.equal(h.signupReminderModalHidden(), true, 'the reminder must not stack on top of an active announcement splash');
 })();
 
 console.log('test_static_page_client_invariants.js: all assertions passed');

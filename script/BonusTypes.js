@@ -204,6 +204,40 @@ function annotateBonusEntryCountStatus_(entries, monthStart) {
   });
 }
 
+/**
+ * Marks each of one PAX's Bonus Tracker entries with whether its Slack Link duplicates an
+ * earlier entry's link within the same Sun-Sat period + type (F3Go30-6faz.1) — mirrors the
+ * sheet's own `=UNIQUE('Bonus Tracker'!A:F)` dedup (bonusWebapp.js's header comment: Uncapped
+ * Points echoes the Slack Link for uncapped types, so a reused link collapses two rows into one
+ * counted entry there) so the bonus-list UI can give a PAX the same "this one's extra" signal
+ * annotateBonusEntryCountStatus_ gives for a weekly-cap repeat, but for a duplicated link
+ * instead. Detection only, same as that function — never changes what counts; see this file's
+ * header and F3Go30-fkox for why the sheet's dedup itself is intentional and untouched here.
+ * Entries with no link, or an unparseable date, are never flagged (nothing to compare against).
+ * Applies to every type, not just weekly-capped ones — a duplicate link is silently dropped by
+ * the sheet's dedup even for an uncapped type like EHing FNG.
+ * @param {Array<Object>} entries listBonusEntriesForPax_ shape (rowIndex/type/whenIso/message/link/complete).
+ * @param {Date} monthStart
+ * @returns {Array<Object>} same entries, each with an added `duplicateLink` boolean (only
+ *   meaningful when entry.complete, same convention as `counts`).
+ */
+function annotateBonusEntryDuplicateLinkStatus_(entries, monthStart) {
+  var seenByKey = {};
+  return (entries || []).map(function(entry) {
+    var link = String(entry.link || '').trim();
+    var duplicateLink = false;
+    if (link) {
+      var when = parseIsoDateLocal_bt_(entry.whenIso);
+      if (when && !isNaN(when.getTime())) {
+        var key = entry.type + ':' + weekOfMonth_(when, monthStart) + ':' + link.toLowerCase();
+        if (seenByKey[key]) duplicateLink = true;
+        else seenByKey[key] = true;
+      }
+    }
+    return Object.assign({}, entry, { duplicateLink: duplicateLink });
+  });
+}
+
 /** Parses a "YYYY-MM-DD" date-only string as local midnight, not UTC midnight — same correction
  *  bonusWebapp.js's parseBonusDateLocal_/dashboardWebapp.js's parseIsoDateLocal_ apply elsewhere;
  *  duplicated locally (rather than required) to keep this module dependency-free. */
@@ -229,5 +263,6 @@ if (typeof module !== 'undefined' && module.exports) {
     computeBonusPillsAsOf_: computeBonusPillsAsOf_,
     computeBonusSeriesForPax_: computeBonusSeriesForPax_,
     annotateBonusEntryCountStatus_: annotateBonusEntryCountStatus_,
+    annotateBonusEntryDuplicateLinkStatus_: annotateBonusEntryDuplicateLinkStatus_,
   };
 }

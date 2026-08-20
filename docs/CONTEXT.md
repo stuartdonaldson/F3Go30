@@ -113,6 +113,13 @@ month's tracker in minutes without manual sheet or trigger configuration in the 
   is client-only (localStorage) in V1. A PAX can dismiss it outright or snooze it for 30 minutes
   ("Remind me later"), which re-checks whatever is actually live when it wakes rather than
   replaying what was on screen at snooze time
+- Once next month's tracker exists and an already-identified PAX has no record in it, a
+  SignupReminder popup prompts them to sign up (F3Go30-xyvs) — no Config authoring step, purely
+  derived from tracker/PaxDB existence, re-evaluated on every identify/dashboard/resume-refresh.
+  "Sign Up" drops them straight into the next-month signup flow, already authenticated and
+  prefilled from their current-month record; "Remind me later" suppresses it until the next
+  calendar day (survives an app/tab restart, unlike the announcement splash's session-only
+  snooze). Never shown alongside an active announcement splash — the admin-authored notice wins.
 
 ---
 

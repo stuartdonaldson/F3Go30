@@ -47,6 +47,10 @@ const STATIC_SIGNUP_PAX = {
 // needs re-establishing — so the test below only asserts the redirect target, it never saves.
 const LATE_SIGNUP_PAX = { f3Name: 'LateSignupTest', email: 'latesignup@example.com' };
 
+// F3Go30-9u68: a dedicated fixture, distinct from STATIC_SIGNUP_PAX above, so the validation
+// test's own save doesn't collide with (or get overwritten by) that test's fixture state.
+const VALIDATION_TEST_PAX = { f3Name: 'SignupValidationTest', email: 'signupvalidationtest@example.com' };
+
 // Same reasoning as static-checkin.spec.js's constant of the same name, and the same defect: the
 // 15000 waits here predate F3Go30-313u, which bounded the client transport at a 12s read timeout
 // plus one retry. A lost read now surfaces at up to 24s and RECOVERS, so 15000 reports correct
@@ -269,5 +273,46 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
 
     expect(loads).toBe(1);
     expect(new URL(page.url()).origin).toBe(staticOrigin);
+  });
+
+  test('info step blocks Continue until team and goals are filled in, and the team info button opens its modal — F3Go30-9u68', async ({ page }) => {
+    await page.goto(signupPageUrl());
+    await expect(page.locator('#su-step-intro')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await page.locator('#suIntroNextBtn').click();
+
+    await page.locator('#suF3Name').fill(VALIDATION_TEST_PAX.f3Name);
+    await page.locator('#suEmail').fill(VALIDATION_TEST_PAX.email);
+    await page.locator('#suIdentifyBtn').click();
+    await expect(page.locator('#su-step-info')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
+
+    // Team info splash (reuses the announcement overlay's markup/CSS, F3Go30-g9bi): opens on
+    // demand, explains WHY a team matters, and closes without leaving the info step.
+    await page.locator('#suTeamInfoBtn').click();
+    await expect(page.locator('#teamInfoModal')).toBeVisible();
+    await expect(page.locator('#teamInfoModal')).toContainText(/accountability/i);
+    await page.locator('#teamInfoCloseBtn').click();
+    await expect(page.locator('#teamInfoModal')).toBeHidden();
+
+    // Nothing filled in yet — Continue must block on the missing team, with an inline reason.
+    await clickThroughAnnouncement_(page.locator('#suInfoNextBtn'));
+    await expect(page.locator('#suInfoError')).toBeVisible();
+    await expect(page.locator('#suInfoError')).toContainText(/team/i);
+    await expect(page.locator('#su-step-info')).toBeVisible();
+
+    // Team filled, goals still blank — must now block on goals instead of silently proceeding.
+    await page.locator('#suTtOtherOption').click();
+    await page.locator('#suTeamOtherInput').fill('Crucible');
+    await page.locator('#suInfoNextBtn').click();
+    await expect(page.locator('#suInfoError')).toBeVisible();
+    await expect(page.locator('#suInfoError')).toContainText(/who|what|how/i);
+    await expect(page.locator('#su-step-info')).toBeVisible();
+
+    // Everything filled — Continue proceeds and the flow completes normally.
+    await page.locator('#suWhoInput').fill('An available, attentive partner');
+    await page.locator('#suWhatInput').fill('No alcohol.');
+    await page.locator('#suHowInput').fill('Daily check-in with my team.');
+    await saveStaticSignup(page);
+    await expect(page.locator('#suInfoError')).toBeHidden();
   });
 });

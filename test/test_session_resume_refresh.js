@@ -36,6 +36,7 @@ function makeResumeHarness_(callApiImpl, opts) {
 
   var applyIdentifySuccessCalls = [];
   var applyServerConfigCalls = [];
+  var signupReminderCalls = [];
   var reconcileCalls = [];
   var saveSnapshotCalls = [];
   var prefetchCallCount = 0;
@@ -46,8 +47,9 @@ function makeResumeHarness_(callApiImpl, opts) {
   var state = { checkinReady: opts.checkinReady !== false };
 
   var factory = new Function(
-    'state', 'SAVED_IDENTITY_TOKEN', 'callApi', 'applyServerConfig_', 'reconcileWithLocalWrites_',
-    'applyIdentifySuccess_', 'saveCheckinSnapshot_', 'prefetchDashboard_', 'document', 'Date',
+    'state', 'SAVED_IDENTITY_TOKEN', 'callApi', 'applyServerConfig_', 'applySignupReminderState_',
+    'reconcileWithLocalWrites_', 'applyIdentifySuccess_', 'saveCheckinSnapshot_', 'prefetchDashboard_',
+    'document', 'Date',
     body + '\nreturn { silentResumeRefresh_: silentResumeRefresh_ };'
   );
   var fns = factory(
@@ -55,6 +57,7 @@ function makeResumeHarness_(callApiImpl, opts) {
     Object.prototype.hasOwnProperty.call(opts, 'token') ? opts.token : 'tok123',
     callApiImpl || function() { throw new Error('callApi should not have been called'); },
     function(cfg) { applyServerConfigCalls.push(cfg); },
+    function(reminder) { signupReminderCalls.push(reminder); },
     function(res) { reconcileCalls.push(res); },
     function(res, o) { applyIdentifySuccessCalls.push({ res: res, opts: o }); },
     function(token, res) { saveSnapshotCalls.push({ token: token, res: res }); },
@@ -73,6 +76,7 @@ function makeResumeHarness_(callApiImpl, opts) {
     },
     applyIdentifySuccessCalls: applyIdentifySuccessCalls,
     applyServerConfigCalls: applyServerConfigCalls,
+    signupReminderCalls: signupReminderCalls,
     reconcileCalls: reconcileCalls,
     saveSnapshotCalls: saveSnapshotCalls,
     prefetchCallCount: function() { return prefetchCallCount; },
@@ -99,6 +103,7 @@ function makeResumeHarness_(callApiImpl, opts) {
     assert.equal(callApiCalls[0].action, 'identify');
     assert.equal(callApiCalls[0].payload.token, 'tok123');
     assert.equal(h.applyServerConfigCalls.length, 1, 'server config from the refreshed response must be applied');
+    assert.equal(h.signupReminderCalls.length, 1, 'F3Go30-xyvs: the SignupReminder popup must be re-evaluated on every resume refresh, not just shown once and cached');
     assert.equal(h.reconcileCalls.length, 1, 'local writes must be reconciled onto the refreshed response');
     assert.equal(h.applyIdentifySuccessCalls.length, 1, 'the refreshed identify result must be applied');
     assert.equal(h.applyIdentifySuccessCalls[0].opts.preserveView, true,
