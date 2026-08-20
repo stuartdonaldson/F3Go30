@@ -61,7 +61,29 @@ function markEmptyCellsAsMinusOne_(contextDate) {
   // boundary the marked tracker IS the prior month, and reloading both still covers the
   // current-month cache the webapp is actively serving.
   refreshPaxCacheForCurrentAndPriorMonths_(today);
+  syncTrackerTriggersBestEffort_(today);
   return markedCount;
+}
+
+/**
+ * Best-effort nightly trigger-lifecycle sweep (F3Go30 2026-08-20 SIT quota incident) —
+ * bounds per-tracker onEdit/form-submit trigger growth to the previous/current/next-month
+ * window (TrackerTriggerLifecycle.js's syncTrackerTriggers_/planTrackerTriggerSync_), on the
+ * same nightly cadence as the −1 marking run rather than relying solely on the admin-triggered
+ * sweep or a deploy to catch quota buildup between deploys. Runs against the bound spreadsheet
+ * (the Template, which holds TrackerDB) — same convention as this file's historyScopeId.
+ * Guarded so a missing syncTrackerTriggers_ (not loaded, e.g. this file's own unit tests) or any
+ * failure never blocks the marking run itself; only logged.
+ * @param {Date} today
+ */
+function syncTrackerTriggersBestEffort_(today) {
+  if (typeof syncTrackerTriggers_ !== 'function') return;
+  try {
+    var result = syncTrackerTriggers_(SpreadsheetApp.getActiveSpreadsheet(), today);
+    GasLogger.log('markEmptyCellsAsMinusOne.triggerSync', result);
+  } catch (e) {
+    GasLogger.log('markEmptyCellsAsMinusOne.triggerSyncFailed', { error: e.message });
+  }
 }
 
 /**
@@ -234,6 +256,7 @@ if (typeof module !== 'undefined' && module.exports) {
     markEmptyCellsAsMinusOne_: markEmptyCellsAsMinusOne_,
     applyMinusOneToTrackerSheet_: applyMinusOneToTrackerSheet_,
     refreshPaxCacheForSheet_: refreshPaxCacheForSheet_,
-    refreshPaxCacheForCurrentAndPriorMonths_: refreshPaxCacheForCurrentAndPriorMonths_
+    refreshPaxCacheForCurrentAndPriorMonths_: refreshPaxCacheForCurrentAndPriorMonths_,
+    syncTrackerTriggersBestEffort_: syncTrackerTriggersBestEffort_
   };
 }

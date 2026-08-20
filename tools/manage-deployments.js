@@ -303,6 +303,16 @@ function deploy(targetKey, options = {}) {
     cwd: ROOT,
   });
 
+  // Bounds per-tracker onEdit/form-submit trigger growth to the previous/current/next-month
+  // window on every deploy (F3Go30 2026-08-20 SIT quota incident — nothing previously ran this
+  // sweep except on-demand, so leaked/out-of-window triggers accumulated toward the
+  // 20-triggers/user/script Apps Script quota unnoticed). See TrackerTriggerLifecycle.js.
+  console.log(`\n🧹 Syncing tracker onEdit/form-submit triggers on ${label}…`);
+  execSyncWithRetry_(`node tools/callWebapp.js syncTrackerTriggers --env ${invalidateEnv}`, {
+    stdio: 'inherit',
+    cwd: ROOT,
+  });
+
   if (targetKey === 'template') {
     console.log('\n🔗 Setting WEBAPP_URL script property on PROD…');
     execSyncWithRetry_('node tools/callWebapp.js setWebappUrl --env prod', {

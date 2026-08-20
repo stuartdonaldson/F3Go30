@@ -48,6 +48,23 @@ function noneTrashed_() { return false; }
   assert.deepEqual(plan.cleanup, [{ sheetId: 'stale', reason: 'aged_out' }]);
 })();
 
+// A row two or more months ahead (past the "next month" window) is cleaned up as not-yet-active,
+// even if it already carries an edit trigger — the onEdit window is prev/current/next only.
+(function() {
+  var rows = [{ sheetId: 'far-future', startDate: new Date('2026-09-01T00:00:00') }];
+  var plan = planTrackerTriggerSync_(rows, ['far-future'], today, noneTrashed_);
+  assert.deepEqual(plan.backfill, []);
+  assert.deepEqual(plan.cleanup, [{ sheetId: 'far-future', reason: 'not_yet_active' }]);
+})();
+
+// A far-future row with no existing trigger is also not backfilled.
+(function() {
+  var rows = [{ sheetId: 'far-future-2', startDate: new Date('2026-10-01T00:00:00') }];
+  var plan = planTrackerTriggerSync_(rows, [], today, noneTrashed_);
+  assert.deepEqual(plan.backfill, []);
+  assert.deepEqual(plan.cleanup, [{ sheetId: 'far-future-2', reason: 'not_yet_active' }]);
+})();
+
 // AC2a: a trashed row is cleaned up regardless of its StartDate (even a current-month row).
 (function() {
   var rows = [{ sheetId: 'trashed-current', startDate: new Date('2026-07-01T00:00:00') }];

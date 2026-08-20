@@ -7,11 +7,14 @@
  *     o39s.5 only wire new trackers going forward (CreateNewTracker.js/CopyTemplate.js) —
  *     trackers that existed before that landed have no edit trigger at all.
  *  2. Cleanup — clears both per-tracker trigger types (form-submit + edit) for any TrackerDB
- *     row whose spreadsheet is trashed in Drive, or whose StartDate has aged out (older than
- *     the previous month) — bounding trigger growth against the 20-triggers/user/script Apps
- *     Script quota long-term (see docs/staging/tracker-edit-cache-invalidation.md "Trigger
- *     lifecycle"). Deliberately on-demand, not a nightly trigger, per 2026-07-17 developer
- *     decision — can be wired to a nightly cadence later once proven.
+ *     row whose spreadsheet is trashed in Drive, whose StartDate has aged out (older than the
+ *     previous month), or whose StartDate is more than one month ahead (not yet the "next"
+ *     tracker) — the onEdit-eligible window is exactly previous/current/next month, no wider —
+ *     bounding trigger growth against the 20-triggers/user/script Apps Script quota long-term
+ *     (see docs/staging/tracker-edit-cache-invalidation.md "Trigger lifecycle"; F3Go30 2026-08-20
+ *     incident — SIT hit the quota because nothing enforced an upper bound). Runs on-demand
+ *     (WebApp.js's syncTrackerTriggers admin action), on every deploy (manage-deployments.js),
+ *     and nightly as part of markEmptyCellsAsMinusOne_ (markMinusOne.js) — see those call sites.
  *
  * planTrackerTriggerSync_ is the pure decision function (unit-tested); syncTrackerTriggers_
  * is the GAS orchestration wrapper that reads TrackerDB, calls ScriptApp/DriveApp/
@@ -57,7 +60,13 @@ function ttlMonthStart_(date, monthsOffset) {
  * @returns {{backfill:Array<string>, cleanup:Array<{sheetId:string, reason:string}>}}
  */
 function planTrackerTriggerSync_(trackerRows, existingEditTriggerSourceIds, today, isTrashedFn) {
-  var cutoff = ttlMonthStart_(today, -1); // start of the previous month — the "no longer active" boundary
+  var cutoff = ttlMonthStart_(today, -1); // start of the previous month — the "no longer active" lower boundary
+  // Start of the month after next — the "not yet active" upper boundary. The onEdit-eligible
+  // window is exactly previous/current/next month (three trackers), never wider: a row whose
+  // StartDate lands here or later hasn't earned its trigger yet (F3Go30 2026-08-20 SIT quota
+  // incident — nothing previously bounded the window from above, so far-future rows kept
+  // accumulating triggers indefinitely).
+  var upperBound = ttlMonthStart_(today, 2);
   var editTriggerSet = {};
   (existingEditTriggerSourceIds || []).forEach(function(id) { editTriggerSet[id] = true; });
 
@@ -78,6 +87,12 @@ function planTrackerTriggerSync_(trackerRows, existingEditTriggerSourceIds, toda
     var agedOut = startDate ? startDate.getTime() < cutoff.getTime() : false;
     if (agedOut) {
       cleanup.push({ sheetId: sheetId, reason: 'aged_out' });
+      return;
+    }
+
+    var tooFarAhead = startDate ? startDate.getTime() >= upperBound.getTime() : false;
+    if (tooFarAhead) {
+      cleanup.push({ sheetId: sheetId, reason: 'not_yet_active' });
       return;
     }
 
