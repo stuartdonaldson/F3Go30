@@ -396,6 +396,28 @@ function findNextBonusRow_(bonusSheet) {
 }
 
 /**
+ * Finds an existing row for f3Name that already carries the exact same content as payload
+ * (type + whenIso + message + link) — a retried bonusAdd (F3Go30-6faz.2) after a dropped/errored
+ * response whose prior attempt actually wrote the row server-side (ADR-022: GAS's doPost runs to
+ * completion, sheet write included, before the redirect hop the client's response can be lost
+ * on). Deliberately full-content match, not just PAX+date+type, so two genuinely distinct entries
+ * logged the same day (different message or link) are never collapsed.
+ * @returns {number|null} existing rowIndex, or null if no match.
+ */
+function findDuplicateBonusEntry_(bonusSheet, f3Name, sheetId, payload) {
+  var message = String(payload.message || '').trim();
+  var link = String(payload.link || '').trim();
+  var existing = listBonusEntriesForPax_(bonusSheet, f3Name, sheetId);
+  for (var i = 0; i < existing.length; i++) {
+    var e = existing[i];
+    if (e.type === payload.type && e.whenIso === payload.whenIso && e.message === message && e.link === link) {
+      return e.rowIndex;
+    }
+  }
+  return null;
+}
+
+/**
  * Appends a new Bonus Tracker row for f3Name into the first unused pre-formatted row. B:E
  * (Period/Uncapped Points/Multiplier/Complete) need no writing here — they're a single spilled
  * array formula anchored at B2 that recalculates automatically as soon as this row's
@@ -417,11 +439,16 @@ function addBonusEntry_(bonusSheet, f3Name, payload) {
     return { ok: false, error: 'locked' };
   }
   try {
+    var sheetId = bonusSheet.getParent().getId();
+
+    var duplicateRow = findDuplicateBonusEntry_(bonusSheet, f3Name, sheetId, payload);
+    if (duplicateRow) return { ok: true, rowIndex: duplicateRow };
+
     var nextRow = findNextBonusRow_(bonusSheet);
     if (!nextRow) return { ok: false, error: 'bonus_sheet_full' };
 
     writeBonusEnteredColumns_(bonusSheet, nextRow, f3Name, payload);
-    patchBonusCaches_(bonusSheet.getParent().getId(), 'add', nextRow, f3Name, buildBonusCacheShapes_(f3Name, nextRow, payload), null);
+    patchBonusCaches_(sheetId, 'add', nextRow, f3Name, buildBonusCacheShapes_(f3Name, nextRow, payload), null);
     return { ok: true, rowIndex: nextRow };
   } finally {
     lock.releaseLock();
@@ -562,6 +589,7 @@ if (typeof module !== 'undefined' && module.exports) {
     formatBonusRowForClient_: formatBonusRowForClient_,
     listBonusEntriesForPax_: listBonusEntriesForPax_,
     findNextBonusRow_: findNextBonusRow_,
+    findDuplicateBonusEntry_: findDuplicateBonusEntry_,
     addBonusEntry_: addBonusEntry_,
     editBonusEntry_: editBonusEntry_,
     clearBonusEntry_: clearBonusEntry_,

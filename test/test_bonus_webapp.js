@@ -1,13 +1,13 @@
 const assert = require('node:assert/strict');
 
 function makeFakeScriptCache_() {
-  var store = {};
-  return {
-    get: function(key) { return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null; },
-    put: function(key, value) { store[key] = value; },
-    remove: function(key) { delete store[key]; },
-    _store: store,
+  var self = {
+    get: function(key) { return Object.prototype.hasOwnProperty.call(self._store, key) ? self._store[key] : null; },
+    put: function(key, value) { self._store[key] = value; },
+    remove: function(key) { delete self._store[key]; },
+    _store: {},
   };
+  return self;
 }
 
 var fakeScriptCache_ = makeFakeScriptCache_();
@@ -208,6 +208,44 @@ function makeMockBonusSheet_(maxRows, names, fullRows) {
   });
   assert.equal(result.ok, false);
   assert.equal(result.error, 'bonus_sheet_full');
+})();
+
+// F3Go30-6faz.2: a retried bonusAdd (client saw a dropped/errored response — ADR-022's redirect
+// hop, F3Go30-313u — but the prior addBonusEntry_ call had already written its row server-side)
+// must not create a second row for the same PAX+type+date+message+link.
+(function testAddBonusEntryIsIdempotentForIdenticalRepeatedPayload() {
+  fakeScriptCache_._store = {}; // isolate from other tests' cached bonusRows/bonusEntries
+  var sheet = makeMockBonusSheet_(892, []);
+  var payload = { type: 'Fellowship', whenIso: '2026-06-01', message: 'gathered with PAX' };
+
+  var first = addBonusEntry_(sheet, 'Little John', payload);
+  assert.equal(first.ok, true);
+  assert.equal(first.rowIndex, 2);
+
+  var retry = addBonusEntry_(sheet, 'Little John', payload);
+  assert.equal(retry.ok, true);
+  assert.equal(retry.rowIndex, 2, 'retry must report the original row, not a new one');
+
+  // No third row should have been appended — the next free row is still row 3.
+  assert.equal(findNextBonusRow_(sheet), 3);
+})();
+
+(function testAddBonusEntryStillWritesGenuinelyDistinctEntriesSameDateAndType() {
+  fakeScriptCache_._store = {};
+  var sheet = makeMockBonusSheet_(892, []);
+
+  var first = addBonusEntry_(sheet, 'Little John', {
+    type: 'Fellowship', whenIso: '2026-06-01', message: 'gathered with PAX at the flag',
+  });
+  assert.equal(first.ok, true);
+  assert.equal(first.rowIndex, 2);
+
+  // Same PAX/date/type but a different message is a real second entry, not a retry.
+  var second = addBonusEntry_(sheet, 'Little John', {
+    type: 'Fellowship', whenIso: '2026-06-01', message: 'gathered with PAX after the workout',
+  });
+  assert.equal(second.ok, true);
+  assert.equal(second.rowIndex, 3, 'a genuinely distinct entry must still get its own row');
 })();
 
 // ── readAllBonusEntries_ ─────────────────────────────────────────────────
