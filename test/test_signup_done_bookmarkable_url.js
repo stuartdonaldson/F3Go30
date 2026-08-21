@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { staticEntryUrl } = require('../tools/static-urls.js');
 
 // F3Go30-1f75. Two defects on the static page's signup completion path:
 //
@@ -47,7 +48,7 @@ function loadSubject_() {
   return new Function('URL', body)(URL);
 }
 
-const BASE = 'https://f3go30.github.io/static-pages/dist/sit/index.html';
+const BASE = staticEntryUrl('sit') + 'index.html';
 const TOKEN = '11111111-2222-3333-4444-555555555555';
 
 // ── AC1: the signup routing params are stripped when ?id= is installed ───────────────────────

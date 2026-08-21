@@ -26,10 +26,10 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const { staticBaseUrl } = require('./static-urls.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const VERSION_PATH = path.join(ROOT, 'script', 'version.js');
-const STATIC_BASE_URL = 'https://f3go30.github.io/static-pages/dist/';
 
 /** Reads the currently-stamped APP_VERSION straight out of script/version.js (same source
  * manage-deployments.js's stampVersion() writes) — this is "the version to wait for" by default,
@@ -93,7 +93,7 @@ async function waitForStaticDeploy_(opts) {
   const { env, version, intervalSec, timeoutSec, fetchText, sleep, log } = opts;
   const doLog = log || (() => {});
   const doSleep = sleep || sleep_;
-  const url = `${STATIC_BASE_URL}${env}/index.html?cachebust=${Date.now()}`;
+  const url = `${staticBaseUrl()}${env}/index.html?cachebust=${Date.now()}`;
   const startedAt = Date.now();
   let attempt = 0;
   for (;;) {
@@ -120,7 +120,7 @@ async function waitForStaticDeploy_(opts) {
 async function main() {
   const args = parseArgs_(process.argv.slice(2));
   const version = args.version || readCurrentVersion_();
-  console.log(`Waiting for https://f3go30.github.io/static-pages/dist/${args.env}/ to serve v${version} (poll every ${args.intervalSec}s, timeout ${args.timeoutSec}s)...`);
+  console.log(`Waiting for ${staticBaseUrl()}${args.env}/ to serve v${version} (poll every ${args.intervalSec}s, timeout ${args.timeoutSec}s)...`);
   try {
     await waitForStaticDeploy_({
       env: args.env, version, intervalSec: args.intervalSec, timeoutSec: args.timeoutSec,

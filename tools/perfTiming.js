@@ -52,6 +52,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
+const { staticBaseUrl } = require('./static-urls.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const STATIC_DIR = path.join(ROOT, 'static-pages', 'src');
@@ -59,7 +60,7 @@ const RESULTS_DIR = path.join(ROOT, 'tools', 'perf-results');
 
 // Real published SIT static surface (GitHub Pages) — see script/version.js's
 // STATIC_PAGES_BASE_URL_ and tools/publish-static-pages.js for how it gets there.
-const SIT_STATIC_PAGES_URL = 'https://f3go30.github.io/static-pages/dist/sit';
+const SIT_STATIC_PAGES_URL = `${staticBaseUrl()}sit`;
 
 const ACCOUNTS = [
   { f3Name: 'NoSadClown', email: 'nosadclown@example.com' },

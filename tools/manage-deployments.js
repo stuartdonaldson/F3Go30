@@ -18,6 +18,7 @@
  * Direct invocation:
  *   node tools/manage-deployments.js --deploy-template
  *   node tools/manage-deployments.js --deploy-test
+ *   node tools/manage-deployments.js --summary --env sit|prod   # read-only: no push, no deploy
  *
  * Prerequisites:
  *   - local.settings.json at project root with templateScriptId/templateSpreadsheetId and
@@ -32,6 +33,7 @@ const { execSync }  = require('child_process');
 const fs            = require('fs');
 const os            = require('os');
 const path          = require('path');
+const { staticEntryUrl } = require('./static-urls.js');
 
 const ROOT          = path.join(__dirname, '..');
 const SETTINGS_PATH = path.join(ROOT, 'local.settings.json');
@@ -56,10 +58,17 @@ function resolveClaspAuthPath_(settings) {
   return expandHome_(claspAuth);
 }
 
+// monthScriptId/monthSpreadsheetId are retired (ADR-010, F3Go30-shsx) — no separate script
+// project for the live month tracker exists anymore, so there is no third TARGETS entry for it.
+// The settings keys are left in local.settings.json/its .example as historical residue; see
+// docs/deployment-model.md.
 const TARGETS = {
-  template: { scriptIdKey: 'templateScriptId', label: 'TEMPLATE', emoji: '📋', deploymentIdKey: 'templateDeploymentId' },
-  test:     { scriptIdKey: 'testScriptId',     label: 'TEST',     emoji: '🧪',  deploymentIdKey: 'testDeploymentId' },
+  template: { scriptIdKey: 'templateScriptId', label: 'TEMPLATE', emoji: '📋', deploymentIdKey: 'templateDeploymentId', sheetIdKey: 'templateSpreadsheetId', staticEnv: 'prod' },
+  test:     { scriptIdKey: 'testScriptId',     label: 'TEST',     emoji: '🧪',  deploymentIdKey: 'testDeploymentId',     sheetIdKey: 'testSpreadsheetId',     staticEnv: 'sit'  },
 };
+
+// --summary --env <sit|prod> maps the public env names onto the internal target keys above.
+const ENV_TO_TARGET = { sit: 'test', prod: 'template' };
 
 // ─────────────────────────────────────────────────────────────────────────
 // Settings
@@ -171,6 +180,22 @@ function replaceConst(src, name, value) {
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
+ * Parses `clasp deployments` output into `{ id, revision }` entries, skipping the @HEAD
+ * test-deployment entry clasp always lists. A line looks like:
+ *   - AKfycbzwlKLu...UZA @269 - v2.5.0.9 GO30-APP
+ */
+function parseDeploymentsOutput_(output) {
+  return output
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.startsWith('-') && !line.includes('@HEAD'))
+    .map(line => {
+      const match = line.match(/^-\s*(\S+)\s+@(\d+)/);
+      return match ? { id: match[1], revision: match[2], raw: line } : { id: null, revision: null, raw: line };
+    });
+}
+
+/**
  * Each script project (template, test) is expected to carry exactly one active named
  * deployment (excluding the @HEAD test-deployment entry clasp always lists). Rather than
  * storing its ID in local.settings.json (which goes stale the moment a deployment is
@@ -179,23 +204,33 @@ function replaceConst(src, name, value) {
  */
 function findActiveDeploymentId_(claspEnv) {
   const output = execSync('clasp deployments', { cwd: ROOT, env: claspEnv }).toString();
-  const deploymentLines = output
-    .split('\n')
-    .map(line => line.trim())
-    .filter(line => line.startsWith('-') && !line.includes('@HEAD'));
+  const deployments = parseDeploymentsOutput_(output);
 
-  if (deploymentLines.length === 0) {
+  if (deployments.length === 0) {
     throw new Error('No active (non-@HEAD) deployment found — create one via the script editor first.');
   }
-  if (deploymentLines.length > 1) {
-    throw new Error(`Expected exactly one active deployment, found ${deploymentLines.length}:\n${deploymentLines.join('\n')}`);
+  if (deployments.length > 1) {
+    throw new Error(`Expected exactly one active deployment, found ${deployments.length}:\n${deployments.map(d => d.raw).join('\n')}`);
   }
+  if (!deployments[0].id) {
+    throw new Error(`Could not parse deployment ID from: ${deployments[0].raw}`);
+  }
+  return deployments[0].id;
+}
 
-  const match = deploymentLines[0].match(/^-\s*(\S+)/);
-  if (!match) {
-    throw new Error(`Could not parse deployment ID from: ${deploymentLines[0]}`);
-  }
-  return match[1];
+/**
+ * Revision resolution (RECOMMENDATION.md §3.1): `clasp deploy`'s own stdout is parsed first for
+ * the revision it just created; if that misses (a clasp output-format change, a swallowed
+ * newline, etc.), `listDeployments` (a `clasp deployments` re-run, injected so this is testable
+ * without a real clasp call) is consulted and the revision read back off the matching row.
+ * Returns null — printed as "(unresolved)" by printDeploySummary_ — only if both miss.
+ */
+function resolveRevision_(deployStdout, deploymentId, listDeployments) {
+  const match = (deployStdout || '').match(/@(\d+)\b/);
+  if (match) return match[1];
+
+  const found = parseDeploymentsOutput_(listDeployments()).find(d => d.id === deploymentId);
+  return found ? found.revision : null;
 }
 
 // A freshly created/updated Apps Script deployment can take a few seconds to propagate on
@@ -218,6 +253,43 @@ function saveDeploymentId_(targetKey, deploymentId) {
   const settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
   settings[TARGETS[targetKey].deploymentIdKey] = deploymentId;
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Deploy summary (RECOMMENDATION.md §3.1 — the standard deploy summary)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Prints the standard eight-row post-deploy summary. The deployment ID is always printed in
+ * full — never truncated — because it has to be pasteable straight into tools/callWebapp.js or a
+ * bug report. Rows whose input is absent print an explanatory placeholder, never a broken URL.
+ */
+function printDeploySummary_(targetKey, { version, now, deploymentId, revision, scriptId, settings }) {
+  const { label, emoji, staticEnv, sheetIdKey } = TARGETS[targetKey];
+  const sheetId = settings[sheetIdKey];
+
+  const scriptProjectLine = scriptId
+    ? `${scriptId.slice(0, 12)}…   https://script.google.com/home/projects/${scriptId}/edit`
+    : '(scriptId not set in local.settings.json)';
+  const webappLine = deploymentId
+    ? `https://script.google.com/macros/s/${deploymentId}/exec`
+    : '(deployment ID unavailable)';
+  const staticLine = staticEnv
+    ? staticEntryUrl(staticEnv)
+    : '(static hosting not configured for this target)';
+  const spreadsheetLine = sheetId
+    ? `https://docs.google.com/spreadsheets/d/${sheetId}/edit`
+    : `(${sheetIdKey} not set in local.settings.json)`;
+
+  console.log(`\n${emoji}  ${label} deploy summary`);
+  console.log(`   Product version: v${version}`);
+  console.log(`   Stamped at:      ${now}`);
+  console.log(`   Deployment ID:   ${deploymentId || '(unavailable)'}`);
+  console.log(`   Revision:        ${revision ? '@' + revision : '(unresolved)'}`);
+  console.log(`   Script project:  ${scriptProjectLine}`);
+  console.log(`   Webapp:          ${webappLine}`);
+  console.log(`   Static page:     ${staticLine}`);
+  console.log(`   Spreadsheet:     ${spreadsheetLine}\n`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -263,7 +335,7 @@ function deploy(targetKey, options = {}) {
     version = JSON.parse(fs.readFileSync(PKG_PATH, 'utf8')).version;
   }
 
-  stampVersion(label, { versionOverride: version });
+  const { now } = stampVersion(label, { versionOverride: version });
 
   // Regenerate the "How it Works" panels/static page from docs/Go30-Intro.md (F3Go30-e3co) so
   // any edit to the canonical source lands on every deploy without a manual sync step.
@@ -281,9 +353,15 @@ function deploy(targetKey, options = {}) {
   console.log(`\n🔎 Looking up active deployment for ${label}…\n`);
   const deploymentId = findActiveDeploymentId_(claspEnv);
   console.log(`\n🌐 Updating named deployment ${deploymentId.slice(0, 12)}…\n`);
-  execSync(
+  // Captured (not 'inherit') so the revision number clasp reports (e.g. "...@269.") can be
+  // parsed out for the deploy summary below; still echoed to stdout so nothing is lost.
+  const deployOutput = execSync(
     `clasp deploy --deploymentId ${deploymentId} --description "v${version} GO30-APP"`,
-    { stdio: 'inherit', cwd: ROOT, env: claspEnv }
+    { cwd: ROOT, env: claspEnv }
+  ).toString();
+  process.stdout.write(deployOutput);
+  const revision = resolveRevision_(deployOutput, deploymentId, () =>
+    execSync('clasp deployments', { cwd: ROOT, env: claspEnv }).toString()
   );
   console.log(`\n✅ ${label} named deployment updated.`);
 
@@ -335,6 +413,48 @@ function deploy(targetKey, options = {}) {
     `node ${path.join(__dirname, 'publish-static-pages.js')} --env ${staticEnv} --skip-bump`,
     { stdio: 'inherit', cwd: ROOT }
   );
+
+  printDeploySummary_(targetKey, { version, now, deploymentId, revision, scriptId, settings });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Summary (read-only — no push, no clasp deploy, no post-deploy hooks)
+// ─────────────────────────────────────────────────────────────────────────
+
+/** `--summary --env <sit|prod>`: answers "what is deployed right now?" without deploying
+ * anything. Still needs .clasp.json pointed at the target scriptId to run `clasp deployments`,
+ * and still resolves the revision via the same stdout-then-fallback strategy deploy() uses
+ * (there being no `clasp deploy` stdout to parse here, it goes straight to the fallback). */
+function summary(targetKey) {
+  const { scriptIdKey, label, emoji } = TARGETS[targetKey];
+  const settings = loadSettings();
+  const scriptId = settings[scriptIdKey];
+
+  if (!scriptId || scriptId.startsWith('<')) {
+    console.error(`❌  ${scriptIdKey} is not set in local.settings.json`);
+    process.exit(1);
+  }
+
+  const claspAuthPath = resolveClaspAuthPath_(settings);
+  const claspEnv = { ...process.env, clasp_config_auth: claspAuthPath };
+
+  console.log(`\n${emoji}  Reading current ${label} deployment state (${scriptId.slice(0, 12)}…)…`);
+  writeClasp(scriptId);
+
+  const deploymentId = findActiveDeploymentId_(claspEnv);
+  // There is no `clasp deploy` stdout to parse here (nothing was just deployed), so this goes
+  // straight to the fallback branch of resolveRevision_.
+  const revision = resolveRevision_('', deploymentId, () =>
+    execSync('clasp deployments', { cwd: ROOT, env: claspEnv }).toString()
+  );
+
+  const versionSrc = fs.readFileSync(VERSION_PATH, 'utf8');
+  const versionMatch = versionSrc.match(/const APP_VERSION\s*=\s*'([^']+)'/);
+  const dateMatch = versionSrc.match(/const APP_VERSION_DATE\s*=\s*'([^']+)'/);
+  const version = versionMatch ? versionMatch[1] : '(unknown)';
+  const now = dateMatch ? dateMatch[1] : '(unknown)';
+
+  printDeploySummary_(targetKey, { version, now, deploymentId, revision, scriptId, settings });
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -370,6 +490,17 @@ async function main() {
   const args = process.argv.slice(2);
   const options = { skipBump: args.includes('--skip-bump') };
 
+  if (args.includes('--summary')) {
+    const envIdx = args.indexOf('--env');
+    const env = envIdx !== -1 ? args[envIdx + 1] : null;
+    const targetKey = ENV_TO_TARGET[env];
+    if (!targetKey) {
+      console.error(`❌  --summary requires --env sit|prod, got '${env}'`);
+      process.exit(1);
+    }
+    return summary(targetKey);
+  }
+
   if (args.includes('--deploy-template')) return deploy('template', options);
   if (args.includes('--deploy-test'))     return deploy('test', options);
 
@@ -393,5 +524,8 @@ module.exports = {
   bumpPatchVersion_,
   bumpBuildNumber_,
   resetBuildNumber_,
+  printDeploySummary_,
+  parseDeploymentsOutput_,
+  resolveRevision_,
   TARGETS,
 };

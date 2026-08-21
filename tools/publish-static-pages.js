@@ -2,8 +2,8 @@
 /**
  * Publishes the built static-pages/dist/<env>/ output to the sibling f3go30/static-pages repo
  * (local.settings.json's staticPagesRepoPath, e.g. ../F3Static), which is what GitHub Pages
- * actually serves (https://f3go30.github.io/static-pages/dist/<sit|prod>/ — see
- * script/version.js's STATIC_PAGES_BASE_URL_).
+ * actually serves (see tools/static-urls.js's staticEntryUrl(), sourced from script/version.js's
+ * STATIC_PAGES_BASE_URL_).
  *
  * Normally invoked automatically, once per target, as the last step of manage-deployments.js's
  * deploy() (npm run deploy:sit / deploy:prod) — with --skip-bump, since deploy() already
@@ -27,6 +27,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { bumpBuildNumber_ } = require('./manage-deployments.js');
+const { staticEntryUrl } = require('./static-urls.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST_ROOT = path.join(ROOT, 'static-pages', 'dist');
@@ -114,6 +115,7 @@ function main() {
   execFileSync('git', ['commit', '-m', message], { cwd: staticRepo, stdio: 'inherit' });
   execFileSync('git', ['push'], { cwd: staticRepo, stdio: 'inherit' });
   console.log(`🚀 Published to F3Static and pushed.`);
+  envs.forEach((e) => console.log(`   ${e}: ${staticEntryUrl(e)}`));
 }
 
 main();

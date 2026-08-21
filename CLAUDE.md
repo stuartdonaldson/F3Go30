@@ -131,6 +131,13 @@ npm run deploy:sit    # push to SIT (testScriptId)       — alias: npm run depl
 npm run deploy:prod   # push to PROD (templateScriptId)  — alias: npm run push
 npm run release:patch # bump version + deploy:prod + git push --follow-tags
 ```
+Every deploy ends by printing the standard deploy summary (version, stamp time, full deployment
+ID, revision, script project, webapp, static page, spreadsheet links). To see the same summary
+for what is *currently* deployed without deploying anything — no push, no `clasp deploy`, no
+post-deploy hooks — run:
+```
+node tools/manage-deployments.js --summary --env sit    # or --env prod
+```
 Before changing a request/response shape on `handleCheckinPost_` / `handleSignupPost_`, read
 docs/OPERATIONS.md §API compatibility with installed clients — installed PWA clients update on
 their own schedule, so a stale client posting to a new server must keep working.
