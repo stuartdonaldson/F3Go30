@@ -29,6 +29,8 @@ var signupWebappPaxCacheModule_ = (typeof module !== 'undefined' && module.expor
   : null;
 var deletePaxCacheRow_sw_ = (signupWebappPaxCacheModule_ && signupWebappPaxCacheModule_.deletePaxCacheRow_)
   || (typeof globalThis !== 'undefined' && globalThis.deletePaxCacheRow_);
+var upsertPaxGoalsForMonth_sw_ = (signupWebappPaxCacheModule_ && signupWebappPaxCacheModule_.upsertPaxGoalsForMonth_)
+  || (typeof globalThis !== 'undefined' && globalThis.upsertPaxGoalsForMonth_);
 var patchPaxRosterIndex_sw_ = (signupWebappPaxCacheModule_ && signupWebappPaxCacheModule_.patchPaxRosterIndex_)
   || (typeof globalThis !== 'undefined' && globalThis.patchPaxRosterIndex_);
 
@@ -665,6 +667,28 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     nagEmail: payload.nag ? 'Yes' : 'No',
   });
 
+  // F3Go30-uz9e.4 (PAX data model migration Slice 2): dual-write the new f3Name-keyed versioned
+  // goals record alongside the Responses cell above — Responses stays authoritative (§5 Slice 2)
+  // until the new record has proven itself in live use, so this write is additive and never blocks
+  // the rest of the save. monthKey_ pins to the 1st of targetMonth, matching the record's upsert-
+  // by-monthKey contract (docs/pax-data-model-and-contract.md §3.1/§4). Unlike advancePaxHistoryDay_'s
+  // log-and-continue on lock failure (a dropped history write must never fail a check-in), a
+  // dropped goal save is surfaced to the caller via response.goalRecordSaveFailed (invariant 3,
+  // §4) rather than swallowed — but it still doesn't abort the save itself, since Responses (just
+  // written above) already holds the real data and the rest of this function's writes are
+  // independent of it.
+  var goalRecordSaveFailed = false;
+  if (upsertPaxGoalsForMonth_sw_) {
+    var goalsWriteResult = upsertPaxGoalsForMonth_sw_(
+      templateSpreadsheet.getId(), payload.f3Name, monthKey_(targetMonth.startDate),
+      payload.who, payload.what, payload.how
+    );
+    if (!goalsWriteResult || !goalsWriteResult.ok) {
+      goalRecordSaveFailed = true;
+      GasLogger.log('signupWebapp.save.goalRecordFailed', { f3Name: payload.f3Name, error: goalsWriteResult && goalsWriteResult.error });
+    }
+  }
+
   var trackerSheet = targetSs.getSheetByName('Tracker');
   var trackerLastRow = trackerSheet ? trackerSheet.getLastRow() : 0;
   if (trackerSheet && trackerLastRow >= 4) {
@@ -722,7 +746,7 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     : null;
 
   sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, targetMonth, !match, checkinSessionGuid);
-  return buildSignupSaveResponse_(targetMonth, months, checkinSessionGuid);
+  return buildSignupSaveResponse_(targetMonth, months, checkinSessionGuid, goalRecordSaveFailed);
 }
 
 /**
@@ -740,8 +764,14 @@ function handleSignupSave_(templateSpreadsheet, payload) {
  *                  view in place. Deliberately still current-month only: handing it out for a
  *                  next-month save would send an old client into a month that does not exist yet
  *                  (docs/OPERATIONS.md §API compatibility with installed clients).
+ *   goalRecordSaveFailed  F3Go30-uz9e.4: true only when the new PaxCache goals record's write
+ *                  (dual-write alongside the Responses cell, which already succeeded by the time
+ *                  this response is built) hit a lock/write failure. Additive field — an installed
+ *                  client that doesn't know about it simply ignores it, same compatibility rule as
+ *                  every other field here. Absent (not `false`) on the ordinary success path, so
+ *                  existing response-shape assertions that don't expect the field are unaffected.
  */
-function buildSignupSaveResponse_(targetMonth, months, checkinSessionGuid) {
+function buildSignupSaveResponse_(targetMonth, months, checkinSessionGuid, goalRecordSaveFailed) {
   var response = { ok: true, savedMonth: targetMonth.label, trackerUrl: targetMonth.trackerUrl };
   if (checkinSessionGuid) {
     var links = resolveCheckinLinks_sw_ ? resolveCheckinLinks_sw_(checkinSessionGuid) : null;
@@ -750,6 +780,7 @@ function buildSignupSaveResponse_(targetMonth, months, checkinSessionGuid) {
   if (checkinSessionGuid && months.current && targetMonth.sheetId === months.current.sheetId) {
     response.identityToken = checkinSessionGuid;
   }
+  if (goalRecordSaveFailed) response.goalRecordSaveFailed = true;
   return response;
 }
 

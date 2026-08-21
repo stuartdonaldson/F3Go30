@@ -1,9 +1,22 @@
 # PAX Data Model & Browser/Server Contract
 
-**Status:** Draft — documents the current (as-built) contract and data flow, and a proposed
-future data model. Nothing in the "Proposed" sections is decided or implemented; this is a
-discussion document, not an ADR. If/when a direction is chosen, promote the relevant pieces into
-docs/DESIGN.md and an ADR per this project's placement rules.
+**Status:** Partly implemented. Slices 1-2 (§5) shipped and are live; Slices 3-4 are proposed and
+not built. This began as a discussion document and is now the working design for an in-flight
+migration (epic F3Go30-uz9e) — treat §3's record shape and §5.1/§5.2's as-built notes as binding on
+implementation, and the rest of §5 as intent that may still change. Not an ADR: when Slice 3
+commits the primary write path, promote the settled pieces into docs/DESIGN.md and raise an ADR
+per this project's placement rules.
+
+**Section status at a glance:**
+
+| Section | Status |
+|---|---|
+| §1 Contract | As-built. Unchanged by Slices 1-2, and unchanged by every remaining slice by design. |
+| §2 Current data flow | As-built, **corrected for Slice 1** — §2.2/§2.3 previously described pre-Slice-1 behavior. |
+| §3 Proposed model | Record shape is settled and live end to end (`history` and `goals` both shipped as sibling PaxCache entries). §3.3 (datastore) still speculative. |
+| §4 Implementation invariants | As-built. Rules Slice 1 established that Slices 2-3 must not break; Slice 2 preserves all of them (invariant 8 extended to `goals`). |
+| §5 Migration slices | Slices 1-2 **done**; Slice 3 is blocked on its own design gap (§6); Slice 4 open. |
+| §6 Open items | Slice 3's backfill mechanics remain the one blocking design gap. |
 
 **Scope:** the `cmd=checkin` webapp (identify → check-in → dashboard → bonus/goals) and the
 `cmd=signup` webapp (registration + goal capture), covering:
@@ -166,9 +179,16 @@ Everything lives in Google Sheets. Two spreadsheet lifetimes:
   Tracker` (Fellowship/Q/Inspire/EH entries, date-scoped).
 
 A PAX's day values, score, and goals for month M live **only** in month M's own spreadsheet.
-There is no per-PAX record that spans months except `PaxDB`, and the live webapp never reads
-`PaxDB` — it's write-only from the app's perspective (upserted after signup saves and after the
-nightly minus-one job), consumed only by reporting/admin tooling.
+
+Two things have changed since this section was first written:
+- **Slice 1 shipped**, adding the `go30hist:` rolling window (`PaxCache.js`) — the first store that
+  spans months for a PAX, and now the live source of every board row's streak/rolling average
+  (§2.2). It is `PropertiesService`-backed, not a sheet.
+- **`PaxDB` is no longer write-only** — `identify` reads it per request for month participation,
+  though not for any of the goal/stat data it exists to hold (§2.4).
+
+`PaxDB` remains one row per PAX-**per-month**, so it still cannot answer "give me PAX X across
+every month" without a scan.
 
 ### 2.2 Server-side caching
 
@@ -186,23 +206,39 @@ Two independent layers, both Apps Script built-ins, neither a "fast" external da
   classification, 6-hour TTL) and Responses data rows. Separate from PaxCache; carries no
   per-PAX day values.
 
-Because both are keyed by `sheetId` (i.e. by month), every cross-month read is a cache miss into
-a *different* namespace: `getPriorMonthTailValues_` explicitly re-opens the prior month's own
-`PaxCache` entry (`kind:'tracker', sheetId: priorMonth.sheetId, f3Name`) to stitch a trailing
-window across the boundary. This pattern would need to be repeated for every historical month a
-future feature wants to reach — it doesn't generalize past "one month back."
+Both of the above are keyed by `sheetId` (i.e. by month), so every cross-month read against them
+is a cache miss into a *different* namespace. That was the original motivation for this whole
+document, and Slice 1 has since added a **third** layer that isn't month-keyed:
 
-### 2.3 Why teammates' tile streaks look month-truncated (recap)
+- **`go30hist:` rolling history window (`PaxCache.js`, Slice 1 — shipped)** — keyed by
+  `{scopeId, f3Name}` where `scopeId` is the resolved *template* spreadsheet id (namespace
+  identity), **not** a tracker `sheetId`. Holds `{historyEndDate, days}` per §3.1. This is the
+  first store in the system that spans months for a PAX, and it is the live source of
+  `streak`/`maxStreak30`/`rollingAverage`/`priorMonthDayValues` for **every** board row today.
 
-`buildDashboardPaxRow_` computes `streak`/`maxStreak30` from `dayValues` sourced from
-`identity.trackerValues` — this month's Tracker roster only — for **every** row, viewer
-included. Only afterward, for the one matched viewer, does `handleCheckinDashboard_` fetch
+`getPriorMonthTailValues_` still exists, but its role changed: it is no longer on the normal read
+path: it is the **cold-start/rebuild backfill source** for the history window
+(`getPaxHistoryWindowValues_`, dashboardWebapp.js:2410), reached only when a PAX has no usable
+window yet or the window fails read-time reconciliation. Steady-state reads never touch the prior
+month's spreadsheet at all.
+
+### 2.3 Teammates' tile streaks: month-truncation (fixed by Slice 1)
+
+**Historical — this describes the bug that motivated Slice 1, and is no longer current
+behavior.** `buildDashboardPaxRow_` used to compute `streak`/`maxStreak30` from `dayValues`
+sourced from `identity.trackerValues` — this month's Tracker roster only — for **every** row,
+viewer included. Only afterward, for the one matched viewer, did `handleCheckinDashboard_` fetch
 `getPriorMonthTailValues_` and recompute `userStreak`/`userMaxStreak30`, overwriting just the
-top-level fields. `myTeam`/`paxBoard` (built from `allPaxRows` earlier in the same function)
-never receive that correction. Early in a calendar month, every teammate but the viewer shows an
-artificially short streak. (Analyzed, not yet fixed — tracked separately.)
+top-level fields. `myTeam`/`paxBoard` never received that correction, so early in a calendar
+month every teammate but the viewer showed an artificially short streak.
 
-### 2.4 PaxDB: the aggregate that already exists but isn't read live
+As shipped (F3Go30-5uk2, F3Go30-uz9e.1), every row — viewer and teammates alike — is computed
+from the same `getPaxHistoryWindowValues_` window, and the viewer-only override is gone:
+`userStreak`/`userMaxStreak30`/`userRollingAverage` now just read the values off `userRow`
+(dashboardWebapp.js:2618-2628). There is no longer a second, viewer-only computation path to keep
+in sync — which is the structural win, independent of the bug it fixed.
+
+### 2.4 PaxDB: the cross-tracker aggregate, read live for one narrow purpose
 
 `PaxDB` (go30tools.js) is a Template-resident sheet, one row per `{SheetId, F3 Name}`, columns:
 `SheetId, Date, F3 Name, Team, WHO, WHAT, HOW, Comments, Hit, Miss, NoCheckin, Fellowship, Q
@@ -212,9 +248,14 @@ rows per write — a lock-guarded full-column read, not a cache) after signup sa
 nightly minus-one job, and can be fully rebuilt by `scanTrackers()`/a historical rebuild. It is
 the closest thing this system already has to a cross-tracker PAX aggregate — but it's still one
 row **per month**, not one row per PAX, so it doesn't yet answer "give me PAX X's full history"
-without scanning every row that matches their name across however many months exist. The live
-webapp (`dashboardWebapp.js`) never reads it at all; it's a write-only side channel for
-reporting.
+without scanning every row that matches their name across however many months exist.
+
+**It is no longer purely write-only.** `buildMonthNavigationPayload_dw_` (dashboardWebapp.js)
+reads the whole sheet on every `identify` — an uncapped `getDataRange().getValues()` — but only to
+answer one narrow question: which months this PAX has a row for (`registeredMonthKeys`). None of
+`PaxDB`'s actual goal/stat payload is consumed. Measured at ~730ms on SIT with a single PAX's
+roster and 4 months (F3Go30-bopt); scales with total rows. See §3.6 — this read is exactly what
+`PaxProfile.goals` retires.
 
 ### 2.5 Client-side caching
 
@@ -235,7 +276,7 @@ current page load:
 - **`paxGoals` has no client-side cache at all** — every tap of a team tile re-fetches goals from
   the server, even for the same PAX opened twice in one session.
 
-### 2.6 Before: current state diagram
+### 2.6 Current state diagram (as of Slice 1)
 
 ```mermaid
 flowchart TB
@@ -244,6 +285,7 @@ flowchart TB
     subgraph GAS["Apps Script webapp"]
         Dispatch["doPost dispatch<br/>identify / checkin / dashboard / paxGoals / monthGrid / bonus*"]
         PaxCache["PaxCache (PropertiesService)<br/>keyed by {kind, sheetId, f3Name}"]
+        History["go30hist window (Slice 1, SHIPPED)<br/>keyed by {scopeId, f3Name} — spans months<br/>streak / maxStreak30 / rollingAverage"]
         LayoutCache["CacheService blobs<br/>Tracker/Responses layout, 6h TTL"]
     end
 
@@ -267,21 +309,28 @@ flowchart TB
     Browser -->|"JSON RPC, resolvedContext echoed back"| Dispatch
     Dispatch --> PaxCache
     Dispatch --> LayoutCache
-    Dispatch -->|"TrackerDB scan to resolve month"| TrackerDB
+    Dispatch -->|"TrackerDB scan to resolve month<br/>+ availableMonths (m732, §3.6)"| TrackerDB
     PaxCache -.->|"cache miss: live read"| TJuly
     PaxCache -.->|"cache miss: live read"| RJuly
-    Dispatch -->|"getPriorMonthTailValues_<br/>(viewer only, §2.3)"| TJune
+    Dispatch -->|"streak/rollingAverage<br/>for EVERY row"| History
+    History -.->|"cold start / failed reconcile only:<br/>getPriorMonthTailValues_"| TJune
     Dispatch --> BJuly
     Dispatch -.->|"upsert after signup save /<br/>nightly minus-one"| PaxDB
+    Dispatch -.->|"identify: full-sheet scan for<br/>registeredMonthKeys (m732, §3.6)"| PaxDB
 
     style PaxDB fill:#00000000,stroke-dasharray: 5 5
 ```
 
-Two structural problems this diagram makes visible: (1) `PaxCache` is keyed by `sheetId`, so
-reaching one month back for the viewer's streak means a second cache namespace
-(`getPriorMonthTailValues_`) — a lookup that isn't applied to teammates at all; (2) `PaxDB`
-already sits centrally in the Template with per-PAX goal/stat data, but nothing in the live
-read path (`Dispatch`) ever queries it — it's a write-only side channel.
+What this diagram makes visible, as of Slice 1:
+
+1. **`History` is the template for where the whole model is going** — one store, keyed by
+   `{scopeId, f3Name}`, spanning months, feeding every board row from one lookup. The prior-month
+   spreadsheet read it replaced is now a dotted cold-start edge, not a steady-state dependency.
+2. **`PaxCache` proper is still `sheetId`-keyed**, so goals and identity resolution remain
+   month-sharded — that is exactly the gap Slices 2-3 close.
+3. **`PaxDB` is no longer purely write-only.** `buildMonthNavigationPayload_dw_` reads it on every
+   `identify` for `registeredMonthKeys` — a full-sheet scan across every month (§3.6, F3Go30-m732).
+   It remains unread for the goal/stat data that is its actual content.
 
 ### 2.7 Data inventory: objects, contents, and who touches them (current state)
 
@@ -295,7 +344,7 @@ concrete.
 | Object | Contents | Written by | Read by |
 |---|---|---|---|
 | `TrackerDB` | One row per monthly tracker: `SheetId`, `StartDate`, URLs, aggregate stats | `CreateNewTracker.js` (new month), `scanTrackers()` (rescan) | `resolveDashboardMonth_`/`resolveTrackerDbRowForContextDate_` on every action that needs to pick a month |
-| `PaxDB` | One row per `{SheetId, F3 Name}`: goals + Hit/Miss/NoCheckin/bonus counts (full column list in §2.4) | `upsertPaxDbRow_` (after signup save, after nightly minus-one), `scanTrackers()`/historical rebuild | Reporting/admin tooling only — **never** the live `cmd=checkin`/`cmd=signup` webapp |
+| `PaxDB` | One row per `{SheetId, F3 Name}`: goals + Hit/Miss/NoCheckin/bonus counts (full column list in §2.4) | `upsertPaxDbRow_` (after signup save, after nightly minus-one), `scanTrackers()`/historical rebuild | Reporting/admin tooling, **plus** `buildMonthNavigationPayload_dw_` on every `identify` — full-sheet scan for `registeredMonthKeys` only, none of the goal/stat payload (§2.4, §3.6) |
 | `NamespaceDB` | Registry of provisioned namespace environments (ADR-014) | `copyTemplate` admin action | `resolveTemplateSpreadsheet_` (ns resolution on every request) |
 | `CheckinSessions` | One row per saved-link session guid: `f3Name`, `email`, created/last-used timestamps | `createOrTouchCheckinSession_dw_` (every `identify`) | `resolveCheckinToken_dw_`/`resolveCheckinSession_dw_` (token-based `identify`) |
 
@@ -313,6 +362,7 @@ concrete.
 |---|---|---|---|
 | Roster index — `go30idx:{kind}:{sheetId}` | JSON map: normalized name → row offset | `setPaxCacheRowsBulk_dw_` (bulk repopulate on cold roster read) | `buildTrackerValuesFromPaxCache_`, `resolvePaxRowIndex_dw_` |
 | Per-PAX row — `go30pax:{kind}:{sheetId}:{f3Name}` | This PAX's full Tracker or Responses row, as last read/written | `setPaxCacheRow_dw_`/`refreshPaxCacheRowFromSheet_dw_` on every checkin/bonus write | Every identity resolver (`resolveCheckinIdentityLean_/Full_`, `resolveLeanIdentityFromHandle_`, `getPriorMonthTailValues_`) |
+| **Rolling history window — `go30hist:{scopeId}:{f3Name}`** (Slice 1, shipped) | `{historyEndDate, days}` — dense 1-char/day outcomes, 400-day cap, **spans months**; keyed by namespace + name, *not* by `sheetId` | `advancePaxHistoryDay_` (write-through on every checkin), nightly minus-one job, rebuild path via `getPriorMonthTailValues_` | `getPaxHistoryWindowValues_` → `buildDashboardPaxRow_` for **every** board row: `streak`, `maxStreak30`, `rollingAverage`, `priorMonthDayValues` |
 
 **CacheService**
 
@@ -337,17 +387,29 @@ concrete.
 
 ```
 PaxProfile {
-  f3Name,                      // key
+  f3Name,                        // key (normalized; scoped by namespace — see below)
   team, email, phone,
   goals: [
     { monthKey: "2026-06", who, what, how },
     { monthKey: "2026-07", who, what, how }
   ],
   historyEndDate: "2026-08-02",  // ISO date the LAST character of `history` represents
-  history: "1101.0-1..."         // one char/day, dense-encoded, rolling ~400-day window,
-                                  // history[0] = historyEndDate - (history.length - 1) days
+  history: "1101.0X1."           // one char/day, dense-encoded, rolling 400-day window,
+                                 // history[0] = historyEndDate - (history.length - 1) days
 }
 ```
+
+**Day encoding (as shipped, `paxHistoryEncodeValue_`):** `'1'` = Hit, `'0'` = Miss, `'X'` = Failed
+(the Tracker's `-1`), `'.'` = no data (blank cell, or a gap the window never observed). Failed is
+`X`, not `-1` — the encoding is strictly one character per day, so a two-character token would
+desynchronize every index after it from its calendar date. (An earlier draft of this document
+showed `-1` inline in the example string; that was never implementable.)
+
+**Keying (as shipped):** the live key is `go30hist:{scopeId}:{normalizedF3Name}`, where `scopeId`
+is the **resolved template spreadsheet id** — namespace identity per ADR-014, not a tracker
+`sheetId`. "Keyed by `f3Name` alone" throughout this document is shorthand for "no month/`sheetId`
+dimension"; the namespace dimension stays, and must stay, or two namespaces' PAX of the same name
+would collide in one store. Slices 2-3 use the same `{scopeId, f3Name}` scoping.
 
 - **Goals become a small, upsert-by-`monthKey` list**, not a single overwritten value.
   `effectiveAt` is pinned to the 1st of the month a save targets (decided in this thread): a
@@ -356,6 +418,12 @@ PaxProfile {
   goals = the entry for the current `monthKey`. Point-in-time reporting = the entry for whatever
   `monthKey` is asked for — a lookup in one small list, not a re-derivation from a month's own
   spreadsheet (which today can't even answer this, since an overwrite destroys the prior value).
+- **The `goals` list doubles as the PAX's month-participation index.** A goals entry exists for
+  month M exactly when that PAX registered for month M — `upsertPaxDbRow_` (the only writer of a
+  `PaxDB` row) is called from `signupWebapp.js` at signup, the same event that captures
+  WHO/WHAT/HOW. So `identify`'s `registeredMonthKeys` becomes `goals.map(g => g.monthKey)` off one
+  already-cached record, rather than today's full-sheet `PaxDB` scan across every month. This is
+  the structural fix for half of F3Go30-m732 — see §3.6.
 - **History becomes a single rolling-window string, anchored by an explicit `historyEndDate`.**
   A bare string of day-outcome characters is ambiguous on its own — without a stamped date, there
   is no way to know which calendar day any character represents, especially since the window
@@ -377,12 +445,14 @@ PaxProfile {
 - `PaxProfile` becomes what `PaxDB` almost already is, restructured: **one row per PAX** (not
   per PAX-per-month) in the Template, with `goals` and `history` stored as JSON-ish string
   columns instead of one-row-per-month + separate Tracker-sheet day columns.
-- `PaxCache` gets re-keyed by `f3Name` alone (dropping `sheetId` from the key entirely) — the
-  same `PropertiesService` write-through mechanism already in place today, just with one
-  namespace collapse. `getPriorMonthTailValues_` and the viewer-only streak-correction
-  special-case (§2.3) both disappear, because there's nothing cross-month left to stitch.
-  Team-board reads still batch via a roster index → bulk `getProperties()`, unchanged in
-  mechanism.
+- `PaxCache` gets re-keyed by `{scopeId, f3Name}` (dropping `sheetId` — the *month* dimension —
+  from the key; the namespace dimension stays, per §3.1). Same `PropertiesService` write-through
+  mechanism already in place today, just with the month namespace collapsed. The viewer-only
+  streak-correction special-case (§2.3) is already gone as of Slice 1.
+  `getPriorMonthTailValues_` survives Slice 1 as a cold-start backfill source and retires fully
+  only at Slice 3, once `PaxProfile.history` is authoritative and there is no per-month Tracker
+  sheet left to backfill *from*. Team-board reads still batch via a roster index → bulk
+  `getProperties()`, unchanged in mechanism.
 - Writes (`checkin`, bonus, goal save) become single-row upserts against this one PaxProfile
   sheet instead of a cell write into whichever month's Tracker/Responses sheet is currently
   active — closer to how `upsertPaxDbRow_` already works today, just as the primary write path
@@ -472,7 +542,7 @@ counterpart.
 | Object | Contents | Written by | Read by |
 |---|---|---|---|
 | `TrackerDB` | Unchanged — still resolves which month's Bonus Tracker/Form is active | Unchanged | Unchanged, but narrower scope: only bonus/form dispatch, no longer score/streak/goal resolution |
-| `PaxProfile` (replaces `PaxDB`) | **One row per `f3Name`**: team/email/phone, `goals: [{monthKey, who, what, how}]`, `history` rolling day-outcome string | `handleCheckinSubmit_` (history), `handleSignupSave_` (goals upsert by `monthKey`) — both live-request writers now, not a side-effect aggregate | `handleCheckinDashboard_`, `handleCheckinIdentify_`, `handlePaxGoals_`, `handleMonthGrid_` — the live webapp reads it directly for the first time |
+| `PaxProfile` (replaces `PaxDB`) | **One row per `f3Name`**: team/email/phone, `goals: [{monthKey, who, what, how}]`, `history` rolling day-outcome string | `handleCheckinSubmit_` (history), `handleSignupSave_` (goals upsert by `monthKey`) — both live-request writers now, not a side-effect aggregate | `handleCheckinDashboard_`, `handleCheckinIdentify_`, `handlePaxGoals_`, `handleMonthGrid_` — one keyed record lookup replaces both the per-month sheet reads and `identify`'s full-sheet `PaxDB` scan (§3.6) |
 | `NamespaceDB`, `CheckinSessions` | Unchanged | Unchanged | Unchanged |
 
 **Spreadsheet (per monthly tracker copy) — narrowed scope**
@@ -495,6 +565,69 @@ counterpart.
 
 **Browser** — unchanged shape from §2.7, plus one addition: a small in-memory `state.goalsCache[f3Name]` becomes viable once `paxGoals` is cheap (one `PaxProfile` field already loaded alongside score/streak, per §3.2's contract-impact note), closing the "goals never cached client-side" gap noted in §2.7's last row.
 
+### 3.6 Relationship to F3Go30-m732 (unthrottled TrackerDB/PaxDB reads)
+
+`buildMonthNavigationPayload_dw_` (dashboardWebapp.js) does two uncapped
+`getDataRange().getValues()` reads per `identify`, measured on SIT at `trackerDbReadMs=260` +
+`paxDbReadMs=730` with only 4 tracker months and one PAX's roster (F3Go30-bopt). Both scale with
+accumulated rows. This model splits cleanly against that issue, and the two halves have
+*different* answers:
+
+| Read | What it actually answers | Under PaxProfile |
+|---|---|---|
+| `PaxDB` full scan (~730ms) | "Which months does this PAX have a row for?" → `registeredMonthKeys` | **Retires.** Becomes `goals.map(g => g.monthKey)` off the one already-cached `{scopeId, f3Name}` record (§3.1). No scan, no per-month dimension to iterate. |
+| `TrackerDB` full scan (~260ms) | "Which months exist at all?" → `availableMonths` | **Unchanged.** §3.2 keeps `TrackerDB` as the month/Form/Bonus-Tracker registry; this read is not PAX-scoped and no PaxProfile record can answer it. |
+
+Consequences for sequencing:
+
+- **Do not build a bespoke `PaxDB` cache for m732.** Slice 3 removes the read entirely rather than
+  making it cheaper, and a hand-rolled cache would be thrown away — plus it would add a second
+  invalidation contract to keep correct in the meantime, against a sheet Slice 3 deletes.
+- **The `TrackerDB` half is independent of this whole migration** and can be fixed on its own
+  schedule (a small write-through-cached month list, invalidated at the few `TrackerDB` mutation
+  points: `_updateTrackerDB`, `removeTrackerDbRow_`, and tracker creation). Nothing in Slices 2-4
+  changes that read or makes the fix redundant.
+
+m732 should therefore be scoped to the `TrackerDB` read only, with the `PaxDB` half tracked as
+subsumed by F3Go30-uz9e.5.
+
+---
+
+## 4. Implementation invariants (established by Slice 1)
+
+Rules the shipped Slice 1 code enforces that Slices 2-3 must preserve. These are the
+easy-to-miss ones — a reasonable-looking implementation that violates any of them silently
+corrupts a PAX's history or leaks data across namespaces.
+
+1. **Namespace scoping is part of the key, always.** `{scopeId, f3Name}`, never `f3Name` alone
+   (§3.1). `scopeId` is the resolved template spreadsheet id.
+2. **`historyEndDate` and `history` move together, in one write.** Advancing one without the other
+   silently re-dates every character. `advancePaxHistoryEntry_` is the only thing that should
+   compute the pair.
+3. **Read-modify-write against a shared record takes the script lock.** `advancePaxHistoryDay_`
+   wraps its get→advance→set in `LockService.getScriptLock()` with a 10s `waitLock`, and on lock
+   failure **logs and returns rather than throwing** — a dropped history write must never fail a
+   user's check-in. Slice 2's `goals` upsert is the same read-modify-write shape and needs the
+   same discipline (this is the F3Go30-xg8f class of bug).
+4. **Future-day writes are not folded into the window.** Advance check-in is allowed for
+   `1`/`0`/`null`, but advancing the window to a future day pads every skipped day with `.` and
+   shifts real history off the front permanently. The value lives on the Tracker; read-time
+   reconciliation brings it in once the day is actually in range.
+5. **Reads anchor to the caller's context date, not to `now`.** `getPaxHistoryWindowValues_` takes
+   the day the window must end on. Trim a window ending after it; pad with `.` at the *tail* only
+   (safe because `computeStreak_` trims trailing blanks); treat a window that can't reach the
+   anchor as a miss.
+6. **The window is reconciled against the Tracker row on read, not trusted blindly.** Two
+   independent write-through paths represent the same day values; the overlapping tail is compared
+   and the window rebuilt from the sheet on disagreement. This is what makes a *wrong* entry
+   self-heal — cold-start alone only ever catches a *missing* one.
+7. **Storage cap and display cap are separate constants.** `PAX_HISTORY_WINDOW_DAYS_` (400, storage)
+   vs `MAX_STREAK_WINDOW_DAYS_` (30, applied at compute time) vs `PAX_HISTORY_BACKFILL_DAYS_` (62,
+   rebuild depth). Re-coupling them is the F3Go30-uz9e.3 regression.
+8. **Never cache a negative lookup.** `PaxCache.js`'s standing rule — a miss re-reads live and is
+   not stored, so a brand-new signup can't be masked. Applies to `goals` in Slice 2 as well: a PAX
+   with no entry for a `monthKey` is a miss, not a cached empty.
+
 ---
 
 ## 5. Suggested migration slices
@@ -503,7 +636,14 @@ Getting from §2's "before" to §3's "after" doesn't have to be one migration. E
 independently shippable, leaves the contract (§1) unchanged for the live apps at every step, and
 narrows the gap without requiring the ones after it.
 
-### Slice 1 — f3Name-keyed rolling history window (streak/maxStreak30 only)
+| Slice | Status | Issues |
+|---|---|---|
+| 1 — rolling history window | ✅ **Shipped & live** | F3Go30-5uk2, uz9e.1, uz9e.2, uz9e.3 (all closed) |
+| 2 — versioned goals list | ✅ **Shipped & live** | F3Go30-uz9e.4 |
+| 3 — PaxProfile as primary store | ○ Open; **backfill mechanics undesigned** (§6) | F3Go30-uz9e.5 |
+| 4 — swap backing store | ○ Open, blocked by Slice 3; gated on a datastore decision | F3Go30-uz9e.6, gate F3Go30-uz9e.7 |
+
+### Slice 1 — f3Name-keyed rolling history window (streak/maxStreak30 only) — SHIPPED
 
 The smallest real piece of `PaxProfile.history`: a new `PaxCache` kind keyed by `f3Name` alone,
 holding `{ historyEndDate, days }` — dense day-outcome encoding, one character per day, anchored
@@ -524,11 +664,21 @@ window alone, with no prior-month spreadsheet read, throughout the following mon
 originally coupled (the rebuild stored back only 30 days), which capped effective storage below
 the 44 days `rollingAverage` and `priorMonthDayValues` need; F3Go30-uz9e.3 separated them.
 
-`getPriorMonthTailValues_` and the
-viewer-only override (dashboardWebapp.js:2247-2260) delete entirely once this lands.
-
 *Fixes the streak-month-boundary bug for every teammate, not just the viewer — directly answers
 the question this thread started from.*
+
+**Divergence from plan, as shipped.** This slice predicted that "`getPriorMonthTailValues_` and
+the viewer-only override delete entirely once this lands." Only half happened:
+
+- The **viewer-only override did** delete — `userStreak`/`userMaxStreak30`/`userRollingAverage`
+  now read straight off `userRow` (dashboardWebapp.js:2618-2628), no second computation path.
+- **`getPriorMonthTailValues_` did not.** It was repurposed as the cold-start/rebuild backfill
+  source behind `getPaxHistoryWindowValues_` (dashboardWebapp.js:2410) — off the steady-state read
+  path, but still needed to *populate* a window for a PAX who has none, and to rebuild one that
+  fails read-time reconciliation (invariant 6, §4). It can only retire at **Slice 3**, when
+  `PaxProfile.history` becomes authoritative and there is no per-month Tracker sheet left to
+  backfill from. Plan accordingly: it is not dead code, and removing it before Slice 3 breaks
+  cold-start for every new PAX.
 
 **Read side, as shipped (F3Go30-uz9e.2).** §3.1's anchor rule binds on read as well as write, and
 Slice 1's first cut only honoured it on write. Two rules the read path enforces:
@@ -551,7 +701,7 @@ Write side: a checkin for a **future** day (advance check-in is intended and unr
 with `.` and shift that many days of real history off the front permanently. The value lives on
 the Tracker, and rule 2 brings it into the window on the first read once the day is in range.
 
-### Slice 2 — versioned goals list on the same f3Name-keyed record
+### Slice 2 — versioned goals list on the same f3Name-keyed record — SHIPPED
 
 Extend the Slice 1 record (or add a sibling `PaxCache` entry under the same `f3Name` key) with the
 `goals: [{monthKey, who, what, how}]` list from §3.1. `handleSignupSave_` upserts by `monthKey`
@@ -562,6 +712,52 @@ starts reading from this record instead of `resolveCheckinIdentityLean_`'s Respo
 
 *Unlocks point-in-time goal reporting — the second concrete need raised in this thread — without
 touching the Tracker/day-value side of the model at all.*
+
+**Implementation notes (for the session that picks this up):**
+
+- **Sibling entry, not an extension of `go30hist:`.** Add a new prefix (e.g. `go30goals:`) under
+  the same `{scopeId, f3Name}` scoping rather than widening the history entry. History is written
+  on every check-in and goals on every signup save — two very different write frequencies sharing
+  one read-modify-write record means every check-in contends with, and can clobber, a concurrent
+  goal save. Separate keys keep the lock scopes disjoint.
+- **Dual-write, and keep Responses authoritative until proven.** Write both the new record and
+  the existing Responses cell. Read from the new record only after a period of live agreement —
+  Responses stays the fallback for a miss (invariant 8: a missing entry is a miss, not an empty
+  goals set, and *must* fall through to Responses rather than rendering blank goals).
+- **`monthKey` is pinned to the 1st of the month** a save targets. A re-save inside the same month
+  upserts that entry (matching today's last-write-wins-within-a-month behavior); a save in a new
+  month appends. Mid-month effective dating is explicitly out of scope (§6).
+- **`paxGoals`'s new `monthKey` param is additive and optional** — an installed client that never
+  sends it must keep getting current-month goals, per this repo's installed-client compatibility
+  rule (docs/OPERATIONS.md §API compatibility with installed clients).
+- Locking per invariant 3 (§4): the goals upsert is a read-modify-write and needs the script lock,
+  but unlike a history write, a **dropped goal save is user-visible** — it should surface an error
+  rather than log-and-continue.
+
+**As shipped.** Implemented exactly as designed above, plus the operational details below.
+
+- `PaxCache.js` adds a fourth PropertiesService prefix, `go30goals:{scopeId}:{f3Name}` →
+  `{goals: [{monthKey, who, what, how}]}`, mirroring `go30hist:`'s namespace scoping and orphan-
+  sweep/`wipeAllPaxCache_` coverage exactly (`upsertPaxGoalsForMonth_`, `getPaxGoalsForMonth_`,
+  `wipePaxGoalsForScope_`).
+- `handleSignupSave_` (signupWebapp.js) calls `upsertPaxGoalsForMonth_` right after the existing
+  `upsertPaxDbRow_` call, keyed by `templateSpreadsheet.getId()` (scopeId) and
+  `monthKey_(targetMonth.startDate)` (already-existing helper, pins to the 1st of the month). On
+  lock/write failure it does **not** abort the rest of the save (Responses, PaxDB, Tracker row,
+  email are all independent of this record and already succeeding) — instead the response gains an
+  additive `goalRecordSaveFailed: true` field (absent, not `false`, on the ordinary path) so the
+  failure is surfaced to the caller without regressing an installed client that ignores unknown
+  fields.
+- `handlePaxGoals_` (dashboardWebapp.js) gained the optional `monthKey` param. When given, it also
+  selects which month's tracker `resolveDashboardMonth_` resolves to — so a goals-record miss
+  falls through to the SAME month's Responses sheet, not a mismatched one. The goals-record lookup
+  is exact-`monthKey`-match only (`findPaxGoalsForMonth_`) — no nearest/most-recent fallback — a
+  request for a month the PAX never (re)saved in is a miss, same as no record at all, and falls
+  through to Responses exactly as invariant 8 requires.
+- Read semantics for point-in-time reporting are therefore: "the `{who, what, how}` this PAX saved
+  when they signed up/updated for that specific month," not an interpolated "goals in effect as of
+  that date" — consistent with goals only ever being written on an actual signup save, once per
+  month at most.
 
 ### Slice 3 — PaxProfile becomes the primary store, `PaxDB` retires
 
@@ -581,23 +777,50 @@ Once a fast external datastore is available, replace what's behind `PaxCache.js`
 functions (per §3.3) — no slice above needs to be redone; they were already designed around a
 single-key document, so this is a transport swap, not a reshape.
 
-### Recommendation: start with Slice 1
+### Recommendation: close §6's design gap before starting Slice 3
 
-Slice 1 is the right next step: it's the smallest diff (one new cache kind, two write-through call
-sites, one read-path change), it's purely additive (nothing existing is removed except the
-now-redundant viewer-only special case), and it directly fixes the bug this whole investigation
-started from. It also happens to be the first real piece of `PaxProfile.history`, so nothing
-about it needs to be thrown away when Slice 3 consolidates everything into the full record —
-Slice 2 and 3 build on top of it rather than around it.
+Slices 1 and 2's bet paid off as intended — both were purely additive, nothing about either needed
+to be thrown away, and the `{scopeId, f3Name}` record shape (now holding both `history` and
+`goals`) held up under real traffic. Slice 3 builds on top of them rather than around them.
+
+**Slice 3 is not ready to start**, and its blocker is a design gap rather than a dependency:
+§6's backfill mechanics (batch size, verification, rollback) are still undesigned, and Slice 3 is
+the first slice that (a) changes the primary write path and (b) requires a real data migration of
+existing `PaxDB` rows plus every live Tracker sheet's history. Closing that gap is its own design
+pass and should happen before implementation is scheduled — the risk profile is categorically
+different from Slices 1-2, neither of which could lose data if abandoned mid-flight.
+
+> **Run the §6 design pass in an Opus session.** The open items are irreversible design
+> tradeoffs against live PAX data, not implementation work — this is the one slice where getting
+> the migration mechanics wrong loses data rather than just requiring rework. Implementing the
+> slice afterwards, once the decisions are written down here, is ordinary work and does not need
+> Opus.
 
 ---
 
 ## 6. Open items (not resolved by this document)
 
+**Blocking Slice 3 — needs its own design pass (run it in Opus, per §5's recommendation) before
+implementation is scheduled:**
+
+- Migration path/sequencing for converting existing `PaxDB` (one row per PAX-per-month) and every
+  live Tracker sheet's history into the new one-row-per-PAX shape — detailed at a slice level in
+  §5, but the exact backfill mechanics aren't designed here. Specifically undecided: batch size
+  and how the backfill stays inside Apps Script's execution time limit across a multi-month,
+  whole-roster read; how a partially-completed backfill is detected and resumed; what verification
+  proves the migrated record matches the sheets it came from; and what rollback looks like once
+  writes have started landing on `PaxProfile` instead of the Tracker.
+- What happens to `PaxProfile.history` for a PAX whose Tracker row is edited manually *after*
+  migration. Today `TrackerEditTrigger.js`'s `onEdit` invalidates month-keyed cache entries; once
+  the Tracker is no longer the source of truth, an `onEdit` there is either meaningless or a
+  conflicting write, and the reconciliation rule (invariant 6, §4) has nothing left to reconcile
+  *against*. Needs an answer before the Tracker retires as source of truth.
+
+**Non-blocking / deferred:**
+
 - Whether monthly tracker-copy spreadsheets stay as the mechanism for Bonus Tracker
   period-capping and signup Form binding, or also get consolidated — out of scope here.
 - Whether `effectiveAt`-pinned-to-month-start goals should eventually become truly mid-month
   effective-dated, changing the UX around "Update my registration" — flagged earlier, deferred.
-- Migration path/sequencing for converting existing `PaxDB` (one row per PAX-per-month) and every
-  live Tracker sheet's history into the new one-row-per-PAX shape — detailed at a slice level in
-  §5, but the exact backfill mechanics (batch size, verification, rollback) aren't designed here.
+- Whether the `TrackerDB` `availableMonths` read gets its own cache (F3Go30-m732's remaining half,
+  §3.6) — independent of every slice here; neither blocks the other.

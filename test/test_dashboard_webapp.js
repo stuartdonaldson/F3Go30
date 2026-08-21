@@ -81,11 +81,15 @@ const {
   getResponsesLayout_,
   resolveCheckinIdentityLean_,
   handleMonthGrid_,
+  handlePaxGoals_,
+  paxHistoryScopeId_dw_,
   buildMonthNavigationPayload_dw_,
   handleBonusAdd_,
   handleBonusEdit_,
   handleSiteFeedback_,
 } = require('../script/dashboardWebapp.js');
+
+var { upsertPaxGoalsForMonth_: upsertPaxGoalsForMonth_dwTest_ } = require('../script/PaxCache.js');
 
 // ── classifyTrackerColumns_ ──────────────────────────────────────────────
 // Row layout mirrors CreateNewTracker.js populateTrackerSheet: columns A-H (idx 0-7) are
@@ -2580,6 +2584,241 @@ function makeFakeDataRangeSheet_(rows) {
 })();
 
 console.log('test_dashboard_webapp.js: month navigation / monthGrid assertions passed');
+
+// ── handlePaxGoals_ (F3Go30-uz9e.4: PAX data model migration Slice 2) ────────────────────────
+// New f3Name-keyed goals record read as a fast path ahead of the existing Responses-row fetch —
+// a cache hit must skip resolveCheckinIdentityLean_/the Responses sheet entirely; a miss must
+// fall straight through to today's existing behavior (invariant 8, §4: a missing entry is a
+// miss, never rendered as an empty goals set).
+//
+// Several earlier tests in this file (the post-write cache derivation block above) `delete
+// global.LockService` for their own lock-unavailable scenarios and never restore it — a
+// pre-existing fixture-pollution gap (same class as F3Go30-lem7/vecg's signup-validation fixture
+// pollution fix), not something this slice introduces. upsertPaxGoalsForMonth_ (PaxCache.js) is
+// itself lock-guarded, so it surfaces that ambient pollution the moment a test here calls it;
+// reinstalling a plain always-granted lock explicitly avoids depending on suite ordering.
+global.LockService = { getScriptLock: function() { return { waitLock: function() {}, releaseLock: function() {} }; } };
+
+(function testHandlePaxGoalsMissingF3NameIsAnError() {
+  assert.deepEqual(handlePaxGoals_({}, {}), { ok: false, error: 'missing_f3Name' });
+})();
+
+(function testHandlePaxGoalsCacheHitSkipsResponsesFetchEntirely() {
+  installFakePropertiesStore_();
+  var templateSpreadsheet = {
+    getId: function() { return 'scope-goals-hit'; },
+    // Any attempt to open a spreadsheet on a cache hit is a bug — the whole point of the fast
+    // path is skipping the Responses-row resolution.
+    getSheetByName: function() { throw new Error('must not consult Config/TrackerDB on a goals cache hit'); },
+  };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-throws', trackerUrl: 'https://x', startDate: new Date(2026, 8, 1) };
+  };
+  global.formatRegistrationMonth_ = function() { return 'September 2026'; };
+  global.SpreadsheetApp = {
+    openById: function() { throw new Error('must not open any spreadsheet on a goals cache hit'); },
+  };
+
+  upsertPaxGoalsForMonth_dwTest_(paxHistoryScopeId_dw_(templateSpreadsheet), 'Anchor', '2026-09', 'WhoVal', 'WhatVal', 'HowVal');
+
+  var res = handlePaxGoals_(templateSpreadsheet, { f3Name: 'Anchor', monthKey: '2026-09' });
+  assert.deepEqual(res, { ok: true, f3Name: 'Anchor', goals: { who: 'WhoVal', what: 'WhatVal', how: 'HowVal' } });
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+(function testHandlePaxGoalsMissFallsThroughToResponsesRow() {
+  installFakePropertiesStore_();
+  var templateSpreadsheet = { getId: function() { return 'scope-goals-miss'; } };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-sep-goals', trackerUrl: 'https://x/sep', startDate: new Date(2026, 8, 1) };
+  };
+  global.formatRegistrationMonth_ = function() { return 'September 2026'; };
+  installFakeSpreadsheetById_({
+    'sheet-sep-goals': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1), new Date(2026, 8, 2)],
+            [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 0]]
+          );
+        }
+        if (n === 'Responses') {
+          return makeLeanIdentityResponsesSheet_([
+            ['', 'anchor@x.com', 'Yes', 'Anchor', 'AO', 'Crucible', '', 'RespWho', 'RespWhat', 'RespHow', '', '', ''],
+          ]);
+        }
+        return null;
+      },
+    },
+  });
+
+  // No goals record written — a genuine miss (no entry at all for this scope/name).
+  var res = handlePaxGoals_(templateSpreadsheet, { f3Name: 'Anchor', monthKey: '2026-09' });
+  assert.deepEqual(res, { ok: true, f3Name: 'Anchor', goals: { who: 'RespWho', what: 'RespWhat', how: 'RespHow' } });
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+(function testHandlePaxGoalsMonthKeyEntryPresentButWrongMonthStillFallsThrough() {
+  installFakePropertiesStore_();
+  var templateSpreadsheet = { getId: function() { return 'scope-goals-wrongmonth'; } };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-sep-goals2', trackerUrl: 'https://x/sep', startDate: new Date(2026, 8, 1) };
+  };
+  global.formatRegistrationMonth_ = function() { return 'September 2026'; };
+  installFakeSpreadsheetById_({
+    'sheet-sep-goals2': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1), new Date(2026, 8, 2)],
+            [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 0]]
+          );
+        }
+        if (n === 'Responses') {
+          return makeLeanIdentityResponsesSheet_([
+            ['', 'anchor@x.com', 'Yes', 'Anchor', 'AO', 'Crucible', '', 'RespWho', 'RespWhat', 'RespHow', '', '', ''],
+          ]);
+        }
+        return null;
+      },
+    },
+  });
+
+  // An entry exists, but for a DIFFERENT month — exact-match only (findPaxGoalsForMonth_), no
+  // nearest/most-recent fallback, so this is still a miss that falls through to Responses.
+  upsertPaxGoalsForMonth_dwTest_(paxHistoryScopeId_dw_(templateSpreadsheet), 'Anchor', '2026-06', 'OldWho', 'OldWhat', 'OldHow');
+  var res = handlePaxGoals_(templateSpreadsheet, { f3Name: 'Anchor', monthKey: '2026-09' });
+  assert.deepEqual(res.goals, { who: 'RespWho', what: 'RespWhat', how: 'RespHow' });
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+(function testHandlePaxGoalsWithoutMonthKeyIsBackwardCompatible() {
+  // An installed client that never sends monthKey must keep getting current-month goals via the
+  // existing Responses-row path, unaffected by the new cache lookup (which simply misses since
+  // nothing was ever written for this scope/name).
+  installFakePropertiesStore_();
+  var templateSpreadsheet = { getId: function() { return 'scope-goals-nomkey'; } };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-cur', trackerUrl: 'https://x/cur', startDate: new Date(2026, 8, 1) };
+  };
+  global.formatRegistrationMonth_ = function() { return 'September 2026'; };
+  installFakeSpreadsheetById_({
+    'sheet-cur': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1), new Date(2026, 8, 2)],
+            [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 0]]
+          );
+        }
+        if (n === 'Responses') {
+          return makeLeanIdentityResponsesSheet_([
+            ['', 'anchor@x.com', 'Yes', 'Anchor', 'AO', 'Crucible', '', 'RespWho', 'RespWhat', 'RespHow', '', '', ''],
+          ]);
+        }
+        return null;
+      },
+    },
+  });
+
+  var res = handlePaxGoals_(templateSpreadsheet, { f3Name: 'Anchor' });
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.goals, { who: 'RespWho', what: 'RespWhat', how: 'RespHow' });
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+// Code-review regression: an explicit payload.monthKey for a PAST month must win over an echoed
+// resolvedContext handle describing the VIEWER's CURRENT month — the handle fast path is only a
+// same-month shortcut, never a reason to ignore a different requested monthKey (that would defeat
+// point-in-time reporting whenever a client happens to already hold a handle, i.e. almost always).
+(function testHandlePaxGoalsExplicitMonthKeyOverridesCurrentMonthHandle() {
+  installFakePropertiesStore_();
+  var templateSpreadsheet = { getId: function() { return 'scope-goals-handle-override'; } };
+  global.formatRegistrationMonth_ = function() { return 'June 2026'; };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-jun-goals', trackerUrl: 'https://x/jun', startDate: new Date(2026, 5, 1) };
+  };
+  installFakeSpreadsheetById_({
+    'sheet-jun-goals': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 5, 1)],
+            [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1]]
+          );
+        }
+        if (n === 'Responses') {
+          return makeLeanIdentityResponsesSheet_([
+            ['', 'anchor@x.com', 'Yes', 'Anchor', 'AO', 'Crucible', '', 'JuneWho', 'JuneWhat', 'JuneHow', '', '', ''],
+          ]);
+        }
+        return null;
+      },
+    },
+    // The viewer's handle points at AUGUST — if it wins, this hostile fixture would be opened
+    // and this test would fail loudly instead of silently returning the wrong month's goals.
+    'sheet-aug-handle': {
+      getSheetByName: function() { throw new Error('must not resolve the handle\'s month when payload.monthKey differs'); },
+    },
+  });
+
+  var handle = { sheetId: 'sheet-aug-handle', monthKey: '2026-08', startDateIso: '2026-08-01', trackerUrl: 'https://x/aug', label: 'August 2026', rowIndex: 0, f3Name: 'Anchor' };
+  var res = handlePaxGoals_(templateSpreadsheet, { f3Name: 'Anchor', monthKey: '2026-06', resolvedContext: handle, dateISO: '2026-08-15' });
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.goals, { who: 'JuneWho', what: 'JuneWhat', how: 'JuneHow' });
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+(function testHandlePaxGoalsNotFoundReturnsError() {
+  installFakePropertiesStore_();
+  var templateSpreadsheet = { getId: function() { return 'scope-goals-notfound'; } };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-empty-goals', trackerUrl: 'https://x', startDate: new Date(2026, 8, 1) };
+  };
+  global.formatRegistrationMonth_ = function() { return 'September 2026'; };
+  installFakeSpreadsheetById_({
+    'sheet-empty-goals': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1)],
+            [['SomeoneElse', 'Crucible', '', '', '', '', 5, 0.5, 1]]
+          );
+        }
+        return null;
+      },
+    },
+  });
+
+  var res = handlePaxGoals_(templateSpreadsheet, { f3Name: 'Anchor', monthKey: '2026-09' });
+  assert.deepEqual(res, { ok: false, error: 'not_found' });
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+console.log('test_dashboard_webapp.js: handlePaxGoals_ assertions passed');
 
 // ── Bonus writes refresh the PAX's cached Tracker row (F3Go30-s1a5 item 2) ───────────────────
 // A bonus entry recalculates the Tracker sheet's formula-computed Score/Raw Score/bonus-total

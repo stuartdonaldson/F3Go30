@@ -75,6 +75,30 @@ const GUID = 'sess-abc-123';
   assert.equal(res.trackerUrl, NEXT.trackerUrl);
 })();
 
+// ── F3Go30-uz9e.4: goalRecordSaveFailed is additive and only present on a real failure ─────────
+
+(function testGoalRecordSaveFailedAbsentOnOrdinarySuccess() {
+  var res = signupWebapp.buildSignupSaveResponse_(CURRENT, MONTHS, GUID, false);
+  assert.equal('goalRecordSaveFailed' in res, false, 'must be absent, not false, on the ordinary success path');
+})();
+
+(function testGoalRecordSaveFailedSurfacedWhenTheDualWriteDropped() {
+  var res = signupWebapp.buildSignupSaveResponse_(CURRENT, MONTHS, GUID, true);
+  assert.equal(res.goalRecordSaveFailed, true);
+  assert.equal(res.ok, true, 'the save itself (Responses cell, already written) still succeeded');
+})();
+
+(function testHandleSignupSaveCallsUpsertPaxGoalsForMonthAndThreadsItsFailureIntoTheResponse() {
+  var src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'script', 'signupWebapp.js'), 'utf8'
+  );
+  var fn = src.match(/function handleSignupSave_\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /upsertPaxGoalsForMonth_sw_\(/,
+    'handleSignupSave_ must dual-write the new goals record, not rely on Responses alone (§5 Slice 2)');
+  assert.match(fn, /goalRecordSaveFailed/,
+    'a dropped goal-record write must be threaded into the response, not swallowed');
+})();
+
 (function testHandleSignupSaveRoutesItsResponseThroughTheBuilder() {
   // The builder only means anything if the real save path actually uses it.
   const fs = require('node:fs');

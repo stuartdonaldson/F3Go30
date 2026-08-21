@@ -334,7 +334,7 @@ function wipeAllPaxCache_() {
       // — it's the same PropertiesService store, and a wrong/stale streak needs the same "force a
       // reload" escape hatch as every other PaxCache entry. A wipe here just means the next
       // dashboard read for that PAX cold-starts via getPaxHistoryWindowValues_'s self-heal path.
-      if (key.indexOf(PAX_CACHE_PREFIX_) === 0 || key.indexOf(PAX_CACHE_ROSTER_PREFIX_) === 0 || key.indexOf(PAX_HISTORY_PREFIX_) === 0) {
+      if (key.indexOf(PAX_CACHE_PREFIX_) === 0 || key.indexOf(PAX_CACHE_ROSTER_PREFIX_) === 0 || key.indexOf(PAX_HISTORY_PREFIX_) === 0 || key.indexOf(PAX_GOALS_PREFIX_) === 0) {
         props.deleteProperty(key);
         wiped++;
       }
@@ -476,7 +476,7 @@ function extractSheetIdFromPaxCacheKey_(key) {
   if (key.indexOf(PAX_CACHE_PREFIX_) === 0 || key.indexOf(PAX_CACHE_ROSTER_PREFIX_) === 0) {
     return key.split(':')[2] || null;
   }
-  if (key.indexOf(PAX_HISTORY_PREFIX_) === 0) {
+  if (key.indexOf(PAX_HISTORY_PREFIX_) === 0 || key.indexOf(PAX_GOALS_PREFIX_) === 0) {
     return key.split(':')[1] || null;
   }
   return null;
@@ -578,6 +578,10 @@ function purgeStalePaxCache_(now, spreadsheet) {
       // needing their own bespoke pass (see the fourth pass below, which now only has to cover
       // per-PAX staleness WITHIN a still-live scope).
       wipePaxHistoryForScope_(sheetId);
+      // F3Go30-uz9e.4: go30goals: is scoped identically to go30hist: ({scopeId, f3Name}), so an
+      // orphaned scope's goals entries are reaped by this same pass rather than accumulating
+      // forever against a namespace that no longer exists.
+      wipePaxGoalsForScope_(sheetId);
       orphanedSheetsPurged++;
     });
   }
@@ -915,6 +919,165 @@ function advancePaxHistoryDay_(scopeId, f3Name, date, value, todayIso) {
   }
 }
 
+// ── f3Name-keyed versioned goals list (PAX data model migration Slice 2, F3Go30-uz9e.4) ──
+//
+// A SIBLING PaxCache entry kind to go30hist: above — deliberately NOT a widening of that entry.
+// History is written on every check-in; goals are written on every signup save. Sharing one
+// read-modify-write record would mean every check-in contends with (and can clobber) a
+// concurrent goal save; separate keys keep the lock scopes disjoint (design review,
+// docs/pax-data-model-and-contract.md §5 Slice 2).
+//
+// Same namespace scoping as go30hist: {scopeId, f3Name}, scopeId the resolved TEMPLATE
+// spreadsheet id (namespace identity, ADR-014) — never the tracker sheetId, since the whole point
+// is one record spanning every month a PAX has signed up.
+//
+// Shape: { goals: [ {monthKey, who, what, how}, ... ] }, monthKey "YYYY-MM", pinned to the 1st of
+// the month a save targets (signupWebapp.js's monthKey_). A re-save within the same month upserts
+// that entry in place; a save in a new month appends. No ordering is assumed on read — callers
+// look up by exact monthKey (findPaxGoalsForMonth_), not by nearest/most-recent.
+//
+// Dual-write, Responses-authoritative (docs/pax-data-model-and-contract.md §5 Slice 2): this
+// record is read only as a fast-path cache ahead of the existing Responses-row fetch, never as
+// the sole source. A miss (PAX has no entry for this monthKey yet, or the whole entry is missing)
+// is a miss, not an empty goals set — invariant 8, §4 — and the caller MUST fall through to
+// Responses rather than render blank goals.
+var PAX_GOALS_PREFIX_ = 'go30goals:';
+
+/** @param {string} scopeId Namespace identity — the resolved template spreadsheet id. Not the
+ *  tracker sheetId (see the header comment on PAX_GOALS_PREFIX_ above). */
+function paxGoalsKey_(scopeId, f3Name) {
+  return PAX_GOALS_PREFIX_ + scopeId + ':' + paxCacheNormalizeName_(f3Name);
+}
+
+/** Returns the cached {goals: [{monthKey, who, what, how}]} entry for {scopeId, f3Name}, or null
+ *  on a miss (never throws). @param {string} scopeId See paxGoalsKey_. */
+function getPaxGoalsEntry_(scopeId, f3Name) {
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty(paxGoalsKey_(scopeId, f3Name));
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** @param {string} scopeId See paxGoalsKey_. */
+function setPaxGoalsEntry_(scopeId, f3Name, entry) {
+  PropertiesService.getScriptProperties().setProperty(paxGoalsKey_(scopeId, f3Name), JSON.stringify(entry));
+}
+
+/**
+ * Pure state-transition function: folds one month's {who, what, how} save into the existing
+ * {goals: [...]} entry (or null, for a brand-new PAX), returning the next entry. Never mutates
+ * its input — same convention as advancePaxHistoryEntry_, so the upsert-by-monthKey rule is
+ * unit-testable without a PropertiesService/LockService fixture.
+ *   - No existing entry, or monthKey not yet present: appends a new {monthKey, who, what, how}.
+ *   - monthKey already present: replaces that entry in place (last-write-wins within the month,
+ *     matching today's Responses-cell-overwrite behavior) — original list order otherwise
+ *     preserved.
+ * @param {?{goals: Array}} entry
+ * @param {string} monthKey "YYYY-MM", pinned to the 1st of the month being saved.
+ * @param {string} who
+ * @param {string} what
+ * @param {string} how
+ * @returns {{goals: Array}}
+ */
+function upsertPaxGoalsEntry_(entry, monthKey, who, what, how) {
+  var goals = (entry && Array.isArray(entry.goals)) ? entry.goals.slice() : [];
+  var idx = -1;
+  for (var i = 0; i < goals.length; i++) {
+    if (goals[i] && goals[i].monthKey === monthKey) { idx = i; break; }
+  }
+  var next = { monthKey: monthKey, who: who || '', what: what || '', how: how || '' };
+  if (idx === -1) {
+    goals = goals.concat([next]);
+  } else {
+    goals = goals.slice();
+    goals[idx] = next;
+  }
+  return { goals: goals };
+}
+
+/**
+ * Read-side counterpart to upsertPaxGoalsEntry_: exact-monthKey lookup within a stored entry.
+ * Point-in-time goal reporting (docs/pax-data-model-and-contract.md §5 Slice 2) means "the
+ * {who, what, how} this PAX saved for that specific month," not a nearest/most-recent match —
+ * a monthKey with no entry is a miss, same as the whole record being absent.
+ * @param {?{goals: Array}} entry
+ * @param {string} monthKey "YYYY-MM"
+ * @returns {?{who:string, what:string, how:string}} null on a miss.
+ */
+function findPaxGoalsForMonth_(entry, monthKey) {
+  var goals = (entry && Array.isArray(entry.goals)) ? entry.goals : [];
+  for (var i = 0; i < goals.length; i++) {
+    if (goals[i] && goals[i].monthKey === monthKey) {
+      return { who: goals[i].who || '', what: goals[i].what || '', how: goals[i].how || '' };
+    }
+  }
+  return null;
+}
+
+/**
+ * Read entry point: {who, what, how} for {scopeId, f3Name, monthKey}, or null on a miss. Callers
+ * MUST treat null as "fall through to Responses" (invariant 8, §4) — never render an empty goals
+ * set off this alone.
+ * @param {string} scopeId See paxGoalsKey_.
+ */
+function getPaxGoalsForMonth_(scopeId, f3Name, monthKey) {
+  return findPaxGoalsForMonth_(getPaxGoalsEntry_(scopeId, f3Name), monthKey);
+}
+
+/**
+ * Write-through entry point (F3Go30-uz9e.4): folds one signup save's {who, what, how} into
+ * f3Name's versioned goals list, upserted by monthKey. Call site: handleSignupSave_
+ * (signupWebapp.js), alongside (not instead of) the existing Responses-cell write — Responses
+ * stays authoritative until this record has proven itself in live use (§5 Slice 2).
+ *
+ * Lock-guarded read-modify-write, same LOST UPDATE justification as advancePaxHistoryDay_ — but
+ * UNLIKE that function, a dropped write here is NOT logged-and-continued (invariant 3, §4): a
+ * history write can drop silently because a check-in must never fail over it, but a dropped goal
+ * save is user-visible, so lock/write failure is returned to the caller as an explicit failure
+ * rather than swallowed.
+ * @param {string} scopeId See paxGoalsKey_.
+ * @param {string} f3Name
+ * @param {string} monthKey "YYYY-MM", pinned to the 1st of the month being saved.
+ * @param {string} who
+ * @param {string} what
+ * @param {string} how
+ * @returns {{ok: boolean, error?: string}}
+ */
+function upsertPaxGoalsForMonth_(scopeId, f3Name, monthKey, who, what, how) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch (e) {
+    GasLogger.log('upsertPaxGoalsForMonth_.lockFailed', { f3Name: f3Name, monthKey: monthKey, error: e.message });
+    return { ok: false, error: 'lock_failed' };
+  }
+  try {
+    var entry = getPaxGoalsEntry_(scopeId, f3Name);
+    setPaxGoalsEntry_(scopeId, f3Name, upsertPaxGoalsEntry_(entry, monthKey, who, what, how));
+    return { ok: true };
+  } catch (e2) {
+    GasLogger.log('upsertPaxGoalsForMonth_.failed', { f3Name: f3Name, monthKey: monthKey, error: e2.message });
+    return { ok: false, error: 'write_failed' };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Wipes every go30goals: entry scoped to scopeId — the PAX_GOALS_PREFIX_ counterpart of
+ *  wipePaxHistoryForScope_, used by the orphan sweep below so a torn-down namespace's goals
+ *  entries don't outlive it forever. */
+function wipePaxGoalsForScope_(scopeId) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var prefix = PAX_GOALS_PREFIX_ + scopeId + ':';
+    props.getKeys().forEach(function(key) {
+      if (key.indexOf(prefix) === 0) props.deleteProperty(key);
+    });
+  } catch (e) { /* best-effort */ }
+}
+
 function clearPaxCachePurgeTrigger_() {
   ScriptApp.getProjectTriggers().forEach(function(trigger) {
     if (trigger.getHandlerFunction() === 'purgeStalePaxCache') {
@@ -1044,5 +1207,14 @@ if (typeof module !== 'undefined' && module.exports) {
     setPaxHistoryEntry_: setPaxHistoryEntry_,
     setPaxHistoryEntriesBulk_: setPaxHistoryEntriesBulk_,
     advancePaxHistoryDay_: advancePaxHistoryDay_,
+    PAX_GOALS_PREFIX_: PAX_GOALS_PREFIX_,
+    paxGoalsKey_: paxGoalsKey_,
+    getPaxGoalsEntry_: getPaxGoalsEntry_,
+    setPaxGoalsEntry_: setPaxGoalsEntry_,
+    upsertPaxGoalsEntry_: upsertPaxGoalsEntry_,
+    findPaxGoalsForMonth_: findPaxGoalsForMonth_,
+    getPaxGoalsForMonth_: getPaxGoalsForMonth_,
+    upsertPaxGoalsForMonth_: upsertPaxGoalsForMonth_,
+    wipePaxGoalsForScope_: wipePaxGoalsForScope_,
   };
 }

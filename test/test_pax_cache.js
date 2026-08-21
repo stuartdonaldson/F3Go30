@@ -85,6 +85,13 @@ const {
   getPaxHistoryEntriesBulk_,
   setPaxHistoryEntry_,
   advancePaxHistoryDay_,
+  getPaxGoalsEntry_,
+  setPaxGoalsEntry_,
+  upsertPaxGoalsEntry_,
+  findPaxGoalsForMonth_,
+  getPaxGoalsForMonth_,
+  upsertPaxGoalsForMonth_,
+  wipePaxGoalsForScope_,
 } = require('../script/PaxCache.js');
 
 function resetProps_() {
@@ -859,6 +866,120 @@ var SCOPE_B_ = 'scope-b';
   assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), { historyEndDate: '2026-08-02', days: '111' });
   assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'crazy ivan'), { historyEndDate: '2026-08-02', days: '111' });
   assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Little John'), { historyEndDate: '2026-08-02', days: '101' });
+})();
+
+// ── F3Go30-uz9e.4: f3Name-keyed versioned goals list (PAX data model migration Slice 2) ────
+
+(function testUpsertPaxGoalsEntryAppendsNewMonth() {
+  var entry = upsertPaxGoalsEntry_(null, '2026-06', 'Who1', 'What1', 'How1');
+  assert.deepEqual(entry, { goals: [{ monthKey: '2026-06', who: 'Who1', what: 'What1', how: 'How1' }] });
+
+  var next = upsertPaxGoalsEntry_(entry, '2026-07', 'Who2', 'What2', 'How2');
+  assert.deepEqual(next.goals, [
+    { monthKey: '2026-06', who: 'Who1', what: 'What1', how: 'How1' },
+    { monthKey: '2026-07', who: 'Who2', what: 'What2', how: 'How2' },
+  ]);
+  assert.deepEqual(entry.goals.length, 1); // original untouched — pure function
+})();
+
+(function testUpsertPaxGoalsEntryReplacesSameMonth() {
+  var entry = upsertPaxGoalsEntry_(null, '2026-06', 'Who1', 'What1', 'How1');
+  entry = upsertPaxGoalsEntry_(entry, '2026-07', 'Who2', 'What2', 'How2');
+  var resaved = upsertPaxGoalsEntry_(entry, '2026-06', 'Who1b', 'What1b', 'How1b');
+  assert.deepEqual(resaved.goals, [
+    { monthKey: '2026-06', who: 'Who1b', what: 'What1b', how: 'How1b' },
+    { monthKey: '2026-07', who: 'Who2', what: 'What2', how: 'How2' },
+  ]);
+})();
+
+(function testFindPaxGoalsForMonthIsExactMatchOnly() {
+  var entry = upsertPaxGoalsEntry_(null, '2026-06', 'Who1', 'What1', 'How1');
+  assert.deepEqual(findPaxGoalsForMonth_(entry, '2026-06'), { who: 'Who1', what: 'What1', how: 'How1' });
+  assert.equal(findPaxGoalsForMonth_(entry, '2026-07'), null); // no nearest/most-recent fallback
+  assert.equal(findPaxGoalsForMonth_(null, '2026-06'), null);
+})();
+
+(function testPaxGoalsEntryRoundTripAndNamespaceScoping() {
+  resetProps_();
+  assert.equal(getPaxGoalsEntry_(SCOPE_A_, 'Crazy Ivan'), null);
+  setPaxGoalsEntry_(SCOPE_A_, 'Crazy Ivan', { goals: [{ monthKey: '2026-06', who: 'W', what: 'X', how: 'Y' }] });
+  assert.deepEqual(getPaxGoalsEntry_(SCOPE_A_, 'crazy ivan').goals.length, 1); // case/space-insensitive
+  // Same defect class as history's DR-01 — two namespaces sharing this store must never collide.
+  assert.equal(getPaxGoalsEntry_(SCOPE_B_, 'Crazy Ivan'), null);
+})();
+
+(function testUpsertPaxGoalsForMonthWriteThroughIsLockGuarded() {
+  resetProps_();
+  var result = upsertPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06', 'Who', 'What', 'How');
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(getPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06'), { who: 'Who', what: 'What', how: 'How' });
+
+  // Re-save in the same month upserts, not appends.
+  upsertPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06', 'Who2', 'What2', 'How2');
+  assert.deepEqual(getPaxGoalsEntry_(SCOPE_A_, 'Crazy Ivan').goals.length, 1);
+  assert.deepEqual(getPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06'), { who: 'Who2', what: 'What2', how: 'How2' });
+})();
+
+// Unlike advancePaxHistoryDay_'s log-and-continue on lock failure, a dropped goal save must be
+// reported back to the caller (invariant 3/§5 Slice 2) — not silently swallowed — so
+// handleSignupSave_ can surface it.
+(function testUpsertPaxGoalsForMonthLockFailureIsReportedNotSwallowed() {
+  resetProps_();
+  var realLock = global.LockService;
+  global.LockService = { getScriptLock: function() { return { waitLock: function() { throw new Error('busy'); }, releaseLock: function() {} }; } };
+  var result = upsertPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06', 'Who', 'What', 'How');
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'lock_failed');
+  assert.equal(getPaxGoalsEntry_(SCOPE_A_, 'Crazy Ivan'), null); // nothing written
+  global.LockService = realLock;
+})();
+
+(function testGetPaxGoalsForMonthMissFallsThroughAsNullNeverEmptyObject() {
+  resetProps_();
+  assert.equal(getPaxGoalsForMonth_(SCOPE_A_, 'Nobody Home', '2026-06'), null); // whole entry missing
+  upsertPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06', 'Who', 'What', 'How');
+  assert.equal(getPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2027-01'), null); // entry exists, month doesn't
+})();
+
+// wipeAllPaxCache_ must also clear go30goals: entries, same escape-hatch guarantee as go30hist:.
+(function testWipeAllPaxCacheAlsoClearsGoalsEntries() {
+  resetProps_();
+  setPaxCacheRow_('tracker', 'sheet-x', 'Someone', ['v']);
+  upsertPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06', 'Who', 'What', 'How');
+  var wiped = wipeAllPaxCache_();
+  assert.ok(wiped >= 2);
+  assert.equal(getPaxCacheRow_('tracker', 'sheet-x', 'Someone'), null);
+  assert.equal(getPaxGoalsEntry_(SCOPE_A_, 'Crazy Ivan'), null);
+})();
+
+(function testWipePaxGoalsForScopeOnlyClearsThatScope() {
+  resetProps_();
+  upsertPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06', 'Who', 'What', 'How');
+  upsertPaxGoalsForMonth_(SCOPE_B_, 'Crazy Ivan', '2026-06', 'Who', 'What', 'How');
+  wipePaxGoalsForScope_(SCOPE_A_);
+  assert.equal(getPaxGoalsEntry_(SCOPE_A_, 'Crazy Ivan'), null);
+  assert.ok(getPaxGoalsEntry_(SCOPE_B_, 'Crazy Ivan'));
+})();
+
+// The orphan sweep (purgeStalePaxCache_'s third pass) must reap go30goals: entries for a scope
+// whose TrackerDB row(s) are entirely gone, same as it already does for go30hist: — otherwise a
+// torn-down namespace's goals entries accumulate against the store cap forever.
+(function testOrphanSweepReapsGoalsEntriesForUnknownScope() {
+  resetProps_();
+  var now = new Date(2026, 6, 16);
+  var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
+
+  // "torn-down-scope" has a go30pax entry (so the orphan sweep's scan even notices the id exists)
+  // and a go30goals entry, but no TrackerDB/NamespaceDB row anywhere — as if teardownEnvironment
+  // already ran. Mirrors testPurgeOrphanSweepAlsoReapsHistoryForDeletedScope above.
+  setPaxCacheRow_('tracker', 'torn-down-scope', 'Old Pax', ['gone']);
+  setPaxRosterIndex_('tracker', 'torn-down-scope', { 'old pax': 0 });
+  upsertPaxGoalsForMonth_('torn-down-scope', 'Old Pax', '2026-06', 'Who', 'What', 'How');
+
+  var spreadsheet = makeFakeTrackerDbSpreadsheet_([{ sheetId: 'sheet-recent', startDate: recentStart }]);
+  var result = purgeStalePaxCache_(now, spreadsheet);
+  assert.equal(result.orphanedSheetsPurged, 1);
+  assert.equal(getPaxGoalsEntry_('torn-down-scope', 'Old Pax'), null);
 })();
 
 console.log('test_pax_cache.js: all assertions passed');

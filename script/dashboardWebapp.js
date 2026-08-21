@@ -94,6 +94,10 @@ var PAX_HISTORY_BACKFILL_DAYS_dw_ = (dashboardWebappPaxCacheModule_ && dashboard
   || (typeof globalThis !== 'undefined' && globalThis.PAX_HISTORY_BACKFILL_DAYS_);
 var advancePaxHistoryDay_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.advancePaxHistoryDay_)
   || (typeof globalThis !== 'undefined' && globalThis.advancePaxHistoryDay_);
+// f3Name-keyed versioned goals list (F3Go30-uz9e.4, PAX data model migration Slice 2) — see
+// PaxCache.js's PAX_GOALS_PREFIX_ header comment.
+var getPaxGoalsForMonth_dw_ = (dashboardWebappPaxCacheModule_ && dashboardWebappPaxCacheModule_.getPaxGoalsForMonth_)
+  || (typeof globalThis !== 'undefined' && globalThis.getPaxGoalsForMonth_);
 
 /**
  * go30hist scopeId (DR-01, 2026-08-04 design review) — the namespace identity every history
@@ -2693,6 +2697,17 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
  * handleCheckinDashboard_) — the handle's rowIndex/f3Name belong to the *viewer*, not the target
  * pax, so identity itself always goes through resolveCheckinIdentityLean_(needGoals=true) rather
  * than any handle-based shortcut.
+ *
+ * F3Go30-uz9e.4 (PAX data model migration Slice 2): `monthKey` ("YYYY-MM") is an additive,
+ * optional param for point-in-time goal reporting — a PAX's goals as of a specific past month, not
+ * just "current." An installed client that never sends it keeps getting current-month goals
+ * exactly as before (this repo's installed-client compatibility rule,
+ * docs/OPERATIONS.md §API compatibility with installed clients). When given, it also selects which
+ * month's tracker `monthInfo` resolves to, so the Responses-row fallback below reads the SAME
+ * month's Responses sheet the goals record miss would otherwise be silently misaligned against.
+ * Goals-record lookup is a fast-path cache check ahead of the existing Responses-row fetch
+ * (§3.2's contract-impact note) — a miss falls through to Responses exactly as it always has
+ * (invariant 8, §4: a missing cache entry is a miss, never rendered as an empty goals set).
  */
 function handlePaxGoals_(templateSpreadsheet, payload) {
   var targetName = payload.f3Name;
@@ -2703,11 +2718,30 @@ function handlePaxGoals_(templateSpreadsheet, payload) {
   if (isNaN(viewDate.getTime())) viewDate = new Date(realToday);
 
   var handle = payload.resolvedContext;
-  var monthInfo = (handle && handle.monthKey && String(payload.dateISO || '').slice(0, 7) === handle.monthKey)
+  // F3Go30-uz9e.4 code review: an explicit payload.monthKey must win over the handle fast path —
+  // the handle only ever describes the VIEWER's current month (see docstring above), so honoring
+  // it unconditionally here silently ignored a requested past monthKey whenever the caller (the
+  // normal case — every dashboard/checkin request echoes resolvedContext) happened to already
+  // have a handle for the current month, defeating the whole point of point-in-time reporting.
+  var monthInfo = (handle && handle.monthKey && (payload.monthKey || String(payload.dateISO || '').slice(0, 7)) === handle.monthKey)
     ? monthInfoFromHandle_(handle)
     : null;
+  if (!monthInfo && payload.monthKey) {
+    monthInfo = resolveDashboardMonth_(parseIsoDateLocal_(payload.monthKey + '-01'), templateSpreadsheet);
+  }
   if (!monthInfo) monthInfo = resolveDashboardMonth_(viewDate, templateSpreadsheet);
   if (!monthInfo) return { ok: false, error: 'no_tracker_for_date' };
+
+  var monthKey = payload.monthKey || _dashboardIsoDate_(monthInfo.startDate).slice(0, 7);
+
+  if (getPaxGoalsForMonth_dw_) {
+    var scopeId = paxHistoryScopeId_dw_(templateSpreadsheet);
+    var cachedGoals = getPaxGoalsForMonth_dw_(scopeId, targetName, monthKey);
+    if (cachedGoals) {
+      GasLogger.log('checkinWebapp.paxDetail', { f3Name: targetName, viewerF3Name: handle && handle.f3Name, monthKey: monthKey, source: 'paxGoalsRecord' });
+      return { ok: true, f3Name: targetName, goals: cachedGoals };
+    }
+  }
 
   var identity = resolveCheckinIdentityLean_(monthInfo, targetName, null, {}, true);
   if (!identity.matched) return { ok: false, error: 'not_found' };
@@ -2715,7 +2749,7 @@ function handlePaxGoals_(templateSpreadsheet, payload) {
   // Viewer identity comes only from the echoed resolvedContext handle (never re-resolved here) —
   // a stale/missing handle just means "viewer unknown" in the log, not a hard failure, since this
   // action's whole job is fetching the *target* pax's goals, not re-authenticating the viewer.
-  GasLogger.log('checkinWebapp.paxDetail', { f3Name: targetName, viewerF3Name: handle && handle.f3Name });
+  GasLogger.log('checkinWebapp.paxDetail', { f3Name: targetName, viewerF3Name: handle && handle.f3Name, monthKey: monthKey, source: 'responses' });
 
   return { ok: true, f3Name: targetName, goals: identity.goals };
 }
@@ -2883,6 +2917,8 @@ if (typeof module !== 'undefined' && module.exports) {
     handleCheckinSubmit_: handleCheckinSubmit_,
     handleCheckinDashboard_: handleCheckinDashboard_,
     handleMonthGrid_: handleMonthGrid_,
+    handlePaxGoals_: handlePaxGoals_,
+    paxHistoryScopeId_dw_: paxHistoryScopeId_dw_,
     handleBonusAdd_: handleBonusAdd_,
     handleBonusEdit_: handleBonusEdit_,
     handleSiteFeedback_: handleSiteFeedback_,
