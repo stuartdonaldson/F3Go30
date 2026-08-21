@@ -254,14 +254,11 @@ function prepareOutboundEmailDelivery_(options) {
   }
 
   if (!policy.emailTestMode) {
+    var message = { to: intendedRecipients, subject: subject, body: body };
+    if (htmlBody) message.htmlBody = htmlBody;
     return {
       ok: true,
-      message: {
-        to: intendedRecipients,
-        subject: subject,
-        body: body,
-        htmlBody: htmlBody
-      },
+      message: message,
       intendedRecipients: intendedRecipients,
       effectiveRecipients: intendedRecipients,
       testMode: false
@@ -275,14 +272,19 @@ function prepareOutboundEmailDelivery_(options) {
   var noticeText = buildTestModeNoticeText_(intendedRecipients);
   var noticeHtml = buildTestModeNoticeHtml_(intendedRecipients);
 
+  // F3Go30-ckq7: only build a TEST MODE htmlBody when the caller actually supplied one.
+  // Unconditionally calling prependEmailHtmlNotice_ on an empty htmlBody used to produce a
+  // non-empty (but content-less) HTML part for every body-only caller (handleSiteFeedback_ is
+  // the only one) — an HTML-capable client renders that empty part instead of the plain-text
+  // `body`, so in test mode the email showed ONLY the red TEST MODE banner and nothing else,
+  // and outside test mode it showed nothing at all. See prepareOutboundEmailDelivery_'s other
+  // branch above for the same fix on the non-test-mode path.
+  var testModeMessage = { to: policy.siteQEmail, subject: '[TEST MODE] ' + subject, body: noticeText + '\n\n' + body };
+  if (htmlBody) testModeMessage.htmlBody = prependEmailHtmlNotice_(htmlBody, noticeHtml);
+
   return {
     ok: true,
-    message: {
-      to: policy.siteQEmail,
-      subject: '[TEST MODE] ' + subject,
-      body: noticeText + '\n\n' + body,
-      htmlBody: prependEmailHtmlNotice_(htmlBody, noticeHtml)
-    },
+    message: testModeMessage,
     intendedRecipients: intendedRecipients,
     effectiveRecipients: policy.siteQEmail,
     testMode: policy.emailTestMode

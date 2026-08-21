@@ -3520,6 +3520,11 @@ function makeMockConfigSheetForFeedback_test_(rows) {
   assert.match(sent[0].body, /Loving the streak view\./);
   assert.match(sent[0].body, /App version: 2\.5\.0\.2 \(2026-08-01T00:00:00\.000Z\)/, 'server APP_VERSION + APP_VERSION_DATE');
   assert.match(sent[0].body, /Client build: 2\.5\.0\.2/, 'client STATIC_BUILD_VERSION_, echoed as payload.clientVersion');
+  // F3Go30-ckq7: handleSiteFeedback_ never supplies htmlBody, so the message object must not
+  // carry the key at all (not even ''). An HTML-capable client renders a present-but-empty
+  // htmlBody instead of the plain-text body above, which is exactly how this bug shipped
+  // invisibly — this call site's own test only ever asserted against sent[0].body.
+  assert.ok(!Object.prototype.hasOwnProperty.call(sent[0], 'htmlBody'), 'no htmlBody key when none was supplied — an empty one would blank the email in HTML-capable clients');
 
   delete global.MailApp;
   delete global.openConfigSheet;

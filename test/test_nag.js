@@ -191,6 +191,32 @@ assert.match(testDelivery.message.body, /Body line/);
 assert.match(testDelivery.message.htmlBody, /TEST MODE - Intended Recipients: alpha@example.com,beta@example.com/);
 assert.match(testDelivery.message.htmlBody, /<p>Body line<\/p>/);
 
+// F3Go30-ckq7: a caller that supplies body only (no htmlBody at all — handleSiteFeedback_,
+// dashboardWebapp.js, is the one live example) must not get an htmlBody key on the outgoing
+// message, in EITHER mode. A present-but-empty htmlBody is what an HTML-capable client renders
+// instead of the plain-text body, which in test mode showed ONLY the red TEST MODE banner (built
+// from noticeHtml, prepended to nothing) and outside test mode showed nothing at all.
+const liveBodyOnlyDelivery = prepareOutboundEmailDelivery_({
+  policy: {},
+  recipientList: 'alpha@example.com',
+  subject: 'Body-only Subject',
+  body: 'Body-only line'
+});
+assert.equal(liveBodyOnlyDelivery.message.body, 'Body-only line');
+assert.ok(!Object.prototype.hasOwnProperty.call(liveBodyOnlyDelivery.message, 'htmlBody'), 'live: no htmlBody key when none supplied');
+
+const testBodyOnlyDelivery = prepareOutboundEmailDelivery_({
+  policy: {
+    emailTestMode: true,
+    siteQEmail: 'siteq@example.com'
+  },
+  recipientList: 'alpha@example.com',
+  subject: 'Body-only Subject',
+  body: 'Body-only line'
+});
+assert.match(testBodyOnlyDelivery.message.body, /Body-only line/, 'test mode: plain body still carries the real content alongside the notice');
+assert.ok(!Object.prototype.hasOwnProperty.call(testBodyOnlyDelivery.message, 'htmlBody'), 'test mode: no htmlBody key when none supplied — the banner alone must not become the whole email');
+
 const blockedDelivery = prepareOutboundEmailDelivery_({
   policy: {
     emailTestMode: true,

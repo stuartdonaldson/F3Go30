@@ -1,11 +1,19 @@
 # PAX Data Model & Browser/Server Contract
 
-**Status:** Partly implemented. Slices 1-2 (§5) shipped and are live; Slices 3-4 are proposed and
-not built. This began as a discussion document and is now the working design for an in-flight
-migration (epic F3Go30-uz9e) — treat §3's record shape and §5.1/§5.2's as-built notes as binding on
-implementation, and the rest of §5 as intent that may still change. Not an ADR: when Slice 3
-commits the primary write path, promote the settled pieces into docs/DESIGN.md and raise an ADR
-per this project's placement rules.
+**Status:** Partly implemented. Slices 1-2 (§5) shipped and are live. **Slice 3 was corrected
+2026-08-20/21**: earlier drafts of §3.2/§5 (and a design-gap pass built on top of them) proposed
+restructuring `PaxProfile` into a new Template-resident sheet that would become the primary write
+target, retiring Tracker/Responses *and* `PaxDB` as sources of truth — none of that was the actual
+intent and all of it has been reverted (`PaxDB` in particular is a live, human-consumed monthly
+reporting artifact, not dead weight). The corrected model (§3.2, §5's Slice 3): `PaxProfile` is the
+existing `PaxCache.js`/`PropertiesService` layer (Slices 1-2's `go30hist:`/`go30goals:`), widened
+by Slice 3 to also hold score; the spreadsheet — Tracker, Responses, *and* `PaxDB` — stays the
+permanent source of truth at every slice, and writes always write-through to it unchanged. This
+began as a discussion document and is now the working design for
+an in-flight migration (epic F3Go30-uz9e) — treat §3's record shape and §5.1/§5.2's as-built notes
+as binding on implementation, and the rest of §5 as intent that may still change. Not an ADR: if a
+future slice ever does commit a real write-path change, promote the settled pieces into
+docs/DESIGN.md and raise an ADR per this project's placement rules.
 
 **Section status at a glance:**
 
@@ -13,10 +21,10 @@ per this project's placement rules.
 |---|---|
 | §1 Contract | As-built. Unchanged by Slices 1-2, and unchanged by every remaining slice by design. |
 | §2 Current data flow | As-built, **corrected for Slice 1** — §2.2/§2.3 previously described pre-Slice-1 behavior. |
-| §3 Proposed model | Record shape is settled and live end to end (`history` and `goals` both shipped as sibling PaxCache entries). §3.3 (datastore) still speculative. |
-| §4 Implementation invariants | As-built. Rules Slice 1 established that Slices 2-3 must not break; Slice 2 preserves all of them (invariant 8 extended to `goals`). |
-| §5 Migration slices | Slices 1-2 **done**; Slice 3 is blocked on its own design gap (§6); Slice 4 open. |
-| §6 Open items | Slice 3's backfill mechanics remain the one blocking design gap. |
+| §3 Proposed model | Record shape settled and live end to end (`history`/`goals` shipped as sibling PaxCache entries). §3.2 **corrected 2026-08-20** — no new sheet, spreadsheet stays authoritative. §3.3 (datastore) still speculative. |
+| §4 Implementation invariants | As-built. Rules Slice 1 established that Slice 2 preserves and Slice 3 (corrected) doesn't touch — invariant 6 in particular already assumed a permanently-authoritative Tracker. |
+| §5 Migration slices | Slices 1-2 **done**; Slice 3 **corrected 2026-08-20/21** — a small cache-widening only (`score` sibling + deeper rebuild), not an authority transfer and not a `PaxDB` change; ready to schedule, no design gate needed. Slice 4 open. |
+| §6 Open items | None blocking. `PaxDB` confirmed 2026-08-21 as a live human-reporting artifact — untouched by Slice 3. |
 
 **Scope:** the `cmd=checkin` webapp (identify → check-in → dashboard → bonus/goals) and the
 `cmd=signup` webapp (registration + goal capture), covering:
@@ -440,35 +448,43 @@ would collide in one store. Slices 2-3 use the same `{scopeId, f3Name}` scoping.
   cell limit (50k chars) or `PropertiesService`'s per-value limit (9KB) — a dense 1-char/day
   encoding of 400 days is ~400 bytes, comfortably inside either.
 
-### 3.2 On the current store (Sheets), before any datastore migration
+### 3.2 On the current store (Sheets) — cache-only, no new sheet
 
-- `PaxProfile` becomes what `PaxDB` almost already is, restructured: **one row per PAX** (not
-  per PAX-per-month) in the Template, with `goals` and `history` stored as JSON-ish string
-  columns instead of one-row-per-month + separate Tracker-sheet day columns.
-- `PaxCache` gets re-keyed by `{scopeId, f3Name}` (dropping `sheetId` — the *month* dimension —
-  from the key; the namespace dimension stays, per §3.1). Same `PropertiesService` write-through
-  mechanism already in place today, just with the month namespace collapsed. The viewer-only
-  streak-correction special-case (§2.3) is already gone as of Slice 1.
-  `getPriorMonthTailValues_` survives Slice 1 as a cold-start backfill source and retires fully
-  only at Slice 3, once `PaxProfile.history` is authoritative and there is no per-month Tracker
-  sheet left to backfill *from*. Team-board reads still batch via a roster index → bulk
-  `getProperties()`, unchanged in mechanism.
-- Writes (`checkin`, bonus, goal save) become single-row upserts against this one PaxProfile
-  sheet instead of a cell write into whichever month's Tracker/Responses sheet is currently
-  active — closer to how `upsertPaxDbRow_` already works today, just as the primary write path
-  instead of a side-effect aggregate.
-- **Contract impact: none, for the live apps.** As established earlier in this thread, every
-  existing request/response shape (`identify`, `checkin`, `dashboard`, `paxGoals`) stays
-  byte-for-byte the same from the client's point of view — only the server's internal resolution
-  changes from "read/write a cell in month M's spreadsheet" to "read/write a field in this PAX's
-  one record." The one addition is an optional `monthKey` param on `paxGoals` for point-in-time
-  reporting, additive and back-compatible per this repo's own installed-client compatibility
-  rule.
-- Monthly tracker copies likely still need to exist for anything that's genuinely
-  month-scoped-by-nature (the Bonus Tracker's period caps, the signup Form binding, admin
-  per-month spreadsheet access for Site Qs) — this proposal consolidates the PAX-identity/
-  history/goals data, not necessarily the whole monthly-copy mechanism. That's a separate
-  scoping question outside what's been evaluated here.
+**Corrected 2026-08-20** — see §5's Slice 3 for the full account of what changed and why. This
+subsection originally proposed restructuring `PaxDB` into a new one-row-per-`f3Name` `PaxProfile`
+sheet and retiring Tracker/Responses as sources of truth. **That was never the actual intent** and
+has been reverted; the paragraphs below are the corrected design.
+
+- `PaxProfile` is not a new sheet. It is the name for what `PaxCache.js`'s existing
+  `{scopeId, f3Name}`-keyed `PropertiesService` entries already are as of Slices 1-2 (`go30hist:`,
+  `go30goals:`), widened by Slice 3 to also hold a `go30score:` sibling (§3.5). Same
+  `PropertiesService` write-through mechanism already in place today — nothing new to build here,
+  only a third sibling key alongside the two that already ship.
+- **The spreadsheet stays authoritative, permanently, at every slice.** `Tracker` day cells and
+  its `Score`/`Raw Score` formulas, and `Responses` WHO/WHAT/HOW, are never retired as sources of
+  truth. Every write (`checkin`, bonus, goal save) still write-throughs to the Tracker/Responses
+  cell exactly as it does today; the cache write is a second, *derived* write in the same request
+  — the same relationship `history`/`goals` already have to the Tracker/Responses cell they're
+  cached from.
+- Reads try the cache first; a miss or a failed reconciliation (invariant 6, §4) rebuilds from the
+  Tracker/Responses sheet(s) it was derived from — as many months back as the request actually
+  needs, not just the current rolling window. `getPriorMonthTailValues_` is the existing
+  one-prior-month version of this; Slice 3 generalizes the same pattern rather than retiring it.
+- **Contract impact: none, for the live apps** — unchanged from the original claim. Every existing
+  request/response shape (`identify`, `checkin`, `dashboard`, `paxGoals`) stays byte-for-byte the
+  same; only the server's internal resolution changes from "read a cell in month M's spreadsheet"
+  to "read a cached field, falling back to the spreadsheet(s) on a miss."
+- **`PaxDB`'s write path stays — confirmed 2026-08-21, not retiring.** No *code* reads its
+  Hit/Miss/NoCheckin/bonus-count payload (§2.4, §3.6 — that remains true), but the sheet is a live
+  **human**-consumed reporting artifact: it captures PAX scores per month specifically so a Site Q
+  can build monthly reporting summaries directly off it in the sheet UI. A `PropertiesService`
+  cache entry can't serve that need — there's nothing to open and browse. `upsertPaxDbRow_`, the
+  nightly minus-one upsert, and `scanTrackers()`'s rebuild all keep running unchanged; Slice 3
+  does not touch `PaxDB` at all.
+- Monthly tracker copies are unaffected by any of this — nothing about the monthly-copy mechanism
+  itself (Bonus Tracker period caps, the signup Form binding, admin per-month spreadsheet access
+  for Site Qs) changes under this slice; consolidating that mechanism, if ever wanted, remains a
+  separate scoping question outside what's been evaluated here.
 
 ### 3.3 On a future fast datastore
 
@@ -491,7 +507,7 @@ If/when a real datastore (Firestore-style document store, or a KV store) is avai
   migration risk lives entirely in the write paths' consistency guarantees (Sheets' single-writer
   lock semantics vs. a datastore's own transaction model), not in the client contract.
 
-### 3.4 After: proposed state diagram
+### 3.4 After: proposed state diagram (corrected 2026-08-20 — see §5's Slice 3)
 
 ```mermaid
 flowchart TB
@@ -499,71 +515,80 @@ flowchart TB
 
     subgraph GAS["Apps Script webapp"]
         Dispatch["doPost dispatch<br/>identify / checkin / dashboard / paxGoals / monthGrid / bonus*"]
-        PaxCache2["PaxCache (PropertiesService)<br/>keyed by {f3Name} only — no sheetId"]
+        PaxCache2["PaxCache ('PaxProfile', PropertiesService)<br/>keyed by {scopeId, f3Name} — no sheetId<br/>history / goals / score siblings"]
     end
 
     subgraph Template["Template spreadsheet (long-lived)"]
-        TrackerDB2["TrackerDB<br/>(still resolves which month's<br/>Bonus Tracker / Form is active)"]
-        PaxProfile["PaxProfile<br/>ONE row per f3Name<br/>goals: [{monthKey, who, what, how}, ...]<br/>history: rolling day-outcome string"]
+        TrackerDB2["TrackerDB<br/>(resolves which month's sheet to open)"]
     end
 
-    subgraph MonthJune2["June tracker copy"]
-        BJune2["Bonus Tracker only<br/>(period caps, date-scoped)"]
-        FJune2["Signup Form binding"]
+    subgraph MonthJune2["June tracker copy — SOURCE OF TRUTH, unchanged"]
+        TJune2["Tracker (day cols, Score/Raw Score formulas)"]
+        RJune2["Responses (WHO/WHAT/HOW)"]
+        BJune2["Bonus Tracker"]
     end
 
-    subgraph MonthJuly2["July tracker copy"]
-        BJuly2["Bonus Tracker only<br/>(period caps, date-scoped)"]
-        FJuly2["Signup Form binding"]
+    subgraph MonthJuly2["July tracker copy — SOURCE OF TRUTH, unchanged"]
+        TJuly2["Tracker (day cols, Score/Raw Score formulas)"]
+        RJuly2["Responses (WHO/WHAT/HOW)"]
+        BJuly2["Bonus Tracker"]
     end
 
     Browser -->|"JSON RPC — same request/response shapes as today"| Dispatch
     Dispatch --> PaxCache2
-    PaxCache2 -.->|"cache miss: single-row read/write"| PaxProfile
-    Dispatch -->|"TrackerDB scan, month-scoped concerns only"| TrackerDB2
     Dispatch --> BJuly2
+    Dispatch -->|"TrackerDB scan: which month to open"| TrackerDB2
+    PaxCache2 -.->|"write-through on every checkin/bonus/goal write"| TJuly2
+    PaxCache2 -.->|"write-through"| RJuly2
+    PaxCache2 -.->|"cache miss / reconciliation fail:<br/>rebuild from as many months as needed"| TJune2
+    PaxCache2 -.->|"rebuild"| RJune2
 
-    style PaxProfile fill:#00000000,stroke-width:2px
+    style PaxCache2 fill:#00000000,stroke-width:2px
 ```
 
-Same contract, same actions — the only thing that moved is what's *behind* `Dispatch`. Reading
-or writing a PAX's goals/history is a single-record operation with no month-namespace to cross,
-so `getPriorMonthTailValues_` and the viewer-only correction (§2.3) simply don't exist in this
-picture. Monthly tracker copies persist only for what's genuinely month-scoped (Bonus Tracker
-period caps, the signup Form binding) — see the open item in §6.
+Same contract, same actions — what moved is only where a read/write gets short-circuited by a
+cache hit. Tracker/Responses are drawn as **"SOURCE OF TRUTH, unchanged"** deliberately: unlike an
+earlier draft of this diagram, nothing here retires them. `getPriorMonthTailValues_` generalizes
+into a multi-month rebuild path rather than disappearing — under this model it's still exactly how
+a cold cache entry gets populated, just able to reach back further than one prior month. Monthly
+tracker copies are entirely unaffected; there was never actually a scoping question here once the
+spreadsheet stays authoritative.
 
-### 3.5 Data inventory: objects, contents, and who touches them (proposed state)
+### 3.5 Data inventory: objects, contents, and who touches them (Slice 3, corrected 2026-08-20)
 
-Same table shape as §2.7, so each row can be diffed directly against its current-state
-counterpart.
+Same table shape as §2.7. The spreadsheet tables below are nearly identical to §2.7's, since Slice
+3 (corrected) doesn't change the spreadsheet's role at all — only the `PropertiesService` block
+(the actual "PaxProfile") gains a sibling entry.
 
 **Spreadsheet (Template-resident)**
 
 | Object | Contents | Written by | Read by |
 |---|---|---|---|
-| `TrackerDB` | Unchanged — still resolves which month's Bonus Tracker/Form is active | Unchanged | Unchanged, but narrower scope: only bonus/form dispatch, no longer score/streak/goal resolution |
-| `PaxProfile` (replaces `PaxDB`) | **One row per `f3Name`**: team/email/phone, `goals: [{monthKey, who, what, how}]`, `history` rolling day-outcome string | `handleCheckinSubmit_` (history), `handleSignupSave_` (goals upsert by `monthKey`) — both live-request writers now, not a side-effect aggregate | `handleCheckinDashboard_`, `handleCheckinIdentify_`, `handlePaxGoals_`, `handleMonthGrid_` — one keyed record lookup replaces both the per-month sheet reads and `identify`'s full-sheet `PaxDB` scan (§3.6) |
+| `TrackerDB` | Unchanged | Unchanged | Unchanged |
+| `PaxDB` | Unchanged — **stays, confirmed 2026-08-21**. No code reads its goal/stat payload, but it's the source Site Qs build monthly reporting summaries from directly in the sheet UI | Unchanged: `upsertPaxDbRow_`, nightly upsert, `scanTrackers()` rebuild | Human: Site Q monthly reporting (sheet UI, not code) |
 | `NamespaceDB`, `CheckinSessions` | Unchanged | Unchanged | Unchanged |
 
-**Spreadsheet (per monthly tracker copy) — narrowed scope**
+**Spreadsheet (per monthly tracker copy) — unchanged, still the source of truth**
 
 | Object | Contents | Written by | Read by |
 |---|---|---|---|
-| `Bonus Tracker` | Unchanged — still date-scoped, period-capped entries | `handleBonusAdd_`/`handleBonusEdit_` | `handleBonusList_` |
-| Signup Form binding | Unchanged — still needed to receive new signups into that month | Google Forms | `CreateNewTracker.js` (row provisioning) |
-| ~~`Tracker` day columns~~ | Retired as the source of truth for day values/score/streak — superseded by `PaxProfile.history` | — | — |
-| ~~`Responses` WHO/WHAT/HOW~~ | Retired as the source of truth for goals — superseded by `PaxProfile.goals` (Responses may still receive the raw form write, per §3.2, until the record is trusted) | — | — |
+| `Tracker` | Unchanged — day cols, `Score`/`Raw Score` formulas, still authoritative | Unchanged | Unchanged, **plus** the PaxCache rebuild path on a cache miss |
+| `Responses` | Unchanged — WHO/WHAT/HOW, still authoritative | Unchanged | Unchanged, **plus** the PaxCache rebuild path |
+| `Bonus Tracker` | Unchanged | Unchanged | Unchanged |
 
-**PropertiesService (`PaxCache.js`) — re-keyed**
+**PropertiesService (`PaxCache.js`, "PaxProfile") — widened, same `{scopeId, f3Name}` keying Slices 1-2 already shipped**
 
 | Object | Contents | Written by | Read by |
 |---|---|---|---|
-| Roster index — `go30idx:{f3Name-namespace}` | Normalized name → PaxProfile row offset (no `sheetId` dimension) | Bulk repopulate on cold roster read | Team-board reads (`myTeam`/`paxBoard`) |
-| Per-PAX record — `go30pax:{f3Name}` | The whole `PaxProfile` shape: goals list + history string | Write-through on every checkin/bonus/goal-save write | Every identity/dashboard/goals resolver — one lookup, no cross-month stitching |
+| Roster index — `go30idx:{kind}:{sheetId}` | Unchanged from §2.7 — stays month-keyed, since it indexes into the still-month-scoped Tracker/Responses | Unchanged | Unchanged |
+| `go30hist:{scopeId}:{f3Name}` | Rolling history window (Slice 1, shipped) | Write-through on checkin | Every dashboard/board-row resolver |
+| `go30goals:{scopeId}:{f3Name}` | Versioned goals list (Slice 2, shipped) | Write-through on signup save | `paxGoals`, identity resolvers |
+| **`go30score:{scopeId}:{f3Name}` (Slice 3, new)** | Versioned score/raw-score list, mirroring `go30goals:`'s per-`monthKey` shape | Write-through on checkin/bonus, off the same Tracker-row read `history`'s write-through already does | Dashboard score/streak resolvers, once wired |
 
-**CacheService** — unchanged in mechanism (Bonus Tracker layout classification still applies to the narrowed per-month sheet); no longer caches Tracker/Responses layout for score/streak/goal purposes since those columns are retired.
+**CacheService** — unchanged.
 
-**Browser** — unchanged shape from §2.7, plus one addition: a small in-memory `state.goalsCache[f3Name]` becomes viable once `paxGoals` is cheap (one `PaxProfile` field already loaded alongside score/streak, per §3.2's contract-impact note), closing the "goals never cached client-side" gap noted in §2.7's last row.
+**Browser** — unchanged shape from §2.7, plus the same `state.goalsCache[f3Name]` opportunity
+noted in the original draft (now sourced from `go30goals:` directly rather than a new sheet).
 
 ### 3.6 Relationship to F3Go30-m732 (unthrottled TrackerDB/PaxDB reads)
 
@@ -580,9 +605,10 @@ accumulated rows. This model splits cleanly against that issue, and the two halv
 
 Consequences for sequencing:
 
-- **Do not build a bespoke `PaxDB` cache for m732.** Slice 3 removes the read entirely rather than
-  making it cheaper, and a hand-rolled cache would be thrown away — plus it would add a second
-  invalidation contract to keep correct in the meantime, against a sheet Slice 3 deletes.
+- **Do not build a bespoke `PaxDB` cache for m732.** Slice 2 already removed this read entirely
+  rather than making it cheaper, and a hand-rolled cache would be thrown away — plus it would add
+  a second invalidation contract to keep correct against a sheet that stays fully live and human-
+  read (§5's Slice 3 confirms `PaxDB` is untouched, not retired).
 - **The `TrackerDB` half is independent of this whole migration** and can be fixed on its own
   schedule (a small write-through-cached month list, invalidated at the few `TrackerDB` mutation
   points: `_updateTrackerDB`, `removeTrackerDbRow_`, and tracker creation). Nothing in Slices 2-4
@@ -640,7 +666,7 @@ narrows the gap without requiring the ones after it.
 |---|---|---|
 | 1 — rolling history window | ✅ **Shipped & live** | F3Go30-5uk2, uz9e.1, uz9e.2, uz9e.3 (all closed) |
 | 2 — versioned goals list | ✅ **Shipped & live** | F3Go30-uz9e.4 |
-| 3 — PaxProfile as primary store | ○ Open; **backfill mechanics undesigned** (§6) | F3Go30-uz9e.5 |
+| 3 — PaxProfile as primary store | ○ Open; **design closed 2026-08-20** (§5.3), implementation not started | F3Go30-uz9e.5 |
 | 4 — swap backing store | ○ Open, blocked by Slice 3; gated on a datastore decision | F3Go30-uz9e.6, gate F3Go30-uz9e.7 |
 
 ### Slice 1 — f3Name-keyed rolling history window (streak/maxStreak30 only) — SHIPPED
@@ -759,17 +785,59 @@ touching the Tracker/day-value side of the model at all.*
   that date" — consistent with goals only ever being written on an actual signup save, once per
   month at most.
 
-### Slice 3 — PaxProfile becomes the primary store, `PaxDB` retires
+### Slice 3 — PaxProfile: widen the existing cache
 
-Consolidate Slices 1+2 plus score/raw-score into one real `PaxProfile` sheet (one row per
-`f3Name`, per §3.2), sourced by migrating existing `PaxDB` rows (already per-PAX-per-month, just
-needs folding into one row per name) and backfilling `history` from every live Tracker sheet.
-`checkin`/`bonus` writes move to single-row upserts against this sheet. `PaxDB`'s incremental
-upsert (`upsertPaxDbRow_`) and the nightly/`scanTrackers()` rebuild retire — nothing left for them
-to feed that isn't already current.
+**Corrected 2026-08-20/21.** An earlier draft of this section (and a design-gap pass built on top
+of it, formerly recorded here as §5.3) proposed making `PaxProfile` a new Template-resident sheet
+that would become the primary write target, retiring Tracker/Responses **and `PaxDB`** as sources
+of truth, and requiring a phased cutover with backfill/verification/rollback machinery. **That was
+never the actual intent.** A first correction pass (2026-08-20) fixed the Tracker/Responses half
+but still proposed retiring `PaxDB`'s write; a second pass (2026-08-21) found that wrong too —
+`PaxDB` is a live *human*-consumed reporting artifact (Site Q monthly summaries), not dead weight,
+and stays untouched. The corrected design:
 
-*This is the slice that actually changes the primary write path — do it only after Slices 1-2
-have proven the record shape and cache re-keying hold up under real traffic.*
+- `PaxProfile` is not a new sheet. It's `PaxCache.js`'s existing `{scopeId, f3Name}`-keyed
+  `PropertiesService` entries (`go30hist:`, `go30goals:`, shipped in Slices 1-2), widened to also
+  hold a `go30score:` sibling — versioned score/raw-score, mirroring `go30goals:`'s per-`monthKey`
+  shape, written through on the same Tracker-row read `history`'s write-through already performs.
+  No new store, no new invariant beyond the ones §4 already established.
+- **The spreadsheet stays authoritative, permanently, at every slice.** `checkin`/bonus/goal-save
+  writes keep write-through-ing to the Tracker/Responses cell exactly as today; the cache write is
+  a second, derived write in the same request — unchanged from how `history`/`goals` already work.
+  Nothing about this slice moves authority off the spreadsheet, so nothing about it can lose data.
+- **Cache rebuild reaches back as many months as a request needs**, generalizing today's
+  one-prior-month `getPriorMonthTailValues_` cold-start pattern (§2.2) into a
+  `rebuildPaxCacheFromSheets_(f3Name, monthKeysNeeded)` that opens each named month's Tracker/
+  Responses (via `TrackerDB`) and folds the result into the cache entry on a miss or a failed
+  reconciliation (invariant 6, §4). Read-path only — never writes back to the spreadsheet, so a
+  partial or failed rebuild just leaves a cache miss a miss (invariant 8), never a corrupt entry.
+- **`PaxDB` is untouched — confirmed 2026-08-21, not retiring.** No *code* reads its goal/stat
+  payload (§2.4, §3.6 — that part of the original analysis was right), but the sheet itself is a
+  live human-consumed reporting artifact: it captures PAX scores per month specifically so a Site
+  Q can build monthly reporting summaries directly off it in the sheet UI. `upsertPaxDbRow_`, the
+  nightly minus-one upsert, and `scanTrackers()`'s PaxDB rebuild all keep running exactly as today.
+  §2.7's "Reporting/admin tooling" reader line, which the first correction pass flagged as
+  unverified, is this — confirmed, not retired.
+- **Manual Tracker edits need no new handling.** `TrackerEditTrigger.js`'s `onEdit` keeps doing
+  exactly what it does today — patch or invalidate the cached row from the live Tracker. Invariant
+  6 was already written for a permanently-authoritative Tracker and needs no restatement; the
+  question "what happens to the cache on a manual edit" that an authority-transfer design would
+  have to answer doesn't arise here, because authority never moves.
+- **No migration, no cutover flag, no mirror, no rollback machinery, no design gate.** The whole
+  apparatus a real authority transfer would need — a phased `off→dual-write→primary` flag, staging
+  sheets, a verification report, a one-month Tracker mirror, an immutable pre-cutover snapshot —
+  existed only to manage the risk of moving the source of truth off the spreadsheet. That move
+  isn't happening, so none of it applies, and it has been removed from this document rather than
+  left as inert dead weight. Slice 3 is a purely additive extension, the same shape Slices 1-2
+  already were: adding a cache sibling and deepening a rebuild path, deleting a write nobody reads.
+
+*What changed and why:* the original draft conflated two different things under one name — the
+internal cache/data-model layer §3.1 describes, and a hypothetical future authority transfer to a
+real datastore (which is what §3.3/Slice 4 is actually for). Confirmed 2026-08-20: the spreadsheet
+is the permanent source of truth at every slice up through Slice 3; only Slice 4, if it ever
+happens, would be a genuine transport swap behind `PaxCache.js`'s existing `get`/`upsert` shape
+(§3.3) — and even then the spreadsheet's role as *this* slice's source of truth is a separate
+question from whatever Slice 4 eventually does.
 
 ### Slice 4 — swap the backing store
 
@@ -777,44 +845,37 @@ Once a fast external datastore is available, replace what's behind `PaxCache.js`
 functions (per §3.3) — no slice above needs to be redone; they were already designed around a
 single-key document, so this is a transport swap, not a reshape.
 
-### Recommendation: close §6's design gap before starting Slice 3
+### Recommendation: Slice 3 is a small, low-risk extension — ready to schedule
 
 Slices 1 and 2's bet paid off as intended — both were purely additive, nothing about either needed
-to be thrown away, and the `{scopeId, f3Name}` record shape (now holding both `history` and
-`goals`) held up under real traffic. Slice 3 builds on top of them rather than around them.
+to be thrown away, and the `{scopeId, f3Name}` record shape (now holding `history` and `goals`)
+held up under real traffic. **Slice 3, corrected 2026-08-20/21, is the same kind of purely-additive
+step**: add a `score` cache sibling and deepen the existing rebuild-from-sheets path. Nothing else
+— `PaxDB` is confirmed live and untouched (§5's Slice 3), so there's no second change bundled in.
+Nothing here moves authority off the spreadsheet, so nothing here can lose data.
 
-**Slice 3 is not ready to start**, and its blocker is a design gap rather than a dependency:
-§6's backfill mechanics (batch size, verification, rollback) are still undesigned, and Slice 3 is
-the first slice that (a) changes the primary write path and (b) requires a real data migration of
-existing `PaxDB` rows plus every live Tracker sheet's history. Closing that gap is its own design
-pass and should happen before implementation is scheduled — the risk profile is categorically
-different from Slices 1-2, neither of which could lose data if abandoned mid-flight.
-
-> **Run the §6 design pass in an Opus session.** The open items are irreversible design
-> tradeoffs against live PAX data, not implementation work — this is the one slice where getting
-> the migration mechanics wrong loses data rather than just requiring rework. Implementing the
-> slice afterwards, once the decisions are written down here, is ordinary work and does not need
-> Opus.
+**No design gate is needed before scheduling implementation.** An earlier draft of this section
+proposed an authority transfer (a new `PaxProfile` sheet becoming the primary write target) and,
+on the strength of that proposal, a design-gap pass was run to work out the migration/cutover
+mechanics such a transfer would need. That pass's output has been removed from this document along
+with the proposal it was designed for — the risk it existed to manage (irreversible tradeoffs
+against live PAX data during an authority transfer) doesn't apply once the spreadsheet stays
+authoritative. A second draft proposed retiring `PaxDB`'s write on the theory that nothing reads
+it; that was also wrong (confirmed 2026-08-21 — see §5's Slice 3) and has been reverted. No open
+items remain blocking Slice 3.
 
 ---
 
 ## 6. Open items (not resolved by this document)
 
-**Blocking Slice 3 — needs its own design pass (run it in Opus, per §5's recommendation) before
-implementation is scheduled:**
+**Blocking Slice 3 — none.** Both prior candidates were checked and closed:
 
-- Migration path/sequencing for converting existing `PaxDB` (one row per PAX-per-month) and every
-  live Tracker sheet's history into the new one-row-per-PAX shape — detailed at a slice level in
-  §5, but the exact backfill mechanics aren't designed here. Specifically undecided: batch size
-  and how the backfill stays inside Apps Script's execution time limit across a multi-month,
-  whole-roster read; how a partially-completed backfill is detected and resumed; what verification
-  proves the migrated record matches the sheets it came from; and what rollback looks like once
-  writes have started landing on `PaxProfile` instead of the Tracker.
-- What happens to `PaxProfile.history` for a PAX whose Tracker row is edited manually *after*
-  migration. Today `TrackerEditTrigger.js`'s `onEdit` invalidates month-keyed cache entries; once
-  the Tracker is no longer the source of truth, an `onEdit` there is either meaningless or a
-  conflicting write, and the reconciliation rule (invariant 6, §4) has nothing left to reconcile
-  *against*. Needs an answer before the Tracker retires as source of truth.
+- ~~Retire `PaxDB`'s write~~ — **confirmed NOT to retire (2026-08-21).** `PaxDB` is a live,
+  human-consumed monthly-reporting artifact (Site Q builds summaries directly off its Hit/Miss/
+  NoCheckin/bonus-count columns in the sheet UI) — no code reader ever existed to migrate, but a
+  human one does, and a `PropertiesService` cache entry can't serve it. `upsertPaxDbRow_`, the
+  nightly minus-one upsert, and `scanTrackers()`'s rebuild all stay exactly as they are.
+- ~~Authority transfer off Tracker/Responses~~ — never the actual intent (2026-08-20); reverted.
 
 **Non-blocking / deferred:**
 
