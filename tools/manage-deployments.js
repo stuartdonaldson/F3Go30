@@ -34,6 +34,10 @@ const fs            = require('fs');
 const os            = require('os');
 const path          = require('path');
 const { staticEntryUrl } = require('./static-urls.js');
+// Reuse the one HTTP client (RECOMMENDATION.md §3.3) rather than building a second — the same
+// POST→GET-redirect-following, secret-free `post()` callWebapp.js already uses to talk to the
+// webapp is what assertDeployedVersion_ polls with below.
+const { post: postWebapp_ } = require('./callWebapp.js');
 
 const ROOT          = path.join(__dirname, '..');
 const SETTINGS_PATH = path.join(ROOT, 'local.settings.json');
@@ -233,6 +237,77 @@ function resolveRevision_(deployStdout, deploymentId, listDeployments) {
   return found ? found.revision : null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Deploy verification (RECOMMENDATION.md §3.2 — assert the version actually serving)
+// ─────────────────────────────────────────────────────────────────────────
+
+function sleep_(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+/**
+ * Polls the deployment's cmd=version route (script/WebApp.js's handleVersionRequest_) until it
+ * reports the exact version *and* target just stamped, or the timeout expires. This is what
+ * turns "clasp deploy exited 0" into "the webapp is actually serving what we just pushed" — the
+ * gap RECOMMENDATION.md §3.2 identifies as #13: a deployment silently converted to a library, an
+ * edge that hasn't propagated, or a named deployment left pointing at an older version would all
+ * report success under the old exit-code-only check.
+ *
+ * Dependency-injected (postFn/sleep) so the match/mismatch/timeout paths are unit-testable
+ * without a real network call — see test/test_assert_deployed_version.js. Reuses
+ * tools/callWebapp.js's post() (§3.3) rather than a second HTTP client.
+ */
+async function assertDeployedVersion_(deploymentId, expectedVersion, expectedTarget, options = {}) {
+  const { postFn = postWebapp_, intervalSec = 5, timeoutSec = 60, sleep = sleep_, log = () => {} } = options;
+  const url = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=version`;
+  const startedAt = Date.now();
+  let attempt = 0;
+  let lastResult = null;
+
+  for (;;) {
+    attempt++;
+    try {
+      lastResult = await postFn(url, { action: 'version' });
+    } catch (err) {
+      log(`  attempt ${attempt}: request failed (${err.message})`);
+      lastResult = null;
+    }
+
+    if (lastResult && lastResult.ok && lastResult.version === expectedVersion && lastResult.target === expectedTarget) {
+      return { ok: true, attempts: attempt, version: lastResult.version, target: lastResult.target, deploymentId: lastResult.deploymentId };
+    }
+
+    const seen = lastResult && typeof lastResult === 'object'
+      ? `version=${lastResult.version || '(none)'} target=${lastResult.target || '(none)'}`
+      : '(no response)';
+    log(`  attempt ${attempt}: expected version=${expectedVersion} target=${expectedTarget}, got ${seen}`);
+
+    if (Date.now() - startedAt + intervalSec * 1000 > timeoutSec * 1000) {
+      throw new Error(
+        `assertDeployedVersion_ timed out after ${attempt} attempts (${timeoutSec}s): ` +
+        `expected version=${expectedVersion} target=${expectedTarget}, last seen ${seen}`
+      );
+    }
+    await sleep(intervalSec * 1000);
+  }
+}
+
+/**
+ * Single, non-polling cmd=version query for --summary (RECOMMENDATION.md §3.2 work item 5):
+ * "what is deployed right now?" doesn't need to poll for propagation — nothing was just
+ * deployed — it just needs one honest read of the live state, or a clear "(unreachable)" if the
+ * webapp can't be reached at all.
+ */
+async function queryLiveVersion_(deploymentId, options = {}) {
+  const { postFn = postWebapp_ } = options;
+  const url = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=version`;
+  try {
+    const result = await postFn(url, { action: 'version' });
+    if (result && result.ok) return { version: result.version, target: result.target };
+  } catch {
+    // fall through to null below
+  }
+  return null;
+}
+
 // A freshly created/updated Apps Script deployment can take a few seconds to propagate on
 // Google's edge, so the very next HTTPS call against it may 404/error transiently.
 function execSyncWithRetry_(command, options, { attempts = 3, delayMs = 5000 } = {}) {
@@ -296,7 +371,7 @@ function printDeploySummary_(targetKey, { version, now, deploymentId, revision, 
 // Deploy
 // ─────────────────────────────────────────────────────────────────────────
 
-function deploy(targetKey, options = {}) {
+async function deploy(targetKey, options = {}) {
   const { scriptIdKey, label, emoji } = TARGETS[targetKey];
   const settings = loadSettings();
   const scriptId = settings[scriptIdKey];
@@ -414,7 +489,27 @@ function deploy(targetKey, options = {}) {
     { stdio: 'inherit', cwd: ROOT }
   );
 
-  printDeploySummary_(targetKey, { version, now, deploymentId, revision, scriptId, settings });
+  // Deploy verification (RECOMMENDATION.md §3.2) — the mandatory last step before the summary.
+  // Polls cmd=version until the webapp itself confirms it is serving the version *and* target
+  // just stamped; the target check is what catches deploying to the wrong environment, which no
+  // prior version of this script could detect. On mismatch the deploy fails loudly (non-zero
+  // exit, expected-vs-actual) but still prints the summary so the operator can see what *is*
+  // deployed.
+  console.log(`\n🔍 Verifying ${label} is actually serving v${version}…`);
+  let verified;
+  try {
+    verified = await assertDeployedVersion_(deploymentId, version, label, { log: console.log });
+    console.log(`✅ ${label} verified — serving v${verified.version} (target ${verified.target})`);
+  } catch (err) {
+    console.error(`\n❌ Deploy verification failed: ${err.message}`);
+    printDeploySummary_(targetKey, { version, now, deploymentId, revision, scriptId, settings });
+    process.exitCode = 1;
+    return;
+  }
+
+  // Report what the server confirmed, not what was stamped locally (RECOMMENDATION.md §3.2's
+  // closing rule: "the verified version ... feed[s] the summary").
+  printDeploySummary_(targetKey, { version: verified.version, now, deploymentId, revision, scriptId, settings });
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -425,7 +520,7 @@ function deploy(targetKey, options = {}) {
  * anything. Still needs .clasp.json pointed at the target scriptId to run `clasp deployments`,
  * and still resolves the revision via the same stdout-then-fallback strategy deploy() uses
  * (there being no `clasp deploy` stdout to parse here, it goes straight to the fallback). */
-function summary(targetKey) {
+async function summary(targetKey) {
   const { scriptIdKey, label, emoji } = TARGETS[targetKey];
   const settings = loadSettings();
   const scriptId = settings[scriptIdKey];
@@ -451,8 +546,23 @@ function summary(targetKey) {
   const versionSrc = fs.readFileSync(VERSION_PATH, 'utf8');
   const versionMatch = versionSrc.match(/const APP_VERSION\s*=\s*'([^']+)'/);
   const dateMatch = versionSrc.match(/const APP_VERSION_DATE\s*=\s*'([^']+)'/);
-  const version = versionMatch ? versionMatch[1] : '(unknown)';
+  const localVersion = versionMatch ? versionMatch[1] : '(unknown)';
   const now = dateMatch ? dateMatch[1] : '(unknown)';
+
+  // Read-only version check (RECOMMENDATION.md §3.2 work item 5): a single, non-polling
+  // cmd=version query — nothing was just deployed, so there's no propagation race to wait out —
+  // reporting what the server confirms rather than what local version.js says, and flagging any
+  // divergence (someone deployed from elsewhere, or a deploy half-failed).
+  const live = await queryLiveVersion_(deploymentId);
+  let version = localVersion;
+  if (live) {
+    version = live.version;
+    if (live.version !== localVersion) {
+      console.log(`⚠️  Live ${label} reports v${live.version}, but local script/version.js says v${localVersion} — deployed from elsewhere, or a deploy half-failed.`);
+    }
+  } else {
+    console.log(`⚠️  Could not reach ${label}'s cmd=version route — reporting local script/version.js instead.`);
+  }
 
   printDeploySummary_(targetKey, { version, now, deploymentId, revision, scriptId, settings });
 }
@@ -479,7 +589,7 @@ async function interactiveMenu() {
     ],
   });
 
-  if (action !== 'exit') deploy(action);
+  if (action !== 'exit') await deploy(action);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -525,6 +635,8 @@ module.exports = {
   bumpBuildNumber_,
   resetBuildNumber_,
   printDeploySummary_,
+  assertDeployedVersion_,
+  queryLiveVersion_,
   parseDeploymentsOutput_,
   resolveRevision_,
   TARGETS,

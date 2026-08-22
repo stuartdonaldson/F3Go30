@@ -141,6 +141,26 @@ post-deploy hooks — run:
 ```
 node tools/manage-deployments.js --summary --env sit    # or --env prod
 ```
+
+**Deploy verification** (gas-deploy RECOMMENDATION.md §3.2, F3Go30-gas-deploy Stage 1c): the
+webapp exposes a `cmd=version` route — `{ok, version, versionDate, target, deploymentId}` read
+straight from `script/version.js`'s stamped constants, no secret required (works on the
+`ANYONE_ANONYMOUS` deployment, before any secret is bootstrapped) —
+```
+node tools/callWebapp.js version --cmd version --env sit
+```
+`clasp deploy` exiting 0 only proves a version was *created*, not that the `/exec` URL is
+actually serving it (a deployment silently converted to a library, a not-yet-propagated edge, a
+push landed under the wrong `clasp_config_auth`, or a named deployment left pointing at an older
+revision would all report success under the old check). `pnpm run deploy:sit`/`deploy:prod` run
+`assertDeployedVersion_` (`tools/manage-deployments.js`) as the mandatory last step before the
+summary: it polls `cmd=version` until the reported `version` **and** `target` match what was just
+stamped (tolerating the ~5s edge-propagation race), or times out. A mismatch fails the deploy
+with a non-zero exit and expected-vs-actual printed — the `target` check is what catches
+deploying to the wrong environment — but the summary still prints so the operator can see what
+*is* deployed. `--summary` queries `cmd=version` once (no polling — nothing was just deployed)
+and flags any divergence from local `script/version.js` (deployed from elsewhere, or a deploy
+half-failed).
 Before changing a request/response shape on `handleCheckinPost_` / `handleSignupPost_`, read
 docs/OPERATIONS.md §API compatibility with installed clients — installed PWA clients update on
 their own schedule, so a stale client posting to a new server must keep working.

@@ -50,6 +50,34 @@ function jsonOutput_(obj) {
 }
 
 /**
+ * Pulls the deployment ID out of a webapp /exec URL (…/macros/s/<deploymentId>/exec). Returns
+ * null for anything that doesn't look like one (e.g. the Node-test stub URL, or an empty string
+ * when resolveWebAppBaseUrl_ can't resolve at all).
+ */
+function extractDeploymentIdFromUrl_(url) {
+  var match = /\/macros\/s\/([^/]+)\/exec/.exec(url || '');
+  return match ? match[1] : null;
+}
+
+/**
+ * RECOMMENDATION.md §3.2 (F3Go30-gas-deploy Stage 1c): the deploy-verification contract every
+ * `gas-deploy` consumer will expose. Answers "what is this deployment actually running?" from
+ * whatever the stamper last wrote to version.js — no secret required, so it works on the
+ * ANYONE_ANONYMOUS webapp and before any secret is bootstrapped. tools/manage-deployments.js's
+ * assertDeployedVersion_ polls this after every deploy; --summary queries it once to flag
+ * divergence from the local version.js it just read.
+ */
+function handleVersionRequest_() {
+  return jsonOutput_({
+    ok: true,
+    version: APP_VERSION,
+    versionDate: APP_VERSION_DATE,
+    target: APP_DEPLOY_TARGET,
+    deploymentId: extractDeploymentIdFromUrl_(resolveWebAppBaseUrl_())
+  });
+}
+
+/**
  * Renders the default (no-cmd) landing page: links to Sign Up, Dashboard/Check-in, and the
  * current month's tracker spreadsheet. Replaces the old bare {"status":"ok"} JSON response.
  */
@@ -704,6 +732,9 @@ function handleAdminPost_(e) {
 function doGet(e) {
   return GasLogger.run('doGet', function() {
     GasLogger.log('doGet', buildWebAppRequestLog_(e));
+    if (e && e.parameter && e.parameter.cmd === 'version') {
+      return handleVersionRequest_();
+    }
     if (e && e.parameter && e.parameter.cmd === 'signup') {
       return renderSignupPage_(e);
     }
@@ -719,6 +750,11 @@ function doPost(e) {
     var cmd = e && e.parameter && e.parameter.cmd;
     GasLogger.log('doPost', buildWebAppRequestLog_(e));
 
+    // No secret required — must work before any secret is bootstrapped (§3.2), so this is
+    // checked ahead of the cmd=admin branch below rather than folded into handleAdminPost_.
+    if (cmd === 'version') {
+      return handleVersionRequest_();
+    }
     if (cmd === 'admin') {
       return handleAdminPost_(e);
     }
@@ -741,5 +777,9 @@ if (typeof module !== 'undefined' && module.exports) {
     renderHomePage_: renderHomePage_,
     handleAdminPost_: handleAdminPost_,
     buildWebAppRequestLog_: buildWebAppRequestLog_,
+    handleVersionRequest_: handleVersionRequest_,
+    extractDeploymentIdFromUrl_: extractDeploymentIdFromUrl_,
+    doGet: doGet,
+    doPost: doPost,
   };
 }
