@@ -5,7 +5,7 @@
 ### Model
 
 The script is bound to the Go30 Template spreadsheet and has no standalone deployment. Script
-files live in `script/` and are pushed to Google Apps Script via `npm run deploy:prod` (which invokes `tools/manage-deployments.js`).
+files live in `script/` and are pushed to Google Apps Script via `pnpm run deploy:prod` (which invokes `tools/manage-deployments.js`).
 
 Since ADR-010, the Template is the **only** runtime container — all triggers and dispatch logic
 run there. Monthly tracker copies are pure data spreadsheets with no bound logic of their own, so
@@ -15,7 +15,7 @@ production, not a safe test environment** — see §Testing for the dev/test spr
 
 **Mid-month patch procedure:** there is no separate "month" deploy target or workflow — a fix
 needed partway through a live month is delivered the same way as any other change: validate on
-SIT (`npm run deploy:sit`), then `npm run deploy:prod` (or `npm run release:patch`) to the
+SIT (`pnpm run deploy:sit`), then `pnpm run deploy:prod` (or `pnpm run release:patch`) to the
 Template. It takes effect immediately for the in-progress month tracker (and every other tracker)
 with no extra step. (A separate `monthScriptId`/`deploy:month` target existed before ADR-010,
 when the monthly copy still ran its own bound script; it was retired in F3Go30-shsx and no longer
@@ -29,12 +29,12 @@ applies — see `docs/deployment-model.md` for the historical context.)
 ### Installation
 
 ```bash
-npm run deploy:prod   # full deploy: push code + update named deployment URL
+pnpm run deploy:prod   # full deploy: push code + update named deployment URL
 ```
 
 `tools/manage-deployments.js` writes `.clasp.json` automatically before each push — do not
 edit `.clasp.json` by hand. Both `deploy:prod` and `deploy:sit` do a full deploy (code push
-plus named deployment URL update); `npm run push` is a kept alias for `deploy:prod`.
+plus named deployment URL update); `pnpm run push` is a kept alias for `deploy:prod`.
 
 **Before changing a web app request or response shape, read §API compatibility with installed
 clients below** — the deploy pushes the backend and the static client together, but they do not
@@ -44,7 +44,7 @@ land on a PAX's device together.
 
 A plain web page self-corrects on the next visit. An **installed** PWA may not re-fetch its
 document for days — Android resumes the existing task on home-screen launch, iOS suspends and
-resumes — so we no longer control when a client updates. `npm run deploy:*` pushes the GAS
+resumes — so we no longer control when a client updates. `pnpm run deploy:*` pushes the GAS
 backend and the static build together, but they *land on the client* at different times, leaving
 an open-ended version-skew window. A stale client posting to a new server must keep working.
 
@@ -95,7 +95,7 @@ Two script projects exist. **Default environment is SIT** unless PROD is stated 
 | **SIT** (System Integration Test) | `testScriptId` | `testSpreadsheetId` | Development and pre-release testing |
 | **PROD** | `templateScriptId` | `templateSpreadsheetId` | Live production — the real Go30 Template |
 
-Use `npm run deploy:sit` for SIT; `npm run deploy:prod` / `npm run release:*` for PROD. (`deploy:test` and `push` are kept as aliases.) Never push to PROD without first passing SIT validation.
+Use `pnpm run deploy:sit` for SIT; `pnpm run deploy:prod` / `pnpm run release:*` for PROD. (`deploy:test` and `push` are kept as aliases.) Never push to PROD without first passing SIT validation.
 
 ### Smoke Mode
 
@@ -414,37 +414,37 @@ email and spreadsheet/form URLs. Do not share publicly or commit the URL to vers
 
 ## Testing
 
-### GasLogger live test
+### GasLogger live test (F3Go30-kq0t)
 
-Verifies end-to-end structured logging: runs `testGasLogger()` in the Apps Script editor via
-Playwright, captures Logger output, and asserts on the Drive files written to
-`GAS_LOGGER_LOCAL_PATH/F3Go30/`.
+Confirms the GAS → logging-sink pipe is actually delivering data in a given environment.
+`test/test_gas_logger_axiom.py` picks its check the same way `GasLogger.flush()` picks its
+sink (script/GasLogger.js): Axiom exclusively when `axiomDataset`/`axiomQueryToken` are set
+in `local.settings.json` (the local proxy for the live `AXIOM_TOKEN`/`AXIOM_DATASET` script
+properties — same pair `tools/query_axiom.py` gates on), else the Drive LogFile channel
+(ADR-007).
 
-**Prerequisites:**
-- `local.settings.json` populated (`GAS_LOGGER_LOCAL_PATH`, `templateScriptId`)
-- Google Drive for Desktop mounted at `GAS_LOGGER_LOCAL_PATH`
-- Node.js installed; `npm install` run once
+It is **passive** — it does not trigger a dedicated GAS execution. It queries for *recent*
+`side=='gas'` activity (default: last 15 minutes) on the assumption this runs as part of a
+regression pass that already exercised the webapp moments earlier (checkin/signup/dashboard,
+each wrapped in `GasLogger.run()`). `regression:sit` runs it last, after the other live-check
+specs, for exactly that reason. There is no dedicated-execution variant: an earlier version of
+this test drove `testGasLogger()` through the Apps Script editor via Playwright and polled the
+Drive file for it — retired (2026-08-21, kq0t) because browser automation of the editor added
+flakiness this pipe check doesn't need, and `buildAxiomRows_`'s own flush/newLog/execId
+behavior is already covered by the Node unit test (`test/test_gas_logger.js`).
 
-**One-time auth capture** (interactive — do this once per machine):
+**Running the test:**
 ```bash
-npm run auth
-# Log in to the f3go30@gmail.com account in the browser that opens, then press ENTER
+pnpm run test:gaslogger
+# or directly: python test/test_gas_logger_axiom.py --env sit [--since 15m] [--min-count 1]
 ```
-
-**Running the test** (unattended after auth):
-```bash
-npm run test:gaslogger
-```
-
-The test opens the Apps Script editor, runs `testGasLogger()`, writes Logger output to
-`test/output/gaslogger-{timestamp}.txt`, then runs `test/test_gas_logger_live.py` to verify
-the five expected Drive entries (AC2–AC5). Passes in ~45s.
 
 **If it fails:**
-- Auth expired → re-run `npm run auth`
-- Drive not synced → ensure Google Drive for Desktop is running and mounted
-- Selector broken → check `test-results/**/error-context.md` for updated ARIA names;
-  see `/mnt/c/dev/GAS-Practices/best-practices/gas-editor-testing/README.md`
+- No recent Axiom rows → run one of the other `regression:sit` live-check specs first, or
+  widen `--since`
+- Axiom query errors → check `axiomQueryToken` in `local.settings.json` hasn't expired
+- Falls back to Drive polling and `GAS_LOGGER_LOCAL_PATH` isn't mounted → ensure Google Drive
+  for Desktop is running and mounted (only relevant when Axiom isn't configured)
 
 ### Testing the Web App (cmd=signup, cmd=checkin, and similar)
 
@@ -481,7 +481,7 @@ curl -s -L "https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec?cmd=signup" 
 
 ### Verifying a static-page deploy has propagated (F3Go30-g9bi)
 
-`npm run deploy:sit`/`deploy:prod` push the built static front end to the sibling `f3go30/
+`pnpm run deploy:sit`/`deploy:prod` push the built static front end to the sibling `f3go30/
 static-pages` repo, which GitHub Pages serves from — but Pages/its CDN has propagation lag, so
 the public URL (`https://f3go30.github.io/static-pages/dist/<sit|prod>/`) can still answer with
 the *previous* build for a while after a deploy returns. Manually opening/screenshotting that URL

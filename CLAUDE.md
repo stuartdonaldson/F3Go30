@@ -123,13 +123,16 @@ clasp_config_auth=~/.clasprc-f3go30.json clasp <subcommand>
 ```
 
 ### Deploying
+This project is pnpm-only (`packageManager` pinned in package.json; `preinstall` refuses a bare
+`npm install`). Use `pnpm`, not `npm`, for every script below.
+
 Environment switching is managed by `tools/manage-deployments.js`, which writes `.clasp.json`
-before each push. Do not edit `.clasp.json` manually. Both npm scripts do a full deploy
+before each push. Do not edit `.clasp.json` manually. Both pnpm scripts do a full deploy
 (push + named deployment URL update).
 ```
-npm run deploy:sit    # push to SIT (testScriptId)       — alias: npm run deploy:test
-npm run deploy:prod   # push to PROD (templateScriptId)  — alias: npm run push
-npm run release:patch # bump version + deploy:prod + git push --follow-tags
+pnpm run deploy:sit    # push to SIT (testScriptId)       — alias: pnpm run deploy:test
+pnpm run deploy:prod   # push to PROD (templateScriptId)  — alias: pnpm run push
+pnpm run release:patch # bump version + deploy:prod + git push --follow-tags
 ```
 Every deploy ends by printing the standard deploy summary (version, stamp time, full deployment
 ID, revision, script project, webapp, static page, spreadsheet links). To see the same summary

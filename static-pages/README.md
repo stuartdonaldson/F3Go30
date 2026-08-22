@@ -26,7 +26,7 @@ environment's copy (plus a small `version.json` the GAS About dialog reads) to i
 subfolder.
 
 Publishing lives in a sibling repo rather than this one, and is not a separate step you run by
-hand — `npm run deploy:sit` / `deploy:prod` (`tools/manage-deployments.js`) call
+hand — `pnpm run deploy:sit` / `deploy:prod` (`tools/manage-deployments.js`) call
 `tools/publish-static-pages.js` automatically as their last step, once the GAS push itself has
 succeeded. It builds, then copies that target's env folder (`static-pages/dist/sit/` for a test
 deploy, `dist/prod/` for a template deploy) into the `f3go30/static-pages` repo's own
@@ -97,7 +97,7 @@ same principle as the GAS page's own `prefetchDashboard_`.
 `tools/sync-how-it-works.js` extracts that fragment and writes this file, and also injects the
 same fragment into `script/SignupApp.html`'s and `script/CheckinApp.html`'s `#howBody` panels
 (between matching markers) so all three surfaces stay in sync from one edit point. Run manually
-via `npm run sync:how-it-works`, or automatically as part of every `npm run deploy:sit` /
+via `pnpm run sync:how-it-works`, or automatically as part of every `pnpm run deploy:sit` /
 `deploy:prod` (wired into `tools/manage-deployments.js`'s `deploy()`, before `clasp push`).
 
 Unlike `index.html`, this page has no server calls and no `STATIC_BUILD_VERSION_` stamping —
