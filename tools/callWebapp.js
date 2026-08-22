@@ -30,9 +30,14 @@ const callWebappCli = require('gas-deploy/bin/call-webapp.js');
 
 const ROOT = path.join(__dirname, '..');
 
+/**
+ * `secretKey` is what the package reads; `adminSecretKey` is the same value under this project's
+ * original name, kept because copyTemplate.js, smokeTestNamespace.js and three
+ * tests/playwright/*-live-check.spec.js suites destructure it to build their own payloads.
+ */
 const ENV_MAP = {
-  sit:  { deploymentIdKey: 'testDeploymentId',     secretKey: 'testAdminSecret',     scriptIdKey: 'testScriptId'     },
-  prod: { deploymentIdKey: 'templateDeploymentId', secretKey: 'templateAdminSecret', scriptIdKey: 'templateScriptId' },
+  sit:  { deploymentIdKey: 'testDeploymentId',     secretKey: 'testAdminSecret',     adminSecretKey: 'testAdminSecret',     scriptIdKey: 'testScriptId'     },
+  prod: { deploymentIdKey: 'templateDeploymentId', secretKey: 'templateAdminSecret', adminSecretKey: 'templateAdminSecret', scriptIdKey: 'templateScriptId' },
 };
 
 const config = {
