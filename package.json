@@ -1,7 +1,7 @@
 {
   "name": "f3go30",
   "version": "2.5.0",
-  "build": 14,
+  "build": 15,
   "private": true,
   "packageManager": "pnpm@11.15.1",
   "scripts": {
@@ -23,7 +23,7 @@
     "auth": "node authenticate.js"
   },
   "dependencies": {
-    "gas-deploy": "github:stuartdonaldson/GAS-Core#gas-deploy-v1.0.0&path:/packages/gas-deploy"
+    "gas-deploy": "github:stuartdonaldson/GAS-Core#gas-deploy-v1.1.0&path:/packages/gas-deploy"
   },
   "devDependencies": {
     "@inquirer/prompts": "^7.5.2",
