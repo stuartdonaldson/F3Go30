@@ -129,6 +129,15 @@ This project is pnpm-only (`packageManager` pinned in package.json; `preinstall`
 Environment switching is managed by `tools/manage-deployments.js`, which writes `.clasp.json`
 before each push. Do not edit `.clasp.json` manually. Both pnpm scripts do a full deploy
 (push + named deployment URL update).
+
+**The deploy pipeline itself lives in the shared `gas-deploy` package**, not in this repo
+(GAS-Core `packages/gas-deploy/`, pinned by tag in `package.json`). `tools/manage-deployments.js`
+here is pure config — targets, the stamper, the ordered pre-push/post-deploy hooks — and
+`tools/callWebapp.js` is a thin wrapper over the package's one HTTP client. For deploy
+*internals* (auth, deployment-ID resolution, stamping, verification, summary, hook semantics)
+read that package's README; changing behaviour means changing the package and cutting a new
+`gas-deploy-vX.Y.Z` tag, not editing these two files. Background:
+`GAS-Core/best-practices/gas-deployment/RECOMMENDATION.md`.
 ```
 pnpm run deploy:sit    # push to SIT (testScriptId)       — alias: pnpm run deploy:test
 pnpm run deploy:prod   # push to PROD (templateScriptId)  — alias: pnpm run push
@@ -153,8 +162,8 @@ node tools/callWebapp.js version --cmd version --env sit
 actually serving it (a deployment silently converted to a library, a not-yet-propagated edge, a
 push landed under the wrong `clasp_config_auth`, or a named deployment left pointing at an older
 revision would all report success under the old check). `pnpm run deploy:sit`/`deploy:prod` run
-`assertDeployedVersion_` (`tools/manage-deployments.js`) as the mandatory last step before the
-summary: it polls `cmd=version` until the reported `version` **and** `target` match what was just
+`assertDeployedVersion` (gas-deploy's `lib/verify.js`) as the mandatory, non-skippable last step
+before the summary: it polls `cmd=version` until the reported `version` **and** `target` match what was just
 stamped (tolerating the ~5s edge-propagation race), or times out. A mismatch fails the deploy
 with a non-zero exit and expected-vs-actual printed — the `target` check is what catches
 deploying to the wrong environment — but the summary still prints so the operator can see what
@@ -180,8 +189,12 @@ against the live backend, bypassing GitHub Pages entirely, so they're never stal
 ```
 node tools/callWebapp.js <action> [--cmd admin|signup|...] [--env sit|prod] [--body '{"key":"val"}']
 ```
-Reads deployment ID from local.settings.json. For `--cmd admin` (the default), also reads and
-injects the admin secret automatically. Default: `--cmd admin --env sit`.
+Resolves the deployment ID from the **live** `clasp deployments` list (falling back to the value
+recorded in `local.settings.json` when clasp auth is unavailable), so a recreated deployment can
+never leave it calling a dead URL. For `--cmd admin` (the default) it also injects the admin
+secret — into the POST body only, never argv, never the query string, never printed. Other `cmd`
+endpoints (`signup`, `checkin`, `version`) are not secret-gated and never receive it.
+Default: `--cmd admin --env sit`.
 
 Common admin actions: `setScriptProperties`, `cleanupTracker`,
 `runScanTrackers`, `getSheet`, `runAutoGenerate`, `createTrackerForMonth`, `copyTemplate`,

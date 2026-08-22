@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      gas-deploy:
+        specifier: github:stuartdonaldson/GAS-Core#gas-deploy-v1.0.0&path:/packages/gas-deploy
+        version: https://codeload.github.com/stuartdonaldson/GAS-Core/tar.gz/94c1aceb482382caacb4602892224f744dc5e0d1#path:/packages/gas-deploy
     devDependencies:
       '@inquirer/prompts':
         specifier: ^7.5.2
@@ -189,6 +193,12 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  gas-deploy@https://codeload.github.com/stuartdonaldson/GAS-Core/tar.gz/94c1aceb482382caacb4602892224f744dc5e0d1#path:/packages/gas-deploy:
+    resolution: {gitHosted: true, path: /packages/gas-deploy, tarball: https://codeload.github.com/stuartdonaldson/GAS-Core/tar.gz/94c1aceb482382caacb4602892224f744dc5e0d1}
+    version: 1.0.0
+    engines: {node: '>=18'}
+    hasBin: true
+
   iconv-lite@0.7.2:
     resolution: {integrity: sha512-im9DjEDQ55s9fL4EYzOAv0yMqmMBSZp6G0VvFyTMPKWxiSBHUj9NW/qqLmXUwXrrM7AvqSlTCfvqRb0cM8yYqw==}
     engines: {node: '>=0.10.0'}
@@ -365,6 +375,8 @@ snapshots:
 
   fsevents@2.3.2:
     optional: true
+
+  gas-deploy@https://codeload.github.com/stuartdonaldson/GAS-Core/tar.gz/94c1aceb482382caacb4602892224f744dc5e0d1#path:/packages/gas-deploy: {}
 
   iconv-lite@0.7.2:
     dependencies:

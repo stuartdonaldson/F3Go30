@@ -68,3 +68,8 @@ static-pages/dist/
 # Generated performance-timing runs (tools/perfTiming.js) — timestamped, not source.
 tools/perf-results/
 
+
+# gas-deploy local deploy records. Per-developer, per-machine history of what was
+# deployed when — useful locally, pure merge churn if committed.
+.deploy-metadata.json
+deployment-ledger/
