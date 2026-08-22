@@ -94,7 +94,12 @@ test.describe('PaxCache history reload live check (F3Go30-uz9e.3)', () => {
     expect(dash.ok).toBe(true);
     expect(Array.isArray(dash.dayValues)).toBe(true);
     expect(Array.isArray(dash.rollingAverage)).toBe(true);
-    expect(dash.rollingAverage.length).toBe(dash.dayValues.length); // AC5
+    // F3Go30-3uvp: rollingAverage is deliberately truncated to the last REPORTED day
+    // (buildDashboardPaxRow_'s lastReportedDayCount_ slice) so its line stops before any
+    // pending/unreported trailing days rather than flattening into them — it is allowed to be
+    // shorter than dayValues whenever the PAX has unreported days at the end of the window, but
+    // never longer.
+    expect(dash.rollingAverage.length).toBeLessThanOrEqual(dash.dayValues.length); // AC5
     expect(Array.isArray(dash.priorMonthDayValues)).toBe(true);
     expect(dash.priorMonthDayValues.length).toBeLessThanOrEqual(13); // AC6
     expect(dash.streak).toBeLessThanOrEqual(30); // AC2

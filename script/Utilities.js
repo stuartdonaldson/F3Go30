@@ -363,10 +363,15 @@ function buildSignupSlackMessage_(year, month, signupUrl, trackerUrl, formUrl) {
 }
 
 /**
- * Developer test: exercises GasLogger behavioral scenarios and writes to Drive.
- * Run from the GAS editor, then verify with: python test/test_gas_logger_live.py
+ * Manual developer tool: exercises GasLogger's flush/newLog/execId behavior by hand from
+ * the GAS editor (Run > testGasLogger). Not wired to any automated test — that behavior is
+ * covered by the Node unit test on buildAxiomRows_ (test/test_gas_logger.js), and the live
+ * pipe itself (Axiom or Drive, whichever is configured) is checked passively by
+ * test/test_gas_logger_axiom.py (see docs/OPERATIONS.md §GasLogger live test, F3Go30-kq0t) —
+ * neither drives this function. Kept for ad-hoc sanity checks; inspect the Drive folder or
+ * Axiom directly (`python tools/query_axiom.py --name normal --since 5m`) to see the output.
  *
- * Sets F3GO30_TEST_RUN_ID='gaslogger-test' so the local verifier can filter entries.
+ * Sets F3GO30_TEST_RUN_ID='gaslogger-test' so entries are identifiable if you go looking.
  */
 function testGasLogger() {
   PropertiesService.getScriptProperties().setProperty('F3GO30_TEST_RUN_ID', 'gaslogger-test');

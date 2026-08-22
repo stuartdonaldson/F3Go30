@@ -10,24 +10,36 @@
  * Config-sheet row (see the SIT-test-artifacts memory: a live announcement present during a test
  * run is expected SIT-environment state, not something to work around by clearing it).
  *
- * `applyServerConfig_`/`applyAnnouncementState_` (static-pages/src/index.html) only ever run from
- * two triggers: every identify-family response (typed identify, token identify, live resume) and
- * `silentResumeRefresh_` on `visibilitychange`. The instant-paint snapshot-replay path explicitly
- * passes `isLive:false` and skips the announcement gate, so a snapshot-painted view never shows
- * the modal — only a LIVE identify response can raise it. Call this once after each point in a
- * spec where a live identify response has just landed (a fresh page.goto()'s step-checkin/
- * step-identify visibility wait, or a syncing-note-cleared wait following a delayed live
- * response), before any subsequent interaction with the page underneath.
+ * Same story for F3Go30-xyvs's `#signupReminderModal` — resolveSignupReminder_dw_
+ * (script/dashboardWebapp.js) fires it whenever a next-month tracker exists and the identified
+ * PAX isn't signed up for it yet, which is exactly the state a live SIT next-month tracker
+ * (created ahead of month-end, or by createTrackerForMonth) puts the fixture PAX in. Real PAX
+ * see it too, and dismiss it the same way (tap "Remind me later"), so this helper dismisses both
+ * live-data-driven overlays rather than suppressing either one.
+ *
+ * `applyServerConfig_`/`applyAnnouncementState_`/`applySignupReminderState_`
+ * (static-pages/src/index.html) only ever run from two triggers: every identify-family response
+ * (typed identify, token identify, live resume) and `silentResumeRefresh_` on `visibilitychange`.
+ * The instant-paint snapshot-replay path explicitly passes `isLive:false` and skips both gates, so
+ * a snapshot-painted view never shows either modal — only a LIVE identify response can raise one.
+ * Call this once after each point in a spec where a live identify response has just landed (a
+ * fresh page.goto()'s step-checkin/step-identify visibility wait, or a syncing-note-cleared wait
+ * following a delayed live response), before any subsequent interaction with the page underneath.
  */
 async function dismissAnnouncementIfPresent_(page, opts) {
   const timeout = (opts && opts.timeout) || 1000;
-  const modal = page.locator('#announcementModal');
+  await dismissOverlay_(page, '#announcementModal', '#announcementDismissBtn', timeout);
+  await dismissOverlay_(page, '#signupReminderModal', '#signupReminderLaterBtn', timeout);
+}
+
+async function dismissOverlay_(page, modalSelector, dismissBtnSelector, timeout) {
+  const modal = page.locator(modalSelector);
   try {
     await modal.waitFor({ state: 'visible', timeout });
   } catch (e) {
     return; // not shown — nothing to dismiss
   }
-  await page.locator('#announcementDismissBtn').click();
+  await page.locator(dismissBtnSelector).click();
   await modal.waitFor({ state: 'hidden', timeout: 5000 });
 }
 

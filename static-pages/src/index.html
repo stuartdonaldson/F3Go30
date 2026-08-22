@@ -300,6 +300,11 @@
   #announcementText > :last-child { margin-bottom: 0; }
   .announce-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
   .announce-modal-actions button { font-family: inherit; font-size: 14px; padding: 9px 14px; border-radius: 8px; cursor: pointer; }
+  /* button.primary's width:100% is meant for standalone full-width CTAs; override it here so a
+     primary button sharing this flex row with a plain button (siteFeedback Send, signupReminder
+     Sign Up) sizes to its own content instead of stretching to fill the row and squeezing its
+     sibling down to a sliver. */
+  .announce-modal-actions button.primary { width: auto; }
   #announcementRemindLaterBtn { background: none; border: 1px solid var(--border); color: var(--text); }
   #announcementDismissBtn { background: var(--brand); border: 1px solid var(--brand); color: #fff; }
   /* F3Go30-1pqo: settings/tools menu + its content-only sub-modals (FAQ) — all three reuse
@@ -587,8 +592,7 @@
   <div id="signupReminderModal" class="announce-overlay hidden">
     <div class="announce-modal">
       <h2>Sign up for <span id="signupReminderMonthLabel"></span>?</h2>
-      <p>You're not signed up for <span id="signupReminderMonthLabel2"></span> yet — lock in your
-        goals now so you're ready when the month starts.</p>
+      <p>You're not signed up for <span id="signupReminderMonthLabel2"></span> yet — lock in your goals now so you're ready when the month starts.</p>
       <div class="announce-modal-actions">
         <button id="signupReminderLaterBtn" type="button">Remind me later</button>
         <button class="primary" id="signupReminderSignUpBtn" type="button">Sign Up</button>
