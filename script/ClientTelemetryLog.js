@@ -27,31 +27,53 @@ var clientTelemetryGasLoggerModule_ = (typeof module !== 'undefined' && module.e
 var maskPiiForLog_ctl_ = (clientTelemetryGasLoggerModule_ && clientTelemetryGasLoggerModule_.maskPiiForLog_)
   || (typeof globalThis !== 'undefined' && globalThis.maskPiiForLog_);
 
-function _loadClientTelemetrySeenIds_() {
+/**
+ * Generic PropertiesService-backed "seen id" dedupe store — {id: isoTimestamp} JSON blob under a
+ * caller-chosen property key, pruned to a caller-chosen window on every write so it can't grow
+ * without bound. Extracted (F3Go30-5c2a.3) from what was originally this file's private
+ * client-telemetry-only helpers, so a second call site (handleSiteFeedback_,
+ * dashboardWebapp.js) doesn't hand-roll a second dedupe store — same file header reasoning for
+ * PropertiesService over CacheService (6h TTL cap) applies to any caller.
+ */
+function loadDedupeSeenIds_(propertyKey) {
   try {
-    var raw = PropertiesService.getScriptProperties().getProperty(CLIENT_TELEMETRY_DEDUPE_PROPERTY_);
+    var raw = PropertiesService.getScriptProperties().getProperty(propertyKey);
     return raw ? JSON.parse(raw) : {};
   } catch (e) {
     return {};
   }
 }
 
-function _saveClientTelemetrySeenIds_(map) {
+function saveDedupeSeenIds_(propertyKey, map) {
   try {
-    PropertiesService.getScriptProperties().setProperty(CLIENT_TELEMETRY_DEDUPE_PROPERTY_, JSON.stringify(map));
-  } catch (e) { /* best-effort — a lost write only costs one dedupe window's worth of re-logging */ }
+    PropertiesService.getScriptProperties().setProperty(propertyKey, JSON.stringify(map));
+  } catch (e) { /* best-effort — a lost write only costs one dedupe window's worth of re-processing */ }
 }
 
-/** Drops entries older than the dedupe window. Pure (no PropertiesService access) so it's
- * unit-testable without a GAS stub. */
-function pruneClientTelemetrySeenIds_(map, nowMs) {
-  var cutoff = (nowMs || Date.now()) - CLIENT_TELEMETRY_DEDUPE_WINDOW_DAYS_ * 24 * 60 * 60 * 1000;
+/** Drops entries older than windowDays. Pure (no PropertiesService access) so it's unit-testable
+ * without a GAS stub. */
+function pruneDedupeSeenIds_(map, windowDays, nowMs) {
+  var cutoff = (nowMs || Date.now()) - windowDays * 24 * 60 * 60 * 1000;
   var pruned = {};
   Object.keys(map || {}).forEach(function(id) {
     var ts = Date.parse(map[id]);
     if (!isNaN(ts) && ts >= cutoff) pruned[id] = map[id];
   });
   return pruned;
+}
+
+function _loadClientTelemetrySeenIds_() {
+  return loadDedupeSeenIds_(CLIENT_TELEMETRY_DEDUPE_PROPERTY_);
+}
+
+function _saveClientTelemetrySeenIds_(map) {
+  saveDedupeSeenIds_(CLIENT_TELEMETRY_DEDUPE_PROPERTY_, map);
+}
+
+/** Drops entries older than the dedupe window. Pure (no PropertiesService access) so it's
+ * unit-testable without a GAS stub. */
+function pruneClientTelemetrySeenIds_(map, nowMs) {
+  return pruneDedupeSeenIds_(map, CLIENT_TELEMETRY_DEDUPE_WINDOW_DAYS_, nowMs);
 }
 
 /**
@@ -90,6 +112,9 @@ function handleClientTelemetryPost_(payload) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    loadDedupeSeenIds_: loadDedupeSeenIds_,
+    saveDedupeSeenIds_: saveDedupeSeenIds_,
+    pruneDedupeSeenIds_: pruneDedupeSeenIds_,
     pruneClientTelemetrySeenIds_: pruneClientTelemetrySeenIds_,
     handleClientTelemetryBatch_: handleClientTelemetryBatch_,
     handleClientTelemetryPost_: handleClientTelemetryPost_

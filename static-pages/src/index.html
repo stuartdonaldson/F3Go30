@@ -1267,18 +1267,26 @@
   /** The single point where a below-HTTP failure becomes a PAX-readable one. Flagged so the
    * banner can drop the Site-Q escalation (a connectivity problem is not the Site Q's to fix)
    * and so the retry below can tell a transport failure from a server that answered. */
-  function makeTransportError_() {
+  function makeTransportError_(extra) {
     var err = new Error(NETWORK_ERROR_MESSAGE_);
     err.isTransport = true;
+    if (extra) Object.assign(err, extra);
     return err;
   }
 
   /** One attempt, bounded. Resolves with the raw Response (status handling stays in callApi);
    * rejects with a flagged transport error for anything that dies below HTTP, including the
-   * timeout — the abort and a genuine network drop are the same thing to the PAX. */
+   * timeout — the abort and a genuine network drop are the same thing to the PAX (the banner copy
+   * and isTransport-driven behaviour are unchanged, F3Go30-5c2a.2 AC4). The rejection itself does
+   * carry the distinction now, for telemetry only: abortedAtTimeout tells whether OUR OWN
+   * AbortController fired at timeoutMs, vs. fetch rejecting on its own (a redirect/connection
+   * dying below HTTP), and elapsedMs is recorded on both branches so the two are separable purely
+   * off elapsed time even on an old client that predates abortedAtTimeout (AC3). */
   function fetchAttempt_(url, bodyJson, timeoutMs) {
     var controller = new AbortController();
-    var timeoutId = setTimeout(function() { controller.abort(); }, timeoutMs);
+    var startedAt = Date.now();
+    var abortedByTimeout = false;
+    var timeoutId = setTimeout(function() { abortedByTimeout = true; controller.abort(); }, timeoutMs);
     return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -1289,8 +1297,27 @@
       return res;
     }, function() {
       clearTimeout(timeoutId);
-      throw makeTransportError_();
+      throw makeTransportError_({ abortedAtTimeout: abortedByTimeout, elapsedMs: Date.now() - startedAt });
     });
+  }
+
+  /** F3Go30-5c2a.1: extracts identity of the Apps Script redirect echo endpoint (script.
+   * googleusercontent.com/macros/echo?user_content_key=...) a response actually resolved to, so
+   * two requests' telemetry can be compared for "same key or different key" — the evidence the
+   * parent bug (F3Go30-5c2a) needs to confirm or kill the stale-cached-redirect hypothesis.
+   * Never returns the raw key: only a stable hash (reusing hashString_, the same non-security hash
+   * already used to namespace TOKEN_STORAGE_KEY_), since user_content_key is a capability-bearing
+   * token that must not land in Axiom verbatim (AC2/AC5). Never throws — res.url can be absent or
+   * malformed and this must still degrade to "no evidence" rather than break the caller. */
+  function extractEchoKeyInfo_(res) {
+    var info = { redirected: false, echoKeyHash: '' };
+    try {
+      info.redirected = !!(res && res.redirected);
+      var url = res && res.url;
+      var m = url ? /[?&]user_content_key=([^&]+)/.exec(url) : null;
+      if (m) info.echoKeyHash = hashString_(decodeURIComponent(m[1]));
+    } catch (e) { /* best effort — missing evidence, not a crash */ }
+    return info;
   }
 
   // F3Go30-5nfj.5: reference-counted, not a boolean — more than one request can be in flight at
@@ -1324,6 +1351,11 @@
     var bodyJson = JSON.stringify(body);
     var mayRetry = RETRYABLE_ACTIONS_.indexOf(action) !== -1;
     var timeoutMs = mayRetry ? REQUEST_TIMEOUT_MS_ : WRITE_TIMEOUT_MS_;
+    // F3Go30-5c2a.1: captured off the Response as soon as one exists (both an ok and a non-ok
+    // HTTP response still carry res.url/res.redirected — only a below-HTTP transport failure
+    // never gets a Response at all). Stashed here so both the error paths below and the success
+    // sample can attach it without re-deriving it or holding the Response itself past its use.
+    var echoKeyInfo_ = null;
     pendingRequestCount_++;
     updateSyncingIndicator_();
     return fetchAttempt_(url, bodyJson, timeoutMs).catch(function(err) {
@@ -1333,17 +1365,24 @@
       if (!mayRetry || !err || !err.isTransport) throw err;
       return fetchAttempt_(url, bodyJson, timeoutMs);
     }).then(function(res) {
-      if (!res.ok) throw new Error('Server returned HTTP ' + res.status);
+      echoKeyInfo_ = extractEchoKeyInfo_(res);
+      if (!res.ok) throw Object.assign(new Error('Server returned HTTP ' + res.status), echoKeyInfo_);
       return res.json();
     }).then(function(json) {
-      if (!json.ok) throw new Error(json.error || 'Server reported an error with no detail');
+      if (!json.ok) throw Object.assign(new Error(json.error || 'Server reported an error with no detail'), echoKeyInfo_);
       return json;
     }).then(function(json) {
       // F3Go30-xyri: piggyback the queued-telemetry upload on any successful round trip rather
       // than opening a dedicated connection for it — fire-and-forget, never blocks/degrades the
       // call that triggered it. Excludes the upload action itself so a successful flush doesn't
       // immediately try to flush its own (now-empty) queue again.
-      if (action !== 'clientTelemetry') flushClientTelemetryQueue_();
+      if (action !== 'clientTelemetry') {
+        // F3Go30-5c2a.1 AC4: sample the echo key on every successful round trip too — piggybacked
+        // on this same queue/flush path, no dedicated connection — so key reuse vs. fresh-per-
+        // request can be established from healthy traffic, not just failures.
+        captureClientTelemetry_('echoKey', action, echoKeyInfo_);
+        flushClientTelemetryQueue_();
+      }
       return json;
     }).finally(function() {
       pendingRequestCount_--;
@@ -1426,7 +1465,17 @@
     captureClientTelemetry_('error', action, Object.assign({
       errorText: (err && err.message) ? err.message : String(err),
       stack: (err && err.stack) ? String(err.stack) : '',
-      isTransport: !!(err && err.isTransport)
+      isTransport: !!(err && err.isTransport),
+      // F3Go30-5c2a.1 AC3: carried over from callApi's thrown error when a Response existed
+      // (redirected/echoKeyHash) — absent (redirected false, echoKeyHash '') for a below-HTTP
+      // transport failure, which never gets a Response to read them off of.
+      redirected: !!(err && err.redirected),
+      echoKeyHash: (err && err.echoKeyHash) || '',
+      // F3Go30-5c2a.2 AC2/AC3: carried over from fetchAttempt_'s thrown error — absent (false /
+      // null) for an err that predates AC1 (or never went through fetchAttempt_ at all, e.g. the
+      // window.onerror/unhandledrejection handlers below), degrading safely rather than crashing.
+      abortedAtTimeout: !!(err && err.abortedAtTimeout),
+      elapsedMs: (err && typeof err.elapsedMs === 'number') ? err.elapsedMs : null
     }, extra || {}));
   }
 
@@ -3159,6 +3208,17 @@
   });
   $('siteFeedbackCancelBtn').addEventListener('click', function() { $('siteFeedbackModal').classList.add('hidden'); });
   $('siteFeedbackDoneBtn').addEventListener('click', function() { $('siteFeedbackModal').classList.add('hidden'); });
+  // F3Go30-5c2a.3: a client-minted idempotency key, stable across a hand-retried resubmission of
+  // the exact same (unedited) report — the failure mode that produced three emails for one
+  // report during F3Go30-5c2a: the server's send actually succeeded each time, but the client
+  // reported false transport failures, so the PAX resubmitted by hand. Content-derived (not a
+  // random per-attempt id like makeClientTelemetryId_) so a retry of the same report reuses the
+  // same key, while editing the text before resubmitting produces a new one. Reuses hashString_
+  // (already used for TOKEN_STORAGE_KEY_'s namespacing) rather than a bespoke hash.
+  function siteFeedbackKey_(f3Name, email, rating, comment) {
+    return hashString_((f3Name || '') + '|' + (email || '') + '|' + (rating || 0) + '|' + (comment || ''));
+  }
+
   $('siteFeedbackSendBtn').addEventListener('click', function() {
     var comment = $('siteFeedbackComment').value.trim();
     var rating = siteFeedbackState_.rating;
@@ -3170,7 +3230,8 @@
     $('siteFeedbackError').classList.add('hidden');
     hideApiError_();
     setButtonLoading_($('siteFeedbackSendBtn'), true, 'Sending…');
-    callApi('siteFeedback', { f3Name: state.f3Name, email: state.email, rating: rating, comment: comment })
+    var feedbackKey = siteFeedbackKey_(state.f3Name, state.email, rating, comment);
+    callApi('siteFeedback', { f3Name: state.f3Name, email: state.email, rating: rating, comment: comment, feedbackKey: feedbackKey })
       .then(function() {
         $('siteFeedbackNotSent').classList.add('hidden');
         $('siteFeedbackSentNote').classList.remove('hidden');

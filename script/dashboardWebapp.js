@@ -26,6 +26,19 @@ var findSignupMatchByF3NameOnly_dw_ = (dashboardWebappSignupModule_ && dashboard
 var findPaxDbMatch_dw_ = (dashboardWebappSignupModule_ && dashboardWebappSignupModule_.findPaxDbMatch_)
   || (typeof globalThis !== 'undefined' && globalThis.findPaxDbMatch_);
 
+// F3Go30-5c2a.3: handleSiteFeedback_'s idempotency dedupe reuses the generic PropertiesService
+// dedupe-store primitives ClientTelemetryLog.js already built for handleClientTelemetryBatch_,
+// rather than hand-rolling a second store.
+var dashboardWebappClientTelemetryLogModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./ClientTelemetryLog.js')
+  : null;
+var loadDedupeSeenIds_dw_ = (dashboardWebappClientTelemetryLogModule_ && dashboardWebappClientTelemetryLogModule_.loadDedupeSeenIds_)
+  || (typeof globalThis !== 'undefined' && globalThis.loadDedupeSeenIds_);
+var saveDedupeSeenIds_dw_ = (dashboardWebappClientTelemetryLogModule_ && dashboardWebappClientTelemetryLogModule_.saveDedupeSeenIds_)
+  || (typeof globalThis !== 'undefined' && globalThis.saveDedupeSeenIds_);
+var pruneDedupeSeenIds_dw_ = (dashboardWebappClientTelemetryLogModule_ && dashboardWebappClientTelemetryLogModule_.pruneDedupeSeenIds_)
+  || (typeof globalThis !== 'undefined' && globalThis.pruneDedupeSeenIds_);
+
 var dashboardWebappUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
   ? require('./Utilities.js')
   : null;
@@ -502,10 +515,21 @@ function handleCheckinPost_(e) {
  * email, not a sheet write. Reuses readEmailDeliveryPolicy_/sendConfiguredEmail_ (Utilities.js)
  * — the same email-delivery path every other outbound email in this codebase goes through —
  * rather than a bespoke MailApp call.
- * @param {Object} payload { f3Name, email, rating, comment, clientVersion } — clientVersion is
- *   attached to every callApi() call automatically (static-pages/src/index.html's STATIC_BUILD_
- *   VERSION_, see F3Go30-833s.15), reused here rather than inventing a second version field.
+ * @param {Object} payload { f3Name, email, rating, comment, clientVersion, feedbackKey } —
+ *   clientVersion is attached to every callApi() call automatically (static-pages/src/index.html's
+ *   STATIC_BUILD_VERSION_, see F3Go30-833s.15), reused here rather than inventing a second version
+ *   field. feedbackKey (F3Go30-5c2a.3) is a client-minted hash of the unedited report content
+ *   (siteFeedbackKey_, index.html) — stable across a hand-retried resubmission of the exact same
+ *   report (the failure mode that produced three emails for one report during F3Go30-5c2a: the
+ *   server's send actually succeeded each time, but the client reported false transport
+ *   failures, so the PAX resubmitted by hand), and different once the report text changes.
  */
+var SITE_FEEDBACK_DEDUPE_PROPERTY_ = 'SITE_FEEDBACK_DEDUPE_SEEN_KEYS';
+var SITE_FEEDBACK_DEDUPE_WINDOW_DAYS_ = 2; // same window as CLIENT_TELEMETRY_DEDUPE_WINDOW_DAYS_
+                                            // (ClientTelemetryLog.js) — generous relative to how
+                                            // fast a PAX actually hand-retries, but the store is
+                                            // pruned on every write so it costs nothing to keep.
+
 function handleSiteFeedback_(templateSpreadsheet, payload) {
   var comment = String((payload && payload.comment) || '').trim();
   var rating = Number(payload && payload.rating) || 0;
@@ -513,6 +537,17 @@ function handleSiteFeedback_(templateSpreadsheet, payload) {
 
   var f3Name = String((payload && payload.f3Name) || '').trim() || '(unknown)';
   var email = String((payload && payload.email) || '').trim();
+
+  var feedbackKey = String((payload && payload.feedbackKey) || '').trim();
+  var seenKeys = feedbackKey
+    ? pruneDedupeSeenIds_dw_(loadDedupeSeenIds_dw_(SITE_FEEDBACK_DEDUPE_PROPERTY_), SITE_FEEDBACK_DEDUPE_WINDOW_DAYS_)
+    : null;
+  if (feedbackKey && seenKeys[feedbackKey]) {
+    // Repeat of an already-sent report within the window: report success without sending a
+    // second email — the PAX must never be told a resubmission of an already-delivered report
+    // failed (AC3).
+    return { ok: true };
+  }
 
   var policy = readEmailDeliveryPolicy_dw_(templateSpreadsheet);
   if (!policy.siteQEmail) {
@@ -545,6 +580,11 @@ function handleSiteFeedback_(templateSpreadsheet, payload) {
   } catch (e) {
     GasLogger.logError('dashboardWebapp.siteFeedback.error', e, {});
     return { ok: false, error: 'send_failed' };
+  }
+
+  if (feedbackKey) {
+    seenKeys[feedbackKey] = new Date().toISOString();
+    saveDedupeSeenIds_dw_(SITE_FEEDBACK_DEDUPE_PROPERTY_, seenKeys);
   }
 
   return { ok: true };

@@ -3555,6 +3555,70 @@ function makeMockConfigSheetForFeedback_test_(rows) {
   delete global.openConfigSheet;
 })();
 
+// ── handleSiteFeedback_ idempotency dedupe (F3Go30-5c2a.3) ───────────────
+// During the parent incident (F3Go30-5c2a) one report produced three emails: each send actually
+// succeeded server-side, but the client reported the 2nd/3rd as failures, so the PAX resubmitted
+// by hand. Fix is server-side dedupe on a client-minted feedbackKey (stable across a resubmission
+// of the exact same report, new once the report is edited — see siteFeedbackKey_,
+// static-pages/src/index.html, test/test_site_feedback_key.js), reusing ClientTelemetryLog.js's
+// generic PropertiesService dedupe-store primitives (AC2) rather than a second hand-rolled store.
+function setUpSiteFeedbackDedupeFixture_() {
+  var sent = [];
+  global.MailApp = { sendEmail: function(msg) { sent.push(msg); } };
+  global.maskRecipientListForLog_ = function(list) { return list; };
+  global.openConfigSheet = function() {
+    return makeMockConfigSheetForFeedback_test_([['Site Q', 'Little John', 'lj@example.com']]);
+  };
+  installFakePropertiesStore_();
+  return sent;
+}
+
+function tearDownSiteFeedbackDedupeFixture_() {
+  delete global.MailApp;
+  delete global.openConfigSheet;
+  delete global.maskRecipientListForLog_;
+}
+
+(function testHandleSiteFeedbackSuppressesRepeatKeyWithoutSendingSecondEmail() {
+  var sent = setUpSiteFeedbackDedupeFixture_();
+  var report = { f3Name: 'Splinter', email: 'splinter@example.com', rating: 4, comment: 'Loving the streak view.', feedbackKey: 'key-1' };
+
+  var first = handleSiteFeedback_({}, report);
+  var second = handleSiteFeedback_({}, report); // hand-retried resubmission, unedited report
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true, 'AC3: a repeat submission must still report ok to the client');
+  assert.equal(sent.length, 1, 'AC2: the repeat key must not send a second email');
+
+  tearDownSiteFeedbackDedupeFixture_();
+})();
+
+(function testHandleSiteFeedbackSendsForANewKey() {
+  var sent = setUpSiteFeedbackDedupeFixture_();
+
+  var a = handleSiteFeedback_({}, { f3Name: 'Splinter', email: 'splinter@example.com', rating: 4, comment: 'Report A', feedbackKey: 'key-a' });
+  var b = handleSiteFeedback_({}, { f3Name: 'Ovechkin', email: 'ovi@example.com', rating: 5, comment: 'Report B', feedbackKey: 'key-b' });
+
+  assert.equal(a.ok, true);
+  assert.equal(b.ok, true);
+  assert.equal(sent.length, 2, 'AC1: distinct keys are distinct reports, both must be sent');
+
+  tearDownSiteFeedbackDedupeFixture_();
+})();
+
+(function testHandleSiteFeedbackSendsAgainWhenReportTextEditedProducesNewKey() {
+  var sent = setUpSiteFeedbackDedupeFixture_();
+
+  handleSiteFeedback_({}, { f3Name: 'Splinter', email: 'splinter@example.com', rating: 4, comment: 'Loving the streak view.', feedbackKey: 'key-original' });
+  // Same submitter, edited comment before resubmitting: the client would mint a different
+  // feedbackKey (siteFeedbackKey_ is content-derived) — simulated here by passing a new key.
+  handleSiteFeedback_({}, { f3Name: 'Splinter', email: 'splinter@example.com', rating: 4, comment: 'Loving the streak view even more now.', feedbackKey: 'key-edited' });
+
+  assert.equal(sent.length, 2, 'AC4: an edited report must send even though the same PAX resubmitted');
+
+  tearDownSiteFeedbackDedupeFixture_();
+})();
+
 console.log('test_dashboard_webapp.js: handleSiteFeedback_ assertions passed');
 
 console.log('test_dashboard_webapp.js: announcement splash config assertions passed');
