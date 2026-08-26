@@ -1361,15 +1361,31 @@
     entry.inFlight = true;
     send().then(function(json) {
       waiters.forEach(function(w) { w.resolve(json); });
-    }, function(err) {
-      waiters.forEach(function(w) { w.reject(err); });
-    }).finally(function() {
       entry.inFlight = false;
       if (entry.queuedSend) {
+        // Healthy: the last attempt succeeded, so it's safe to keep coalescing — send the
+        // latest tap that arrived while this one was in flight.
         flushCheckinCoalesce_(key);
       } else {
         delete checkinCoalesce_[key];
       }
+    }, function(err) {
+      // A failure means THIS MOMENT is unhealthy for this day's writes. Auto-continuing the
+      // chain here (as the success branch does) would retry the next queued tap, and if it also
+      // fails, the one after that — each waiting its own full timeout — so a PAX tapping through
+      // an unstable stretch could see a button stuck for several timeout cycles stacked
+      // end-to-end, far longer than any single request ever took before this change. Instead,
+      // fail the WHOLE queued backlog for this day together (including anything that arrived
+      // during this failed attempt) — matching the pre-coalescing behavior where a burst's
+      // requests all failed in parallel around the same ~timeout mark — and let the PAX's own
+      // next tap start a fresh, independent attempt rather than an inherited retry chain.
+      var stranded = entry.waiters;
+      entry.queuedSend = null;
+      entry.waiters = [];
+      entry.inFlight = false;
+      delete checkinCoalesce_[key];
+      waiters.forEach(function(w) { w.reject(err); });
+      stranded.forEach(function(w) { w.reject(err); });
     });
   }
 

@@ -520,23 +520,37 @@ function testCheckinDoesNotCoalesceAcrossDifferentDays() {
   });
 }
 
-function testCheckinCoalesceQueueSurvivesAFailedInFlightRequest() {
+// Live evidence (2026-08-26, SIT v2.5.0.18): a genuine transport failure (CORS block) on the
+// in-flight request left a burst's later taps stuck showing "Saving…" for well over a minute.
+// Root cause: an earlier version of this coalescing logic auto-fired the next queued tap on
+// failure too, and if THAT also failed, the one after — each waiting its own full timeout in
+// sequence, unlike the pre-coalescing behavior where a burst's requests all failed in parallel
+// around the same ~timeout mark. The fix: a failure fails the WHOLE queued backlog for that day
+// together, immediately, with no further auto-retry — bounding worst-case stuck time to one
+// timeout cycle, same as before this change.
+function testCheckinFailureFailsWholeQueuedBacklogTogetherWithNoAutoRetry() {
   var deferred = makeDeferredFetch_();
   var h = makeReconnectHarness_({ fetchImpl: deferred.fetchImpl });
 
-  var caught1 = null, resolved2 = false;
+  var caught1 = null, caught2 = null, caught3 = null;
   h.callApi('checkin', { day: 'today', value: 1 }).catch(function(err) { caught1 = err; });
-  h.callApi('checkin', { day: 'today', value: 0 }).then(function() { resolved2 = true; });
-  assert.equal(checkinFetchCalls_(h).length, 1);
+  h.callApi('checkin', { day: 'today', value: 0 }).catch(function(err) { caught2 = err; });
+  h.callApi('checkin', { day: 'today', value: 1 }).catch(function(err) { caught3 = err; });
+  assert.equal(checkinFetchCalls_(h).length, 1, 'only the first tap opens a connection; the rest are queued');
 
   deferred.fail(0);
   return new Promise(function(resolve) { setImmediate(resolve); }).then(function() {
-    assert.ok(caught1, "the first tap's own promise must reject when its request fails");
-    assert.equal(checkinFetchCalls_(h).length, 2, 'a failure on the in-flight request must not strand the queued tap — the flush must still fire');
+    assert.ok(caught1, "the in-flight tap's own promise must reject when its request fails");
+    assert.ok(caught2, 'a queued tap must reject together with the in-flight failure, not wait for its own retry');
+    assert.ok(caught3, 'every queued tap must reject together, not just the most recent one');
+    assert.equal(checkinFetchCalls_(h).length, 1, 'a failure must NOT auto-fire another request for the queued backlog');
+
+    // The queue for this key must be fully cleared, not left retrying — a fresh tap after a
+    // failure starts a brand new, independent attempt.
+    var p4 = h.callApi('checkin', { day: 'today', value: 1 });
+    assert.equal(checkinFetchCalls_(h).length, 2, 'a tap after a cleared failure must fire immediately, like a fresh burst');
     deferred.settle(1, 'k2');
-    return new Promise(function(resolve) { setImmediate(resolve); });
-  }).then(function() {
-    assert.ok(resolved2, 'the queued tap must still resolve once its own (later) request succeeds');
+    return p4;
   });
 }
 
@@ -698,7 +712,7 @@ function run() {
     testCaptureClientErrorDefaultsAbortTimingFieldsWhenAbsentFromErr,
     testCheckinCoalescesRapidTapsOnSameDayIntoAtMostTwoRequests,
     testCheckinDoesNotCoalesceAcrossDifferentDays,
-    testCheckinCoalesceQueueSurvivesAFailedInFlightRequest,
+    testCheckinFailureFailsWholeQueuedBacklogTogetherWithNoAutoRetry,
     testPollSchedulesOnStart,
     testStartIsIdempotentWhileAlreadyPolling,
     testSuccessfulPollStopsPolling,
