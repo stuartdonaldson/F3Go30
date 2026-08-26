@@ -431,6 +431,115 @@ function testCaptureClientErrorDefaultsAbortTimingFieldsWhenAbsentFromErr() {
   assert.equal(queue[0].elapsedMs, null);
 }
 
+// ── F3Go30-5c2a.4: per-day checkin coalescing ───────────────────────────────────────────────
+// Evidence gap this closes: 5c2a.4's own live-burst evidence (bd notes) ruled out stale-key
+// reuse — every echo key minted was distinct, even under the tightest concurrent clusters — so
+// the fix targets the burst itself, not the redirect. A deferred (manually-resolved) fetchImpl
+// lets these tests control exactly when each in-flight request settles, so the queuing behavior
+// is observed directly rather than inferred from timing.
+
+/** fetchImpl that never resolves on its own — returns a resolve/reject pair per call so the
+ * test drives settlement order explicitly. settle() resolves with a real, ok:true
+ * Response-shaped value; fail() rejects with a transport-style error, same shape fetch() itself
+ * would throw on a below-HTTP drop. */
+function makeDeferredFetch_() {
+  var pending = [];
+  return {
+    fetchImpl: function() {
+      return new Promise(function(resolve, reject) { pending.push({ resolve: resolve, reject: reject }); });
+    },
+    pending: pending,
+    settle: function(index, key) {
+      pending[index].resolve({
+        ok: true,
+        url: 'https://script.googleusercontent.com/macros/echo?user_content_key=' + key,
+        redirected: true,
+        json: function() { return Promise.resolve({ ok: true }); },
+      });
+    },
+    fail: function(index) {
+      pending[index].reject(new TypeError('Failed to fetch'));
+    },
+  };
+}
+
+// A successful settle also piggybacks the opportunistic clientTelemetry upload (F3Go30-xyri,
+// already covered by testSuccessfulCallQueuesAnEchoKeySampleWithoutANewConnection) — an
+// unrelated real fetch these tests must not mistake for a second checkin request. Filtering to
+// the checkin action keeps the coalescing assertions independent of that incidental traffic.
+function checkinFetchCalls_(h) {
+  return h.fetchCalls.filter(function(c) { return c.body.action === 'checkin'; });
+}
+
+function testCheckinCoalescesRapidTapsOnSameDayIntoAtMostTwoRequests() {
+  var deferred = makeDeferredFetch_();
+  var h = makeReconnectHarness_({ fetchImpl: deferred.fetchImpl });
+
+  var results = [];
+  var p1 = h.callApi('checkin', { day: 'today', value: 1 }).then(function() { results.push(1); });
+  var p2 = h.callApi('checkin', { day: 'today', value: 0 }).then(function() { results.push(2); });
+  var p3 = h.callApi('checkin', { day: 'today', value: 1 }).then(function() { results.push(3); });
+  // All three taps landed while the first request was still in flight: only ONE fetch has been
+  // sent so far (the coalescing gate), carrying tap 1's payload.
+  assert.equal(checkinFetchCalls_(h).length, 1, 'a second/third tap for the same day must not open a new connection while one is in flight');
+  assert.equal(checkinFetchCalls_(h)[0].body.value, 1, "the in-flight request must carry the first tap's payload");
+
+  deferred.settle(0, 'k1');
+  return new Promise(function(resolve) { setImmediate(resolve); }).then(function() {
+    // Tap 1 has now resolved. Taps 2 and 3 both arrived during the flight, so the LATEST
+    // (tap 3's) payload is what gets sent next — never tap 2's superseded one. (Tap 1's own
+    // success also piggybacks an opportunistic clientTelemetry upload — a real, unrelated fetch
+    // that may land at any index in between, hence locating the coalesced request by action
+    // rather than assuming a fixed index.)
+    assert.equal(checkinFetchCalls_(h).length, 2, 'exactly one more request must fire for the coalesced (latest) pending tap');
+    assert.equal(checkinFetchCalls_(h)[1].body.value, 1, "the coalesced flush must carry the LATEST tap's payload, not an intermediate one");
+    var idx = h.fetchCalls.findIndex(function(c, i) { return i > 0 && c.body.action === 'checkin'; });
+    deferred.settle(idx, 'k2');
+    return new Promise(function(resolve) { setImmediate(resolve); });
+  }).then(function() {
+    assert.equal(checkinFetchCalls_(h).length, 2, 'no further checkin requests should fire once the queue drains');
+    assert.deepEqual(results, [1, 2, 3], 'every tap must eventually resolve, in tap order');
+    return Promise.all([p1, p2, p3]);
+  });
+}
+
+function testCheckinDoesNotCoalesceAcrossDifferentDays() {
+  var deferred = makeDeferredFetch_();
+  var h = makeReconnectHarness_({ fetchImpl: deferred.fetchImpl });
+
+  h.callApi('checkin', { day: 'today', value: 1 });
+  h.callApi('checkin', { day: 'yesterday', value: 1 });
+  // Two independent day cells are two independent server writes — both must fire immediately,
+  // exactly like before this change; only same-day taps are gated.
+  assert.equal(checkinFetchCalls_(h).length, 2, 'taps on different days must not be gated against each other');
+
+  deferred.settle(0, 'k1');
+  deferred.settle(1, 'k2');
+  return new Promise(function(resolve) { setImmediate(resolve); }).then(function() {
+    assert.equal(checkinFetchCalls_(h).length, 2, 'settling both requests must not trigger any extra checkin requests');
+  });
+}
+
+function testCheckinCoalesceQueueSurvivesAFailedInFlightRequest() {
+  var deferred = makeDeferredFetch_();
+  var h = makeReconnectHarness_({ fetchImpl: deferred.fetchImpl });
+
+  var caught1 = null, resolved2 = false;
+  h.callApi('checkin', { day: 'today', value: 1 }).catch(function(err) { caught1 = err; });
+  h.callApi('checkin', { day: 'today', value: 0 }).then(function() { resolved2 = true; });
+  assert.equal(checkinFetchCalls_(h).length, 1);
+
+  deferred.fail(0);
+  return new Promise(function(resolve) { setImmediate(resolve); }).then(function() {
+    assert.ok(caught1, "the first tap's own promise must reject when its request fails");
+    assert.equal(checkinFetchCalls_(h).length, 2, 'a failure on the in-flight request must not strand the queued tap — the flush must still fire');
+    deferred.settle(1, 'k2');
+    return new Promise(function(resolve) { setImmediate(resolve); });
+  }).then(function() {
+    assert.ok(resolved2, 'the queued tap must still resolve once its own (later) request succeeds');
+  });
+}
+
 // ── F3Go30-n40u: background reconnect poll ──────────────────────────────────────────────────
 
 function testPollSchedulesOnStart() {
@@ -587,6 +696,9 @@ function run() {
     testFetchAttemptDoesNotMarkAbortedAtTimeoutOnImmediateRejection,
     testCaptureClientErrorIncludesAbortTimingFieldsFromErr,
     testCaptureClientErrorDefaultsAbortTimingFieldsWhenAbsentFromErr,
+    testCheckinCoalescesRapidTapsOnSameDayIntoAtMostTwoRequests,
+    testCheckinDoesNotCoalesceAcrossDifferentDays,
+    testCheckinCoalesceQueueSurvivesAFailedInFlightRequest,
     testPollSchedulesOnStart,
     testStartIsIdempotentWhileAlreadyPolling,
     testSuccessfulPollStopsPolling,

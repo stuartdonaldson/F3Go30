@@ -1336,6 +1336,56 @@
   // back to CMD_ — so every pre-existing check-in call site is unchanged; only the signup step
   // passes 'signup'. Leaving it a page constant would route signup actions into the check-in
   // dispatcher, which would reject them as unknown_action.
+  // F3Go30-5c2a.4: rapid repeated taps on the SAME day cell (a PAX changing their mind, or a
+  // slow round trip inviting a re-tap) each fired their own checkin POST, producing a burst of
+  // near-simultaneous requests against the flaky Apps Script echo-redirect leg — the concurrency
+  // shape behind the 2026-08-25 SIT incident (F3Go30-5c2a). callApi coalesces per day below:
+  // while a checkin POST for a given day is in flight, a newer tap for that same day is queued
+  // rather than sent immediately; the instant the in-flight request settles, the LATEST queued
+  // send (not any intermediate one) fires — collapsing N rapid taps on one cell into at most two
+  // network requests. Deliberately per-day, not global: two different day cells are independent
+  // writes on the server (handleCheckinSubmit_ writes exactly one cell per call,
+  // dashboardWebapp.js) and are still sent concurrently, same as before. Every queued caller
+  // still gets its own promise, resolved/rejected in tap order once the request that was actually
+  // sent settles — the UI is already optimistic (applyOwnDayWrite_ runs before any of this), so a
+  // superseded tap's success handler briefly re-rendering a stale status is harmless: the
+  // next-attached (later, latest) tap's handler always runs after it and wins.
+  var checkinCoalesce_ = {};
+
+  function flushCheckinCoalesce_(key) {
+    var entry = checkinCoalesce_[key];
+    var send = entry.queuedSend;
+    var waiters = entry.waiters;
+    entry.queuedSend = null;
+    entry.waiters = [];
+    entry.inFlight = true;
+    send().then(function(json) {
+      waiters.forEach(function(w) { w.resolve(json); });
+    }, function(err) {
+      waiters.forEach(function(w) { w.reject(err); });
+    }).finally(function() {
+      entry.inFlight = false;
+      if (entry.queuedSend) {
+        flushCheckinCoalesce_(key);
+      } else {
+        delete checkinCoalesce_[key];
+      }
+    });
+  }
+
+  function callApiCheckinCoalesced_(key, send) {
+    var entry = checkinCoalesce_[key];
+    if (!entry) {
+      entry = checkinCoalesce_[key] = { inFlight: false, queuedSend: null, waiters: [] };
+    }
+    var promise = new Promise(function(resolve, reject) {
+      entry.waiters.push({ resolve: resolve, reject: reject });
+    });
+    entry.queuedSend = send;
+    if (!entry.inFlight) flushCheckinCoalesce_(key);
+    return promise;
+  }
+
   function callApi(action, payload, cmd) {
     var body = Object.assign({}, payload, {
       action: action,
@@ -1351,43 +1401,51 @@
     var bodyJson = JSON.stringify(body);
     var mayRetry = RETRYABLE_ACTIONS_.indexOf(action) !== -1;
     var timeoutMs = mayRetry ? REQUEST_TIMEOUT_MS_ : WRITE_TIMEOUT_MS_;
-    // F3Go30-5c2a.1: captured off the Response as soon as one exists (both an ok and a non-ok
-    // HTTP response still carry res.url/res.redirected — only a below-HTTP transport failure
-    // never gets a Response at all). Stashed here so both the error paths below and the success
-    // sample can attach it without re-deriving it or holding the Response itself past its use.
-    var echoKeyInfo_ = null;
-    pendingRequestCount_++;
-    updateSyncingIndicator_();
-    return fetchAttempt_(url, bodyJson, timeoutMs).catch(function(err) {
-      // Exactly one retry, and only for a read that died below HTTP. A server that ANSWERED —
-      // any status, any json.ok:false — is not re-asked: it has already made its decision, and
-      // repeating the call would only double the load while returning the same answer.
-      if (!mayRetry || !err || !err.isTransport) throw err;
-      return fetchAttempt_(url, bodyJson, timeoutMs);
-    }).then(function(res) {
-      echoKeyInfo_ = extractEchoKeyInfo_(res);
-      if (!res.ok) throw Object.assign(new Error('Server returned HTTP ' + res.status), echoKeyInfo_);
-      return res.json();
-    }).then(function(json) {
-      if (!json.ok) throw Object.assign(new Error(json.error || 'Server reported an error with no detail'), echoKeyInfo_);
-      return json;
-    }).then(function(json) {
-      // F3Go30-xyri: piggyback the queued-telemetry upload on any successful round trip rather
-      // than opening a dedicated connection for it — fire-and-forget, never blocks/degrades the
-      // call that triggered it. Excludes the upload action itself so a successful flush doesn't
-      // immediately try to flush its own (now-empty) queue again.
-      if (action !== 'clientTelemetry') {
-        // F3Go30-5c2a.1 AC4: sample the echo key on every successful round trip too — piggybacked
-        // on this same queue/flush path, no dedicated connection — so key reuse vs. fresh-per-
-        // request can be established from healthy traffic, not just failures.
-        captureClientTelemetry_('echoKey', action, echoKeyInfo_);
-        flushClientTelemetryQueue_();
-      }
-      return json;
-    }).finally(function() {
-      pendingRequestCount_--;
+
+    function sendNow_() {
+      // F3Go30-5c2a.1: captured off the Response as soon as one exists (both an ok and a non-ok
+      // HTTP response still carry res.url/res.redirected — only a below-HTTP transport failure
+      // never gets a Response at all). Stashed here so both the error paths below and the success
+      // sample can attach it without re-deriving it or holding the Response itself past its use.
+      var echoKeyInfo_ = null;
+      pendingRequestCount_++;
       updateSyncingIndicator_();
-    });
+      return fetchAttempt_(url, bodyJson, timeoutMs).catch(function(err) {
+        // Exactly one retry, and only for a read that died below HTTP. A server that ANSWERED —
+        // any status, any json.ok:false — is not re-asked: it has already made its decision, and
+        // repeating the call would only double the load while returning the same answer.
+        if (!mayRetry || !err || !err.isTransport) throw err;
+        return fetchAttempt_(url, bodyJson, timeoutMs);
+      }).then(function(res) {
+        echoKeyInfo_ = extractEchoKeyInfo_(res);
+        if (!res.ok) throw Object.assign(new Error('Server returned HTTP ' + res.status), echoKeyInfo_);
+        return res.json();
+      }).then(function(json) {
+        if (!json.ok) throw Object.assign(new Error(json.error || 'Server reported an error with no detail'), echoKeyInfo_);
+        return json;
+      }).then(function(json) {
+        // F3Go30-xyri: piggyback the queued-telemetry upload on any successful round trip rather
+        // than opening a dedicated connection for it — fire-and-forget, never blocks/degrades the
+        // call that triggered it. Excludes the upload action itself so a successful flush doesn't
+        // immediately try to flush its own (now-empty) queue again.
+        if (action !== 'clientTelemetry') {
+          // F3Go30-5c2a.1 AC4: sample the echo key on every successful round trip too — piggybacked
+          // on this same queue/flush path, no dedicated connection — so key reuse vs. fresh-per-
+          // request can be established from healthy traffic, not just failures.
+          captureClientTelemetry_('echoKey', action, echoKeyInfo_);
+          flushClientTelemetryQueue_();
+        }
+        return json;
+      }).finally(function() {
+        pendingRequestCount_--;
+        updateSyncingIndicator_();
+      });
+    }
+
+    if (action === 'checkin') {
+      return callApiCheckinCoalesced_(String(payload && payload.day), sendNow_);
+    }
+    return sendNow_();
   }
 
   // ── F3Go30-xyri: client-side error telemetry ──────────────────────────────────────────────
