@@ -509,14 +509,67 @@ function testCheckinDoesNotCoalesceAcrossDifferentDays() {
 
   h.callApi('checkin', { day: 'today', value: 1 });
   h.callApi('checkin', { day: 'yesterday', value: 1 });
-  // Two independent day cells are two independent server writes — both must fire immediately,
-  // exactly like before this change; only same-day taps are gated.
-  assert.equal(checkinFetchCalls_(h).length, 2, 'taps on different days must not be gated against each other');
+  // Two independent day cells are two independent server writes — never merged into one request
+  // — but the global concurrency cap (below) now holds the second back until the first settles,
+  // instead of firing both at once.
+  assert.equal(checkinFetchCalls_(h).length, 1, 'only one write may be in flight at a time; the other day\'s tap is queued, not sent');
 
   deferred.settle(0, 'k1');
-  deferred.settle(1, 'k2');
   return new Promise(function(resolve) { setImmediate(resolve); }).then(function() {
+    assert.equal(checkinFetchCalls_(h).length, 2, 'settling the first write must release the slot and send the queued second day\'s tap');
+    var idx = h.fetchCalls.findIndex(function(c, i) { return i > 0 && c.body.action === 'checkin'; });
+    deferred.settle(idx, 'k2');
+    return new Promise(function(resolve) { setImmediate(resolve); });
+  }).then(function() {
     assert.equal(checkinFetchCalls_(h).length, 2, 'settling both requests must not trigger any extra checkin requests');
+  });
+}
+
+// F3Go30-5c2a.4: global concurrency cap. Live HAR evidence (2026-08-26, SIT v2.5.0.19) showed a
+// PAX rage-tapping BOTH the Today and Yesterday buttons in the same burst — different coalescing
+// keys, so per-day coalescing alone let their POSTs fire concurrently, reproducing the parent
+// incident's concurrency shape (real transport failures on identify/clientTelemetry landed in
+// that same window). The fix: cap simultaneous in-flight checkin writes globally, across every
+// day key, not just within one.
+function testCheckinGlobalConcurrencyCapQueuesAThirdDayBehindTwoAlreadyInFlight() {
+  var deferred = makeDeferredFetch_();
+  var h = makeReconnectHarness_({ fetchImpl: deferred.fetchImpl });
+
+  h.callApi('checkin', { day: 'today', value: 1 });
+  h.callApi('checkin', { day: 'yesterday', value: 1 });
+  h.callApi('checkin', { day: '2026-08-01', value: 0 });
+  assert.equal(checkinFetchCalls_(h).length, 1, 'a third distinct day must queue behind the cap, same as a second day does');
+
+  deferred.settle(0, 'k1');
+  return new Promise(function(resolve) { setImmediate(resolve); }).then(function() {
+    assert.equal(checkinFetchCalls_(h).length, 2, 'freeing one slot must release exactly one queued day, in arrival order');
+    var idx2 = h.fetchCalls.findIndex(function(c, i) { return i > 0 && c.body.action === 'checkin'; });
+    assert.equal(h.fetchCalls[idx2].body.day, 'yesterday', 'the longest-waiting queued day must go next, not the most recent');
+    deferred.settle(idx2, 'k2');
+    return new Promise(function(resolve) { setImmediate(resolve); });
+  }).then(function() {
+    assert.equal(checkinFetchCalls_(h).length, 3, 'the last queued day must be released once its turn comes');
+    var idx3 = h.fetchCalls.findIndex(function(c, i) { return i > 1 && c.body.action === 'checkin'; });
+    deferred.settle(idx3, 'k3');
+    return new Promise(function(resolve) { setImmediate(resolve); });
+  }).then(function() {
+    assert.equal(checkinFetchCalls_(h).length, 3, 'draining the queue must not trigger any extra checkin requests');
+  });
+}
+
+function testCheckinGlobalCapFailureReleasesTheSlotForTheNextQueuedDay() {
+  var deferred = makeDeferredFetch_();
+  var h = makeReconnectHarness_({ fetchImpl: deferred.fetchImpl });
+
+  var caught = null;
+  h.callApi('checkin', { day: 'today', value: 1 }).catch(function(err) { caught = err; });
+  h.callApi('checkin', { day: 'yesterday', value: 1 });
+  assert.equal(checkinFetchCalls_(h).length, 1, 'yesterday\'s tap starts out queued behind today\'s in-flight write');
+
+  deferred.fail(0);
+  return new Promise(function(resolve) { setImmediate(resolve); }).then(function() {
+    assert.ok(caught, 'the failed write must still reject its own caller');
+    assert.equal(checkinFetchCalls_(h).length, 2, 'a failure must release the slot so the next queued day can send, not leave it stuck');
   });
 }
 
@@ -712,6 +765,8 @@ function run() {
     testCaptureClientErrorDefaultsAbortTimingFieldsWhenAbsentFromErr,
     testCheckinCoalescesRapidTapsOnSameDayIntoAtMostTwoRequests,
     testCheckinDoesNotCoalesceAcrossDifferentDays,
+    testCheckinGlobalConcurrencyCapQueuesAThirdDayBehindTwoAlreadyInFlight,
+    testCheckinGlobalCapFailureReleasesTheSlotForTheNextQueuedDay,
     testCheckinFailureFailsWholeQueuedBacklogTogetherWithNoAutoRetry,
     testPollSchedulesOnStart,
     testStartIsIdempotentWhileAlreadyPolling,
