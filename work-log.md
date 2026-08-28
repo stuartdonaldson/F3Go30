@@ -2467,3 +2467,26 @@ Transition: user reported the bug mid-session ("i am not seeing in the email the
 Rationale: Traced to prepareOutboundEmailDelivery_ (Utilities.js) unconditionally setting message.htmlBody = '' whenever a caller supplied no htmlBody. handleSiteFeedback_ (dashboardWebapp.js, the settings-menu "Send Feedback" handler) is the only sendConfiguredEmail_ caller in the whole codebase that never builds an htmlBody — every other one renders a real HTML template. MailApp/Gmail renders a present-but-empty htmlBody instead of falling back to the plain-text body, so the email showed nothing outside test mode and, on SIT, showed only the red TEST MODE banner (which the user confirmed live: "in sit, it contains the test mode banner because that's what is enabled in sit").
 Outcome [user-facing]: Site Q now receives the feedback rating/comment in the email body, in both live and TEST MODE. Verified live on SIT (siteFeedback call + Axiom log showing fellBackToPlainText=False, i.e. no htmlBody sent).
 Outcome [developer-facing]: prepareOutboundEmailDelivery_ now omits the htmlBody key entirely (both the live and TEST MODE message branches) when no real htmlBody is supplied, protecting any future body-only email caller, not just this one. Added regression coverage in test_nag.js (prepareOutboundEmailDelivery_, both modes) and test_dashboard_webapp.js (handleSiteFeedback_) asserting the htmlBody key is absent, since the existing tests only ever checked sent[0].body and couldn't have caught this. Filed F3Go30-ckq7; fix deployed to SIT (v2.5.0.7), not yet committed to git or deployed to PROD.
+
+## 2026-08-27 22:45:00
+_session 25d47356 · v3 · 08-27_
+
+### Objective 1: Cut and ship the v2.6.0 PROD release
+Rationale: The Unreleased CHANGELOG section had accumulated a full minor-series worth of
+PAX/Site-Q-facing work since v2.5.0 (tap-name menu, cross-device check-in consistency, reconnect
+banner, signup goal requirements, bonus-link reuse notice, sign-up-for-next-month nudge) sitting
+behind uncommitted local changes (client-only Logout, F3Go30-1pqo.10) — cutting the release
+promotes that backlog to a dated heading per the CHANGELOG's own convention ("user/admin-facing
+capability rolls up to a minor series") rather than leaving it open-ended.
+Outcome [user-facing]: v2.6.0 live on PROD — adds a "Logout" entry to the tap-name settings menu
+(clears the local check-in token/snapshot but preserves saved name/email so the identify form
+still pre-fills), alongside the already-landed tap-name menu, cross-device check-in consistency
+fix, auto-reconnect banner, signup goal requirements, bonus-link reuse notice, and
+sign-up-for-next-month nudge.
+Outcome [developer-facing]: docs/CHANGELOG.md Unreleased promoted to a dated `## v2.6` heading;
+new empty Unreleased section opened for what lands next. Full `pnpm test` suite (49 files) green
+before deploy. `pnpm run release:minor` bumped package.json 2.5.0→2.6.0, deployed+verified PROD
+(assertDeployedVersion confirmed `cmd=version` serving v2.6.0/TEMPLATE), published static pages,
+tagged and pushed `v2.6.0`. Post-deploy SIT build-stamp trailer (script/version.js/package.json
+build counter) committed separately per existing convention.
+
