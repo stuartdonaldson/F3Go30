@@ -504,10 +504,11 @@
   </div>
 
   <!-- F3Go30-1pqo.1: settings/tools menu, opened by tapping the PAX name in the persistent
-       header (#headerName, always present outside .wrap — see the header markup below). Only
-       the entries this stage (F3Go30-1pqo.4/.5/.7/.9 + que4) actually delivers: Theme/
-       Notifications/Logout (F3Go30-1pqo.2/.3/.8) are added in Stage 9 once their own
-       infrastructure (kgzo.5, 833s.7) lands — see PLAN-08-19.md Stage 3 handoff. -->
+       header (#headerName, always present outside .wrap — see the header markup below). Entries
+       this stage delivers: F3Go30-1pqo.4/.5/.7/.9 + que4, plus F3Go30-1pqo.10's client-only
+       Logout. Theme/Notifications (F3Go30-1pqo.3/.8) and the full server-invalidating Logout
+       (F3Go30-1pqo.2) are added once their own infrastructure (kgzo.5, 833s.7) lands — see
+       PLAN-08-19.md Stage 3 handoff / F3Go30-1pqo.10's description for the split rationale. -->
   <div id="settingsModal" class="announce-overlay hidden">
     <div class="announce-modal">
       <h2>Menu</h2>
@@ -516,6 +517,7 @@
         <button type="button" class="settings-menu-item" id="settingsFaqBtn">FAQ</button>
         <button type="button" class="settings-menu-item" id="settingsBonusBtn">Log Bonus Points</button>
         <button type="button" class="settings-menu-item" id="settingsFeedbackBtn">Send Feedback</button>
+        <button type="button" class="settings-menu-item" id="settingsLogoutBtn">Logout</button>
       </div>
       <div class="announce-modal-actions">
         <button id="settingsCloseBtn" type="button">Close</button>
@@ -3403,6 +3405,7 @@
     var hasIdentity = !!state.f3Name;
     $('settingsBonusBtn').disabled = !hasIdentity;
     $('settingsFeedbackBtn').disabled = !hasIdentity;
+    $('settingsLogoutBtn').disabled = !hasIdentity;
     $('settingsModal').classList.remove('hidden');
   }
   function hideSettingsMenu_() { $('settingsModal').classList.add('hidden'); }
@@ -3452,6 +3455,20 @@
   });
   $('siteFeedbackCancelBtn').addEventListener('click', function() { $('siteFeedbackModal').classList.add('hidden'); });
   $('siteFeedbackDoneBtn').addEventListener('click', function() { $('siteFeedbackModal').classList.add('hidden'); });
+
+  // F3Go30-1pqo.10: client-only Logout — forgets the durable check-in token + snapshot (so this
+  // device stops silently resuming straight into check-in) but deliberately leaves
+  // go30SignupIdentity alone, unlike notYouLink's full clear, so the identify form still
+  // pre-fills name/email on the next visit. Reuses notYouLink's already-computed href
+  // (webapp/ns/contextDate, no id/token) rather than recomputing the same URL a second time —
+  // that navigation is what lands back on the identify form pre-filled (its fields are painted
+  // from `state`, itself loaded from the now-untouched go30SignupIdentity, on the next load).
+  // Full server-side token invalidation (PaxCache/spreadsheet) stays F3Go30-1pqo.2's scope.
+  $('settingsLogoutBtn').addEventListener('click', function() {
+    if ($('settingsLogoutBtn').disabled) return;
+    clearCheckinSnapshot_();
+    location.href = $('notYouLink').href;
+  });
   // F3Go30-5c2a.3: a client-minted idempotency key, stable across a hand-retried resubmission of
   // the exact same (unedited) report — the failure mode that produced three emails for one
   // report during F3Go30-5c2a: the server's send actually succeeded each time, but the client

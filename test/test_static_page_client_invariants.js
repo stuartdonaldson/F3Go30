@@ -731,4 +731,35 @@ function makeBannerHarness_(fromGas, opts) {
   assert.equal(h.signupReminderModalHidden(), true, 'the reminder must not stack on top of an active announcement splash');
 })();
 
+// ── F3Go30-1pqo.10: Logout menu entry (client-only — token/snapshot clear, identity kept) ─────
+//    Deliberately narrower than the deferred F3Go30-1pqo.2/833s.7 (server-side invalidation,
+//    identity also cleared) — see that issue's description for the split rationale.
+
+(function testStaticPageSettingsModalHasLogoutButton() {
+  var src = readStaticPage_();
+  var modalMatch = src.match(/<div id="settingsModal"[\s\S]*?<\/div>\s*<\/div>/);
+  assert.ok(modalMatch, '#settingsModal markup not found in index.html');
+  assert.match(modalMatch[0], /id="settingsLogoutBtn"/, '#settingsModal must contain a Logout menu item (#settingsLogoutBtn)');
+})();
+
+(function testStaticPageShowSettingsMenuGatesLogoutOnIdentity() {
+  var src = readStaticPage_();
+  var fnMatch = src.match(/function showSettingsMenu_\(\)[\s\S]*?\n  \}/);
+  assert.ok(fnMatch, 'showSettingsMenu_ not found in index.html');
+  assert.match(fnMatch[0], /settingsLogoutBtn'\)\.disabled = !hasIdentity/,
+    'showSettingsMenu_ must gate settingsLogoutBtn on hasIdentity, same as settingsBonusBtn/settingsFeedbackBtn');
+})();
+
+(function testStaticPageLogoutClearsSnapshotButPreservesIdentity() {
+  var src = readStaticPage_();
+  var fnMatch = src.match(/\$\('settingsLogoutBtn'\)\.addEventListener\('click', function\(\)[\s\S]*?\n  \}\);/);
+  assert.ok(fnMatch, "settingsLogoutBtn's click handler not found in index.html");
+  assert.match(fnMatch[0], /clearCheckinSnapshot_\(\)/,
+    'Logout must clear the token/snapshot via the existing clearCheckinSnapshot_() helper');
+  assert.doesNotMatch(fnMatch[0], /IDENTITY_STORAGE_KEY/,
+    'Logout must NOT touch go30SignupIdentity — name/email stay saved so the identify form pre-fills next time (deliberate deviation from 833s.7 AC#2)');
+  assert.match(fnMatch[0], /location\.href = \$\('notYouLink'\)\.href/,
+    "Logout must reuse notYouLink's already-computed (webapp/ns/contextDate, no id) href to land back on a pre-filled identify form, rather than recomputing it");
+})();
+
 console.log('test_static_page_client_invariants.js: all assertions passed');

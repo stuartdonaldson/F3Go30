@@ -27,6 +27,15 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+---
+
+## v2.6 — Tap-name menu, cross-device check-in consistency, signup goal requirements (2026-08-27)
+
+The 2.6 series rolls up everything landed since v2.5.0: a new tap-your-name menu (bonus points,
+feedback, and logout in one place), a "sign up for next month?" nudge, tighter signup validation,
+bonus-link reuse detection, automatic reconnect after a dropped connection, and a fix for
+check-ins occasionally disagreeing with themselves across devices.
+
 - **Fixed the check-in page occasionally disagreeing with itself** — the day calendar could show a
   check-in as still pending when the today/yesterday buttons (and the dashboard) already showed it
   done, if you'd paged the calendar to another month right before checking in. Separately, on a
@@ -44,8 +53,9 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   into a second entry for the week, you'll see a plain-language notice (both at save time and in
   your bonus list) that it won't add extra points, instead of it silently not counting.
 - **New menu — tap your name** in the app header for quick access to How It Works, FAQ, Log Bonus
-  Points, and Send Feedback (a rating + note that goes straight to your Site Q, with your name and
-  app version attached so they can track it down).
+  Points, Send Feedback (a rating + note that goes straight to your Site Q, with your name and
+  app version attached so they can track it down), and Logout (forgets you on this device but
+  keeps your name and email remembered, so next time it's already filled in).
 - **A "Sign up for next month?" popup** now appears once next month's tracker is ready if you
   haven't signed up for it yet — "Sign Up" drops you straight into the signup form, already filled
   in from this month's goals; "Remind me later" hides it until tomorrow.
