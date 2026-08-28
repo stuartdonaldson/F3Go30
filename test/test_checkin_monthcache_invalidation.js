@@ -2,16 +2,18 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// F3Go30-0gx6: state.monthCache is populated at identify time by prefetchDashboard_(), BEFORE
-// any check-in made this session. F3Go30-5nfj.5 replaced the original invalidate-and-hope fix
-// (delete the cached month, hope the in-flight prefetch resolves before it's read again) with a
-// write-through patch: the checkin submit functions now call applyOwnDayWrite_(dateIso, value)
-// synchronously, BEFORE the callApi round trip, so the value lands either straight in the
-// already-cached payload or in state.pendingSelfWrites for loadDashboard_ to apply the moment its
-// own in-flight fetch resolves — closing the race regardless of arrival order. A failed write
-// reverts via revertOwnDayWrite_, which still uses invalidateMonthCacheFor_ (a real fetch is
-// safest after an unknown-state failure). No jsdom harness exists for this <script> file (see
-// test_static_page_client_invariants.js's precedent), so this is a static-shape check.
+// F3Go30-0gx6: state.board (renamed from state.monthCache by F3Go30-os03, which merged it with
+// the former state.calGridCache into one per-monthKey store) is populated at identify time by
+// prefetchDashboard_(), BEFORE any check-in made this session. F3Go30-5nfj.5 replaced the
+// original invalidate-and-hope fix (delete the cached month, hope the in-flight prefetch resolves
+// before it's read again) with a write-through patch: the checkin submit functions now call
+// applyOwnDayWrite_(dateIso, value) synchronously, BEFORE the callApi round trip, so the value
+// lands either straight in the already-cached payload or in state.pendingSelfWrites for
+// loadDashboard_ to apply the moment its own in-flight fetch resolves — closing the race
+// regardless of arrival order. A failed write reverts via revertOwnDayWrite_, which still uses
+// invalidateMonthCacheFor_ (a real fetch is safest after an unknown-state failure). No jsdom
+// harness exists for this <script> file (see test_static_page_client_invariants.js's precedent),
+// so this is a static-shape check.
 
 function readHtml_(name) {
   return fs.readFileSync(path.join(__dirname, '..', 'static-pages', 'src', name), 'utf8');
@@ -21,7 +23,7 @@ function readHtml_(name) {
   var src = readHtml_('index.html');
   var fnMatch = src.match(/function invalidateMonthCacheFor_\([\s\S]*?\n  \}/);
   assert.ok(fnMatch, 'invalidateMonthCacheFor_ not found in static-pages/src/index.html');
-  assert.match(fnMatch[0], /delete state\.monthCache\[/, 'invalidateMonthCacheFor_ must delete the affected monthCache entry');
+  assert.match(fnMatch[0], /delete state\.board\[/, 'invalidateMonthCacheFor_ must delete the affected state.board entry');
 })();
 
 (function testApplyOwnDayWritePatchesCacheOrQueuesPending() {

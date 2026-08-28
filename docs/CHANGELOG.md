@@ -27,6 +27,12 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+- **Fixed the check-in page occasionally disagreeing with itself** — the day calendar could show a
+  check-in as still pending when the today/yesterday buttons (and the dashboard) already showed it
+  done, if you'd paged the calendar to another month right before checking in. Separately, on a
+  phone left open in the background for a while, checking in on a different device could get
+  silently overwritten back to the phone's old answer the next time you opened the app — that's
+  fixed too; the newest check-in now always wins, on every device.
 - **Automatic reconnect after a "Couldn't reach the server" banner** — the app now quietly
   retries in the background and clears the banner itself once your connection is back, instead
   of needing a manual refresh. If it's not back after a couple of minutes, a "Reload page" button

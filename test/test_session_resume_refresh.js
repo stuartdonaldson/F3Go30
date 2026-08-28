@@ -45,7 +45,7 @@ function makeResumeHarness_(callApiImpl, opts) {
   var factory = new Function(
     'state', 'SAVED_IDENTITY_TOKEN', 'callApi', 'applyServerConfig_', 'applySignupReminderState_',
     'reconcileWithLocalWrites_', 'applyIdentifySuccess_', 'saveCheckinSnapshot_', 'prefetchDashboard_',
-    'document', 'Date',
+    'document', 'Date', 'requestGen_',
     body + '\nreturn { silentResumeRefresh_: silentResumeRefresh_ };'
   );
   var fns = factory(
@@ -54,12 +54,15 @@ function makeResumeHarness_(callApiImpl, opts) {
     callApiImpl || function() { throw new Error('callApi should not have been called'); },
     function(cfg) { applyServerConfigCalls.push(cfg); },
     function(reminder) { signupReminderCalls.push(reminder); },
-    function(res) { reconcileCalls.push(res); },
+    function(res, issuedGen) { reconcileCalls.push(res); },
     function(res, o) { applyIdentifySuccessCalls.push({ res: res, opts: o }); },
     function(token, res) { saveSnapshotCalls.push({ token: token, res: res }); },
     function() { prefetchCallCount++; },
     fakeDocument,
-    fakeDate
+    fakeDate,
+    // F3Go30-os03 D5: silentResumeRefresh_ now does `++requestGen_` to capture this read's
+    // issuedGen — a real (if here test-local) module-level counter, not part of what's under test.
+    0
   );
 
   return {

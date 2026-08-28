@@ -94,11 +94,11 @@ function monthKey_() {
 function baseState_(cachedForToday) {
   var state = {
     f3Name: 'Test PAX', email: 'test@example.com', resolvedContext: null,
-    monthCache: {}, pendingSelfWrites: {}, viewDate: new Date(),
+    board: {}, pendingSelfWrites: {}, viewDate: new Date(),
     dashboardLoading: false, dashboardPrefetchPromise: null,
   };
   if (cachedForToday) {
-    state.monthCache[monthKey_()] = { monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0 };
+    state.board[monthKey_()] = { monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0 };
   }
   return state;
 }

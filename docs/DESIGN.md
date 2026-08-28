@@ -345,12 +345,14 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
   - **Dashboard prefetch (qi26.2):** `CheckinApp.html` fires `prefetchDashboard_()` (a `silent`
     `loadDashboard_` call using the just-returned handle) immediately after identify resolves,
     while the PAX is still reading the check-in step. The `dashboardBtn` click handler renders
-    from `state.monthCache` (or rides the in-flight prefetch promise) instead of blocking on a
+    from `state.board` (renamed from `state.monthCache` by F3Go30-os03, which also merged in the
+    former `state.calGridCache` — see that issue's DESIGN field for the full client-side state
+    consolidation) — or rides the in-flight prefetch promise — instead of blocking on a
     fresh round trip, so "Continue to Dashboard" is effectively instant on the common path.
     - **Client-side write-through (F3Go30-5nfj.5):** the prefetch above raced a same-session
       check-in write: if the PAX clicked Hit/Miss before the background prefetch resolved,
       `invalidateMonthCacheFor_`'s delete was a no-op (nothing cached yet), and the prefetch then
-      resolved afterward and unconditionally overwrote `state.monthCache` with a payload that
+      resolved afterward and unconditionally overwrote `state.board` with a payload that
       predated the write — the dashboard rendered stale until an unrelated nav forced a real
       refetch. Fixed by mirroring the server-side write-through pattern (PaxCache, bonus cache)
       client-side: `applyOwnDayWrite_` patches the PAX's own day directly into an already-cached

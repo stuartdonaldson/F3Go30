@@ -718,7 +718,7 @@ function testRepaintReloadsBonusListWhenOnBonusStep() {
 }
 
 function testRepaintReloadsCalendarWhenAdvancedGridOpen() {
-  var h = makeRepaintHarness_({ currentStep: 'checkin', advancedOpen: true, calMonthKey: '2026-08', calGridCache: { '2026-08': {} } });
+  var h = makeRepaintHarness_({ currentStep: 'checkin', advancedOpen: true, calMonthKey: '2026-08', board: { '2026-08': {} } });
   h.repaint();
   assert.equal(h.loadCalls.loadCalMonth_, 1);
 }

@@ -1325,6 +1325,13 @@
   // indicator must stay visible until the LAST outstanding request settles, not just the first.
   var pendingRequestCount_ = 0;
 
+  // F3Go30-os03 D5/Addendum 3: a monotonic, never-reset counter ordering identify reads against
+  // this PAX's own write acks — a plain integer, not Date.now(), because a wall clock is not
+  // monotonic (NTP correction, DST, a manual clock change) and the scenario this exists for is an
+  // installed PWA left open for days, exactly where a backwards jump stops being theoretical. See
+  // reconcileWithLocalWrites_ for how it's used.
+  var requestGen_ = 0;
+
   function updateSyncingIndicator_() {
     var el = $('checkinSyncingNote');
     if (el) el.classList.toggle('hidden', pendingRequestCount_ <= 0);
@@ -1647,7 +1654,7 @@
    * control is still there and working, and a write is never auto-resubmitted. */
   function repaintCurrentView_() {
     if (state.currentStep === 'checkin' && state.advancedOpen && state.calMonthKey) {
-      delete state.calGridCache[state.calMonthKey];
+      delete state.board[state.calMonthKey];
       loadCalMonth_(state.calMonthKey);
     } else if (state.currentStep === 'dashboard') {
       loadDashboard_(state.viewDate ? isoDate_(state.viewDate) : undefined);
@@ -1762,9 +1769,22 @@
     email: (savedIdentity && savedIdentity.email) || '',
     trackerUrl: '',
     resolvedContext: null,
-    monthCache: {},
+    // F3Go30-os03 D1: the ONE client-side per-monthKey board record, replacing the former
+    // state.monthCache (dashboard payload) AND state.calGridCache (monthGrid response) — see
+    // patchBoardDayFacts_/boardMonthGrid_ below. A record's fields are optional: a partial record
+    // (e.g. identify-only, no score/streak/myTeam/paxBoard yet) is a MISS for the fields it
+    // lacks, never a cached empty (invariant 8, docs/pax-data-model-and-contract.md §4).
+    board: {},
     pendingSelfWrites: {}, // dateIso -> value, held only while its month isn't cached yet (F3Go30-5nfj.5)
-    locallyWrittenIso: {}, // dateIso -> status string ('done'/'missed'/'pending'/'absent'), tracks writes made this pageview so a live identify response can't clobber them with stale data (F3Go30-5nfj.5)
+    // dateIso -> status string ('done'/'missed'/'pending'/'absent'), tracks writes made this
+    // pageview so a live identify response can't clobber them with stale data (F3Go30-5nfj.5).
+    // F3Go30-os03 D5: an ACKED entry stops outranking the server once a read issued after the ack
+    // lands (writeGenByIso_ below carries the generation comparison) — see reconcileWithLocalWrites_.
+    locallyWrittenIso: {},
+    // F3Go30-os03 D5: dateIso -> the requestGen_ value at the moment this date's write last acked.
+    // Compared against a read's own issuedGen in reconcileWithLocalWrites_ to tell "this response
+    // predates the write" (keep the overlay) from "this response already reflects it" (drop it).
+    writeGenByIso_: {},
     viewDate: null,
     dashboardLoading: false,
     dashboardPrefetchPromise: null,
@@ -1790,12 +1810,11 @@
     availableMonths: [],
     registeredMonthKeys: [],
     calMonthKey: null,
-    calGridCache: {},
     calLoading: false,
     // Pax-detail popup (F3Go30 "click a PAX" feature): "f3Name|YYYY-MM" -> goals/bonus-entries
     // payload, so cycling prev/next through a team with stepPaxDetail_ re-shows an already-
     // fetched teammate instantly instead of re-paying the round trip every time. Same
-    // stale-while-revalidate shape as monthCache/calGridCache above: a cache hit paints
+    // stale-while-revalidate shape as state.board above: a cache hit paints
     // immediately, then a background refetch still runs and repaints if it lands while that same
     // PAX is still the one on screen.
     paxGoalsCache: {},
@@ -2209,10 +2228,30 @@
 
   /** F3Go30-5nfj.5: any date the PAX wrote locally this pageview (state.locallyWrittenIso) wins
    * over a live identify response that may predate it — mutates res in place before it's handed
-   * to applyIdentifySuccess_. */
-  function reconcileWithLocalWrites_(res) {
+   * to applyIdentifySuccess_.
+   *
+   * F3Go30-os03 D5/Addendum 2-3 (Finding A): the overlay used to win FOREVER — set before the
+   * write's round trip, deleted only on failure, never cleared on success — so once a write acked
+   * it outranked every later server response for the rest of the pageview, including one from a
+   * SECOND device that had since moved the truth on (cross-device split-brain that never self-
+   * healed). Since F3Go30-xg8f made the check-in write re-read the row before acking, any read
+   * ISSUED AFTER that ack necessarily already contains it, so the overlay's job ends there.
+   * `issuedGen` is this read's position in the requestGen_ sequence (captured by the caller
+   * immediately before firing the identify request); writeGenByIso_[dateIso] is the sequence
+   * position at the moment that date's write acked. An entry whose write acked at or after this
+   * read was issued is still ahead of (or concurrent with) it — the response predates the write,
+   * so the overlay is kept. An entry whose write acked BEFORE this read was issued is already
+   * reflected in the response — the overlay is dropped instead of clobbering fresher server truth.
+   * Do not "just clear on ack" instead of this comparison — that reintroduces the original
+   * F3Go30-5nfj.5 race (a stale in-flight read landing AFTER the ack and clobbering the write). */
+  function reconcileWithLocalWrites_(res, issuedGen) {
     var local = state.locallyWrittenIso;
     if (!local || !Object.keys(local).length) return;
+    Object.keys(local).forEach(function(dateIso) {
+      var writeGen = state.writeGenByIso_[dateIso];
+      if (writeGen !== undefined && writeGen < issuedGen) delete local[dateIso];
+    });
+    if (!Object.keys(local).length) return;
     (res.monthGrid || []).forEach(function(entry) {
       if (Object.prototype.hasOwnProperty.call(local, entry.dateIso)) entry.status = local[entry.dateIso];
     });
@@ -2280,8 +2319,16 @@
     saveIdentityToStorage_(res.f3Name, res.email);
     saveTokenToStorage_(res.identityToken);
     if (!opts.preserveView) {
-      state.monthCache = {};
+      // F3Go30-os03 D6: reset the whole board plus every piece of this-pageview write-tracking
+      // state together — leaving pendingSelfWrites/locallyWrittenIso/writeGenByIso_ behind on a
+      // re-identify was a latent bug (found while designing D6): a DIFFERENT PAX typing their name
+      // in the same pageview would otherwise inherit the previous PAX's writes through
+      // reconcileWithLocalWrites_/applyOwnDayWrite_.
+      state.board = {};
       state.viewDate = null;
+      state.pendingSelfWrites = {};
+      state.locallyWrittenIso = {};
+      state.writeGenByIso_ = {};
     }
     updateHeaderIdentity_(res.f3Name, res.team, res.monthLabel);
     $('checkinHeading').textContent = (res.firstUse ? 'Welcome, ' : 'Welcome back, ') + res.f3Name + '!';
@@ -2291,26 +2338,33 @@
     $('yesterdayBlock').classList.toggle('hidden', !res.yesterdayAvailable);
     if (res.yesterdayAvailable) renderCheckinStatus_('yesterday', res.yesterdayStatus);
 
-    state.monthGrid = res.monthGrid || [];
+    // F3Go30-os03 D1/D3: identify's own monthGrid is this PAX's day facts for ITS OWN month —
+    // always merge them into that month's board slot (never gated on preserveView: this is fresh
+    // authoritative data regardless of which month the calendar happens to be parked on), then
+    // derive state.monthGrid for whatever month IS actually parked (state.calMonthKey) from the
+    // board — never a direct assignment from res.monthGrid, which is what made state.monthGrid a
+    // mutable alias into a cache entry (the P1 bug this issue fixes).
+    var identifyMonthGrid = res.monthGrid || [];
+    var todayD = new Date();
+    var identifyMonthKey = (identifyMonthGrid[0] && identifyMonthGrid[0].dateIso.slice(0, 7)) || monthKeyOf_(todayD);
+    patchBoardDayFacts_(identifyMonthKey, identifyMonthGrid);
     state.todayStatus = res.todayStatus;
     state.yesterdayStatus = res.yesterdayStatus;
     state.yesterdayAvailable = !!res.yesterdayAvailable;
-    var todayD = new Date();
     state.todayIso = isoDate_(todayD);
     var yesterdayD = new Date(todayD);
     yesterdayD.setDate(yesterdayD.getDate() - 1);
     state.yesterdayIso = isoDate_(yesterdayD);
     // Month-to-month navigation (F3Go30-k5fn.2): always take the freshest available/registered
-    // lists from the server, but only reset which month the calendar is parked on (and its cache)
-    // on a genuine fresh identify — not on a preserveView reconciliation, which must not yank a
-    // PAX back to their anchored month if they had already paged elsewhere.
+    // lists from the server, but only reset which month the calendar is parked on on a genuine
+    // fresh identify — not on a preserveView reconciliation, which must not yank a PAX back to
+    // their anchored month if they had already paged elsewhere.
     state.availableMonths = res.availableMonths || [];
     state.registeredMonthKeys = res.registeredMonthKeys || [];
     if (!opts.preserveView || !state.calMonthKey) {
-      state.calMonthKey = (state.monthGrid[0] && state.monthGrid[0].dateIso.slice(0, 7)) || monthKeyOf_(todayD);
-      state.calGridCache = {};
-      state.calGridCache[state.calMonthKey] = { monthKey: state.calMonthKey, monthGrid: state.monthGrid, registered: true };
+      state.calMonthKey = identifyMonthKey;
     }
+    state.monthGrid = boardMonthGrid_(state.calMonthKey);
     if (!opts.preserveView) {
       state.selectedDateIso = null;
       state.lastEditedDayIso = null;
@@ -2426,12 +2480,13 @@
       $('step-identify').classList.add('hidden');
       $('step-tokenLoading').classList.remove('hidden');
     }
+    var tokenIdentifyIssuedGen_ = ++requestGen_; // F3Go30-os03 D5 — this read's position in the sequence
     callApi('identify', { token: SAVED_IDENTITY_TOKEN })
       .then(function(res) {
         if (res.config) applyServerConfig_(res.config);
         applySignupReminderState_(res.signupReminder);
         if (res.matched) {
-          reconcileWithLocalWrites_(res);
+          reconcileWithLocalWrites_(res, tokenIdentifyIssuedGen_);
           applyIdentifySuccess_(res, { preserveView: paintedFromSnapshot_ });
           saveCheckinSnapshot_(SAVED_IDENTITY_TOKEN, res);
         } else if (res.knownPaxNotRegistered) {
@@ -2492,8 +2547,20 @@
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
-  function valueToCheckinStatus_(value) {
-    return value === 1 ? 'done' : value === 0 ? 'missed' : 'pending';
+  /** F3Go30-os03 D2: the ONE value->status converter, total over the numeric dayValues
+   * vocabulary (1/0/null/-1) state.board stores day facts in — collapses the former
+   * valueToCheckinStatus_ (today/yesterday) and valueToMonthGridStatus_ (calendar), which had
+   * silently drifted: they disagreed on -1 ('pending' vs 'absent'), masked only because
+   * submitCheckin_ never passes -1. -1 never reaches the today/yesterday check-in UI for the same
+   * reason, so using the richer (calendar) mapping everywhere is safe there too. */
+  function valueToStatus_(value) {
+    return value === 1 ? 'done' : value === 0 ? 'missed' : value === -1 ? 'absent' : 'pending';
+  }
+
+  /** Inverse of valueToStatus_ — needed only where identify/monthGrid responses (string
+   * vocabulary) are ingested into state.board (numeric vocabulary, D2). See patchBoardDayFacts_. */
+  function statusToValue_(status) {
+    return status === 'done' ? 1 : status === 'missed' ? 0 : status === 'absent' ? -1 : null;
   }
 
   /** Shared WHO/WHAT/HOW row markup for goals.who/what/how — blank lines dropped. Returns ''
@@ -2691,15 +2758,22 @@
     hideApiError_();
     setButtonLoading_(btn, true, 'Saving…');
     var dateIso = day === 'today' ? state.todayIso : state.yesterdayIso;
-    var status = valueToCheckinStatus_(value);
+    var status = valueToStatus_(value);
     applyOwnDayWrite_(dateIso, value);
     state.locallyWrittenIso[dateIso] = status;
     callApi('checkin', { f3Name: state.f3Name, email: state.email, day: day, value: value, resolvedContext: state.resolvedContext })
       .then(function() {
+        state.writeGenByIso_[dateIso] = requestGen_; // F3Go30-os03 D5 — this write's ack position
         renderCheckinStatus_(day, status);
         state.lastEditedDayIso = dateIso;
         if (day === 'today') state.todayStatus = status; else state.yesterdayStatus = status;
-        updateMonthGridEntry_(dateIso, status);
+        // F3Go30-os03 D3/D4: state.board was already patched (applyOwnDayWrite_, above, before the
+        // round trip) regardless of which month the calendar is parked on — this just refreshes
+        // the CURRENTLY PAINTED grid from it (a fresh derive, never a mutated alias; see
+        // boardMonthGrid_). Replaces the former updateMonthGridEntry_, which mutated state.monthGrid
+        // directly and silently no-opped whenever the calendar was parked on a different month
+        // than dateIso's (the P1 cross-month split-brain this issue fixes).
+        state.monthGrid = boardMonthGrid_(state.calMonthKey);
         if (state.advancedOpen) {
           updateCalCellStatus_(dateIso, status);
           if (state.selectedDateIso === dateIso) renderSelectionPanel_(dateIso);
@@ -2732,21 +2806,37 @@
     absent: 'Marked Failed',
   };
 
-  function valueToMonthGridStatus_(value) {
-    return value === 1 ? 'done' : value === 0 ? 'missed' : value === -1 ? 'absent' : 'pending';
-  }
-
   function monthGridEntryFor_(dateIso) {
     return (state.monthGrid || []).filter(function(e) { return e.dateIso === dateIso; })[0] || null;
   }
 
-  function updateMonthGridEntry_(dateIso, status) {
-    var entry = monthGridEntryFor_(dateIso);
-    if (entry) entry.status = status;
+  function invalidateMonthCacheFor_(dateIso) {
+    delete state.board[monthKeyOf_(parseIsoDate_(dateIso))];
   }
 
-  function invalidateMonthCacheFor_(dateIso) {
-    delete state.monthCache[monthKeyOf_(parseIsoDate_(dateIso))];
+  /** F3Go30-os03 D1/D3: merges a {dateIso, status}[] response (identify's or the monthGrid RPC's
+   * shape) into state.board[monthKey]'s day-facts fields, creating the record if absent. Only
+   * touches dayDates/dayValues — never clobbers dashboard-only fields (score, streak, myTeam,
+   * paxBoard, ...) a prior dashboard fetch may already have populated for this monthKey
+   * (invariant 8, docs/pax-data-model-and-contract.md §4: a field the store doesn't have yet is a
+   * miss, not a cached empty). */
+  function patchBoardDayFacts_(monthKey, entries) {
+    var rec = state.board[monthKey] || (state.board[monthKey] = { monthKey: monthKey });
+    rec.dayDates = entries.map(function(e) { return e.dateIso; });
+    rec.dayValues = entries.map(function(e) { return statusToValue_(e.status); });
+  }
+
+  /** F3Go30-os03 D3: the one accessor that derives a calendar's display grid for a monthKey from
+   * state.board — always a fresh array of fresh objects (never a reference into the stored
+   * record), so nothing downstream can corrupt the board by mutating what this returns. Returns
+   * [] on a miss (no day facts known yet for this monthKey), matching the pre-consolidation
+   * empty-grid signal renderCalSignupPrompt_/renderCalendar_ already handle. */
+  function boardMonthGrid_(monthKey) {
+    var rec = state.board[monthKey];
+    if (!rec || !rec.dayDates || !rec.dayValues) return [];
+    return rec.dayDates.map(function(dateIso, i) {
+      return { dateIso: dateIso, status: valueToStatus_(rec.dayValues[i]) };
+    });
   }
 
   /** F3Go30-5nfj.5: patches a just-written (or about-to-be-written) value straight into every
@@ -2776,7 +2866,7 @@
    * dashboard reflects it even if the PAX navigates there before the write finishes. */
   function applyOwnDayWrite_(dateIso, value) {
     var monthKey = monthKeyOf_(parseIsoDate_(dateIso));
-    var cached = state.monthCache[monthKey];
+    var cached = state.board[monthKey];
     if (cached) {
       patchOwnDayIntoPayload_(cached, dateIso, value);
     } else {
@@ -2872,8 +2962,13 @@
     $('calNextMonthBtn').disabled = state.calLoading || !canGoForward;
   }
 
-  function applyCalGridPayload_(res) {
-    state.monthGrid = res.monthGrid || [];
+  /** F3Go30-os03 D3: takes an explicit monthKey (never trusts whatever happens to already be
+   * parked) and derives its display grid from state.board via boardMonthGrid_ — this and
+   * loadCalMonth_'s cache-hit check below are the two places that used to read/assign
+   * state.calGridCache/res.monthGrid directly, which is what made state.monthGrid a mutable alias
+   * into a cache entry (P1). */
+  function applyCalGridPayload_(monthKey) {
+    state.monthGrid = boardMonthGrid_(monthKey);
     $('calSignupPrompt').classList.add('hidden');
     $('calEditableArea').classList.remove('hidden');
     renderCalendar_();
@@ -2896,9 +2991,12 @@
 
   /** Single seam for putting any month (identify's own, or a paged-to one) on screen: consults
    * state.registeredMonthKeys for the signup-gate decision (AC5), then either serves
-   * state.calGridCache or fetches via the monthGrid action (F3Go30-k5fn.1) — never a second
-   * calendar renderer (AC9): both the registered and just-loaded paths funnel into
-   * applyCalGridPayload_, which calls the same renderCalendar_ the initial month uses. */
+   * state.board or fetches via the monthGrid action (F3Go30-k5fn.1) — never a second calendar
+   * renderer (AC9): both the registered and just-loaded paths funnel into applyCalGridPayload_,
+   * which calls the same renderCalendar_ the initial month uses.
+   * F3Go30-os03 A11: a month's day facts already sitting in state.board — e.g. fetched earlier by
+   * dashboard navigation, which shares this same store — serve straight from the accessor with no
+   * monthGrid RPC at all; state.board unifies what used to be two separate per-month caches. */
   function loadCalMonth_(monthKey) {
     state.calMonthKey = monthKey;
     if ((state.registeredMonthKeys || []).indexOf(monthKey) === -1) {
@@ -2906,9 +3004,9 @@
       renderCalMonthNav_();
       return Promise.resolve();
     }
-    var cached = state.calGridCache[monthKey];
-    if (cached) {
-      applyCalGridPayload_(cached);
+    var cached = state.board[monthKey];
+    if (cached && cached.dayDates && cached.dayValues) {
+      applyCalGridPayload_(monthKey);
       renderCalMonthNav_();
       return Promise.resolve();
     }
@@ -2917,9 +3015,12 @@
     renderCalMonthNav_();
     return callApi('monthGrid', { f3Name: state.f3Name, email: state.email, monthKey: monthKey, resolvedContext: state.resolvedContext })
       .then(function(res) {
-        state.calGridCache[monthKey] = res;
-        if (res.registered) applyCalGridPayload_(res);
-        else renderCalSignupPrompt_(monthKey);
+        if (res.registered) {
+          patchBoardDayFacts_(monthKey, res.monthGrid || []);
+          applyCalGridPayload_(monthKey);
+        } else {
+          renderCalSignupPrompt_(monthKey);
+        }
       })
       .catch(function(err) { showApiError_('monthGrid', err); })
       .finally(function() {
@@ -3012,12 +3113,15 @@
     hideApiError_();
     setButtonLoading_(btn, true, 'Saving…');
     var dateIso = state.selectedDateIso;
-    var status = valueToMonthGridStatus_(value);
+    var status = valueToStatus_(value);
     applyOwnDayWrite_(dateIso, value);
     state.locallyWrittenIso[dateIso] = status;
     callApi('checkin', { f3Name: state.f3Name, email: state.email, day: dateIso, value: value, resolvedContext: state.resolvedContext })
       .then(function() {
-        updateMonthGridEntry_(dateIso, status);
+        state.writeGenByIso_[dateIso] = requestGen_; // F3Go30-os03 D5 — this write's ack position
+        // F3Go30-os03 D3/D4: refresh the currently-painted grid from state.board (see submitCheckin_'s
+        // matching comment) — dateIso === state.selectedDateIso, always within the parked month here.
+        state.monthGrid = boardMonthGrid_(state.calMonthKey);
         updateCalCellStatus_(dateIso, status);
         renderSelectionPanel_(dateIso);
         state.lastEditedDayIso = dateIso;
@@ -3070,7 +3174,7 @@
   $('dashboardBtn').addEventListener('click', function() {
     var btn = this;
     var todayIso = isoDate_(new Date());
-    var cached = state.monthCache[monthKeyOf_(new Date())];
+    var cached = state.board[monthKeyOf_(new Date())];
     if (cached && cached.dayDates.indexOf(todayIso) !== -1) {
       renderDashboard_(cached, cached.dayDates.indexOf(todayIso));
       revalidateDashboard_();
@@ -3079,7 +3183,7 @@
     setButtonLoading_(btn, true, 'Loading…');
     var pending = state.dashboardPrefetchPromise
       ? state.dashboardPrefetchPromise.then(function() {
-          var c = state.monthCache[monthKeyOf_(new Date())];
+          var c = state.board[monthKeyOf_(new Date())];
           if (c && c.dayDates.indexOf(todayIso) !== -1) {
             renderDashboard_(c, c.dayDates.indexOf(todayIso));
             return;
@@ -3477,7 +3581,7 @@
         var gatedMonthKey = calSignupGateMonthKey_;
         calSignupGateMonthKey_ = null;
         if ((state.registeredMonthKeys || []).indexOf(gatedMonthKey) === -1) state.registeredMonthKeys.push(gatedMonthKey);
-        delete state.calGridCache[gatedMonthKey];
+        delete state.board[gatedMonthKey];
         if (state.calMonthKey === gatedMonthKey) loadCalMonth_(gatedMonthKey);
       }
     }).catch(function(err) {
@@ -4217,7 +4321,7 @@
             delete state.pendingSelfWrites[dateIso];
           }
         });
-        state.monthCache[payload.monthKey] = payload;
+        state.board[payload.monthKey] = payload;
         if (!silent) renderDashboard_(payload, payload.viewDayIndex);
         return payload;
       })
@@ -4253,7 +4357,7 @@
       // transport banner is stale and can be cleared. If revalidate fails, catch below
       // keeps the banner up so cached rendering never masks an ongoing outage.
       hideApiError_();
-      var fresh = state.monthCache[monthKeyOf_(new Date())];
+      var fresh = state.board[monthKeyOf_(new Date())];
       if (fresh && fresh.dayDates.indexOf(todayIso) !== -1 &&
           state.viewDate && isoDate_(state.viewDate) === todayIso) {
         renderDashboard_(fresh, fresh.dayDates.indexOf(todayIso));
@@ -4269,7 +4373,7 @@
     var todayClient = new Date();
     if (newDate > todayClient && isoDate_(newDate) !== isoDate_(todayClient)) return;
 
-    var cached = state.monthCache[monthKeyOf_(newDate)];
+    var cached = state.board[monthKeyOf_(newDate)];
     if (cached) {
       var idx = cached.dayDates.indexOf(isoDate_(newDate));
       if (idx === -1) { loadDashboard_(isoDate_(newDate)); return; }
@@ -4505,7 +4609,7 @@
     setButtonLoading_(btn, true, 'Saving…');
     callApi(action, payload)
       .then(function(res) {
-        // Bonus totals are baked into the cached per-month dashboard payload (see monthCache
+        // Bonus totals are baked into the cached per-month dashboard payload (see state.board
         // above); a save here would otherwise leave the dashboard showing pre-edit bonus totals
         // until the user navigates months, mirroring the checkin invalidation pattern.
         invalidateMonthCacheFor_(payload.whenIso);
@@ -4547,6 +4651,7 @@
     var now = Date.now();
     if (now - lastResumeRefreshAt_ < RESUME_REFRESH_THROTTLE_MS_) return;
     lastResumeRefreshAt_ = now;
+    var resumeIssuedGen_ = ++requestGen_; // F3Go30-os03 D5 — this read's position in the sequence
     callApi('identify', { token: SAVED_IDENTITY_TOKEN })
       .then(function(res) {
         // Token went stale (revoked) while parked, or a plain miss — leave the current display
@@ -4554,7 +4659,7 @@
         if (!res.matched) return;
         if (res.config) applyServerConfig_(res.config);
         applySignupReminderState_(res.signupReminder);
-        reconcileWithLocalWrites_(res);
+        reconcileWithLocalWrites_(res, resumeIssuedGen_);
         applyIdentifySuccess_(res, { preserveView: true });
         saveCheckinSnapshot_(SAVED_IDENTITY_TOKEN, res);
         prefetchDashboard_();

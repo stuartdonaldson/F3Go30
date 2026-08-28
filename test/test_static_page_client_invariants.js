@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { readStaticPage_ } = require('./helpers/staticPageExtract');
+const { readStaticPage_, extractFunction_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-giqm: static-pages/src/index.html was originally built as a "faithful port" of the
 // GAS-hosted CheckinApp.html + IdentityCore.html (per static-checkin.spec.js's header). DR-04
@@ -122,7 +122,7 @@ const { readStaticPage_ } = require('./helpers/staticPageExtract');
   var src = readStaticPage_();
   var fnMatch = src.match(/function invalidateMonthCacheFor_\([\s\S]*?\n  \}/);
   assert.ok(fnMatch, 'invalidateMonthCacheFor_ not found in index.html');
-  assert.match(fnMatch[0], /delete state\.monthCache\[/, 'invalidateMonthCacheFor_ must delete the affected monthCache entry');
+  assert.match(fnMatch[0], /delete state\.board\[/, 'invalidateMonthCacheFor_ must delete the affected state.board entry');
 })();
 
 (function testStaticPageApplyOwnDayWritePatchesCacheOrQueuesPending() {
@@ -205,8 +205,17 @@ function makeCalNavHarness_(state, callApiImpl) {
     }
     return elements[id];
   }
+  // F3Go30-os03: applyCalGridPayload_ (inside the cal-nav block) now derives state.monthGrid from
+  // state.board via boardMonthGrid_, and loadCalMonth_'s network branch writes into state.board
+  // via patchBoardDayFacts_ — both real functions, extracted and concatenated ahead of the cal-nav
+  // block so they share its closure over `state` (a fake would just re-implement D2/D3 and prove
+  // nothing about them).
+  var src = readStaticPage_();
+  var boardHelpers = [extractFunction_(src, 'valueToStatus_'), extractFunction_(src, 'statusToValue_'),
+    extractFunction_(src, 'patchBoardDayFacts_'), extractFunction_(src, 'boardMonthGrid_')].join('\n');
   var factory = new Function('state', '$', 'callApi', 'hideApiError_', 'renderCalendar_', 'renderSelectionPanel_', 'showApiError_',
-    extractCalNavBlock_() + '\nreturn { renderCalMonthNav_: renderCalMonthNav_, loadCalMonth_: loadCalMonth_, navigateCalMonth_: navigateCalMonth_ };'
+    boardHelpers + '\n' + extractCalNavBlock_() +
+      '\nreturn { renderCalMonthNav_: renderCalMonthNav_, loadCalMonth_: loadCalMonth_, navigateCalMonth_: navigateCalMonth_ };'
   );
   var fns = factory(
     state, fakeEl_,
@@ -228,7 +237,7 @@ function baseNavState_() {
       { monthKey: '2026-08', label: 'August 2026' },
     ],
     registeredMonthKeys: ['2026-06', '2026-07'],
-    calGridCache: {},
+    board: {},
     monthGrid: [],
     selectedDateIso: null,
     todayIso: '2026-07-15',
@@ -303,6 +312,27 @@ function baseNavState_() {
     assert.equal(calledWith.action, 'monthGrid');
     assert.equal(calledWith.payload.monthKey, '2026-06');
     assert.deepEqual(state.monthGrid, [{ dateIso: '2026-06-01', status: 'done' }]);
+  });
+})();
+
+// F3Go30-os03 A11: a month whose day facts are ALREADY in state.board — e.g. fetched earlier by
+// dashboard navigation, which shares this same store post-consolidation — serves straight from
+// boardMonthGrid_ with NO monthGrid RPC, even though state.board didn't exist as a per-month
+// calendar cache before this month was ever paged to in the calendar.
+(function testCalNavServesFromBoardWithNoMonthGridRpcWhenDayFactsAlreadyPresent() {
+  var state = baseNavState_();
+  state.calMonthKey = '2026-05';
+  state.registeredMonthKeys = ['2026-05', '2026-06'];
+  // Simulate a prior DASHBOARD fetch for 2026-06 (not a calendar visit) having already populated
+  // state.board with that month's day facts.
+  state.board['2026-06'] = { monthKey: '2026-06', dayDates: ['2026-06-01', '2026-06-02'], dayValues: [1, 0], score: 5 };
+  var h = makeCalNavHarness_(state, function() { throw new Error('monthGrid must not be fetched — the day facts are already in state.board'); });
+
+  return h.fns.loadCalMonth_('2026-06').then(function() {
+    assert.deepEqual(state.monthGrid, [
+      { dateIso: '2026-06-01', status: 'done' },
+      { dateIso: '2026-06-02', status: 'missed' },
+    ], 'the calendar grid must be derived from the pre-existing board record');
   });
 })();
 
