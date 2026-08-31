@@ -1106,7 +1106,7 @@
         <input type="date" id="bonusWhen">
         <label class="field-label">Type</label>
         <select id="bonusType"></select>
-        <label class="field-label">What / Where / Who</label>
+        <label class="field-label">Description (required)</label>
         <textarea id="bonusMessage" rows="3" placeholder="What happened?"></textarea>
         <label class="field-label" id="bonusLinkLabel">Slack Link</label>
         <input type="text" id="bonusLink" placeholder="https://...slack.com/...">
@@ -4853,7 +4853,7 @@
   var BONUS_ERROR_TEXT_ = {
     invalid_type: 'Please choose a bonus type.',
     invalid_when: 'Please choose a valid date.',
-    message_required: 'Please describe what happened.',
+    message_required: 'Please enter an activity description.',
     link_required: 'This bonus type needs a Slack link before it counts.',
     invalid_link: 'That doesn’t look like a valid link (must start with http:// or https://).',
     not_found: 'That entry could not be found — please refresh and try again.',
