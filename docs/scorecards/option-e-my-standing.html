@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Option E — Where I Stand</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<style>
+  .phone { max-width: 390px; margin: 16px auto 0; border: 1px solid var(--border); border-radius: 26px;
+    background: var(--bg); padding: 10px; box-shadow: 0 6px 26px var(--shadow); }
+  .phone .card { margin-top: 10px; padding: 16px; }
+  .phone-cap { text-align: center; font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+
+  .rank-hero { display: flex; align-items: center; gap: 16px; }
+  .rank-hero .txt .big { font-size: 15px; font-weight: bold; }
+  .rank-hero .txt .small { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-top: 4px; }
+
+  .rivals { display: flex; flex-direction: column; gap: 2px; }
+  .rival { display: grid; grid-template-columns: 24px 1fr auto; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 9px; background: var(--input-bg); border: 1px solid var(--border); font-size: 13px; }
+  .rival.me { background: var(--brand-bg); color: var(--brand-contrast); border-color: var(--brand-bg); }
+  .rival .r { font-size: 11px; opacity: .7; }
+  .rival .s { font-weight: bold; font-variant-numeric: tabular-nums; }
+  .gap { font-size: 11px; color: var(--brand); text-align: center; padding: 2px 0; }
+
+  .contrib { margin-top: 4px; }
+  .contrib .row { display: grid; grid-template-columns: 78px 1fr 34px; align-items: center; gap: 8px;
+    font-size: 12px; padding: 3px 0; }
+  .contrib .bar { height: 12px; border-radius: 6px; background: var(--track); }
+  .contrib .bar > div { height: 12px; border-radius: 6px; }
+  .contrib .v { text-align: right; font-weight: bold; font-variant-numeric: tabular-nums; }
+
+  .milestone { display: flex; align-items: center; gap: 12px; }
+  .milestone .ico { font-size: 26px; }
+  .milestone .body { flex: 1; }
+  .milestone .lbl { font-size: 13px; font-weight: bold; }
+  .milestone .sub2 { font-size: 11px; color: var(--text-muted); }
+  .milestone .track { height: 8px; background: var(--track); border-radius: 4px; margin-top: 6px; }
+  .milestone .track > div { height: 8px; border-radius: 4px; background: var(--cal-done-bg); }
+</style>
+</head>
+<body>
+<div class="header"><div><div class="header-name">Option E — Where I Stand</div>
+  <div class="header-sub">Personal-first competitive card · July 2026</div></div></div>
+<div class="wrap">
+  <div id="nav"></div>
+
+  <div class="phone">
+    <div class="card">
+      <h2 style="margin-bottom:12px">Where you stand</h2>
+      <div class="rank-hero">
+        <div id="dial"></div>
+        <div class="txt">
+          <div class="big" id="rankLine"></div>
+          <div class="small" id="rankSub"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-bottom:10px">Your neighbours</h2>
+      <div class="rivals" id="rivals"></div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-bottom:4px">You vs your team</h2>
+      <p class="sub" style="margin-bottom:10px">Where your score sits against Anvil's average and
+        the whole AO's.</p>
+      <div class="contrib" id="contrib"></div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-bottom:10px">Momentum</h2>
+      <div id="chart"></div>
+      <div id="chartLegend"></div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-bottom:10px">Next milestone</h2>
+      <div id="milestones" style="display:flex;flex-direction:column;gap:14px"></div>
+    </div>
+  </div>
+  <div class="phone-cap">Shown at phone width — this option is designed to sit at the top of the
+    existing dashboard, above My Team.</div>
+
+  <div class="mock-note">
+    <strong>Why it motivates:</strong> the only option framed entirely around the man looking at it.
+    It never shows him a list he is at the bottom of — it shows him the two men either side and the
+    smallest action that moves him. Cheapest to ship: it is a card, not a new screen.
+    <br><strong>Watch out:</strong> low ceiling on team competition. Pairs naturally with B (Team
+    Race) — E answers "how am I doing", B answers "how are we doing".
+  </div>
+</div>
+<script src="assets/mock-data.js"></script>
+<script src="assets/viz.js"></script>
+<script>
+(function () {
+  var V = Viz, M = MOCK;
+  document.getElementById('nav').appendChild(V.optnav('option-e-my-standing.html'));
+
+  var sorted = M.byScore();
+  var me = M.find(M.me);
+  var rank = sorted.findIndex(function (p) { return p.name === me.name; }) + 1;
+  var ahead = Math.round(((sorted.length - rank) / sorted.length) * 100);
+  var team = M.teams[me.teamIndex];
+  var teamStat = M.teamStats().filter(function (t) { return t.index === me.teamIndex; })[0];
+  var teamRank = teamStat.members.slice().sort(function (a, b) { return b.score - a.score; })
+    .findIndex(function (p) { return p.name === me.name; }) + 1;
+
+  // ---- hero dial: percentile, not raw rank — "top 22%" survives a growing roster.
+  document.getElementById('dial').appendChild(
+    V.donut(ahead, 112, 'var(--brand)', '#' + rank, 'of ' + sorted.length));
+  document.getElementById('rankLine').textContent = 'Ahead of ' + ahead + '% of the AO';
+  document.getElementById('rankSub').innerHTML =
+    me.score + ' points · ' + me.streak + '-day streak<br>#' + teamRank + ' of ' +
+    teamStat.members.length + ' on ' + V.esc(team.name);
+
+  // ---- rivals --------------------------------------------------------------
+  var box = document.getElementById('rivals');
+  [rank - 2, rank - 1, rank].forEach(function (i, slot) {
+    var p = sorted[i];
+    if (!p) return;
+    if (slot === 1 && sorted[rank - 2]) {
+      var up = sorted[rank - 2].score - me.score;
+      box.appendChild(V.el('div', 'gap', '↑ ' + up + ' point' + (up === 1 ? '' : 's') + ' to pass ' +
+        V.esc(sorted[rank - 2].name)));
+    }
+    var r = V.el('div', 'rival' + (p.name === me.name ? ' me' : ''));
+    r.innerHTML = '<span class="r">#' + (i + 1) + '</span>' +
+      '<span>' + V.esc(p.name) + (p.name === me.name ? ' (you)' : '') +
+        ' <span style="opacity:.6;font-size:11px">' + V.esc(p.team) + '</span></span>' +
+      '<span class="s">' + p.score + '</span>';
+    box.appendChild(r);
+    if (slot === 1 && sorted[rank]) {
+      var down = me.score - sorted[rank].score;
+      box.appendChild(V.el('div', 'gap', '↓ ' + down + ' point' + (down === 1 ? '' : 's') + ' ahead of ' +
+        V.esc(sorted[rank].name)));
+    }
+  });
+
+  // ---- contribution --------------------------------------------------------
+  var aoAvg = M.pax.reduce(function (a, p) { return a + p.score; }, 0) / M.pax.length;
+  var rows = [
+    { label: 'You', value: me.score, color: 'var(--brand)' },
+    { label: team.name + ' avg', value: teamStat.avgScore, color: team.color },
+    { label: 'AO avg', value: aoAvg, color: 'var(--text-faint2)' }
+  ];
+  var cmax = Math.max.apply(null, rows.map(function (r) { return r.value; }));
+  var cbox = document.getElementById('contrib');
+  rows.forEach(function (r) {
+    var n = V.el('div', 'row');
+    n.innerHTML = '<span>' + V.esc(r.label) + '</span>' +
+      '<span class="bar"><div style="width:' + (r.value / cmax * 100) + '%;background:' + r.color + '"></div></span>' +
+      '<span class="v">' + r.value.toFixed(0) + '</span>';
+    cbox.appendChild(n);
+  });
+
+  // ---- momentum chart ------------------------------------------------------
+  function cumulative(values) {
+    var out = [], run = 0;
+    values.forEach(function (v) { run += v; out.push(run); });
+    return out;
+  }
+  function avgCumulative(list) {
+    var out = [];
+    for (var d = 0; d < M.totalDays; d++) {
+      var s = list.reduce(function (a, p) { return a + p.dayValues[d]; }, 0) / list.length;
+      out.push((out[d - 1] || 0) + s);
+    }
+    return out;
+  }
+  var series = [
+    { name: 'You', color: 'var(--brand)', values: cumulative(me.dayValues) },
+    { name: team.name, color: team.color, values: avgCumulative(teamStat.members) },
+    { name: 'AO', color: 'var(--text-faint2)', values: avgCumulative(M.pax) }
+  ];
+  document.getElementById('chart').appendChild(
+    V.lineChart(series, { width: 360, height: 180, labelGutter: 46, ariaLabel: 'Your cumulative score against team and AO averages' }));
+  document.getElementById('chartLegend').appendChild(V.legend(series));
+
+  // ---- milestones ----------------------------------------------------------
+  var MILES = [
+    { icon: '🔥', label: 'Streak: ' + me.streak + ' days', target: 15,
+      have: me.streak, unit: 'day', note: 'consecutive hits earns the 15-day badge.' },
+    { icon: '🤝', label: 'Fellowship points', target: 5, have: me.bonusByType.fellowship, unit: 'point',
+      note: 'a Coffeeteria post is worth one.' },
+    { icon: '🏁', label: 'Par for the month', target: M.totalDays, have: me.score, unit: 'point',
+      note: '1 point a day, every day — the baseline every HIM is chasing.' }
+  ];
+  var mbox = document.getElementById('milestones');
+  MILES.forEach(function (m) {
+    var need = Math.max(0, m.target - m.have);
+    var n = V.el('div', 'milestone');
+    n.innerHTML = '<div class="ico">' + m.icon + '</div><div class="body">' +
+      '<div class="lbl">' + V.esc(m.label) + '</div>' +
+      '<div class="sub2">' + (need ? need + ' more ' + m.unit + (need === 1 ? '' : 's') + ' — ' + V.esc(m.note)
+                                   : 'Earned ✓') + '</div>' +
+      '<div class="track"><div style="width:' + Math.min(100, (m.have / m.target) * 100) + '%"></div></div></div>';
+    mbox.appendChild(n);
+  });
+})();
+</script>
+</body>
+</html>

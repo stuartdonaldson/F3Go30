@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Option C — Awards Wall</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<style>
+  .awards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+  .award { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--input-bg);
+    display: grid; grid-template-columns: 46px 1fr; gap: 12px; align-items: start; }
+  .award.gold { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+  .award .ico { width: 46px; height: 46px; border-radius: 50%; background: var(--soft-bg);
+    border: 1px solid var(--soft-border); display: flex; align-items: center; justify-content: center; font-size: 22px; }
+  .award .title { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+  .award .who { font-size: 17px; font-weight: bold; margin-top: 2px; }
+  .award .team { font-size: 11px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 5px; }
+  .award .team i { width: 8px; height: 8px; border-radius: 2px; }
+  .award .val { font-size: 12px; color: var(--brand); margin-top: 5px; font-weight: bold; }
+  .award .next { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
+
+  .mine { background: var(--soft-bg); border: 1px solid var(--soft-border); border-radius: 12px; padding: 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip { border-radius: 999px; padding: 6px 12px; font-size: 12px; background: var(--card-bg);
+    border: 1px solid var(--border); display: inline-flex; align-items: center; gap: 6px; }
+  .chip.earned { border-color: var(--gold); color: var(--text); }
+  .chip.locked { opacity: .55; }
+  .progress { height: 8px; background: var(--track); border-radius: 4px; margin-top: 10px; }
+  .progress > div { height: 8px; border-radius: 4px; background: var(--brand); }
+  .trophy-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+</style>
+</head>
+<body>
+<div class="header"><div><div class="header-name">Option C — Awards Wall</div>
+  <div class="header-sub">Named honours, individual and team · July 2026</div></div></div>
+<div class="wrap">
+  <div id="nav"></div>
+
+  <div class="card">
+    <h2>July honours</h2>
+    <p class="sub">Instead of one ranking with one winner, several named awards — each on a
+      different axis, so a man who will never top the total score can still take something home.
+      Every award names the runner-up, which is what keeps it contested.</p>
+    <div class="awards" id="awards"></div>
+  </div>
+
+  <div class="card">
+    <h2>Team trophies</h2>
+    <p class="sub">Team-level honours use the same shape. Consistency and turnout are rewarded
+      alongside raw score.</p>
+    <div class="trophy-row" id="trophies"></div>
+  </div>
+
+  <div class="card">
+    <h2>Your cabinet</h2>
+    <p class="sub">The same wall from one PAX's point of view — what you hold, and the nearest
+      thing you could still take.</p>
+    <div class="mine" id="mine"></div>
+  </div>
+
+  <div class="mock-note">
+    <strong>Why it motivates:</strong> many ways to win. The Awards Wall rewards the behaviours the
+    Go30 actually wants — showing up, Qing, EHing, bringing fellowship — not just the highest number.
+    <br><strong>Watch out:</strong> awards need to feel earned. With a small AO the same three men
+    can sweep every category — Slingshot takes two here. The runner-up line on every card is what
+    makes a permanently-locked category visible, so it can be retired or re-cut.
+  </div>
+</div>
+<script src="assets/mock-data.js"></script>
+<script src="assets/viz.js"></script>
+<script>
+(function () {
+  var V = Viz, M = MOCK;
+  document.getElementById('nav').appendChild(V.optnav('option-c-awards-wall.html'));
+
+  function teamOf(p) { return M.teams[p.teamIndex]; }
+  function top(metric, n) {
+    return M.pax.slice().sort(function (a, b) { return metric(b) - metric(a) || a.name.localeCompare(b.name); }).slice(0, n || 2);
+  }
+  function reported(p) { return p.dayValues.filter(function (v) { return v !== -1; }).length; }
+
+  var AWARDS = [
+    { key: 'him',  icon: '🏆', title: 'HIM of the Month', gold: true,
+      metric: function (p) { return p.score; }, fmt: function (p) { return p.score + ' total points'; } },
+    { key: 'streak', icon: '🔥', title: 'Streak King',
+      metric: function (p) { return p.maxStreak30; }, fmt: function (p) { return p.maxStreak30 + ' days unbroken'; } },
+    { key: 'iron', icon: '🛡️', title: 'Never Missed a Check-in',
+      metric: function (p) { return reported(p); }, fmt: function (p) { return reported(p) + ' of ' + M.totalDays + ' days reported'; } },
+    { key: 'improved', icon: '📈', title: 'Most Improved',
+      metric: function (p) { return p.score - p.priorScore; }, fmt: function (p) { return '+' + (p.score - p.priorScore) + ' on June'; } },
+    { key: 'fellowship', icon: '🤝', title: 'Fellowship Leader',
+      metric: function (p) { return p.bonusByType.fellowship; }, fmt: function (p) { return p.bonusByType.fellowship + ' fellowship points'; } },
+    { key: 'qpoint', icon: '📣', title: 'Q Machine',
+      metric: function (p) { return p.bonusByType.qpoint; }, fmt: function (p) { return p.bonusByType.qpoint + ' Q-points'; } },
+    { key: 'inspire', icon: '💡', title: 'Inspiration',
+      metric: function (p) { return p.bonusByType.inspire; }, fmt: function (p) { return p.bonusByType.inspire + ' inspire points'; } },
+    { key: 'ehfng', icon: '🎣', title: 'EH Champion',
+      metric: function (p) { return p.bonusByType.ehfng; }, fmt: function (p) { return p.bonusByType.ehfng + ' FNGs brought'; } }
+  ];
+
+  var box = document.getElementById('awards');
+  AWARDS.forEach(function (a) {
+    var pair = top(a.metric, 2), w = pair[0], r = pair[1], t = teamOf(w);
+    var gap = a.metric(w) - a.metric(r);
+    var d = V.el('div', 'award' + (a.gold ? ' gold' : ''));
+    d.innerHTML =
+      '<div class="ico">' + a.icon + '</div><div>' +
+      '<div class="title">' + V.esc(a.title) + '</div>' +
+      '<div class="who">' + V.esc(w.name) + '</div>' +
+      '<div class="team"><i style="background:' + t.color + '"></i>' + V.esc(w.team) + '</div>' +
+      '<div class="val">' + a.fmt(w) + '</div>' +
+      '<div class="next">' + V.esc(r.name) + ' is ' + (gap === 0 ? 'level — tie-break on total score' : gap + ' behind') + '</div>' +
+      '</div>';
+    box.appendChild(d);
+  });
+
+  // ---- team trophies -------------------------------------------------------
+  var stats = M.teamStats();
+  var TROPHIES = [
+    { icon: '🥇', title: 'Team Cup', pick: function () { return stats.slice().sort(function (a, b) { return b.avgScore - a.avgScore; }); },
+      fmt: function (t) { return t.avgScore.toFixed(1) + ' avg score'; } },
+    { icon: '📋', title: 'Full Muster', pick: function () { return stats.slice().sort(function (a, b) { return b.participation - a.participation; }); },
+      fmt: function (t) { return Math.round(t.participation * 100) + '% of days reported'; } },
+    { icon: '🚀', title: 'Climbing Fastest', pick: function () { return stats.slice().sort(function (a, b) { return (b.avgScore - b.avgPrior) - (a.avgScore - a.avgPrior); }); },
+      fmt: function (t) { return '+' + (t.avgScore - t.avgPrior).toFixed(1) + ' on June'; } }
+  ];
+  var tbox = document.getElementById('trophies');
+  TROPHIES.forEach(function (tr) {
+    var ranked = tr.pick(), w = ranked[0], r = ranked[1];
+    var d = V.el('div', 'award');
+    d.innerHTML = '<div class="ico">' + tr.icon + '</div><div>' +
+      '<div class="title">' + V.esc(tr.title) + '</div>' +
+      '<div class="who" style="color:' + w.color + '">' + V.esc(w.name) + '</div>' +
+      '<div class="val">' + tr.fmt(w) + '</div>' +
+      '<div class="next">Chased by ' + V.esc(r.name) + '</div></div>';
+    tbox.appendChild(d);
+  });
+
+  // ---- personal cabinet ----------------------------------------------------
+  var me = M.find(M.me);
+  var held = AWARDS.filter(function (a) { return top(a.metric, 1)[0].name === me.name; });
+  var chased = AWARDS.map(function (a) {
+    var w = top(a.metric, 1)[0];
+    return { a: a, gap: a.metric(w) - a.metric(me), leader: w };
+  }).filter(function (c) { return c.gap > 0; }).sort(function (x, y) { return x.gap - y.gap; });
+  var nearest = chased[0];
+  var mine = document.getElementById('mine');
+  mine.innerHTML =
+    '<div style="font-size:15px;font-weight:bold">' + V.esc(me.name) + ' — ' + V.esc(me.team) + '</div>' +
+    '<div class="chips">' +
+      (held.length
+        ? held.map(function (a) { return '<span class="chip earned">' + a.icon + ' ' + V.esc(a.title) + '</span>'; }).join('')
+        : '<span class="chip locked">No award held yet this month</span>') +
+      chased.slice(0, 3).map(function (c) {
+        return '<span class="chip locked">' + c.a.icon + ' ' + V.esc(c.a.title) + ' · ' + c.gap + ' to go</span>';
+      }).join('') +
+    '</div>' +
+    '<div style="font-size:13px;color:var(--text-muted);margin-top:12px">Closest award: <b>' +
+      V.esc(nearest.a.title) + '</b> — ' + nearest.gap + ' behind ' + V.esc(nearest.leader.name) + '.</div>' +
+    '<div class="progress"><div style="width:' +
+      Math.round((nearest.a.metric(me) / Math.max(1, nearest.a.metric(nearest.leader))) * 100) + '%"></div></div>';
+})();
+</script>
+</body>
+</html>

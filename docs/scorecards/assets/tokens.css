@@ -1,0 +1,103 @@
+/* Go30 scorecard mockups — shared tokens.
+ *
+ * Surface/ink/status tokens are copied verbatim from static-pages/src/index.html so a mockup
+ * reads as the real app, not as a separate design language. Do not invent new surface colors
+ * here; if the app's palette changes, re-copy this block.
+ *
+ * The --team-N slots are the ONE thing added on top: the app has no categorical palette today
+ * (it colors by score, not by identity), and every option below needs stable per-team identity.
+ * Values are the dataviz reference theme's first six slots, validated on the Go30 card surface
+ * (light #fffdf8 / dark #20241f) — all six checks pass in both modes. Light slots 3/4/5 sit
+ * below 3:1 against the card, so every team mark on a light surface must carry a visible text
+ * label; never color-alone.
+ */
+* { box-sizing: border-box; }
+:root {
+  --bg: #f4f1ea; --card-bg: #fffdf8; --input-bg: #fff; --border: #d8cfbf;
+  --text: #2b2b2b; --text-muted: #555; --text-faint: #888; --text-faint2: #b0a898;
+  --brand: #2f5d50; --brand-bg: #2f5d50; --brand-contrast: #f8f4ea;
+  --soft-bg: #eef3f0; --soft-border: #cfe0d8; --link: #0b5c86;
+  --shadow: rgba(47,93,80,.07); --score-divider: #ede9df;
+  --grid: #e7e1d4; --track: #ece7db;
+
+  --pill-fe-bg: #eef3f0; --pill-fe-fg: #2f5d50;
+  --pill-q-bg: #e5eff6; --pill-q-fg: #0b5c86;
+  --pill-ins-bg: #f1e9f6; --pill-ins-fg: #6a3d9a;
+  --pill-eh-bg: #fdf1de; --pill-eh-fg: #9a6b00;
+
+  --cal-done-bg: #3f8b75; --cal-done-fg: #f8f4ea;
+  --cal-missed-bg: #f7b209; --cal-missed-fg: #2b2b2b;
+  --cal-pending-bg: #d8cfbf; --cal-pending-fg: #6b6255;
+  --cal-absent-bg: #de521c; --cal-absent-fg: #f8f4ea;
+
+  --gold: #b8860b; --silver: #7d7d7d; --bronze: #a05a2c;
+  --tooltip-bg: #2b2b2b; --tooltip-fg: #f8f4ea;
+
+  --team-1: #2a78d6; --team-2: #eb6834; --team-3: #1baf7a;
+  --team-4: #eda100; --team-5: #e87ba4; --team-6: #008300;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171b19; --card-bg: #20241f; --input-bg: #262b27; --border: #3a4640;
+    --text: #ece7dc; --text-muted: #b7b0a2; --text-faint: #93a49b; --text-faint2: #93a49b;
+    --brand: #7fc4ac; --brand-bg: #234036; --brand-contrast: #eee9df;
+    --soft-bg: #1d2e28; --soft-border: #2e463d; --link: #6cbce0;
+    --shadow: rgba(0,0,0,.4); --score-divider: #33403a;
+    --grid: #2e3833; --track: #2a322d;
+
+    --pill-fe-bg: #1d2e28; --pill-fe-fg: #82c4ac;
+    --pill-q-bg: #1c2c36; --pill-q-fg: #7bc0e8;
+    --pill-ins-bg: #2a1f36; --pill-ins-fg: #c39ee8;
+    --pill-eh-bg: #33270f; --pill-eh-fg: #e0b656;
+
+    --cal-done-bg: #3f8b75; --cal-done-fg: #eee9df;
+    --cal-missed-bg: #d69a1a; --cal-missed-fg: #1c1c1c;
+    --cal-pending-bg: #3a4640; --cal-pending-fg: #b7b0a2;
+    --cal-absent-bg: #c14a1f; --cal-absent-fg: #eee9df;
+
+    --gold: #e0b656; --silver: #b0b0a8; --bronze: #cf8b52;
+    --tooltip-bg: #ece7dc; --tooltip-fg: #20241f;
+
+    --team-1: #3987e5; --team-2: #d95926; --team-3: #199e70;
+    --team-4: #c98500; --team-5: #d55181; --team-6: #008300;
+  }
+}
+
+body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+  font-family: Arial, Helvetica, sans-serif; -webkit-text-size-adjust: 100%; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 0 10px 64px; }
+.header { background: var(--brand-bg); color: var(--brand-contrast); padding: 12px 18px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.header-name { font-weight: bold; font-size: 19px; }
+.header-sub { font-size: 12px; opacity: .65; }
+.card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
+  padding: 18px; box-shadow: 0 2px 10px var(--shadow); margin-top: 16px; }
+.card h2 { margin: 0 0 4px; color: var(--brand); font-size: 18px; }
+.card .sub { color: var(--text-muted); font-size: 13px; margin: 0 0 14px; line-height: 1.45; }
+.mock-note { border-left: 3px solid var(--soft-border); background: var(--soft-bg);
+  padding: 10px 12px; border-radius: 0 8px 8px 0; font-size: 13px; line-height: 1.5;
+  color: var(--text-muted); margin-top: 16px; }
+.mock-note strong { color: var(--brand); }
+
+/* Option switcher — present on every mockup so the set can be flipped through side by side. */
+.optnav { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 0 0; }
+.optnav a { font-size: 12px; text-decoration: none; color: var(--link); border: 1px solid var(--border);
+  background: var(--card-bg); border-radius: 999px; padding: 5px 11px; }
+.optnav a.on { background: var(--brand-bg); color: var(--brand-contrast); border-color: var(--brand-bg); }
+
+/* Shared chart furniture */
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-muted);
+  margin-top: 12px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.tbl-toggle { background: none; border: none; color: var(--link); font: inherit; font-size: 12px;
+  cursor: pointer; padding: 8px 0 0; }
+table.data { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+table.data th, table.data td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--grid); }
+table.data th:first-child, table.data td:first-child { text-align: left; }
+table.data th { color: var(--text-muted); font-weight: normal; }
+.scroll-x { overflow-x: auto; }
+.tip { position: fixed; pointer-events: none; z-index: 50; background: var(--tooltip-bg);
+  color: var(--tooltip-fg); font-size: 12px; line-height: 1.4; padding: 6px 9px; border-radius: 7px;
+  opacity: 0; transition: opacity .09s; max-width: 220px; }
+.tip.on { opacity: 1; }

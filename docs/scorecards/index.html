@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Go30 Scorecard Options</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<style>
+  .opts { display: grid; gap: 12px; }
+  .opt { display: grid; grid-template-columns: 54px 1fr; gap: 14px; text-decoration: none; color: inherit;
+    border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: var(--card-bg);
+    box-shadow: 0 2px 10px var(--shadow); }
+  .opt:hover { border-color: var(--brand); }
+  .opt .letter { width: 54px; height: 54px; border-radius: 12px; background: var(--soft-bg);
+    border: 1px solid var(--soft-border); color: var(--brand); font-size: 24px; font-weight: bold;
+    display: flex; align-items: center; justify-content: center; }
+  .opt h3 { margin: 0 0 4px; font-size: 17px; color: var(--brand); }
+  .opt p { margin: 0 0 6px; font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag { font-size: 11px; border-radius: 999px; padding: 3px 9px; background: var(--soft-bg);
+    border: 1px solid var(--soft-border); color: var(--text-muted); }
+  .tag.rec { background: var(--brand-bg); color: var(--brand-contrast); border-color: var(--brand-bg); }
+</style>
+</head>
+<body>
+<div class="header"><div><div class="header-name">Go30 Scorecards</div>
+  <div class="header-sub">Five competitive-display options · UI mockups</div></div></div>
+<div class="wrap">
+  <div class="card">
+    <h2>What these are</h2>
+    <p class="sub">Five ways the Go30 app could present competition and reward, all drawn from the
+      same mock July month so they can be compared directly. Today's HIM Score and Team Score sheets
+      answer "who is top" and "which team is top" in two static tables; the app can do considerably
+      more, because it already holds every PAX's day-by-day values, bonuses, streaks and team on the
+      client. None of these options need a new server field.</p>
+    <p class="sub"><b>Read the trade-offs in <code>README.md</code></b> — each mockup also carries
+      its own "why it motivates / watch out" note at the bottom of the page.</p>
+  </div>
+
+  <div class="opts">
+    <a class="opt" href="option-a-him-ladder.html"><div class="letter">A</div><div>
+      <h3>HIM Ladder</h3>
+      <p>Podium plus a full ranked list of every PAX, bar-coded by team, with your own row anchored
+        and the gap to the man above spelled out.</p>
+      <div class="tags"><span class="tag">Individual</span><span class="tag">Closest to HIM Score</span><span class="tag">Ranks everyone publicly</span></div>
+    </div></a>
+
+    <a class="opt" href="option-b-team-race.html"><div class="letter">B</div><div>
+      <h3>Team Race</h3>
+      <p>Team averages as lanes on a race track, a day-by-day cumulative chart showing lead changes,
+        and a promoted weekly head-to-head.</p>
+      <div class="tags"><span class="tag rec">Recommended pairing</span><span class="tag">Team</span><span class="tag">Closest to Team Score</span></div>
+    </div></a>
+
+    <a class="opt" href="option-c-awards-wall.html"><div class="letter">C</div><div>
+      <h3>Awards Wall</h3>
+      <p>Eight named individual honours and three team trophies on different axes, each naming its
+        runner-up, plus a personal trophy cabinet.</p>
+      <div class="tags"><span class="tag">Many ways to win</span><span class="tag">Rewards behaviour, not just score</span></div>
+    </div></a>
+
+    <a class="opt" href="option-d-consistency-grid.html"><div class="letter">D</div><div>
+      <h3>Consistency Grid</h3>
+      <p>Every PAX, every day, one screen — a heatmap grouped by team, with an AO-wide hit-rate bar
+        along the bottom.</p>
+      <div class="tags"><span class="tag">Whole community</span><span class="tag">Site Q tool</span><span class="tag">Most exposing</span></div>
+    </div></a>
+
+    <a class="opt" href="option-e-my-standing.html"><div class="letter">E</div><div>
+      <h3>Where I Stand</h3>
+      <p>A personal card: rank dial, the two men either side of you, you vs team vs AO, and the
+        next milestone within reach.</p>
+      <div class="tags"><span class="tag rec">Recommended pairing</span><span class="tag">Personal</span><span class="tag">Cheapest to ship</span></div>
+    </div></a>
+  </div>
+
+  <div class="mock-note">
+    <strong>Recommendation:</strong> ship <b>E</b> (personal standing) and <b>B</b> (team race)
+    together — E gives every man a reason to open the app whether he is first or last, B gives the
+    AO something to argue about. Add <b>C</b> once a month of data exists to award from. <b>A</b> and
+    <b>D</b> are the highest-risk on morale and are best held back or scoped to a single team.
+  </div>
+</div>
+<script src="assets/viz.js"></script>
+<script>document.querySelector('.wrap').insertBefore(Viz.optnav('index.html'), document.querySelector('.card'));</script>
+</body>
+</html>

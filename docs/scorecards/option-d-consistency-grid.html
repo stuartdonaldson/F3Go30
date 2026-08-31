@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Option D — Consistency Grid</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<style>
+  .grid-scroll { overflow-x: auto; padding-bottom: 4px; }
+  .grid { display: grid; gap: 2px; grid-template-columns: 96px repeat(31, 13px) 46px; align-items: center; }
+  .g-head { font-size: 9px; color: var(--text-faint); text-align: center; }
+  .g-team { grid-column: 1 / -1; font-size: 12px; font-weight: bold; padding: 10px 0 2px;
+    display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--grid); margin-top: 4px; }
+  .g-team i { width: 10px; height: 10px; border-radius: 3px; }
+  .g-team .avg { margin-left: auto; font-weight: normal; color: var(--text-muted); font-size: 11px; }
+  .g-name { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 4px; }
+  .g-name.me { font-weight: bold; color: var(--brand); }
+  .g-cell { width: 13px; height: 13px; border-radius: 3px; }
+  .g-score { font-size: 12px; font-weight: bold; text-align: right; font-variant-numeric: tabular-nums; }
+  .g-foot { grid-column: 1 / -1; height: 1px; background: var(--grid); margin: 8px 0 2px; }
+  .g-daybar { width: 13px; background: var(--track); border-radius: 2px; position: relative; height: 34px; }
+  .g-daybar > div { position: absolute; left: 0; right: 0; bottom: 0; background: var(--brand); border-radius: 2px; }
+  .g-footlabel { font-size: 10px; color: var(--text-muted); text-align: right; padding-right: 6px; }
+</style>
+</head>
+<body>
+<div class="header"><div><div class="header-name">Option D — Consistency Grid</div>
+  <div class="header-sub">Every PAX, every day, one screen · July 2026</div></div></div>
+<div class="wrap">
+  <div id="nav"></div>
+
+  <div class="card">
+    <h2>The whole month at a glance</h2>
+    <p class="sub">One row per PAX, one square per day, grouped by team and sorted by score inside
+      each team. It is not a ranking — it is a pattern. Solid green rows and gaps are both obvious
+      instantly, and a team's block reads as one shape.</p>
+    <div class="grid-scroll"><div class="grid" id="grid"></div></div>
+    <div id="legend"></div>
+    <div id="table"></div>
+  </div>
+
+  <div class="mock-note">
+    <strong>Why it motivates:</strong> streak psychology. Nobody wants to be the one row with a
+    hole in it, and the row you are most aware of is your own — this is the "don't break the chain"
+    mechanic applied to the whole AO. The footer bar shows which days the <em>community</em>
+    struggles with (weekends, holidays), which is a Site Q planning tool as much as a motivator.
+    <br><strong>Watch out:</strong> the most public-shaming of the five. It reads as supportive
+    only if a Miss (reported, amber) is visibly distinct from a no-show (orange) — the reward is
+    for reporting, not only for hitting. Consider showing it team-by-team rather than AO-wide.
+  </div>
+</div>
+<script src="assets/mock-data.js"></script>
+<script src="assets/viz.js"></script>
+<script>
+(function () {
+  var V = Viz, M = MOCK;
+  document.getElementById('nav').appendChild(V.optnav('option-d-consistency-grid.html'));
+
+  var STATUS = {
+    done:    { bg: 'var(--cal-done-bg)',    label: 'Hit (+1)' },
+    missed:  { bg: 'var(--cal-missed-bg)',  label: 'Miss, reported (0)' },
+    absent:  { bg: 'var(--cal-absent-bg)',  label: 'No check-in (−1)' },
+    pending: { bg: 'var(--cal-pending-bg)', label: 'Not yet reported' }
+  };
+
+  var grid = document.getElementById('grid');
+  grid.appendChild(V.el('div'));                       // name column spacer
+  for (var d = 1; d <= M.totalDays; d++) {
+    grid.appendChild(V.el('div', 'g-head', d % 5 === 0 || d === 1 ? String(d) : ''));
+  }
+  grid.appendChild(V.el('div', 'g-head', 'Pts'));
+
+  M.teamStats().forEach(function (t) {
+    var head = V.el('div', 'g-team',
+      '<i style="background:' + t.color + '"></i>' + V.esc(t.name) +
+      '<span class="avg">' + t.members.length + ' PAX · avg ' + t.avgScore.toFixed(1) + '</span>');
+    grid.appendChild(head);
+
+    t.members.slice().sort(function (a, b) { return b.score - a.score; }).forEach(function (p) {
+      var nm = V.el('div', 'g-name' + (p.name === M.me ? ' me' : ''), V.esc(p.name));
+      nm.title = p.name;
+      grid.appendChild(nm);
+      p.dayValues.forEach(function (v, i) {
+        var st = M.status(v);
+        var c = V.el('div', 'g-cell');
+        c.style.background = STATUS[st].bg;
+        V.bindTip(c, function () {
+          return '<strong>' + V.esc(p.name) + '</strong> · July ' + (i + 1) + '<br>' + STATUS[st].label;
+        });
+        grid.appendChild(c);
+      });
+      var sc = V.el('div', 'g-score', String(p.score));
+      sc.style.color = p.score >= M.totalDays ? 'var(--cal-done-bg)' : 'var(--text)';
+      grid.appendChild(sc);
+    });
+  });
+
+  // Footer: share of the whole AO that hit each day.
+  grid.appendChild(V.el('div', 'g-foot'));
+  grid.appendChild(V.el('div', 'g-footlabel', 'AO hit&nbsp;rate'));
+  for (var day = 0; day < M.totalDays; day++) {
+    (function (day) {
+      var hits = M.pax.filter(function (p) { return p.dayValues[day] === 1; }).length;
+      var rate = hits / M.pax.length;
+      var bar = V.el('div', 'g-daybar');
+      var inner = V.el('div');
+      inner.style.height = Math.round(rate * 34) + 'px';
+      bar.appendChild(inner);
+      V.bindTip(bar, function () {
+        return '<strong>July ' + (day + 1) + '</strong><br>' + hits + ' of ' + M.pax.length +
+          ' PAX hit it (' + Math.round(rate * 100) + '%)';
+      });
+      grid.appendChild(bar);
+    })(day);
+  }
+  grid.appendChild(V.el('div'));
+
+  var lg = document.getElementById('legend');
+  lg.appendChild(V.legend(Object.keys(STATUS).map(function (k) {
+    return { name: STATUS[k].label, color: STATUS[k].bg };
+  })));
+
+  document.getElementById('table').appendChild(V.tableView(
+    ['PAX', 'Team', 'Hits', 'Misses', 'No check-in', 'Longest streak', 'Total'],
+    M.byScore().map(function (p) {
+      var c = { done: 0, missed: 0, absent: 0 };
+      p.dayValues.forEach(function (v) { c[M.status(v)]++; });
+      return [V.esc(p.name), V.esc(p.team), c.done, c.missed, c.absent, p.maxStreak30 + 'd', p.score];
+    })));
+})();
+</script>
+</body>
+</html>
