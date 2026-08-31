@@ -279,12 +279,19 @@
   .sc-metric-btn { flex: 1; padding: 8px; font: inherit; font-size: 13px; cursor: pointer;
     border: 1px solid var(--border); background: var(--input-bg); color: var(--text); border-radius: 8px; }
   .sc-metric-btn.on { background: var(--soft-bg); color: var(--brand); border-color: var(--soft-border); font-weight: bold; }
-  .sc-podium { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 18px; }
-  .sc-plinth { text-align: center; background: var(--soft-bg); border: 1px solid var(--soft-border); border-radius: 10px; padding: 10px 4px; }
-  .sc-medal { font-size: 22px; line-height: 1; }
-  .sc-pname { font-weight: bold; font-size: 14px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Winner's-stage podium: gold centered and tallest, silver left, bronze right — same visual
+     order as the docs/scorecards/option-a-him-ladder.html mockup this screen is built from. */
+  .sc-podium { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 0; align-items: end; margin: 4px 0 18px; }
+  .sc-plinth { text-align: center; }
+  .sc-medal { font-size: 20px; line-height: 1; }
+  .sc-pname { font-weight: bold; font-size: 14px; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sc-pteam { font-size: 11px; margin-top: 1px; font-weight: bold; }
-  .sc-pscore { font-size: 20px; font-weight: bold; margin-top: 4px; font-family: monospace; }
+  .sc-pscore { font-size: 22px; font-weight: bold; margin-top: 2px; font-family: monospace; }
+  .sc-stand { margin-top: 10px; background: var(--soft-bg); border: 1px solid var(--soft-border); border-bottom: none;
+    display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: bold; color: var(--text-faint); }
+  .sc-plinth.p1 .sc-stand { height: 56px; border-radius: 10px 10px 0 0; }
+  .sc-plinth.p2 .sc-stand { height: 38px; border-radius: 10px 0 0 0; border-right: none; }
+  .sc-plinth.p3 .sc-stand { height: 26px; border-radius: 0 10px 0 0; border-left: none; }
   .sc-ladder { display: flex; flex-direction: column; gap: 3px; }
   .sc-lrow { display: grid; grid-template-columns: 26px 1fr 48px; align-items: center; gap: 8px; padding: 6px; border-radius: 8px; }
   .sc-lrow.me { background: var(--soft-bg); outline: 2px solid var(--brand); }
@@ -999,13 +1006,13 @@
          state.board (paxBoard is every PAX grouped by team) — no separate fetch. -->
     <div id="step-scorecard" class="hidden">
       <div class="sc-tabs">
-        <button type="button" class="sc-tab" id="scTabLadder">HIM Ladder</button>
+        <button type="button" class="sc-tab" id="scTabLadder">The Grind Board</button>
         <button type="button" class="sc-tab" id="scTabTeams">Top Teams</button>
       </div>
 
       <div id="scLadderView">
         <div class="card">
-          <h2 style="margin-top:0;">HIM Ladder</h2>
+          <h2 style="margin-top:0;">The Grind Board</h2>
           <p class="muted" style="margin-top:-6px;">Every PAX ranked for <span id="scMonthLabel"></span>.</p>
           <div class="sc-metric-row" id="scMetrics"></div>
           <div class="sc-podium" id="scPodium"></div>
@@ -4407,7 +4414,7 @@
   var SCORECARD_TEAM_COLOR_VARS_ = ['--team-1', '--team-2', '--team-3', '--team-4', '--team-5', '--team-6'];
   var SCORECARD_METRICS_ = [
     { key: 'score', label: 'Total score' },
-    { key: 'rawScore', label: 'Workout days' },
+    { key: 'rawScore', label: 'Reps Completed' },
     { key: 'bonusTotal', label: 'Bonus points' }
   ];
   var scorecardState_ = { view: 'ladder', metric: 'score', data: null };
@@ -4459,14 +4466,19 @@
 
     var podiumEl = $('scPodium');
     podiumEl.innerHTML = '';
-    pax.slice(0, 3).forEach(function(p, i) {
+    // Visual order silver-gold-bronze (2nd/1st/3rd) so gold sits centered and tallest, like a
+    // real winner's stage — see docs/scorecards/option-a-him-ladder.html's renderPodium.
+    [[1, 'p2', '🥈'], [0, 'p1', '🥇'], [2, 'p3', '🥉']].forEach(function(slot) {
+      var p = pax[slot[0]];
+      if (!p) return;
       var div = document.createElement('div');
-      div.className = 'sc-plinth';
+      div.className = 'sc-plinth ' + slot[1];
       div.innerHTML =
-        '<div class="sc-medal">' + ['🥇', '🥈', '🥉'][i] + '</div>' +
+        '<div class="sc-medal">' + slot[2] + '</div>' +
         '<div class="sc-pname">' + escapeHtml_(p.name) + '</div>' +
         '<div class="sc-pteam" style="color:' + teamColors[p.teamGroup] + ';">' + escapeHtml_(p.teamGroup) + '</div>' +
-        '<div class="sc-pscore">' + p[metric] + '</div>';
+        '<div class="sc-pscore">' + p[metric] + '</div>' +
+        '<div class="sc-stand">' + (slot[0] + 1) + '</div>';
       podiumEl.appendChild(div);
     });
 

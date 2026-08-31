@@ -8,7 +8,11 @@
  * SIT's real (multi-team) roster.
  *
  * Reuses the same local-static-server + real-session-guid pattern as static-checkin.spec.js /
- * checkin-concurrency-live-check.spec.js.
+ * checkin-concurrency-live-check.spec.js. Uses the Whiplash fixture (pax-history-reload-live-
+ * check.spec.js's LIVE_PAX) rather than NoSadClown — this spec never writes a checkin, so there's
+ * no state to restore, and Whiplash stays registered for the current month across month
+ * boundaries more reliably than the NoSadClown fixture (observed flaky `matched:false` on it
+ * around 2026-08-31).
  *
  * Usage:
  *   npm run deploy:sit
@@ -23,7 +27,7 @@ const { dismissAnnouncementIfPresent_ } = require('./live-check-helpers.js');
 
 const ROOT = path.resolve(__dirname, '../..');
 const STATIC_DIR = path.join(ROOT, 'static-pages', 'src');
-const DEMO_PAX = { f3Name: 'NoSadClown', email: 'nosadclown@example.com' };
+const DEMO_PAX = { f3Name: 'Whiplash', email: 'whiplash.f3@gmail.com' };
 const LIVE_ROUND_TRIP_MS = 30000;
 
 test.use({ storageState: undefined, viewport: { width: 390, height: 844 }, headless: true });
