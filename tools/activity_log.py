@@ -24,6 +24,14 @@ Examples:
     python tools/activity_log.py --env sit
 
 Notes:
+    - A leading section prints ahead of the main log: server-side exceptions ([SERVER ERROR],
+      any GasLogger 'error'/'*.error' tag), client-captured crashes/errors ([CLIENT ERROR],
+      captureClientError_ in static-pages/src/index.html, F3Go30-xyri), and reconnect-poll runs
+      that never recovered on their own ([RECONNECT GAVE UP], F3Go30-n40u — 30 failed attempts,
+      ~5min, banner left up with only the manual reload button). A [RECONNECTED] line (poll
+      succeeded — the client healed itself) appears inline in the main log but is NOT flagged in
+      that section, since it needed no investigation. Routine intermediate failed-poll ticks are
+      dropped entirely — one every 10s mid-outage is expected noise, not a per-tick signal.
     - Nag opt-in status per PAX is NOT logged anywhere (PII masking) — it only lives in
       the Responses sheet's "NAG Email" column. This script instead reports actual nag
       email SEND activity (sendNagEmail.complete / .sendFailed), which is aggregated
@@ -331,6 +339,56 @@ def _classify(event: dict, entry_index: dict = None, legacy_exec_ids: set = None
         return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': None,
                 'label': 'NAG FAILED', 'detail': f"team={team} error={error}"}
 
+    # A client-captured record (F3Go30-xyri error capture / F3Go30-n40u reconnect-poll, both
+    # funneled through captureClientTelemetry_ in static-pages/src/index.html and uploaded via
+    # handleClientTelemetryPost_/ClientTelemetryLog.js as one event per record, tag
+    # 'clientTelemetry', `kind` distinguishing the two). These are the only events in this report
+    # that reflect what actually happened on a PAX's own device — a crash/thrown error, or a
+    # transport outage the client was silently retrying through.
+    if name == 'clientTelemetry' and data.get('kind') == 'error':
+        f3_name = data.get('f3Name') or '?'
+        action = data.get('action') or '?'
+        err_text = data.get('errorText', '?')
+        flags = []
+        if data.get('isTransport'):
+            flags.append('transport')
+        if data.get('abortedAtTimeout'):
+            flags.append('timeout')
+        flag_str = f" [{', '.join(flags)}]" if flags else ""
+        return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': f3_name,
+                'label': 'CLIENT ERROR',
+                'detail': f"{f3_name}: {action} → {err_text}{flag_str} (client v{data.get('clientVersion', '?')})"}
+
+    if name == 'clientTelemetry' and data.get('kind') == 'reconnectPoll':
+        f3_name = data.get('f3Name') or '?'
+        attempt = data.get('attempt')
+        elapsed = data.get('elapsedMs')
+        elapsed_s = f"{elapsed / 1000:.0f}s" if isinstance(elapsed, (int, float)) else '?'
+        outcome = data.get('outcome')
+        if outcome == 'recovered':
+            return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': f3_name,
+                    'label': 'RECONNECTED',
+                    'detail': f"{f3_name}: connection recovered after {attempt} attempt(s), ~{elapsed_s} outage"}
+        # Every 10s failed poll tick is expected noise mid-outage and not individually
+        # actionable; only the give-up point (RECONNECT_POLL_MAX_ATTEMPTS_ in index.html, 30
+        # attempts / ~5min) is worth a line — it means the PAX was left stuck on the error banner
+        # with only the manual reload button, never auto-recovering.
+        if outcome == 'failed' and isinstance(attempt, int) and attempt >= 30:
+            return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': f3_name,
+                    'label': 'RECONNECT GAVE UP',
+                    'detail': f"{f3_name}: still unreachable after {attempt} attempts (~{elapsed_s}) — gave up auto-retrying, reload button offered"}
+        return None
+
+    # Any server-side caught exception: either GasLogger.run()'s own catch-all (tag 'error', every
+    # trigger/entry point) or a hand-rolled dispatcher catch logged via GasLogger.logError (tag
+    # '<site>.error', e.g. handleCheckinPost_.error/handleSignupPost_.error/
+    # handleAdminPost_.error — see its docstring in GasLogger.js). logError stamps `message`;
+    # a few older call sites that log directly via GasLogger.log(...) instead use `error`.
+    if name == 'error' or name.endswith('.error'):
+        message = data.get('message') or data.get('error') or '?'
+        return {'ts': epoch, 'ts_str': ts_str, 'group': _STANDALONE, 'f3Name': None,
+                'label': 'SERVER ERROR', 'detail': f"{name}: {message}"}
+
     # A legacy GAS URL (?cmd=checkin, ?cmd=signup, or bare home) arriving at the one-tap
     # "has moved" interstitial (logStaticRedirect_, script/WebApp.js). This is its own execution,
     # separate from any later identify — Axiom never carries f3Name here (PII rule), and the
@@ -456,7 +514,26 @@ def main() -> int:
 
     activities = [c for c in (_classify(e, entry_index, legacy_exec_ids, signup_index) for e in matches) if c]
     activities.reverse()  # chronological, oldest first
-    summaries = _group_sessions(_attribute_signup_saves_(activities))
+    activities = _attribute_signup_saves_(activities)
+
+    # Surfaced separately, up front, ahead of the --limit truncation below — these are the
+    # labels worth a human's attention: server-side exceptions, client-captured crashes/errors,
+    # and reconnect-poll runs that never recovered on their own (see _classify for what each
+    # covers). A [RECONNECTED] line is deliberately NOT flagged here — it means the client's own
+    # retry logic already fixed things; only include it if it's useful context alongside a nearby
+    # flagged line.
+    _ALERT_LABELS = {'SERVER ERROR', 'CLIENT ERROR', 'RECONNECT GAVE UP'}
+    alerts = [a for a in activities if a['label'] in _ALERT_LABELS]
+    if alerts:
+        print(f"\n{len(alerts)} error(s)/reconnect failure(s) to investigate, {args.since} lookback")
+        print("-" * 90)
+        for a in alerts:
+            print(f"{a['ts_str']}  {_format_tag(a['label'])} {a['detail']}")
+        print("-" * 90)
+    else:
+        print(f"\nNo errors or reconnect failures in the {args.since} lookback.")
+
+    summaries = _group_sessions(activities)
     summaries = summaries[:args.limit]
 
     print(f"\n{len(summaries)} activities, {args.since} lookback")
