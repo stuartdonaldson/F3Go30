@@ -91,7 +91,9 @@ month's tracker in minutes without manual sheet or trigger configuration in the 
 - From that same check-in page, let the identified PAX list, add, and edit their own Bonus
   Tracker entries (EHing FNG, Fellowship, Q Point, Inspire) without opening the spreadsheet — a
   Slack link is required before EHing FNG, Q Point, or Inspire entries count toward score, same
-  rule the Bonus Tracker sheet's own formulas already enforce for manual entries
+  rule the Bonus Tracker sheet's own formulas already enforce for manual entries. A month-nav
+  header (mirroring Scorecard's) lets the PAX page back up to two months and view/edit that
+  month's entries, capped forward at the real current month.
 - Identify once, remembered everywhere: a PAX's F3 Name + Email, once entered on either the
   sign-up or check-in web app, is remembered (browser storage, plus a bookmarkable per-PAX link
   on check-in) and carried across both apps and repeat visits — no separate accounts, no

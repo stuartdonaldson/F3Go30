@@ -1110,9 +1110,17 @@
     </div>
 
     <div id="step-bonus" class="hidden">
+      <!-- Month nav pinned above the list (F3Go30-5ire) — same card-head-row/date-nav-btn
+           pattern as Scorecard's scMonthNavLabel/scPrevMonthBtn/scNextMonthBtn, so a PAX can
+           page back to a previous month's Bonus Tracker to view and edit an entry there. -->
+      <div class="card-head-row">
+        <button id="bonusPrevMonthBtn" class="date-nav-btn" title="Previous month"><svg viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <h2 id="bonusMonthNavLabel" style="margin:0;flex:1;text-align:center;">&nbsp;</h2>
+        <button id="bonusNextMonthBtn" class="date-nav-btn" title="Next month"><svg viewBox="0 0 24 24" fill="none"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+
       <div class="card">
         <h2>Bonus Points</h2>
-        <div class="section-label" id="bonusMonthLabel" style="margin-top:0;"></div>
         <p class="muted">Log EHing an FNG, Fellowship, a Q, or an Inspire moment. EHing FNG, Q
           Point, and Inspire need a link to Slack as evidence before they count.</p>
         <div id="bonusListError" class="error-text hidden"></div>
@@ -4257,10 +4265,6 @@
     return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   }
 
-  function formatMonthLabel_(d) {
-    return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-  }
-
   function memberViewForIndex_(member, dayIndex, totalDays) {
     var sliced = (member.dayValues || []).slice(0, dayIndex + 1);
     // Viewing the latest reported day (the default/no-date-nav case): sliced is the whole array,
@@ -4691,14 +4695,22 @@
    * forward past it, since a future month has no scores yet. Reuses state.board/loadDashboard_ —
    * same cache and fetch path the dashboard and Scorecard's initial open already use, so paging
    * back costs a fetch only the first time a given month is viewed. */
-  function scorecardMonthBounds_() {
+  /** Shared bounds computation for any month-nav header capped relative to the real current
+   * month (not state.viewDate, which day-nav can drag around) — used by both Scorecard
+   * (scorecardMonthBounds_) and Bonus Points (bonusMonthBounds_, F3Go30-5ire) rather than each
+   * reimplementing the same "today's index ± N, clamped to availableMonths" arithmetic. */
+  function monthNavBounds_(maxMonthsBack, maxMonthsForward) {
     var months = state.availableMonths || [];
     var todayIdx = calMonthIndex_(monthKeyOf_(new Date()));
     if (todayIdx === -1) return { minIdx: -1, maxIdx: -1 };
     return {
-      minIdx: Math.max(0, todayIdx - SCORECARD_MAX_MONTHS_BACK_),
-      maxIdx: Math.min(months.length - 1, todayIdx + SCORECARD_MAX_MONTHS_FORWARD_)
+      minIdx: Math.max(0, todayIdx - maxMonthsBack),
+      maxIdx: Math.min(months.length - 1, todayIdx + maxMonthsForward)
     };
+  }
+
+  function scorecardMonthBounds_() {
+    return monthNavBounds_(SCORECARD_MAX_MONTHS_BACK_, SCORECARD_MAX_MONTHS_FORWARD_);
   }
 
   function renderScorecardMonthNav_() {
@@ -4942,6 +4954,37 @@
     return !!(BONUS_TYPE_RULES_[type] && BONUS_TYPE_RULES_[type].requiresLink);
   }
 
+  /** Bonus Points' own month nav state (F3Go30-5ire) — deliberately separate from
+   * state.viewDate (the check-in day-nav's view date), which the bonus page previously borrowed
+   * and which has nothing to do with which month a PAX wants to review/edit bonus entries for. */
+  var bonusState_ = { monthKey: null, loading: false };
+  var BONUS_MAX_MONTHS_BACK_ = 2;
+  // No forward cap beyond the real current month — a bonus entry can never be dated past the end
+  // of the current month (setBonusWhenRange_ below), so there is no future month to page into.
+  var BONUS_MAX_MONTHS_FORWARD_ = 0;
+
+  function bonusMonthBounds_() {
+    return monthNavBounds_(BONUS_MAX_MONTHS_BACK_, BONUS_MAX_MONTHS_FORWARD_);
+  }
+
+  /** First day of the currently-viewed bonus month, or real "now" when that month IS the real
+   * current month — used both to render the nav label context and, in setBonusWhenRange_/
+   * openBonusForm_, to keep the Add/Edit form's date window aligned with whichever month the nav
+   * is parked on rather than always the real current month. */
+  function bonusContextDate_() {
+    var monthKey = bonusState_.monthKey || monthKeyOf_(new Date());
+    if (monthKey === monthKeyOf_(new Date())) return new Date();
+    return parseIsoDate_(monthKey + '-01');
+  }
+
+  function renderBonusMonthNav_() {
+    var idx = calMonthIndex_(bonusState_.monthKey);
+    var bounds = bonusMonthBounds_();
+    $('bonusMonthNavLabel').textContent = bonusState_.loading ? 'Loading…' : calMonthLabel_(bonusState_.monthKey);
+    $('bonusPrevMonthBtn').disabled = bonusState_.loading || idx === -1 || idx <= bounds.minIdx;
+    $('bonusNextMonthBtn').disabled = bonusState_.loading || idx === -1 || idx >= bounds.maxIdx;
+  }
+
   function renderBonusList_() {
     var el = $('bonusList');
     el.innerHTML = '';
@@ -4964,12 +5007,21 @@
     });
   }
 
-  function loadBonusList_() {
+  /** monthKey (optional): which month to load/switch to — defaults to whatever bonusState_ is
+   * already parked on (or the real current month, on first open). Resolves the fetch's dateISO
+   * from that month's own startDateIso in state.availableMonths (F3Go30-5ire) rather than
+   * state.viewDate — the bonus page's month nav is independent of the check-in day-nav. */
+  function loadBonusList_(monthKey) {
     hideApiError_();
     $('bonusListError').classList.add('hidden');
-    var dateISO = state.viewDate ? isoDate_(state.viewDate) : undefined;
+    monthKey = monthKey || bonusState_.monthKey || monthKeyOf_(new Date());
+    bonusState_.monthKey = monthKey;
+    bonusState_.loading = true;
+    renderBonusMonthNav_();
+    var months = state.availableMonths || [];
+    var target = months.filter(function(m) { return m.monthKey === monthKey; })[0];
+    var dateISO = target ? target.startDateIso : isoDate_(bonusContextDate_());
     state.bonusListContextIso = dateISO;
-    $('bonusMonthLabel').textContent = formatMonthLabel_(state.viewDate || new Date());
     $('bonusList').innerHTML = '<p class="muted" style="margin:10px 0 0;">Loading…</p>';
     return callApi('bonusList', { f3Name: state.f3Name, email: state.email, dateISO: dateISO })
       .then(function(res) {
@@ -4981,13 +5033,30 @@
         $('bonusListError').textContent = "Couldn't load your bonus entries — please try again.";
         $('bonusListError').classList.remove('hidden');
         showApiError_('bonusList', err);
+      })
+      .finally(function() {
+        bonusState_.loading = false;
+        renderBonusMonthNav_();
       });
+  }
+
+  /** Mirrors navigateScorecardMonth_ — steps bonusState_.monthKey by delta among
+   * state.availableMonths, clamped to bonusMonthBounds_, no-op while a fetch is already in
+   * flight or the step would land outside the bounds. */
+  function navigateBonusMonth_(delta) {
+    if (bonusState_.loading) return;
+    var months = state.availableMonths || [];
+    var idx = calMonthIndex_(bonusState_.monthKey);
+    var newIdx = idx + delta;
+    var bounds = bonusMonthBounds_();
+    if (idx === -1 || newIdx < bounds.minIdx || newIdx > bounds.maxIdx) return;
+    return loadBonusList_(months[newIdx].monthKey);
   }
 
   var BONUS_DEFAULT_TYPE_ = 'Fellowship';
 
   function setBonusWhenRange_() {
-    var contextDay = state.viewDate || new Date();
+    var contextDay = bonusContextDate_();
     var firstOfLastMonth = new Date(contextDay.getFullYear(), contextDay.getMonth() - 1, 1);
     var lastOfThisMonth = new Date(contextDay.getFullYear(), contextDay.getMonth() + 1, 0);
     $('bonusWhen').min = isoDate_(firstOfLastMonth);
@@ -5039,7 +5108,7 @@
       : null;
     $('bonusFormHeading').textContent = entry ? 'Edit Bonus' : 'Add Bonus';
     setBonusWhenRange_();
-    $('bonusWhen').value = entry ? entry.whenIso : isoDate_(state.viewDate || new Date());
+    $('bonusWhen').value = entry ? entry.whenIso : isoDate_(bonusContextDate_());
     $('bonusType').value = entry ? entry.type : BONUS_DEFAULT_TYPE_;
     $('bonusMessage').value = entry ? entry.message : '';
     $('bonusLink').value = entry ? entry.link : '';
@@ -5071,9 +5140,14 @@
     hideApiError_();
     hideBonusSaveNotice_();
     closeBonusForm_();
+    // Always reopens on the real current month (AC4), regardless of whatever month the nav was
+    // last left on in a prior visit this session.
+    bonusState_.monthKey = monthKeyOf_(new Date());
     showStep('bonus');
-    loadBonusList_();
+    loadBonusList_(bonusState_.monthKey);
   }
+  $('bonusPrevMonthBtn').addEventListener('click', function() { navigateBonusMonth_(-1); });
+  $('bonusNextMonthBtn').addEventListener('click', function() { navigateBonusMonth_(1); });
   $('bonusBtn').addEventListener('click', openBonusManage_);
   $('dBonusTile').addEventListener('click', openBonusManage_);
   $('dBonusTile').addEventListener('keydown', function(e) {

@@ -36,6 +36,9 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
 - **Preview a team's roster before you sign up** — looking ahead to a month you're not registered
   in yet (from Scorecard, or by paging the dashboard forward) used to show an error; it now shows
   who's already signed up for it, grouped by team.
+- **Bonus Points: month-to-month nav** — the Bonus Points screen now has the same month-to-month
+  arrows as Scorecard, so you can page back up to two months and view or edit a bonus entry from
+  a previous month, not just the current one.
 
 ---
 

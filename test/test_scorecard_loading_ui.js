@@ -28,7 +28,7 @@ function loadHarness_() {
   var src = readStaticPage_();
   var body = 'var SCORECARD_MAX_MONTHS_BACK_ = 2;\nvar SCORECARD_MAX_MONTHS_FORWARD_ = 1;\n' + [
     'bonusTotalOf_', 'scorecardBoardHasAnyScore_', 'scorecardIsRosterOnly_',
-    'monthKeyOf_', 'calMonthIndex_', 'calMonthLabel_', 'scorecardMonthBounds_',
+    'monthKeyOf_', 'calMonthIndex_', 'calMonthLabel_', 'monthNavBounds_', 'scorecardMonthBounds_',
     'renderScorecardMonthNav_', 'scorecardLoadingUi_',
   ].map(function(name) { return extractFunction_(src, name); }).join('\n');
 

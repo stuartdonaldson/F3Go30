@@ -2567,3 +2567,12 @@ immediate next step.
   only ever needs to "turn off loading" rather than "restore whatever the last render decided."
   Found live in Scorecard's scorecardLoadingUi_(false) un-hiding a podium renderScorecard_ had
   just correctly hidden moments earlier in the same chain.
+
+## 2026-09-01 04:40:38
+_session e3157b8a · v3 · 09-01_
+
+### Objective 1: Let a PAX view and edit a previous month's Bonus Points from the check-in web app
+Rationale: Bonus Points always scoped its list to the check-in day-nav's current view date, with no way to page independently — a PAX wanting to review or fix a bonus entry from a prior month had no path to it, unlike Scorecard which already has month-to-month arrows. Stuart: "you should be able to go back and look at, and edit bonus point records on the previous month. Add the month nav to the top of the display similar to Scorecard."
+Outcome [user-facing]: Bonus Points now has its own month-nav header (prev/next arrows + label), capped two months back and forward to the real current month, matching Scorecard's pattern; paging back loads and lets you edit that month's entries.
+Outcome [developer-facing]: Added bonusState_/bonusMonthBounds_/navigateBonusMonth_/renderBonusMonthNav_ to static-pages/src/index.html; loadBonusList_ now scopes by its own monthKey instead of state.viewDate. Extracted a shared monthNavBounds_ helper so Scorecard and Bonus Points share one bounds calculation instead of two copies. Fixed the Add/Edit form's date-input range to follow the viewed bonus month (bonusContextDate_) rather than always today, so editing an entry two months back doesn't hand the date picker an out-of-range value. Removed formatMonthLabel_, dead after the rewire. New test/test_bonus_month_nav.js (TDD red→green, 7 assertions extracting the real functions out of index.html) wired into pnpm test; test_scorecard_loading_ui.js updated for the shared-helper refactor. Full suite green. Tracked as bd issue F3Go30-5ire (closed). No backend change needed — resolveBonusSheet_ already resolves the Bonus Tracker sheet by an arbitrary date.
+Outcome [user-facing]: Deployed to PROD as v2.6.2.
