@@ -1313,20 +1313,18 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   }
   var match = findSignupMatchByF3NameOnly_dw_(dataRows, f3Name, columns);
   var responsesMs = Date.now() - t1;
-  if (!match) {
+
+  // F3Go30-csfe.1: no signup match here doesn't necessarily mean nothing to show — a PAX
+  // previewing a just-created next month's roster before registering has no Responses/Tracker
+  // row of their own, but everyone ELSE already registered for that month is still on its
+  // Tracker. Read the roster regardless of match so handleCheckinDashboard_ can render a
+  // board-only view instead of a hard miss; only bail with no roster fields at all when the
+  // Tracker sheet itself isn't there to read (nothing to show under any perspective).
+  var trackerSheet = targetSs.getSheetByName('Tracker');
+  if (!trackerSheet || trackerSheet.getLastRow() < 4) {
     GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({ matched: false, lean: false, openMs: openMs, responsesMs: responsesMs, totalMs: Date.now() - t0 }, paxCacheStatsForLog_dw_()));
     return { matched: false, months: months };
   }
-
-  var registeredEmail = String(
-    headers && typeof getResponseEmailValue_dw_ === 'function'
-      ? getResponseEmailValue_dw_(match.row, columns, headers)
-      : match.row[columns.EMAIL]
-  ).trim().toLowerCase();
-  var emailMismatch = registeredEmail !== String(email || '').trim().toLowerCase();
-
-  var trackerSheet = targetSs.getSheetByName('Tracker');
-  if (!trackerSheet || trackerSheet.getLastRow() < 4) return { matched: false, months: months };
 
   var t2 = Date.now();
   var layout = getTrackerLayout_(trackerSheet, monthInfo.sheetId);
@@ -1337,6 +1335,29 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
     trackerValues = trackerSheet.getRange(4, 1, lastRow - 3, lastCol).getValues();
   }
   var trackerMs = Date.now() - t2;
+
+  // Snapshotted fresh at each return point below (reads the current trackerValues/rowIndex
+  // closure variables, not a value captured once) — the stale-bind path further down reassigns
+  // trackerValues to a fresh read, and this must reflect that if it fires after.
+  function boardOnlyIdentity_dw_() {
+    return {
+      matched: false, months: months, monthInfo: monthInfo,
+      targetSs: { get: function() { return targetSs; }, getOpenMs: function() { return openMs; } },
+      trackerSheet: trackerSheet, row2: layout.row2, row3: layout.row3, trackerValues: trackerValues,
+    };
+  }
+
+  if (!match) {
+    GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({ matched: false, lean: false, openMs: openMs, responsesMs: responsesMs, trackerMs: trackerMs, totalMs: Date.now() - t0 }, paxCacheStatsForLog_dw_()));
+    return boardOnlyIdentity_dw_();
+  }
+
+  var registeredEmail = String(
+    headers && typeof getResponseEmailValue_dw_ === 'function'
+      ? getResponseEmailValue_dw_(match.row, columns, headers)
+      : match.row[columns.EMAIL]
+  ).trim().toLowerCase();
+  var emailMismatch = registeredEmail !== String(email || '').trim().toLowerCase();
 
   var t3 = Date.now();
   var roster = buildRosterFromTrackerValues_(trackerValues);
@@ -1350,7 +1371,7 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
   var cacheWriteMs = Date.now() - t3;
 
   var rowIndex = rosterIndex[paxCacheNormalizeName_dw_(f3Name)];
-  if (rowIndex === undefined) return { matched: false, months: months };
+  if (rowIndex === undefined) return boardOnlyIdentity_dw_();
 
   // Same invariant as the lean path (F3Go30-a2hq). rosterIndex here was rebuilt from
   // trackerValues in this very function, so it agrees with those values by construction — but
@@ -1363,7 +1384,7 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
       fromCache: trackerFromCache,
     });
     purgeStaleTrackerBind_dw_(monthInfo.sheetId, f3Name);
-    if (!trackerFromCache) return { matched: false, months: months };
+    if (!trackerFromCache) return boardOnlyIdentity_dw_();
     var freshLastRow = trackerSheet.getLastRow();
     var freshLastCol = trackerSheet.getLastColumn();
     trackerValues = trackerSheet.getRange(4, 1, freshLastRow - 3, freshLastCol).getValues();
@@ -1371,7 +1392,7 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
     for (var fi = 0; fi < trackerValues.length; fi++) {
       if (trackerRowBelongsToPax_dw_(trackerValues[fi], f3Name)) { rowIndex = fi; break; }
     }
-    if (rowIndex === -1) return { matched: false, months: months };
+    if (rowIndex === -1) return boardOnlyIdentity_dw_();
   }
 
   GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({
@@ -2556,15 +2577,19 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   }
   if (!identity.matched) {
     // Distinct from the no_tracker_for_date miss above: a tracker exists for this date, but the
-    // viewing PAX has no row in it (e.g. date-nav back into a month they weren't registered in —
-    // F3Go30-awhw). The success path logs checkinWebapp.dashboard at the end; without this the
-    // failure leaves zero Axiom trace. Warn with enough context (identity, resolved month) to
-    // diagnose. Graceful degradation of this case is tracked in F3Go30-csfe.
+    // viewing PAX has no row in it (e.g. date-nav into a month they weren't registered in, or
+    // previewing a just-opened next month's roster before signing up — F3Go30-awhw). The success
+    // path logs checkinWebapp.dashboard at the end; without this the miss leaves zero Axiom
+    // trace. Warn with enough context (identity, resolved month) to diagnose.
     GasLogger.log('checkinWebapp.dashboard.identityMiss', {
       f3Name: payload.f3Name, monthLabel: monthInfo.label,
       monthKey: _dashboardIsoDate_(monthInfo.startDate).slice(0, 7),
+      boardOnly: !!identity.trackerValues,
     });
-    return { ok: false, error: 'not_found' };
+    // F3Go30-csfe.1: no roster at all (Tracker itself unreadable) is still a hard miss — nothing
+    // to render under any perspective. A readable roster with no row for THIS viewer degrades to
+    // a board-only view (registered:false) below instead of failing the whole load.
+    if (!identity.trackerValues) return { ok: false, error: 'not_found' };
   }
 
   // F3Go30-bopt: checkpoint marking the end of identity/month resolution — everything below is
@@ -2653,27 +2678,38 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
   });
   var rosterLoopMs = Date.now() - tRosterLoop0;
 
-  var userDayValues = reportedDayCols.map(function(d) { return identity.trackerValues[identity.rowIndex][d.col]; });
-  var outcomes = countOutcomes_(userDayValues);
-  var bonusByType = userRow.bonusByType;
-  var userBonusByTypeSeries = userRow.bonusByTypeSeries;
+  // F3Go30-csfe.1: identity.matched is false for a board-only view (viewer has no row in this
+  // month — e.g. previewing next month's roster before registering). Every field below reads
+  // identity.rowIndex/userRow, neither of which exist in that case — skip straight to the
+  // team/board data, which the roster loop above already built independent of the viewer's own
+  // identity.
+  var userDayValues = null, outcomes = null, bonusByType = null, userBonusByTypeSeries = null;
+  var userRollingAverage = null, priorMonthTail = null, userStreak = null, userMaxStreak30 = null;
+  var myTeamMembers = null;
+  if (identity.matched) {
+    userDayValues = reportedDayCols.map(function(d) { return identity.trackerValues[identity.rowIndex][d.col]; });
+    outcomes = countOutcomes_(userDayValues);
+    bonusByType = userRow.bonusByType;
+    userBonusByTypeSeries = userRow.bonusByTypeSeries;
 
-  // F3Go30-uz9e.1: userRow's rollingAverage and priorMonthDayValues (built inside the roster loop
-  // above, from the same historyValues-sourced computation every other row now gets too) already
-  // span the month boundary — no separate override/getPriorMonthTailValues_ call needed here
-  // anymore (that used to run a second, potentially cache-missing lookup for the viewer alone).
-  var userRollingAverage = userRow.rollingAverage;
-  var priorMonthTail = userRow.priorMonthDayValues;
+    // F3Go30-uz9e.1: userRow's rollingAverage and priorMonthDayValues (built inside the roster
+    // loop above, from the same historyValues-sourced computation every other row now gets too)
+    // already span the month boundary — no separate override/getPriorMonthTailValues_ call
+    // needed here anymore (that used to run a second, potentially cache-missing lookup for the
+    // viewer alone).
+    userRollingAverage = userRow.rollingAverage;
+    priorMonthTail = userRow.priorMonthDayValues;
 
-  // F3Go30-5uk2: userRow (built inside the roster loop above) already carries a cross-month
-  // streak/maxStreak30 via getPaxHistoryWindowValues_ — the same PaxCache history window used
-  // for every other board row, so the viewer no longer needs a separate override computation.
-  var userStreak = userRow.streak;
-  var userMaxStreak30 = userRow.maxStreak30;
+    // F3Go30-5uk2: userRow (built inside the roster loop above) already carries a cross-month
+    // streak/maxStreak30 via getPaxHistoryWindowValues_ — the same PaxCache history window used
+    // for every other board row, so the viewer no longer needs a separate override computation.
+    userStreak = userRow.streak;
+    userMaxStreak30 = userRow.maxStreak30;
 
-  var userTeam = String(identity.trackerValues[identity.rowIndex][TRACKER_TEAM_COL_] || '').trim().toLowerCase();
-  var myTeamMembers = allPaxRows.filter(function(r) { return String(r.team || '').trim().toLowerCase() === userTeam; })
-    .sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
+    var userTeam = String(identity.trackerValues[identity.rowIndex][TRACKER_TEAM_COL_] || '').trim().toLowerCase();
+    myTeamMembers = allPaxRows.filter(function(r) { return String(r.team || '').trim().toLowerCase() === userTeam; })
+      .sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
+  }
 
   var paxBoard = groupByTeam_(allPaxRows);
 
@@ -2688,10 +2724,10 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
     totalMs: Date.now() - t0,
   }, paxCacheStatsForLog_dw_()));
 
-  return {
+  var result = {
     ok: true,
-    f3Name: userRow.name,
-    team: userRow.team,
+    registered: identity.matched,
+    f3Name: identity.matched ? userRow.name : payload.f3Name,
     monthLabel: monthInfo.label,
     monthKey: _dashboardIsoDate_(monthInfo.startDate).slice(0, 7),
     trackerUrl: monthInfo.trackerUrl,
@@ -2700,30 +2736,37 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
     dayDates: dayDates,
     viewDayIndex: viewDayIndex,
     viewDate: dayDates[viewDayIndex] || null,
-    streak: userStreak,
-    maxStreak30: userMaxStreak30,
-    score: userRow.score,
-    rawScore: userRow.rawScore,
-    scorePct: userRow.scorePct,
-    dayValues: userDayValues,
-    daySegments: userRow.daySegments,
-    rollingAverage: userRollingAverage,
+    paxBoard: paxBoard,
+  };
+  // F3Go30-csfe.1: everything below is the viewer's own "you" panel — meaningless (and its
+  // inputs, e.g. userRow, don't exist) when registered is false. A board-only view carries the
+  // team data above and nothing else.
+  if (identity.matched) {
+    result.team = userRow.team;
+    result.streak = userStreak;
+    result.maxStreak30 = userMaxStreak30;
+    result.score = userRow.score;
+    result.rawScore = userRow.rawScore;
+    result.scorePct = userRow.scorePct;
+    result.dayValues = userDayValues;
+    result.daySegments = userRow.daySegments;
+    result.rollingAverage = userRollingAverage;
     // Trailing raw values (0/1/-1) from the end of the previous month's tracker, up to
     // DASHBOARD_DISPLAY_WINDOW_DAYS_-1 of them — lets the client pad the rolling-average
     // chart's display window across a month boundary the same way userRollingAverage's own
     // averaging already does, instead of showing a sparse few-point chart on early-month days.
-    priorMonthDayValues: priorMonthTail,
-    done: outcomes.done,
-    missed: outcomes.missed,
-    absent: outcomes.absent,
-    bonusByType: bonusByType,
+    result.priorMonthDayValues = priorMonthTail;
+    result.done = outcomes.done;
+    result.missed = outcomes.missed;
+    result.absent = outcomes.absent;
+    result.bonusByType = bonusByType;
     // One bonusByType per reported day, aligned with dayDates — lets the client scrub the
     // date-nav arrows and show pills accurate to that day (F3Go30-y55y follow-up) instead of
     // always showing today's month-to-date totals.
-    bonusByTypeSeries: userBonusByTypeSeries,
-    myTeam: myTeamMembers,
-    paxBoard: paxBoard,
-  };
+    result.bonusByTypeSeries = userBonusByTypeSeries;
+    result.myTeam = myTeamMembers;
+  }
+  return result;
 }
 
 /**

@@ -27,6 +27,16 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+- **New Scorecard screen** — tap your name and choose Scorecard to see The Grind Board (every PAX
+  ranked, top-3 podium, switchable between total score / workout days / bonus points) and Top
+  Teams (each team's average score). Ties on the ladder now break by longest streak instead of
+  going straight to alphabetical. Month-to-month arrows let you look back at how a recent month
+  went; before anyone's checked in for a new month (or before you've registered for it), it shows
+  a simple team roster instead of an empty-looking leaderboard.
+- **Preview a team's roster before you sign up** — looking ahead to a month you're not registered
+  in yet (from Scorecard, or by paging the dashboard forward) used to show an error; it now shows
+  who's already signed up for it, grouped by team.
+
 ---
 
 ## v2.6 — Tap-name menu, cross-device check-in consistency, signup goal requirements (2026-08-27)
@@ -59,6 +69,9 @@ check-ins occasionally disagreeing with themselves across devices.
 - **A "Sign up for next month?" popup** now appears once next month's tracker is ready if you
   haven't signed up for it yet — "Sign Up" drops you straight into the signup form, already filled
   in from this month's goals; "Remind me later" hides it until tomorrow.
+- **Fixed Send Feedback emails arriving blank** — your Site Q was receiving your feedback email
+  with no message and no star rating visible, because an empty section of the email confused
+  some mail clients into showing nothing at all. Feedback content now always shows up.
 
 ---
 

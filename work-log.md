@@ -2490,3 +2490,80 @@ before deploy. `pnpm run release:minor` bumped package.json 2.5.0→2.6.0, deplo
 tagged and pushed `v2.6.0`. Post-deploy SIT build-stamp trailer (script/version.js/package.json
 build counter) committed separately per existing convention.
 
+
+## 2026-08-31 21:18:49
+_session 757b9e86 · v3 · 08-31_
+
+### Objective 1: Let PAX preview a month's team roster before they've registered for it
+Rationale: Axiom logs (checkinWebapp.dashboard.identityMiss) showed a live SIT "Something went
+wrong / Error: not_found" failure for a PAX whose dashboard request resolved to a real tracker
+month they simply hadn't signed up for yet. Traced to handleCheckinDashboard_ hard-erroring the
+instant identity.matched was false, even when the month's Tracker roster itself was perfectly
+readable. Stuart's ask once the cause was found: "yes fix this because i want people to be able
+to look at the next month participants before they register for the next month."
+Outcome [user-facing]: The check-in dashboard no longer hard-errors when the viewer isn't
+registered in the month being viewed (e.g. previewing a just-opened next month before signing
+up) — it now shows the team roster instead, with no personal "you" panel. A month whose Tracker
+is genuinely unreadable still shows the original not_found error, unchanged.
+Outcome [developer-facing]: resolveCheckinIdentityFull_ (script/dashboardWebapp.js) now returns
+the Tracker roster fields (trackerValues/row2/row3/targetSs) at every identity-miss point instead
+of a bare `{matched:false}`; handleCheckinDashboard_ falls through to the existing (already
+identity-agnostic) roster-building code and returns `{ok:true, registered:false, paxBoard, ...}`
+with all personal fields omitted. New unit test in test/test_dashboard_webapp.js. Filed and
+closed F3Go30-csfe.1 (child of the pre-existing F3Go30-csfe epic); live-verified on SIT.
+
+### Objective 2: Stand up realistic test data for the new roster-preview behavior  [accreted]
+Transition: verifying F3Go30-csfe.1 properly needed a month with real signed-up PAX the viewer
+wasn't part of — SIT's own bound tracker had none. Picked up immediately since the fix was fresh
+in context.
+Rationale: Stuart asked directly for tooling to "take sit and populate it with prod data for
+august and september." tools/copyTemplate.js already does exactly this (copies PROD's Template +
+N most recent real trackers into a new, separately-addressed namespace) but as a
+throwaway-by-default smoke namespace; confirmed with Stuart that a persistent, separately
+addressed copy — not overwriting SIT's own bound spreadsheet — was the right shape.
+Outcome [internal]: Ran `node tools/copyTemplate.js SepTest --env sit --tracker-count 2 --kind
+demo`, copying PROD's real August and September 2026 trackers (22 PAX/5 teams and 13 PAX/4 teams)
+into a new SIT-registered namespace, addressable via `ns=SepTest` on any webapp call. Left
+standing for further testing; flagged to Stuart that `templateAdminSecret` in
+local.settings.json is stale (cmd=admin calls direct to PROD return `forbidden`) as an unrelated
+pre-existing gap, not touched this session.
+
+### Objective 3: Harden the new Scorecard screen against real usage patterns found via live testing  [accreted]
+Transition: each fix below was found by Stuart actually clicking through the Scorecard against
+the SepTest namespace and reporting what he saw; picked up in the same session since the
+SepTest fixture and Scorecard context were both already warm.
+Rationale: F3Go30-enwp (Scorecard: HIM Ladder + Top Teams) had shipped in an earlier session with
+several assumptions that only broke under real month-boundary and multi-month conditions, each
+surfaced live rather than by inspection.
+Outcome [user-facing]: Scorecard no longer shows a ranked podium/ladder when there's nothing
+meaningful to rank — covers both an unregistered month AND a real registered month where
+everyone is still at zero (Stuart: "the first half of the first day of the month nobody has
+checked in ... it's reasonable to not have the podium"), falling back to a plain team roster
+instead (F3Go30-csfe.2). Scorecard now defaults to the previous month for the first 5 days of a
+new month, since that's the only one with real data yet (F3Go30-enwp.1). Opening Scorecard no
+longer gets silently bounced back to Dashboard a few seconds later by an unrelated background
+refresh (F3Go30-e4r0). Switching from a ranked month to a roster-only one no longer leaves the
+OLD month's podium visibly stuck on screen (F3Go30-iwms). A tied score on the ladder/podium now
+breaks by longest streak before falling back to alphabetical name (F3Go30-enwp.2). The header
+Back button from Scorecard now returns to whichever screen (Checkin or Dashboard) the PAX
+actually came from, instead of always landing on a blank, never-loaded Dashboard (F3Go30-izly).
+Outcome [developer-facing]: script/dashboardWebapp.js and static-pages/src/index.html changes,
+each with a live-Playwright-confirmed root cause (network/DOM instrumentation against the real
+SIT deployment pinpointed revalidateDashboard_'s missing state.currentStep guard and
+scorecardLoadingUi_'s unconditional un-hide, both reproduced before and after the fix) and new
+extraction-based unit tests: test_scorecard_roster_only.js, test_scorecard_default_month.js,
+test_scorecard_loading_ui.js, test_scorecard_pax_comparator.js, test_scorecard_back_button.js,
+plus extensions to test_dashboard_stale_while_revalidate.js. state.bonusReturnStep renamed to
+state.mainViewReturnStep, now shared by both Bonus's and Scorecard's back-navigation. Full suite
+(57 files) green after every change; each fix deployed to SIT and live-verified individually
+(v2.6.0.9 through v2.6.0.14) before moving to the next.
+Open: none of this round's fixes had been deployed to PROD as of session end — that's the
+immediate next step.
+
+### Key Learnings:
+- A promise chain's `.then(render).finally(cleanup)` pattern is a trap when both `render` and
+  `cleanup` touch the same DOM visibility state: `cleanup` running unconditionally after `render`
+  can silently undo a decision `render` just correctly made, if `cleanup` was written assuming it
+  only ever needs to "turn off loading" rather than "restore whatever the last render decided."
+  Found live in Scorecard's scorecardLoadingUi_(false) un-hiding a podium renderScorecard_ had
+  just correctly hidden moments earlier in the same chain.

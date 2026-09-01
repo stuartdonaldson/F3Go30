@@ -95,7 +95,7 @@ function baseState_(cachedForToday) {
   var state = {
     f3Name: 'Test PAX', email: 'test@example.com', resolvedContext: null,
     board: {}, pendingSelfWrites: {}, viewDate: new Date(),
-    dashboardLoading: false, dashboardPrefetchPromise: null,
+    dashboardLoading: false, dashboardPrefetchPromise: null, currentStep: 'dashboard',
   };
   if (cachedForToday) {
     state.board[monthKey_()] = { monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0 };
@@ -160,6 +160,52 @@ function baseState_(cachedForToday) {
 
   assert.ok(h.setButtonLoadingCalls.length >= 1 && h.setButtonLoadingCalls[0].isLoading === true,
     'with no cached payload for today, the button must still show a blocking Loading… state');
+})();
+
+// F3Go30-e4r0: revalidateDashboard_'s background re-render used to fire unconditionally once its
+// silent fetch resolved, with no check on whether the PAX was still even looking at the
+// Dashboard step — reproduced live (SepTest, 2026-09-01): opening Scorecard shortly after
+// Dashboard got silently bounced back to Dashboard a few seconds later, once a revalidation
+// kicked off by the earlier dashboardBtn click finally resolved. Fix: only repaint (and thus
+// showStep('dashboard') via renderDashboard_) when state.currentStep is still 'dashboard' at
+// resolve time — the same guard repaintCurrentView_ already uses for the reconnect-poll's silent
+// repaint ("by the time a poll succeeds the PAX may have navigated on, and repainting a hidden
+// view would be wasted work").
+(function testRevalidateDoesNotBouncePaxBackToDashboardOnceTheyHaveNavigatedAway() {
+  var state = baseState_(true);
+  var resolveFetch;
+  var callApi = function() { return new Promise(function(resolve) { resolveFetch = resolve; }); };
+  var h = makeDashboardHarness_(state, callApi);
+
+  h.elements.dashboardBtn.trigger('click');
+  assert.equal(h.renderCalls.length, 1, 'cached copy still renders instantly on click');
+
+  // The PAX navigates to Scorecard before the background revalidation resolves.
+  state.currentStep = 'scorecard';
+  resolveFetch({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0 });
+
+  return new Promise(function(r) { setImmediate(r); }).then(function() {
+    assert.equal(h.renderCalls.length, 1,
+      'AC1/AC2: revalidation must not repaint (and so must not showStep back to dashboard) once the PAX has navigated away');
+  });
+})();
+
+// AC3: unchanged behavior — a PAX who IS still on the Dashboard step when the revalidation
+// resolves still gets the stale-while-revalidate repaint-in-place.
+(function testRevalidateStillRepaintsInPlaceWhenPaxIsStillOnDashboard() {
+  var state = baseState_(true);
+  var resolveFetch;
+  var callApi = function() { return new Promise(function(resolve) { resolveFetch = resolve; }); };
+  var h = makeDashboardHarness_(state, callApi);
+
+  h.elements.dashboardBtn.trigger('click');
+  assert.equal(h.renderCalls.length, 1);
+
+  resolveFetch({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0 });
+
+  return new Promise(function(r) { setImmediate(r); }).then(function() {
+    assert.equal(h.renderCalls.length, 2, 'AC3: still repaints in place when the PAX is still on dashboard');
+  });
 })();
 
 // ── Pull-to-refresh (AC4): a downward pull past threshold at scrollTop 0 triggers revalidation, ──

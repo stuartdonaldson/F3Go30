@@ -1928,6 +1928,58 @@ function makeLeanIdentityResponsesSheet_(rows) {
   global.resolveContextDate_ = function() { return new Date(); };
 })();
 
+// F3Go30-csfe.1: a viewer with no row in an otherwise-valid month's Tracker (e.g. previewing a
+// just-created next month's roster before signing up) must get the team roster back, not a hard
+// not_found — this is the live SIT bug (Axiom checkinWebapp.dashboard.identityMiss, execId
+// cc2f1d7d, 2026-08-31/09-01, f3Name 'Little John', monthKey '2026-09') behind the Scorecard's
+// future-month roster view (renderScorecardRoster_, static-pages/src/index.html) always erroring
+// instead of rendering the already-signed-up PAX.
+(function testDashboardReturnsBoardOnlyRosterWhenViewerNotRegisteredInMonth() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 7, 31, 17, 0); }; // "today" = Aug 31
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-sep-preview', trackerUrl: 'https://x/sep', startDate: new Date(2026, 8, 1) };
+  };
+  global.formatRegistrationMonth_ = function() { return 'September 2026'; };
+
+  var row2 = ['', '', '', '', '', '', '', '', '', ''];
+  var row3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1), new Date(2026, 8, 2)];
+  var paxRows = [
+    ['Anchor', 'Crucible', '', '', '', '', 0, 0, '', ''],
+    ['Slaw', 'Impala', '', '', '', '', 0, 0, '', ''],
+  ];
+  var emptyBonusSheet = { getLastRow: function() { return 1; }, getRange: function() { return { getValues: function() { return []; } }; } };
+  installFakeSpreadsheetById_({
+    'sheet-sep-preview': {
+      getSheetByName: function(n) {
+        // Little John hasn't signed up for September yet — absent from Responses AND Tracker.
+        if (n === 'Responses') return makeFakeResponsesSheetWithF3Names_(['Anchor', 'Slaw']);
+        if (n === 'Tracker') return makeFakeTrackerSheet_(row2, row3, paxRows);
+        if (n === 'Bonus Tracker') return emptyBonusSheet;
+        return null;
+      },
+    },
+  });
+
+  var result = handleCheckinDashboard_({}, { f3Name: 'Little John', email: 'lj@x.com', dateISO: '2026-09-05' });
+
+  assert.equal(result.ok, true, 'an unregistered-but-existing month must not hard-error');
+  assert.equal(result.registered, false);
+  assert.equal(result.monthKey, '2026-09');
+  var names = [];
+  (result.paxBoard || []).forEach(function(g) { (g.members || []).forEach(function(m) { names.push(m.name); }); });
+  assert.deepEqual(names.sort(), ['Anchor', 'Slaw'], 'the roster must still list already-registered PAX');
+  assert.equal(result.streak, undefined, 'no personal panel data for a viewer with no row in this month');
+  assert.equal(result.myTeam, undefined);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
 // A fresh check-in write-through (handleCheckinSubmit_) advances the PAX's history window —
 // verifies the wiring end to end, not just advancePaxHistoryDay_ in isolation (already unit
 // tested in test_pax_cache.js).

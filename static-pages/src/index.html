@@ -251,6 +251,11 @@
   .board-row-main .bname { width: 117px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: bold; }
   .board-row-main .bstatus { width: 20px; flex-shrink: 0; text-align: center; }
   .board-row-main .bpct { width: 30px; flex-shrink: 0; text-align: right; font-family: monospace; font-weight: bold; }
+  /* Scorecard's future-month roster (F3Go30-enwp follow-up): same .board-row-main a day-scoped
+     board-row uses, but with no status/pct columns to balance against — let the name run free
+     instead of sitting pinned to a 117px column meant to line up with those. */
+  .board-row-main.roster { justify-content: flex-start; }
+  .board-row-main.roster .bname { width: auto; }
   /* F3Go30 pax-detail: taps (not just hover) reveal the badge's meaning — `title` alone is a
      no-op on touch, and the badge sits inside a clickable tile/row so a tap has to be caught and
      stopped here before it reaches that ancestor's own click handler (see the delegated
@@ -276,6 +281,11 @@
     border: 1px solid var(--border); background: var(--input-bg); color: var(--text); border-radius: 10px; }
   .sc-tab.on { background: var(--brand-bg); color: var(--brand-contrast); border-color: var(--brand-bg); }
   .sc-metric-row { display: flex; gap: 6px; margin-bottom: 14px; }
+  /* F3Go30-enwp follow-up: same .hidden-loses-to-a-later-same-specificity-rule trap already fixed
+     for .announce-overlay above — .sc-metric-row/.sc-podium's own display:flex/grid are declared
+     after plain .hidden in this stylesheet, so toggling the hidden class alone did nothing for
+     the future-month roster view. Two-class selectors outrank both regardless of order. */
+  .sc-metric-row.hidden, .sc-podium.hidden { display: none; }
   .sc-metric-btn { flex: 1; padding: 8px; font: inherit; font-size: 13px; cursor: pointer;
     border: 1px solid var(--border); background: var(--input-bg); color: var(--text); border-radius: 8px; }
   .sc-metric-btn.on { background: var(--soft-bg); color: var(--brand); border-color: var(--soft-border); font-weight: bold; }
@@ -1005,6 +1015,17 @@
          normalized/average score), built from the dashboard payload already cached in
          state.board (paxBoard is every PAX grouped by team) — no separate fetch. -->
     <div id="step-scorecard" class="hidden">
+      <!-- F3Go30-enwp follow-up: month nav pinned above the tabs — shared by both Ladder and Top
+           Teams views (one month context for the whole screen), same date-nav-btn/card-head-row
+           pattern as the check-in calendar's calPrevMonthBtn/calNextMonthBtn. Bounded to at most
+           SCORECARD_MAX_MONTHS_BACK_ months behind the real current month; never forward past it
+           (a future month has no scores yet). -->
+      <div class="card-head-row">
+        <button id="scPrevMonthBtn" class="date-nav-btn" title="Previous month"><svg viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <h2 id="scMonthNavLabel" style="margin:0;flex:1;text-align:center;">&nbsp;</h2>
+        <button id="scNextMonthBtn" class="date-nav-btn" title="Next month"><svg viewBox="0 0 24 24" fill="none"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+
       <div class="sc-tabs">
         <button type="button" class="sc-tab" id="scTabLadder">The Grind Board</button>
         <button type="button" class="sc-tab" id="scTabTeams">Top Teams</button>
@@ -1012,8 +1033,8 @@
 
       <div id="scLadderView">
         <div class="card">
-          <h2 style="margin-top:0;">The Grind Board</h2>
-          <p class="muted" style="margin-top:-6px;">Every PAX ranked for <span id="scMonthLabel"></span>.</p>
+          <h2 style="margin-top:0;" id="scLadderTitle">The Grind Board</h2>
+          <p class="muted" style="margin-top:-6px;" id="scLadderSubtitle">Every PAX ranked, month to date.</p>
           <div class="sc-metric-row" id="scMetrics"></div>
           <div class="sc-podium" id="scPodium"></div>
           <div class="sc-ladder" id="scLadder"></div>
@@ -1868,7 +1889,7 @@
     viewDate: null,
     dashboardLoading: false,
     dashboardPrefetchPromise: null,
-    bonusReturnStep: 'checkin',
+    mainViewReturnStep: 'checkin',
     bonusEntries: [],
     bonusEditingRowIndex: null,
     bonusEditingOriginalWhenIso: null,
@@ -2151,19 +2172,24 @@
   applyVersionState_(STATIC_BUILD_VERSION_, null);
 
   // Steps whose Back now lives in the persistent header (headerBackBtn) instead of a per-card
-  // button, keyed to their fixed destination step. 'bonus' isn't listed here — its Back target
-  // is dynamic (state.bonusReturnStep, set below); headerBackBtn's click handler special-cases it.
-  var HEADER_BACK_TARGET_ = { dashboard: 'checkin', paxDetail: 'dashboard', scorecard: 'dashboard' };
+  // button, keyed to their fixed destination step. 'bonus' and 'scorecard' aren't listed here —
+  // both are reachable from either 'checkin' or 'dashboard' (the header menu that opens
+  // Scorecard, and the bonusBtn that opens Bonus, are both available from every main step), so
+  // their Back target is dynamic (state.mainViewReturnStep, set below) rather than fixed;
+  // headerBackBtn's click handler special-cases both. F3Go30-izly: Scorecard used to hardcode
+  // 'dashboard' here, so opening it straight from Checkin (never having visited Dashboard this
+  // session) sent Back to an empty, never-rendered Dashboard skeleton.
+  var HEADER_BACK_TARGET_ = { dashboard: 'checkin', paxDetail: 'dashboard' };
 
   function showStep(name) {
     ['identify', 'checkin', 'dashboard', 'bonus', 'signup', 'nextMonthChoice', 'paxDetail', 'scorecard'].forEach(function(s) {
       $('step-' + s).classList.toggle('hidden', s !== name);
     });
     state.currentStep = name;
-    $('headerBackBtn').classList.toggle('hidden', !HEADER_BACK_TARGET_[name] && name !== 'bonus');
+    $('headerBackBtn').classList.toggle('hidden', !HEADER_BACK_TARGET_[name] && name !== 'bonus' && name !== 'scorecard');
     $('moreBtn').classList.toggle('hidden', name !== 'dashboard');
     $('bonusBtn').classList.toggle('hidden', name === 'identify' || name === 'bonus' || name === 'signup' || name === 'nextMonthChoice' || name === 'paxDetail' || name === 'scorecard');
-    if (name === 'checkin' || name === 'dashboard') state.bonusReturnStep = name;
+    if (name === 'checkin' || name === 'dashboard') state.mainViewReturnStep = name;
   }
 
   /** F3Go30-ez8v: a known PAX who's registered for NEXT month but not the current one — offer the
@@ -4417,7 +4443,11 @@
     { key: 'rawScore', label: 'Reps Completed' },
     { key: 'bonusTotal', label: 'Bonus points' }
   ];
-  var scorecardState_ = { view: 'ladder', metric: 'score', data: null };
+  var scorecardState_ = { view: 'ladder', metric: 'score', data: null, monthKey: null, loading: false };
+  var SCORECARD_MAX_MONTHS_BACK_ = 2;
+  // One month forward lets a PAX check team rosters for a just-opened next month before anyone
+  // has scored anything — Top Teams still lists every signed-up PAX per team even at all-zero.
+  var SCORECARD_MAX_MONTHS_FORWARD_ = 1;
 
   function bonusTotalOf_(bonusByType) {
     var sum = 0;
@@ -4453,6 +4483,17 @@
     });
   }
 
+  /** Ranks two PAX for the ladder/podium by the active metric, breaking a tie on that metric by
+   * longest streak (Stuart, 2026-09-01) before falling back to alphabetical name for a full tie
+   * (metric AND streak both equal). Never overrides an outright higher metric value — streak
+   * only decides genuine ties. Its own function so the tiebreak rule is unit-testable without
+   * the DOM-heavy podium/row building the rest of renderLadder_ does. */
+  function scorecardPaxComparator_(metric) {
+    return function(a, b) {
+      return (b[metric] || 0) - (a[metric] || 0) || (b.streak || 0) - (a.streak || 0) || a.name.localeCompare(b.name);
+    };
+  }
+
   function renderLadder_(d) {
     var teamColors = scorecardTeamColorMap_(d.paxBoard);
     var pax = [];
@@ -4462,7 +4503,7 @@
       });
     });
     var metric = scorecardState_.metric;
-    pax.sort(function(a, b) { return (b[metric] || 0) - (a[metric] || 0) || a.name.localeCompare(b.name); });
+    pax.sort(scorecardPaxComparator_(metric));
 
     var podiumEl = $('scPodium');
     podiumEl.innerHTML = '';
@@ -4536,6 +4577,61 @@
     });
   }
 
+  /** True once at least one PAX on the board has a nonzero score, rawScore, or bonus point —
+   * i.e. there's something real to rank. Early on day 1 of a freshly-started month nobody has
+   * checked in yet, so every row reads 0 across the board; ranking 0-vs-0 is meaningless even
+   * though the viewer IS registered (F3Go30-csfe.2 AC2). */
+  function scorecardBoardHasAnyScore_(paxBoard) {
+    return (paxBoard || []).some(function(group) {
+      return (group.members || []).some(function(m) {
+        return (m.score || 0) > 0 || (m.rawScore || 0) > 0 || bonusTotalOf_(m.bonusByType) > 0;
+      });
+    });
+  }
+
+  /** A month with nothing meaningful to rank has no "you" panel or ranking to show (F3Go30-enwp
+   * follow-up, F3Go30-csfe.2) — that's when renderScorecard_ swaps the ladder/podium for
+   * renderScorecardRoster_ instead. Two independent triggers, both server-grounded rather than
+   * calendar-guessed: the viewer isn't registered in this month (`registered`,
+   * handleCheckinDashboard_, F3Go30-csfe.1), or the board simply has no scores yet (a real,
+   * registered month on day 1 before anyone has checked in). An earlier version compared
+   * d.monthKey against the client's own clock instead, which broke every month boundary the
+   * instant "next month" became "today" and silently rendered a ranked podium for a month
+   * nobody had real scores in. Neither check here depends on what date the client thinks it is. */
+  function scorecardIsRosterOnly_(d) {
+    return d.registered === false || !scorecardBoardHasAnyScore_(d.paxBoard);
+  }
+
+  /** Plain "who's on what team" list for a future month — same .board-group/.board-row markup
+   * and look as the Dashboard's own #dPaxBoard (renderDashboard_), reused for visual consistency,
+   * but built fresh here rather than calling into that function: its row-building is wired to
+   * day-of-month specifics (dayIndex/todayIndex/yesterdayIndex, daySegments mini-bars, check-in
+   * status badges, bonus chips) that don't exist for a month nobody has checked into yet — a
+   * future-dated PAX board is just a name list grouped by team, nothing else. Not clickable into
+   * pax-detail for the same reason: there's no day-scoped detail to show there yet. */
+  function renderScorecardRoster_(d) {
+    var box = $('scLadder');
+    box.innerHTML = '';
+    (d.paxBoard || []).forEach(function(group) {
+      var groupEl = document.createElement('div');
+      groupEl.className = 'board-group';
+      var head = document.createElement('div');
+      head.className = 'board-head';
+      head.innerHTML = '<span>' + escapeHtml_(group.name) + '</span><span>' + group.members.length + ' PAX</span>';
+      groupEl.appendChild(head);
+      var rowsEl = document.createElement('div');
+      rowsEl.className = 'board-rows';
+      (group.members || []).forEach(function(m) {
+        var row = document.createElement('div');
+        row.className = 'board-row' + (m.name === d.f3Name ? ' me' : '');
+        row.innerHTML = '<div class="board-row-main roster"><span class="bname">' + escapeHtml_(m.name) + '</span></div>';
+        rowsEl.appendChild(row);
+      });
+      groupEl.appendChild(rowsEl);
+      box.appendChild(groupEl);
+    });
+  }
+
   function setScorecardView_(view) {
     scorecardState_.view = view;
     $('scTabLadder').classList.toggle('on', view === 'ladder');
@@ -4546,34 +4642,172 @@
 
   function renderScorecard_(d) {
     scorecardState_.data = d;
-    $('scMonthLabel').textContent = d.monthLabel || 'this month';
-    renderScorecardMetrics_();
-    renderLadder_(d);
+    scorecardState_.monthKey = d.monthKey || scorecardState_.monthKey;
+    var rosterOnly = scorecardIsRosterOnly_(d);
+    $('scLadderTitle').textContent = rosterOnly ? 'Team Roster' : 'The Grind Board';
+    $('scLadderSubtitle').textContent = rosterOnly
+      ? "Who's signed up so far, by team — nothing scored yet."
+      : 'Every PAX ranked, month to date.';
+    $('scMetrics').classList.toggle('hidden', rosterOnly);
+    $('scPodium').classList.toggle('hidden', rosterOnly);
+    if (rosterOnly) {
+      renderScorecardRoster_(d);
+    } else {
+      renderScorecardMetrics_();
+      renderLadder_(d);
+    }
     renderTopTeams_(d);
+    renderScorecardMonthNav_();
   }
 
   $('scTabLadder').addEventListener('click', function() { setScorecardView_('ladder'); });
   $('scTabTeams').addEventListener('click', function() { setScorecardView_('teams'); });
 
-  /** Opens Scorecard from the current dashboard payload if it's already cached (state.board —
-   * the common case, since Scorecard is only reachable once the dashboard has loaded), otherwise
-   * fetches it silently first — same 'dashboard' cmd loadDashboard_ already uses, no new
-   * endpoint. */
-  function openScorecard_() {
-    var refDate = state.viewDate || new Date();
-    var cached = state.board[monthKeyOf_(refDate)];
+  /** Which month Scorecard should default-open on (F3Go30-enwp.1). The first few days of a
+   * fresh month have little or no real data yet — F3Go30-csfe.2 already keeps the podium/ladder
+   * from rendering over an all-zero board, but a PAX opening Scorecard on the 2nd still had to
+   * manually page back one month every time to see anything ranked. Defaults to the previous
+   * month through day 5, then the real current month from day 6 on. Pure and self-contained
+   * (takes "today" and the available-months list as params rather than reading
+   * state.viewDate/state.availableMonths itself) so it's unit-testable without the DOM/state
+   * harness — see calMonthIndex_ for the state-coupled sibling this deliberately doesn't share,
+   * since extracting a function for a standalone test can't drag its module-scoped `state` along.
+   * Falls back to the real current month whenever there's no earlier month to default to (AC3:
+   * the very first tracker month ever) or availableMonths hasn't loaded yet. */
+  function scorecardDefaultMonthKey_(today, availableMonths) {
+    var currentKey = monthKeyOf_(today);
+    if (today.getDate() > 5) return currentKey;
+    var months = availableMonths || [];
+    var idx = -1;
+    for (var i = 0; i < months.length; i++) {
+      if (months[i].monthKey === currentKey) { idx = i; break; }
+    }
+    return (idx > 0) ? months[idx - 1].monthKey : currentKey;
+  }
+
+  /** Month nav pinned above both Scorecard tabs (F3Go30-enwp follow-up) — lets a PAX look back at
+   * how a recent month shook out, capped at SCORECARD_MAX_MONTHS_BACK_ months behind the real
+   * current month (not state.viewDate, which can be dragged around by check-in day nav) and never
+   * forward past it, since a future month has no scores yet. Reuses state.board/loadDashboard_ —
+   * same cache and fetch path the dashboard and Scorecard's initial open already use, so paging
+   * back costs a fetch only the first time a given month is viewed. */
+  function scorecardMonthBounds_() {
+    var months = state.availableMonths || [];
+    var todayIdx = calMonthIndex_(monthKeyOf_(new Date()));
+    if (todayIdx === -1) return { minIdx: -1, maxIdx: -1 };
+    return {
+      minIdx: Math.max(0, todayIdx - SCORECARD_MAX_MONTHS_BACK_),
+      maxIdx: Math.min(months.length - 1, todayIdx + SCORECARD_MAX_MONTHS_FORWARD_)
+    };
+  }
+
+  function renderScorecardMonthNav_() {
+    var idx = calMonthIndex_(scorecardState_.monthKey);
+    var bounds = scorecardMonthBounds_();
+    $('scMonthNavLabel').textContent = scorecardState_.loading ? 'Loading…' : calMonthLabel_(scorecardState_.monthKey);
+    $('scPrevMonthBtn').disabled = scorecardState_.loading || idx === -1 || idx <= bounds.minIdx;
+    $('scNextMonthBtn').disabled = scorecardState_.loading || idx === -1 || idx >= bounds.maxIdx;
+  }
+
+  /** A state.board[monthKey] entry only counts as usable here once it carries paxBoard —
+   * patchBoardDayFacts_ (the check-in calendar's own month nav, monthGrid action) can plant a
+   * state.board record with only day-facts fields and no paxBoard at all, which a plain
+   * `state.board[monthKey]` truthiness check used to mistake for "already loaded" and render as
+   * a permanently empty board (caught live: Scorecard opened before prefetchDashboard_'s
+   * background dashboard fetch — the one that actually carries paxBoard — had landed, and
+   * nothing was ever wired to re-render Scorecard once it did land in the background). */
+  function scorecardBoardCached_(monthKey) {
+    var b = state.board[monthKey];
+    return (b && Array.isArray(b.paxBoard)) ? b : null;
+  }
+
+  /** F3Go30-iwms: turning loading OFF must not blindly force-unhide #scMetrics/#scPodium — that
+   * would override whatever renderScorecard_'s own rosterOnly decision (F3Go30-csfe.2) already
+   * made moments earlier in the same .then()-then-.finally() chain, exposing a roster-only
+   * month's podium still holding the PREVIOUS ranked month's stale content (renderLadder_, the
+   * only thing that rebuilds #scPodium's innerHTML, never runs for a roster-only month). Turning
+   * loading ON always hides both regardless — nothing meaningful to show while a fetch is in
+   * flight — but turning it OFF defers to scorecardState_.data's own rosterOnly status. */
+  function scorecardLoadingUi_(on) {
+    scorecardState_.loading = on;
+    var rosterOnly = on || !scorecardState_.data || scorecardIsRosterOnly_(scorecardState_.data);
+    $('scMetrics').classList.toggle('hidden', rosterOnly);
+    $('scPodium').classList.toggle('hidden', rosterOnly);
+    if (on) {
+      $('scLadder').innerHTML = '<p class="muted">Loading…</p>';
+      $('scTeams').innerHTML = '';
+    }
+    renderScorecardMonthNav_();
+  }
+
+  /** Resolves with the full dashboard payload for monthKey — from cache if already fully loaded,
+   * otherwise by fetching it. For the real current month specifically, chains onto
+   * prefetchDashboard_'s in-flight promise when there is one (the common "just identified,
+   * immediately opened Scorecard" case) rather than firing a redundant second request for the
+   * same day; every other month just fetches fresh, same as before. */
+  function loadScorecardMonthData_(monthKey) {
+    var cached = scorecardBoardCached_(monthKey);
+    if (cached) return Promise.resolve(cached);
+    var isRealCurrentMonth = monthKey === monthKeyOf_(new Date());
+    if (isRealCurrentMonth && state.dashboardPrefetchPromise) {
+      return state.dashboardPrefetchPromise.then(function() {
+        return scorecardBoardCached_(monthKey) || state.board[monthKey];
+      });
+    }
+    var months = state.availableMonths || [];
+    var target = months.filter(function(m) { return m.monthKey === monthKey; })[0];
+    return loadDashboard_(target ? target.startDateIso : undefined, { silent: true });
+  }
+
+  function loadScorecardMonth_(monthKey) {
+    scorecardState_.monthKey = monthKey;
+    var cached = scorecardBoardCached_(monthKey);
     if (cached) {
-      setScorecardView_('ladder');
       renderScorecard_(cached);
-      showStep('scorecard');
+      return Promise.resolve();
+    }
+    scorecardLoadingUi_(true);
+    return loadScorecardMonthData_(monthKey)
+      .then(function(payload) { if (payload) renderScorecard_(payload); })
+      .catch(function(err) { showApiError_('dashboard', err); })
+      .finally(function() { scorecardLoadingUi_(false); });
+  }
+
+  function navigateScorecardMonth_(delta) {
+    if (scorecardState_.loading) return;
+    var months = state.availableMonths || [];
+    var idx = calMonthIndex_(scorecardState_.monthKey);
+    var newIdx = idx + delta;
+    var bounds = scorecardMonthBounds_();
+    if (idx === -1 || newIdx < bounds.minIdx || newIdx > bounds.maxIdx) return;
+    loadScorecardMonth_(months[newIdx].monthKey);
+  }
+
+  $('scPrevMonthBtn').addEventListener('click', function() { navigateScorecardMonth_(-1); });
+  $('scNextMonthBtn').addEventListener('click', function() { navigateScorecardMonth_(1); });
+
+  /** Opens Scorecard from the current dashboard payload if it's already fully cached
+   * (state.board — the common case, since Scorecard is only reachable once the dashboard has
+   * loaded), otherwise shows the screen right away with a loading state and fills it in once
+   * loadScorecardMonthData_ resolves (chaining onto the background prefetch already in flight
+   * rather than blocking navigation on a fresh fetch). Defaults to the real current month except
+   * during its first few days (scorecardDefaultMonthKey_, F3Go30-enwp.1), regardless of what
+   * day/month check-in nav happens to be parked on. */
+  function openScorecard_() {
+    var monthKey = scorecardDefaultMonthKey_(new Date(), state.availableMonths);
+    scorecardState_.monthKey = monthKey;
+    setScorecardView_('ladder');
+    showStep('scorecard');
+    var cached = scorecardBoardCached_(monthKey);
+    if (cached) {
+      renderScorecard_(cached);
       return;
     }
-    loadDashboard_(isoDate_(refDate), { silent: true }).then(function(payload) {
-      if (!payload) return;
-      setScorecardView_('ladder');
-      renderScorecard_(payload);
-      showStep('scorecard');
-    });
+    scorecardLoadingUi_(true);
+    loadScorecardMonthData_(monthKey)
+      .then(function(payload) { if (payload) renderScorecard_(payload); })
+      .catch(function(err) { showApiError_('dashboard', err); })
+      .finally(function() { scorecardLoadingUi_(false); });
   }
 
   function loadDashboard_(dateISO, opts) {
@@ -4631,8 +4865,13 @@
       // keeps the banner up so cached rendering never masks an ongoing outage.
       hideApiError_();
       var fresh = state.board[monthKeyOf_(new Date())];
+      // F3Go30-e4r0: by the time this background fetch resolves the PAX may have navigated to
+      // another step entirely (Scorecard, Bonus, ...) — repainting here would call
+      // renderDashboard_'s unconditional showStep('dashboard') and silently yank them back.
+      // Same guard repaintCurrentView_ already uses for the reconnect-poll's silent repaint.
       if (fresh && fresh.dayDates.indexOf(todayIso) !== -1 &&
-          state.viewDate && isoDate_(state.viewDate) === todayIso) {
+          state.viewDate && isoDate_(state.viewDate) === todayIso &&
+          state.currentStep === 'dashboard') {
         renderDashboard_(fresh, fresh.dayDates.indexOf(todayIso));
       }
     }).catch(function() { /* swallowed — the already-rendered cached copy stays on screen */ });
@@ -4843,7 +5082,7 @@
   $('paxDetailPrevBtn').addEventListener('click', function() { stepPaxDetail_(-1); });
   $('paxDetailNextBtn').addEventListener('click', function() { stepPaxDetail_(1); });
   $('headerBackBtn').addEventListener('click', function() {
-    if (state.currentStep === 'bonus') { showStep(state.bonusReturnStep); return; }
+    if (state.currentStep === 'bonus' || state.currentStep === 'scorecard') { showStep(state.mainViewReturnStep); return; }
     var target = HEADER_BACK_TARGET_[state.currentStep];
     if (target) showStep(target);
   });
