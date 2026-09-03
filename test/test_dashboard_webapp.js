@@ -1593,6 +1593,118 @@ function makeLeanIdentityResponsesSheet_(rows) {
   delete global.formatRegistrationMonth_;
 })();
 
+// getPaxHistoryWindowValues_ — F3Go30-b6jy: coverage, not just agreement, gates the cache-hit
+// early return. Reproduces the 1-2 Sept rollover shape: a stored window truncated to the single
+// day the new month has had so far trivially "agrees" with the Tracker row (nothing outside the
+// overlap to disagree with), but has no lead — nothing before Sept 1 — so it must fall through to
+// the backfill rather than being served as-is (which would render an empty history/average).
+(function testGetPaxHistoryWindowValuesRejectsAgreeingButUncoveredWindow() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
+  var PaxCache = require('../script/PaxCache.js');
+  // Truncated at rollover: one day, agreeing trivially with the one day Sept has had so far.
+  PaxCache.setPaxHistoryEntry_('', 'Rollover', { historyEndDate: '2026-09-01', days: '1' });
+
+  var augRow2 = ['', '', '', '', '', '', '', '', '', ''];
+  var augRow3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 7, 30), new Date(2026, 7, 31)];
+  var augTrackerRows = [['Rollover', 'Crucible', '', '', '', '', 5, 0.5, 1, 1]]; // Aug 30 + Aug 31 both done
+  installFakeSpreadsheetById_({
+    'sheet-aug': { getSheetByName: function(n) { return n === 'Tracker' ? makeFakeTrackerSheet_(augRow2, augRow3, augTrackerRows) : null; } },
+  });
+  global.resolveTrackerForContextDate = function(targetDate) {
+    if (targetDate.getFullYear() === 2026 && targetDate.getMonth() === 7) {
+      return { sheetId: 'sheet-aug', trackerUrl: 'https://x/aug', startDate: new Date(2026, 7, 1) };
+    }
+    throw new Error('no tracker for ' + targetDate);
+  };
+  global.formatRegistrationMonth_ = function() { return 'August 2026'; };
+
+  var templateSpreadsheet = {};
+  var monthInfo = { sheetId: 'sheet-sep', startDate: new Date(2026, 8, 1) };
+  var currentMonthDayValues = [1]; // Sept 1 only
+
+  var values = getPaxHistoryWindowValues_('Rollover', currentMonthDayValues, monthInfo, templateSpreadsheet, '2026-09-01');
+  // Rebuilt from Tracker: Aug30, Aug31, Sept1 — spans the month boundary instead of the bare [1]
+  // the uncovered cache entry would have returned.
+  assert.deepEqual(values, [1, 1, 1]);
+
+  var rebuilt = PaxCache.getPaxHistoryEntry_('', 'Rollover');
+  assert.deepEqual(rebuilt, { historyEndDate: '2026-09-01', days: '111' });
+
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+// handleCheckinDashboard_ integration — F3Go30-kyyy: checkinWebapp.dashboard must carry
+// trackerFromCache plus a per-load count/duration of getPaxHistoryWindowValues_ calls that fell
+// through to the prior-month backfill, so a rollover-driven latency spike is diagnosable from
+// Axiom alone rather than needing a live reproduction (the reasoning §prior-month-bulk's operator
+// check in PLAN-pax-history-model.md relies on).
+(function testDashboardLogsHistoryBackfillTelemetryAndTrackerFromCache() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 8, 1, 9, 0); }; // "today" = Sept 1
+
+  var augRow2 = ['', '', '', '', '', '', '', '', '', ''];
+  var augRow3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 7, 30), new Date(2026, 7, 31)];
+  var augTrackerRows = [['Rollover', 'Crucible', '', '', '', '', 5, 0.5, 1, 1]];
+  var sepRow2 = ['', '', '', '', '', '', '', ''];
+  var sepRow3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1)];
+  var sepTrackerRows = [['Rollover', 'Crucible', '', '', '', '', 1, 1.0, 1]];
+  var emptyBonusSheet = { getLastRow: function() { return 1; }, getRange: function() { return { getValues: function() { return []; } }; } };
+  installFakeSpreadsheetById_({
+    'sheet-aug': { getSheetByName: function(n) { return n === 'Tracker' ? makeFakeTrackerSheet_(augRow2, augRow3, augTrackerRows) : null; } },
+    'sheet-sep': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') return makeFakeTrackerSheet_(sepRow2, sepRow3, sepTrackerRows);
+        if (n === 'Bonus Tracker') return emptyBonusSheet;
+        return null;
+      },
+    },
+  });
+  global.resolveTrackerForContextDate = function(targetDate) {
+    if (targetDate.getFullYear() === 2026 && targetDate.getMonth() === 7) {
+      return { sheetId: 'sheet-aug', trackerUrl: 'https://x/aug', startDate: new Date(2026, 7, 1) };
+    }
+    throw new Error('no tracker for ' + targetDate);
+  };
+  global.formatRegistrationMonth_ = function() { return 'August 2026'; };
+
+  var PaxCache = require('../script/PaxCache.js');
+  // Truncated at rollover, same shape as F3Go30-b6jy's regression test — agrees but doesn't
+  // cover, so getPaxHistoryWindowValues_ must fall through to the backfill exactly once.
+  PaxCache.setPaxHistoryEntry_('', 'Rollover', { historyEndDate: '2026-09-01', days: '1' });
+
+  var monthInfo = { sheetId: 'sheet-sep', trackerUrl: 'https://x/sep', label: 'September 2026', startDate: new Date(2026, 8, 1) };
+  var handle = buildResolvedContextHandle_(monthInfo, 0, 'Rollover');
+
+  var loggedEvents = [];
+  var realLog = global.GasLogger.log;
+  global.GasLogger.log = function(name, payload) { loggedEvents.push({ name: name, payload: payload }); };
+  var result;
+  try {
+    result = handleCheckinDashboard_({}, { f3Name: 'Rollover', email: 'r@x.com', dateISO: '2026-09-01', resolvedContext: handle });
+  } finally {
+    global.GasLogger.log = realLog;
+  }
+  assert.equal(result.ok, true);
+
+  var dashboardEvent = loggedEvents.find(function(e) { return e.name === 'checkinWebapp.dashboard'; });
+  assert.ok(dashboardEvent, 'checkinWebapp.dashboard must be logged');
+  assert.equal(typeof dashboardEvent.payload.trackerFromCache, 'boolean');
+  assert.equal(dashboardEvent.payload.historyBackfillCount, 1, 'the one uncovered window must count as one backfill invocation');
+  assert.equal(typeof dashboardEvent.payload.historyBackfillMs, 'number');
+  assert.ok(dashboardEvent.payload.historyBackfillMs >= 0);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
 // handleCheckinDashboard_ integration — the actual bug this issue fixes: EVERY board row's
 // streak/maxStreak30 must reflect the cross-month rolling window, not just the logged-in viewer's.
 // With the old computeStreak_(dayValues) (this month's own 2 tracker columns only), a teammate's

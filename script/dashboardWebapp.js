@@ -1344,6 +1344,7 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
       matched: false, months: months, monthInfo: monthInfo,
       targetSs: { get: function() { return targetSs; }, getOpenMs: function() { return openMs; } },
       trackerSheet: trackerSheet, row2: layout.row2, row3: layout.row3, trackerValues: trackerValues,
+      trackerFromCache: trackerFromCache,
     };
   }
 
@@ -1416,6 +1417,7 @@ function resolveCheckinIdentityFull_(monthInfo, f3Name, email, months) {
     row3: layout.row3,
     trackerValues: trackerValues,
     rowIndex: rowIndex,
+    trackerFromCache: trackerFromCache,
   };
 }
 
@@ -1590,6 +1592,7 @@ function resolveFullIdentityFromHandle_(handle) {
     row3: layout.row3,
     trackerValues: trackerValues,
     rowIndex: rowIndex,
+    trackerFromCache: trackerFromCache,
   };
 }
 
@@ -2456,10 +2459,14 @@ function buildDashboardPaxRow_(name, team, score, rawScore, streak, dayValues, t
  *   would leave a June view in August anchored in August.
  * @param {Object=} entriesByNormName Prefetched entries from getPaxHistoryEntriesBulk_ (one
  *   PropertiesService round trip for the whole roster). Omit to look this PAX up individually.
+ * @param {{count:number, ms:number}=} backfillStats F3Go30-kyyy: when supplied, incremented by one
+ *   invocation and the elapsed ms every time this call falls through to getPriorMonthTailValues_ —
+ *   the per-load counters the checkinWebapp.dashboard event reports. Omit for callers (tests,
+ *   other call sites) that don't need the count.
  * @returns {Array} Trailing day values (up to the stored window's length, or fewer early in the
  *   program), ending on anchorIso.
  */
-function getPaxHistoryWindowValues_(f3Name, currentMonthDayValues, monthInfo, templateSpreadsheet, anchorIso, entriesByNormName) {
+function getPaxHistoryWindowValues_(f3Name, currentMonthDayValues, monthInfo, templateSpreadsheet, anchorIso, entriesByNormName, backfillStats) {
   var scopeId = paxHistoryScopeId_dw_(templateSpreadsheet);
   var entry = entriesByNormName
     ? (entriesByNormName[paxCacheNormalizeName_dw_(f3Name)] || null)
@@ -2468,11 +2475,23 @@ function getPaxHistoryWindowValues_(f3Name, currentMonthDayValues, monthInfo, te
   // F3Go30-uz9e.3: the WHOLE stored window is returned, not a 30-day slice of it. Its leading
   // (prior-month) portion is what rollingAverage and priorMonthDayValues are built from; the
   // 30-day streak cap is applied by computeStreak_/computeMaxStreak_ at the point of use.
-  if (anchored && paxHistoryWindowMatchesTracker_(anchored, currentMonthDayValues)) {
+  // F3Go30-b6jy: agreement alone isn't enough — a window truncated to the current month (e.g. by
+  // month rollover) agrees with the Tracker row trivially, since there's nothing outside the
+  // overlap left to disagree. Coverage checks the part agreement can't see: whether the window
+  // actually reaches back before this month's first reported day (its "lead"). No lead means the
+  // 14-day average and cross-month streak the caller wants have nothing behind them, so this is
+  // the same as a miss and must fall through to the backfill below.
+  if (anchored && paxHistoryWindowMatchesTracker_(anchored, currentMonthDayValues)
+      && paxHistoryWindowHasCoverage_(anchored, currentMonthDayValues)) {
     return anchored;
   }
 
+  var tBackfill0 = backfillStats ? Date.now() : 0;
   var tail = getPriorMonthTailValues_(monthInfo, f3Name, PAX_HISTORY_BACKFILL_DAYS_dw_, templateSpreadsheet);
+  if (backfillStats) {
+    backfillStats.count++;
+    backfillStats.ms += Date.now() - tBackfill0;
+  }
   // No trailing-blank trim: the combined array ends on anchorIso by construction
   // (currentMonthDayValues is the reported day columns, whose last one IS the anchor), and that
   // is exactly what makes the stamped historyEndDate below true.
@@ -2516,6 +2535,18 @@ function paxHistoryWindowMatchesTracker_(historyValues, currentMonthDayValues) {
     if (fromWindow !== fromSheet) return false;
   }
   return true;
+}
+
+/**
+ * True when the window's lead (F3Go30-b6jy) — the part preceding currentMonthDayValues — is
+ * non-empty. Both arrays are tail-aligned to the same anchor day, so any excess length on the
+ * window side is days it holds that the Tracker row can't supply, i.e. days before this month's
+ * first reported column. A window no longer than the Tracker row's own reported days has nothing
+ * before month start to serve a 14-day average or a cross-month streak with, agreement or not.
+ */
+function paxHistoryWindowHasCoverage_(historyValues, currentMonthDayValues) {
+  var dayValues = currentMonthDayValues || [];
+  return historyValues.length > dayValues.length;
 }
 
 function _dashboardIsoDate_(d) {
@@ -2650,6 +2681,10 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
     : null;
   var historyEntriesMs = Date.now() - tHistory0;
   var tRosterLoop0 = Date.now();
+  // F3Go30-kyyy: per-load count/duration of getPaxHistoryWindowValues_ calls that fall through to
+  // the prior-month backfill — the mechanism behind rollover latency (§prior-month-bulk), measured
+  // here so the fix in that stage has a before/after number to check against.
+  var backfillStats = { count: 0, ms: 0 };
   var allPaxRows = [];
   var userRow = null;
   identity.trackerValues.forEach(function(row, idx) {
@@ -2658,7 +2693,7 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
     var dayValues = reportedDayCols.map(function(d) { return row[d.col]; });
     // F3Go30-5uk2/uz9e.1: cross-month streak/maxStreak30/rollingAverage for EVERY row
     // (myTeam/paxBoard), not just the logged-in viewer — see getPaxHistoryWindowValues_.
-    var historyValues = getPaxHistoryWindowValues_(name, dayValues, monthInfo, templateSpreadsheet, historyAnchorIso, historyEntries);
+    var historyValues = getPaxHistoryWindowValues_(name, dayValues, monthInfo, templateSpreadsheet, historyAnchorIso, historyEntries, backfillStats);
     var bonusSeries = computeBonusSeriesForPax_dw_(bonusEntries, paxCacheNormalizeName_dw_(name), reportedDayDates, monthInfo.startDate);
     var paxRow = buildDashboardPaxRow_(
       name,
@@ -2721,6 +2756,8 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
     paxRows: allPaxRows.length, resolveMonthMs: resolveMonthMs, resolveIdentityMs: resolveIdentityMs,
     renderMs: Date.now() - tRenderStart, bonusEntriesMs: bonusEntriesMs, bonusCacheHit: bonusCacheHit,
     historyEntriesMs: historyEntriesMs, rosterLoopMs: rosterLoopMs,
+    trackerFromCache: !!identity.trackerFromCache,
+    historyBackfillCount: backfillStats.count, historyBackfillMs: backfillStats.ms,
     totalMs: Date.now() - t0,
   }, paxCacheStatsForLog_dw_()));
 

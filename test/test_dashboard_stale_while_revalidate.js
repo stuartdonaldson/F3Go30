@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { readStaticPage_ } = require('./helpers/staticPageExtract');
+const { readStaticPage_, extractLoadDashboardBlock_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-833s.13: dashboardBtn used to be cache-or-wait, not cache-then-update — a cached month
 // payload for today rendered instantly ONLY when no prefetch was in flight, then returned with no
@@ -17,15 +17,6 @@ function extractDashboardBtnHandlerBody_(src) {
   var startIdx = src.indexOf(startMarker);
   var endIdx = src.indexOf(endMarker);
   assert.ok(startIdx !== -1 && endIdx !== -1, 'dashboardBtn click handler markers not found in index.html');
-  return src.slice(startIdx, endIdx);
-}
-
-function extractLoadRevalidateBlock_(src) {
-  var startMarker = 'function loadDashboard_(dateISO, opts) {';
-  var endMarker = 'function navigateDashboard_(deltaDays) {';
-  var startIdx = src.indexOf(startMarker);
-  var endIdx = src.indexOf(endMarker);
-  assert.ok(startIdx !== -1 && endIdx !== -1, 'loadDashboard_/revalidateDashboard_ block markers not found in index.html');
   return src.slice(startIdx, endIdx);
 }
 
@@ -59,10 +50,10 @@ function makeDashboardHarness_(state, callApiImpl) {
   var setButtonLoading_ = function(btn, isLoading, text) { setButtonLoadingCalls.push({ isLoading: isLoading, text: text }); };
 
   var src = readStaticPage_();
-  var body = extractDashboardBtnHandlerBody_(src) + '\n' + extractLoadRevalidateBlock_(src);
+  var body = extractDashboardBtnHandlerBody_(src) + '\n' + extractLoadDashboardBlock_(src);
   var factory = new Function(
     'state', '$', 'callApi', 'renderDashboard_', 'setButtonLoading_', 'hideApiError_', 'showApiError_',
-    'isoDate_', 'monthKeyOf_', 'patchOwnDayIntoPayload_', 'renderDateNav_',
+    'isoDate_', 'monthKeyOf_', 'patchOwnDayIntoPayload_', 'renderDateNav_', 'captureDashboardRenderTelemetry_',
     // The dashboardBtn block is a bare $('dashboardBtn').addEventListener(...) statement, not a
     // named function — running it registers the real click handler onto the fake $ element below,
     // which the test then triggers directly rather than trying to name-bind an anonymous function.
@@ -76,6 +67,9 @@ function makeDashboardHarness_(state, callApiImpl) {
     function(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); },
     function(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); },
     function(payload, dateIso, value) { /* no pending writes exercised in these tests */ },
+    function() {},
+    // F3Go30-5p3z: telemetry capture is exercised by its own dedicated test — a no-op stand-in
+    // here keeps this harness scoped to stale-while-revalidate behavior.
     function() {}
   );
   return { fns: fns, elements: elements, renderCalls: renderCalls, setButtonLoadingCalls: setButtonLoadingCalls };

@@ -1705,6 +1705,32 @@
     }, extra || {}));
   }
 
+  /** F3Go30-5p3z: one record per dashboard render attempt (loadDashboard_) — request-issued/
+   * response-received timestamps, plus the counts that show whether a bare board was genuinely
+   * empty or a truncated/rejected read (the rollover defect this stage's sibling issue, F3Go30-
+   * b6jy, fixes server-side). `rejected` is a below-HTTP transport loss with no Response ever
+   * received (responseReceivedTs stays null, same distinction err.isTransport already makes for
+   * captureClientError_ above) — a server-answered rejection (HTTP error, json.ok:false) still
+   * counts as a response received, just an unusable one, so it's NOT what `rejected` means here;
+   * that case is already captured by callApi's own captureClientError_ path via showApiError_.
+   * See F3Go30-5c2a: without this split, a lost response and a genuinely empty one look identical
+   * from the PAX's chair. */
+  function captureDashboardRenderTelemetry_(requestIssuedTs, payload, err) {
+    var boardRowCount = (payload && Array.isArray(payload.paxBoard))
+      ? payload.paxBoard.reduce(function(sum, team) { return sum + ((team && team.members) ? team.members.length : 0); }, 0)
+      : 0;
+    var transportLoss = !payload && !!(err && err.isTransport);
+    captureClientTelemetry_('dashboardRender', 'dashboard', {
+      requestIssuedTs: requestIssuedTs,
+      responseReceivedTs: transportLoss ? null : Date.now(),
+      rejected: transportLoss,
+      dayValuesLength: (payload && payload.dayValues) ? payload.dayValues.length : 0,
+      rollingAverageLength: (payload && payload.rollingAverage) ? payload.rollingAverage.length : 0,
+      priorMonthDayValuesLength: (payload && payload.priorMonthDayValues) ? payload.priorMonthDayValues.length : 0,
+      boardRowCount: boardRowCount
+    });
+  }
+
   var clientTelemetryFlushInFlight_ = false;
 
   /** Uploads queued telemetry records once connectivity is available. Fire-and-forget: never
@@ -4832,8 +4858,10 @@
       $('dateNextBtn').disabled = true;
       $('dateNavLabel').textContent = 'Loading…';
     }
+    var requestIssuedTs_ = Date.now();
     return callApi('dashboard', { f3Name: state.f3Name, email: state.email, dateISO: dateISO, resolvedContext: state.resolvedContext })
       .then(function(payload) {
+        captureDashboardRenderTelemetry_(requestIssuedTs_, payload, null);
         (payload.dayDates || []).forEach(function(dateIso) {
           if (Object.prototype.hasOwnProperty.call(state.pendingSelfWrites, dateIso)) {
             patchOwnDayIntoPayload_(payload, dateIso, state.pendingSelfWrites[dateIso]);
@@ -4845,6 +4873,7 @@
         return payload;
       })
       .catch(function(err) {
+        captureDashboardRenderTelemetry_(requestIssuedTs_, null, err);
         if (silent) throw err;
         var friendly = (err && err.message === 'no_tracker_for_date')
           ? new Error('No tracker exists for that date yet.')

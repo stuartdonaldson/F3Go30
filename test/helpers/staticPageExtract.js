@@ -45,4 +45,16 @@ function extractFunction_(src, name) {
   return m[0];
 }
 
-module.exports = { readStaticPage_, extractTransportBlock_, extractShowApiError_, extractFunction_ };
+/** loadDashboard_/prefetchDashboard_/revalidateDashboard_ — the dashboard fetch block, shared by
+ * test_dashboard_stale_while_revalidate.js (F3Go30-833s.13/e4r0) and test_dashboard_render_
+ * telemetry.js (F3Go30-5p3z), so the two don't each carry their own copy of these markers. */
+function extractLoadDashboardBlock_(src) {
+  var startIdx = src.indexOf('function loadDashboard_(dateISO, opts) {');
+  var endIdx = src.indexOf('function navigateDashboard_(deltaDays) {');
+  assert.ok(startIdx !== -1 && endIdx !== -1, 'loadDashboard_/revalidateDashboard_ block markers not found in index.html');
+  return src.slice(startIdx, endIdx);
+}
+
+module.exports = {
+  readStaticPage_, extractTransportBlock_, extractShowApiError_, extractFunction_, extractLoadDashboardBlock_,
+};

@@ -2,9 +2,10 @@
 
 **Contract:** Pattern D — staged execution (`$DEVSTANDARD/doc-framework/planning-guide.md`
 §Pattern D is the authority; nothing here restates it).
-**Status:** Stage 0 complete — beads created, dependency edges wired, superseded doc retired,
-`F3Go30-os03` closed.
-**Next Step:** Open `rollover-patch` (N1/N2/N3) for a 2.6.3 PROD patch.
+**Status:** Stage 1 (`rollover-patch`) code+tests complete — N1/N2/N3 closed. Not yet deployed to
+PROD; the 2.6.3 patch build/deploy/operator-check is the next action.
+**Next Step:** Deploy the 2.6.3 PROD patch and run `rollover-patch`'s operator check, then open
+`prior-month-bulk` (N4/`F3Go30-m732`).
 
 ## What this plan is about
 
@@ -59,9 +60,9 @@ existing owner gate on a real datastore; unchanged by this plan).
 | # | Stage | Bead | Status | Title |
 |---|---|---|---|---|
 | 0 | `plan-open` | F3Go30-lh7b | ● | Stage 0: file the PAX-history plan beads and wire stage edges |
-| 1 | `rollover-patch` | F3Go30-b6jy | ○ | BUG: a too-short history window is served instead of rebuilt at rollover |
-| 1 | `rollover-patch` | F3Go30-5p3z | ○ | Client telemetry: dashboard request/response and empty-render census |
-| 1 | `rollover-patch` | F3Go30-kyyy | ○ | Server telemetry: dashboard cache and backfill counters |
+| 1 | `rollover-patch` | F3Go30-b6jy | ● | BUG: a too-short history window is served instead of rebuilt at rollover |
+| 1 | `rollover-patch` | F3Go30-5p3z | ● | Client telemetry: dashboard request/response and empty-render census |
+| 1 | `rollover-patch` | F3Go30-kyyy | ● | Server telemetry: dashboard cache and backfill counters |
 | 2 | `prior-month-bulk` | F3Go30-xzm2 | ○ | Hoist the prior-month backfill out of the dashboard roster loop |
 | 2 | `prior-month-bulk` | F3Go30-m732 | ○ | Cache the unthrottled TrackerDB availableMonths read |
 | 3 | `history-model` | F3Go30-b0s1 | ○ | Store only the lead: drop the current-month overlap |
@@ -75,7 +76,7 @@ existing owner gate on a real datastore; unchanged by this plan).
 | # | Stage | Status | Closed | Handoff |
 |---|---|---|---|---|
 | 0 | `plan-open` | complete | 2026-09-02 | See §0 — plan-open below |
-| 1 | `rollover-patch` | pending | — | — |
+| 1 | `rollover-patch` | code+tests complete, deploy pending | — | See §1 — rollover-patch below |
 | 2 | `prior-month-bulk` | pending | — | — |
 | 3 | `history-model` | pending | — | — |
 | 4 | `profile-design` | pending | — | — |
@@ -132,6 +133,39 @@ needs, and that function is claimed by stage 3.
 which shares the render path. That was based on a stale in-progress status: its work landed in
 `ac9ff75` and stage 0 closes it, so `state.board` is settled ground for the new telemetry to read
 from rather than a moving target. There is no other in-flight work in the tracker.
+
+**Handoff (2026-09-02):**
+- **Done:** N1 (`F3Go30-b6jy`) — `paxHistoryWindowHasCoverage_` gates the cache-hit early return
+  in `getPaxHistoryWindowValues_` alongside `paxHistoryWindowMatchesTracker_`; an agreeing but
+  uncovered window (no lead before the current month) now falls through to the existing backfill
+  path. Regression test: `testGetPaxHistoryWindowValuesRejectsAgreeingButUncoveredWindow`
+  (`test/test_dashboard_webapp.js`), the 1–2 Sept shape from the review.
+  N2 (`F3Go30-5p3z`) — `captureDashboardRenderTelemetry_` (`static-pages/src/index.html`), wired
+  into `loadDashboard_`'s success and failure paths: `requestIssuedTs`/`responseReceivedTs`,
+  `rejected` (true only for a below-HTTP transport loss — `err.isTransport` — never for a
+  server-answered error, which already has its own `captureClientError_` path), and
+  `dayValuesLength`/`rollingAverageLength`/`priorMonthDayValuesLength`/`boardRowCount`. New test
+  file `test/test_dashboard_render_telemetry.js` (added to `package.json`'s `test` script); shared
+  `extractLoadDashboardBlock_` factored into `test/helpers/staticPageExtract.js` and reused by
+  `test_dashboard_stale_while_revalidate.js` rather than duplicating the extractor a second time.
+  N3 (`F3Go30-kyyy`) — `checkinWebapp.dashboard`'s log event now carries `trackerFromCache`
+  (threaded through `resolveCheckinIdentityFull_`/`resolveFullIdentityFromHandle_`/
+  `boardOnlyIdentity_dw_`'s return shapes) plus `historyBackfillCount`/`historyBackfillMs`, accumulated
+  via a new optional `backfillStats` accumulator param on `getPaxHistoryWindowValues_` and threaded
+  through the roster loop. Regression test:
+  `testDashboardLogsHistoryBackfillTelemetryAndTrackerFromCache` (`test/test_dashboard_webapp.js`).
+  Full suite (`pnpm run test`, 59 files) green throughout. All three beads closed.
+  `F3Go30-lh7b` itself was also closed here — its own AC was met when Stage 0 was written up but
+  the `bd close` call on the bead was missed; caught while closing N1–N3.
+- **Found:** none beyond what stage 0 carried in.
+- **Next stages must know:** the write side (`advancePaxHistoryEntry_`) is untouched, per this
+  stage's Must-not. Nothing has shipped to PROD yet — this stage's own operator check (call the
+  dashboard for an affected PAX post-deploy; confirm one client telemetry record carries the new
+  fields) has not run. `prior-month-bulk` (N4/`F3Go30-m732`) stays blocked on that operator check
+  in spirit even though the bd graph itself doesn't encode it (§Order note above).
+- **Deliberately not done:** the 2.6.3 PROD build/deploy and its operator check — deploying is an
+  outward-facing action this session did not take without the operator's go-ahead; code and tests
+  are ready for it.
 
 ### 2 — `prior-month-bulk`
 
@@ -210,6 +244,9 @@ Each carries a disposition, so nothing is left to the reader to track.
 
 ## Change Log
 
+- 2026-09-02 — `rollover-patch` (N1/N2/N3) code and tests complete, all three closed; see §1 —
+  rollover-patch Handoff. `F3Go30-lh7b` (stage 0's own bead) also closed — the `bd close` call was
+  missed when stage 0 was written up. PROD deploy still pending.
 - 2026-09-02 — stage 0 closed: N0–N6 created (see §Stage Zero for bd IDs), dependency edges wired,
   `PLAN-dashboard-perf-2026-09-02.md` retired, `F3Go30-os03` closed.
 - 2026-09-02 — dropped the `rollover-patch` anti-pairing after auditing in-progress beads: the only
