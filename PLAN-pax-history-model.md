@@ -2,9 +2,9 @@
 
 **Contract:** Pattern D — staged execution (`$DEVSTANDARD/doc-framework/planning-guide.md`
 §Pattern D is the authority; nothing here restates it).
-**Status:** Stage 0 open — beads proposed, awaiting owner confirmation before creation.
-**Next Step:** Confirm the bead list in §Stage Zero, create the beads, wire the dependency edges,
-then open `rollover-patch` for a 2.6.3 PROD patch.
+**Status:** Stage 0 complete — beads created, dependency edges wired, superseded doc retired,
+`F3Go30-os03` closed.
+**Next Step:** Open `rollover-patch` (N1/N2/N3) for a 2.6.3 PROD patch.
 
 ## What this plan is about
 
@@ -36,19 +36,20 @@ both — which is a down payment on the PaxProfile migration that would have pre
 
 ## Stage Zero
 
-These beads do not exist yet. Confirm this list, and it is created as written.
+Beads created as written; `N<n>` refs below map to the bd IDs actually assigned.
 
-| Ref | Proposed bead | Scope, one sentence |
+| Ref | Bead | Scope, one sentence |
 |---|---|---|
-| N0 | Stage 0: file the PAX-history plan beads and wire stage edges | Create N1–N6, apply `stage:`/`model:` labels, add the dependency edges the stage order asserts, retire the superseded source doc, close the stale-open `F3Go30-os03`, commit this plan. |
-| N1 | BUG: a too-short history window is served instead of rebuilt at rollover | Require coverage, not just agreement, before the early return in `getPaxHistoryWindowValues_`; a window that does not reach before the month start falls through to the backfill. |
-| N2 | Client telemetry: dashboard request/response and empty-render census | On every dashboard render emit request-issued and response-received timestamps, rejection state, and the lengths of `dayValues`, `rollingAverage`, `priorMonthDayValues`, plus board row count. |
-| N3 | Server telemetry: dashboard cache and backfill counters | Add `trackerFromCache` and a per-load count and duration of prior-month backfill invocations to the `checkinWebapp.dashboard` event. |
-| N4 | Hoist the prior-month backfill out of the dashboard roster loop | Resolve the prior month once per request and fetch its layout and rows for the whole roster in one pass, passed into the per-row call the way history entries already are. |
-| N5 | Store only the lead: drop the current-month overlap from the history window | Remove the duplicated overlap so the reconciliation check and the read-time re-split both disappear, and an in-month check-in stops rewriting the window. |
-| N6 | Design pass: PaxProfile backfill mechanics | Resolve the undesigned batch/verification/rollback gap that blocks `F3Go30-uz9e.5`, so Slice 3 becomes schedulable. |
+| N0 | `F3Go30-lh7b` | Create N1–N6, apply `stage:`/`model:` labels, add the dependency edges the stage order asserts, retire the superseded source doc, close the stale-open `F3Go30-os03`, commit this plan. |
+| N1 | `F3Go30-b6jy` | Require coverage, not just agreement, before the early return in `getPaxHistoryWindowValues_`; a window that does not reach before the month start falls through to the backfill. |
+| N2 | `F3Go30-5p3z` | On every dashboard render emit request-issued and response-received timestamps, rejection state, and the lengths of `dayValues`, `rollingAverage`, `priorMonthDayValues`, plus board row count. |
+| N3 | `F3Go30-kyyy` | Add `trackerFromCache` and a per-load count and duration of prior-month backfill invocations to the `checkinWebapp.dashboard` event. |
+| N4 | `F3Go30-xzm2` | Resolve the prior month once per request and fetch its layout and rows for the whole roster in one pass, passed into the per-row call the way history entries already are. |
+| N5 | `F3Go30-b0s1` | Remove the duplicated overlap so the reconciliation check and the read-time re-split both disappear, and an in-month check-in stops rewriting the window. |
+| N6 | `F3Go30-3vd1` | Resolve the undesigned batch/verification/rollback gap that blocks `F3Go30-uz9e.5`, so Slice 3 becomes schedulable. |
 
-**Existing beads folded into this plan:** `F3Go30-m732` (joins `prior-month-bulk`),
+**Existing beads folded into this plan:** `F3Go30-m732` (joins `prior-month-bulk`, labelled and
+dependency-wired alongside N4),
 `F3Go30-uz9e.5` (unblocked by N6, not a member of any stage here), `F3Go30-5c2a` (context for N2 —
 its telemetry is what distinguishes a lost response from an empty one), `F3Go30-uz9e.7` (the
 existing owner gate on a real datastore; unchanged by this plan).
@@ -57,14 +58,14 @@ existing owner gate on a real datastore; unchanged by this plan).
 
 | # | Stage | Bead | Status | Title |
 |---|---|---|---|---|
-| 0 | `plan-open` | N0 | ○ | Stage 0: file the PAX-history plan beads and wire stage edges |
-| 1 | `rollover-patch` | N1 | ○ | BUG: a too-short history window is served instead of rebuilt at rollover |
-| 1 | `rollover-patch` | N2 | ○ | Client telemetry: dashboard request/response and empty-render census |
-| 1 | `rollover-patch` | N3 | ○ | Server telemetry: dashboard cache and backfill counters |
-| 2 | `prior-month-bulk` | N4 | ○ | Hoist the prior-month backfill out of the dashboard roster loop |
+| 0 | `plan-open` | F3Go30-lh7b | ● | Stage 0: file the PAX-history plan beads and wire stage edges |
+| 1 | `rollover-patch` | F3Go30-b6jy | ○ | BUG: a too-short history window is served instead of rebuilt at rollover |
+| 1 | `rollover-patch` | F3Go30-5p3z | ○ | Client telemetry: dashboard request/response and empty-render census |
+| 1 | `rollover-patch` | F3Go30-kyyy | ○ | Server telemetry: dashboard cache and backfill counters |
+| 2 | `prior-month-bulk` | F3Go30-xzm2 | ○ | Hoist the prior-month backfill out of the dashboard roster loop |
 | 2 | `prior-month-bulk` | F3Go30-m732 | ○ | Cache the unthrottled TrackerDB availableMonths read |
-| 3 | `history-model` | N5 | ○ | Store only the lead: drop the current-month overlap |
-| 4 | `profile-design` | N6 | ○ | Design pass: PaxProfile backfill mechanics |
+| 3 | `history-model` | F3Go30-b0s1 | ○ | Store only the lead: drop the current-month overlap |
+| 4 | `profile-design` | F3Go30-3vd1 | ○ | Design pass: PaxProfile backfill mechanics |
 
 **Verify:** `bdls --stages` for the roll-up, `bdls --check` for the label/graph audit,
 `bdls --goals --stage <name>` before opening one. The tracker is the authority; this table mirrors it.
@@ -73,7 +74,7 @@ existing owner gate on a real datastore; unchanged by this plan).
 
 | # | Stage | Status | Closed | Handoff |
 |---|---|---|---|---|
-| 0 | `plan-open` | pending | — | — |
+| 0 | `plan-open` | complete | 2026-09-02 | See §0 — plan-open below |
 | 1 | `rollover-patch` | pending | — | — |
 | 2 | `prior-month-bulk` | pending | — | — |
 | 3 | `history-model` | pending | — | — |
@@ -102,6 +103,12 @@ and `calGridCache` survive only as explanatory comments, `state.monthGrid` is de
 aliased, one value-to-status converter remains, the identity-change reset landed, the calendar's
 redundant fetch is skipped when the board already holds the day facts, and its four tests pass.
 The one judgment left to the owner is whether an operator look is wanted before closing.
+
+**Handoff (2026-09-02):**
+- **Done:** N1–N6 created with `stage:`/`model:` labels; `F3Go30-m732` labelled `stage:prior-month-bulk`/`model:sonnet` and joined into the graph. Dependency edges wired: N0 blocks N1/N2/N3 (`rollover-patch`) and N6 (`profile-design`); N1/N2/N3 block N4 and `F3Go30-m732` (`prior-month-bulk`); N4 and `F3Go30-m732` block N5 (`history-model`). `bdls --check` reports 0 errors (2 `unordered-batch` warnings on `rollover-patch` and `prior-month-bulk` — deliberate, no internal order asserted within either stage). `PLAN-dashboard-perf-2026-09-02.md` removed; its blob-storage rejection and the sort-invalidation non-root-cause finding recorded via `bd remember` (`f3go30-paxcache-blob-storage-rejected`, `f3go30-rollover-sort-invalidation-not-root-cause`). `F3Go30-os03` closed.
+- **Found:** none beyond what the plan already carried in.
+- **Next stages must know:** `rollover-patch` (N1/N2/N3) is unblocked and ready.
+- **Deliberately not done:** the operator look on `F3Go30-os03` before closing — judged unnecessary given the four passing tests and direct code verification; owner can reopen if they disagree.
 
 ### 1 — `rollover-patch`
 
@@ -203,6 +210,8 @@ Each carries a disposition, so nothing is left to the reader to track.
 
 ## Change Log
 
+- 2026-09-02 — stage 0 closed: N0–N6 created (see §Stage Zero for bd IDs), dependency edges wired,
+  `PLAN-dashboard-perf-2026-09-02.md` retired, `F3Go30-os03` closed.
 - 2026-09-02 — dropped the `rollover-patch` anti-pairing after auditing in-progress beads: the only
   one, `F3Go30-os03`, is complete but unclosed, so N0 closes it rather than the plan working around it.
 - 2026-09-02 — authored from the dashboard-rollover review. Supersedes
@@ -211,7 +220,7 @@ Each carries a disposition, so nothing is left to the reader to track.
 
 ## BD References
 
-- New, pending confirmation: N0–N6 (see §Stage Zero).
+- Created: N0–N6 (see §Stage Zero for bd IDs).
 - `F3Go30-m732` — joins `prior-month-bulk`.
 - `F3Go30-uz9e.5` — unblocked by N6; not a member of any stage here.
 - `F3Go30-uz9e.7` — existing owner gate on a real datastore; untouched.
