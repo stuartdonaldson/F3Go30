@@ -54,6 +54,7 @@ function makeDashboardHarness_(state, callApiImpl) {
   var factory = new Function(
     'state', '$', 'callApi', 'renderDashboard_', 'setButtonLoading_', 'hideApiError_', 'showApiError_',
     'isoDate_', 'monthKeyOf_', 'patchOwnDayIntoPayload_', 'renderDateNav_', 'captureDashboardRenderTelemetry_',
+    'requestGen_', 'reconcileDashboardWithLocalWrites_', 'restoreWiderBoardDayFacts_',
     // The dashboardBtn block is a bare $('dashboardBtn').addEventListener(...) statement, not a
     // named function — running it registers the real click handler onto the fake $ element below,
     // which the test then triggers directly rather than trying to name-bind an anonymous function.
@@ -70,7 +71,11 @@ function makeDashboardHarness_(state, callApiImpl) {
     function() {},
     // F3Go30-5p3z: telemetry capture is exercised by its own dedicated test — a no-op stand-in
     // here keeps this harness scoped to stale-while-revalidate behavior.
-    function() {}
+    function() {},
+    // F3Go30-jsrf: requestGen_/reconcileDashboardWithLocalWrites_/restoreWiderBoardDayFacts_ are
+    // exercised by their own dedicated tests (test_checkin_board_consolidation.js) — no-op
+    // stand-ins here keep this harness scoped to stale-while-revalidate behavior.
+    0, function() {}, function() {}
   );
   return { fns: fns, elements: elements, renderCalls: renderCalls, setButtonLoadingCalls: setButtonLoadingCalls };
 }

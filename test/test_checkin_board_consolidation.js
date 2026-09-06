@@ -188,18 +188,24 @@ function makeBoardWriteAndCalNavHarness_(state, callApiImpl) {
 
 // ── A7/A8/A9/A10: generation-ordered overlay expiry (D5, Addendum 2-3, Finding A) ───────────────
 
+// F3Go30-jsrf: the writeGen/issuedGen comparison itself now lives in dropAckedLocalWrites_, split
+// out so loadDashboard_'s dayDates/dayValues shape (reconcileDashboardWithLocalWrites_, same file)
+// can share it instead of re-deriving it — extract both together so reconcileWithLocalWrites_'s
+// call to it resolves in this isolated harness.
 function makeReconcileHarness_() {
   var src = readStaticPage_();
-  var body = extractFunction_(src, 'reconcileWithLocalWrites_');
+  var body = [extractFunction_(src, 'dropAckedLocalWrites_'), extractFunction_(src, 'reconcileWithLocalWrites_')].join('\n');
   var factory = new Function('state', 'isoDate_', body + '\nreturn reconcileWithLocalWrites_;');
   return factory;
 }
 
 (function testA10OverlayExpiryUsesAMonotonicCounterNotDateNow() {
   var src = readStaticPage_();
-  var body = extractFunction_(src, 'reconcileWithLocalWrites_');
-  assert.doesNotMatch(body, /Date\.now\(\)/, 'reconcileWithLocalWrites_ must compare requestGen_ generations, not Date.now() (Addendum 3 — a wall clock is not monotonic)');
-  assert.match(body, /writeGen\b.*issuedGen|issuedGen.*writeGen\b/, 'reconcileWithLocalWrites_ must compare a write\'s generation against the read\'s issuedGen');
+  var reconcileBody = extractFunction_(src, 'reconcileWithLocalWrites_');
+  var dropBody = extractFunction_(src, 'dropAckedLocalWrites_');
+  assert.doesNotMatch(dropBody, /Date\.now\(\)/, 'dropAckedLocalWrites_ must compare requestGen_ generations, not Date.now() (Addendum 3 — a wall clock is not monotonic)');
+  assert.match(dropBody, /writeGen\b.*issuedGen|issuedGen.*writeGen\b/, 'dropAckedLocalWrites_ must compare a write\'s generation against the read\'s issuedGen');
+  assert.match(reconcileBody, /dropAckedLocalWrites_\(issuedGen\)/, 'reconcileWithLocalWrites_ must delegate the generation comparison to dropAckedLocalWrites_ (F3Go30-jsrf, shared with reconcileDashboardWithLocalWrites_)');
 })();
 
 // A8 (both directions) + A7's repro: an unacked write always outranks a stale response; an ACKED
@@ -276,6 +282,75 @@ function makeReconcileHarness_() {
 
   assert.equal(res.todayStatus, 'missed', 'the check-in status line source must show the fresh server truth');
   assert.equal(patch.boardMonthGrid_('2026-08')[0].status, 'missed', 'the board (dashboard/calendar source) must show the SAME value — no split-brain');
+})();
+
+// ── F3Go30-jsrf: loadDashboard_'s own (often narrower, rolling-window) dayDates/dayValues must
+// not silently regress a fuller day-facts set already cached for this monthKey (live SIT repro:
+// a background dashboard prefetch's 6-day window landing after the check-in calendar's own
+// full-month fetch dropped day 30 from state.board entirely). ────────────────────────────────────
+
+(function testRestoreWiderBoardDayFactsFillsGapsButLetsTheCurrentRecordWinOnOverlap() {
+  var src = readStaticPage_();
+  var state = {
+    board: {
+      '2026-09': { monthKey: '2026-09', dayDates: ['2026-09-01', '2026-09-02', '2026-09-30'], dayValues: [1, 0, 1] },
+    },
+  };
+  var fn = new Function('state', extractFunction_(src, 'restoreWiderBoardDayFacts_') + '\nreturn restoreWiderBoardDayFacts_;')(state);
+
+  // Simulate loadDashboard_'s replace-then-restore sequence: a narrower payload just replaced the
+  // record (days 1-2 only, day 1 freshly re-fetched as 'missed'/0), then the prior wider set folds
+  // back in for whatever the narrow payload doesn't cover.
+  var priorDayDates = ['2026-09-01', '2026-09-02', '2026-09-30'];
+  var priorDayValues = [1, 0, 1];
+  state.board['2026-09'] = { monthKey: '2026-09', dayDates: ['2026-09-01', '2026-09-02'], dayValues: [0, 0] };
+  fn('2026-09', priorDayDates, priorDayValues);
+
+  assert.deepEqual(state.board['2026-09'].dayDates, ['2026-09-01', '2026-09-02', '2026-09-30'], 'day 30 must be restored, not left dropped');
+  assert.equal(state.board['2026-09'].dayValues[0], 0, 'the current (narrow) record must win on overlap — it is the freshest fetch for the days it covers');
+  assert.equal(state.board['2026-09'].dayValues[2], 1, 'day 30, absent from the narrow payload, must come from the prior wider set');
+})();
+
+(function testRestoreWiderBoardDayFactsIsANoOpWithNoExistingRecordOrNoPriorData() {
+  var src = readStaticPage_();
+  var state = { board: {} };
+  var fn = new Function('state', extractFunction_(src, 'restoreWiderBoardDayFacts_') + '\nreturn restoreWiderBoardDayFacts_;')(state);
+  fn('2026-09', ['2026-09-01'], [1]); // no record at all yet — must not throw or create one
+  assert.equal(state.board['2026-09'], undefined);
+
+  state.board['2026-09'] = { monthKey: '2026-09', dayDates: ['2026-09-01'], dayValues: [1] };
+  fn('2026-09', null, null); // no prior data — must leave the current record untouched
+  assert.deepEqual(state.board['2026-09'].dayDates, ['2026-09-01']);
+})();
+
+// ── F3Go30-jsrf: reconcileDashboardWithLocalWrites_ — the dashboard-shape counterpart to
+// reconcileWithLocalWrites_ above, same overlay-wins-until-superseded rule (D5), applied to
+// loadDashboard_'s payload before it replaces state.board wholesale. Without this, a dashboard
+// fetch resolving with a day's value from before a since-acked write would silently win. ─────────
+
+function makeDashboardReconcileHarness_() {
+  var src = readStaticPage_();
+  var body = [extractFunction_(src, 'dropAckedLocalWrites_'), extractFunction_(src, 'statusToValue_'), extractFunction_(src, 'reconcileDashboardWithLocalWrites_')].join('\n');
+  return new Function('state', body + '\nreturn reconcileDashboardWithLocalWrites_;');
+}
+
+(function testReconcileDashboardWithLocalWritesAppliesAnUnackedWriteOverAStaleFetchedValue() {
+  var factory = makeDashboardReconcileHarness_();
+  var state = { locallyWrittenIso: { '2026-09-30': 'done' }, writeGenByIso_: {} };
+  var reconcile = factory(state);
+  var payload = { monthKey: '2026-09', dayDates: ['2026-09-29', '2026-09-30'], dayValues: [1, 0] };
+  reconcile(payload, /* issuedGen */ 5);
+  assert.deepEqual(payload.dayValues, [1, 1], 'the unacked local write must win over the fetched (stale) value for its day');
+})();
+
+(function testReconcileDashboardWithLocalWritesDropsAnAckedWriteOnceASubsequentReadReflectsIt() {
+  var factory = makeDashboardReconcileHarness_();
+  var state = { locallyWrittenIso: { '2026-09-30': 'done' }, writeGenByIso_: { '2026-09-30': 1 } };
+  var reconcile = factory(state);
+  var payload = { monthKey: '2026-09', dayDates: ['2026-09-30'], dayValues: [0] };
+  reconcile(payload, /* issuedGen */ 2); // issued strictly after the ack — reflects it already
+  assert.deepEqual(payload.dayValues, [0], 'a response issued after the ack must win — the overlay steps aside');
+  assert.ok(!Object.prototype.hasOwnProperty.call(state.locallyWrittenIso, '2026-09-30'), 'the superseded overlay entry must be dropped');
 })();
 
 console.log('test_checkin_board_consolidation.js: all assertions passed');

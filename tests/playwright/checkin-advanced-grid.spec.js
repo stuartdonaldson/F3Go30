@@ -246,9 +246,16 @@ test.describe('Advanced calendar grid (client, live SIT)', () => {
       await futureCell.click();
       await expect(app.locator('#selFailBtn')).toBeDisabled(); // never settable for a future day
 
+      // F3Go30-jsrf: every action (checkin, dashboard, clientTelemetry, ...) POSTs to this same
+      // ?cmd=checkin route — only the checkin action's own body is the payload under test, so
+      // filter on it explicitly rather than capturing whichever request matching the URL happens
+      // to fire last (the async clientTelemetry flush that piggybacks after every successful
+      // callApi() round trip was clobbering this with its own unrelated body once the app-side
+      // race this bead fixes stopped masking the test getting this far).
       let lastPayload = null;
       await page.route('**/exec?cmd=checkin*', async (route) => {
-        lastPayload = JSON.parse(route.request().postData());
+        const body = JSON.parse(route.request().postData());
+        if (body.action === 'checkin') lastPayload = body;
         await route.continue();
       });
 

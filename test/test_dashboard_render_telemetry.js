@@ -138,13 +138,17 @@ function makeTelemetryHarness_() {
     var factory = new Function(
       'state', '$', 'callApi', 'renderDashboard_', 'setButtonLoading_', 'hideApiError_', 'showApiError_',
       'isoDate_', 'monthKeyOf_', 'patchOwnDayIntoPayload_', 'renderDateNav_', 'captureDashboardRenderTelemetry_',
+      // F3Go30-jsrf: exercised by their own dedicated tests (test_checkin_board_consolidation.js) —
+      // no-op stand-ins here keep this harness scoped to telemetry-capture behavior.
+      'requestGen_', 'reconcileDashboardWithLocalWrites_', 'restoreWiderBoardDayFacts_',
       body + '\nreturn { loadDashboard_: loadDashboard_ };'
     );
     return factory(
       { f3Name: 'Test PAX', email: 't@x.com', resolvedContext: null, board: {}, pendingSelfWrites: {}, dashboardLoading: false, viewDate: new Date() },
       fakeEl_, callApiImpl, function() {}, function() {}, function() {}, function() {},
       function(d) { return d.getFullYear() + '-01-01'; }, function(d) { return d.getFullYear() + '-01'; },
-      function() {}, function() {}, captureDashboardRenderTelemetry_
+      function() {}, function() {}, captureDashboardRenderTelemetry_,
+      0, function() {}, function() {}
     );
   }
 
