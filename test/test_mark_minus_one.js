@@ -2,7 +2,11 @@ const assert = require('node:assert/strict');
 
 // GAS global stubs — must be set before require.
 global.Logger = { log: function() {} };
-global.GasLogger = { log: function() {}, run: function(name, fn) { return fn(); } };
+var gasLoggerRunCalls_ = [];
+global.GasLogger = {
+  log: function() {},
+  run: function(name, fn) { gasLoggerRunCalls_.push(name); return fn(); },
+};
 
 global.Utilities = {
   formatDate: function(date, tz, pattern) {
@@ -49,7 +53,7 @@ function makeFakeSpreadsheet(sheetsByName) {
   };
 }
 
-const { markEmptyCellsAsMinusOne_, applyMinusOneToTrackerSheet_ } = require('../script/markMinusOne.js');
+const { markEmptyCellsAsMinusOne, markEmptyCellsAsMinusOne_, applyMinusOneToTrackerSheet_ } = require('../script/markMinusOne.js');
 
 // A context date two years in the future (a "future TrackerDB row") with an explicit
 // SheetId — proves the dispatch path resolves via TrackerDB + openById, not the active
@@ -291,6 +295,35 @@ function makeFakeFullTrackerSheet(dateRow, rows) {
     'falls back to a full wipe for both months when the repopulate helpers are unavailable');
 
   console.log('test_mark_minus_one.js: F3Go30-o39s.3 fallback-wipe-both-months PASS');
+}
+
+// --- The trigger-named wrapper (F3Go30-y8j7.3) is what the real installed daily trigger calls
+// (setupDailyMinusOneTrigger, this file) and what admin.runMinusOneCheck now calls too
+// (WebApp.js) — it must GasLogger.run-wrap the exact same dispatch logic as markEmptyCellsAsMinusOne_. ---
+{
+  const SHEET_ID = 'wrapper-sheet';
+  const TODAY = new Date(2029, 5, 1);      // June 1, 2029
+  const THRESHOLD = new Date(2029, 4, 30); // May 30, 2029 == today - 2 days
+
+  const sheet = makeFakeFullTrackerSheet(['', '', '', '', THRESHOLD], [{ cells: ['Anchor', '', '', '', ''] }]);
+  const spreadsheet = { getId: function() { return SHEET_ID; }, getSheetByName: function(name) { return name === 'Tracker' ? sheet : null; } };
+
+  global.resolveTrackerForContextDate = function() { return { sheetId: SHEET_ID, startDate: '2029-05-01' }; };
+  global.SpreadsheetApp = {
+    openById: function(sheetId) { if (sheetId === SHEET_ID) return spreadsheet; throw new Error('openById: unexpected sheetId ' + sheetId); },
+    getActiveSpreadsheet: function() { return { getId: function() { return 'bound-spreadsheet-id'; } }; }
+  };
+  delete global.setPaxCacheRowsBulk_;
+  delete global.paxCacheNormalizeName_;
+  global.wipePaxCacheAndRelatedCachesForSheet_ = function() {};
+
+  gasLoggerRunCalls_.length = 0;
+  markEmptyCellsAsMinusOne(TODAY);
+
+  assert.ok(gasLoggerRunCalls_.indexOf('markEmptyCellsAsMinusOne') !== -1, 'expected GasLogger.run to be called with the trigger name');
+  assert.equal(sheet._setValuesCalls.length, 1, 'the wrapper still performs the real marking, not just the logging wrapper');
+
+  console.log('test_mark_minus_one.js: F3Go30-y8j7.3 trigger-wrapper-runs-under-trigger-name PASS');
 }
 
 console.log('test_mark_minus_one.js: PASS');

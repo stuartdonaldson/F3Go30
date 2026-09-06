@@ -641,9 +641,13 @@ function handleAdminPost_(e) {
     }
     if (payload.action === 'runMinusOneCheck') {
       // Runs the daily minus-one marking for a specific context date (default: today).
-      // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload.
+      // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload. Calls the
+      // trigger-named wrapper (not the _ helper) so this on-demand run exercises the exact same
+      // GasLogger.run-wrapped code path the real daily trigger invokes (F3Go30-y8j7.3) — the
+      // underscore direct-call this replaced skipped that wrapper, so its Axiom trace never
+      // matched what a genuine trigger fire produces.
       var contextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
-      var result = markEmptyCellsAsMinusOne_(contextDate);
+      var result = markEmptyCellsAsMinusOne(contextDate);
       return jsonOutput_({ ok: true, result: result });
     }
     if (payload.action === 'runNagCheck') {
@@ -656,9 +660,11 @@ function handleAdminPost_(e) {
     if (payload.action === 'runPaxCachePurge') {
       // Runs the nightly PaxCache purge (F3Go30-440b.2) on demand, for live SIT verification.
       // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload to test against a
-      // pinned "now" rather than the real clock.
+      // pinned "now" rather than the real clock. Calls the trigger-named wrapper (not the _
+      // helper) so this on-demand run exercises the exact same GasLogger.run-wrapped code path
+      // the real nightly trigger invokes (F3Go30-y8j7.3).
       var purgeContextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
-      var purgeResult = purgeStalePaxCache_(purgeContextDate);
+      var purgeResult = purgeStalePaxCache(purgeContextDate);
       return jsonOutput_({ ok: true, result: purgeResult });
     }
     if (payload.action === 'benchmarkPropertiesService') {

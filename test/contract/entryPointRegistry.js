@@ -271,18 +271,33 @@ const ENTRY_POINT_DEFERRED = {
     '[permanent] tagged (F3Go30-y8j7.2) as the real call-site in tools/smokeTestNamespace.js — both the stale-namespace disposal step and the end-of-run teardown — same charter-scope reasoning as copyTemplate — F3Go30-y8j7.2',
 
   // ── triggers (F3Go30-y8j7.3) ──────────────────────────────────────────────────────────────
+  // Investigated per-function (not just re-stamped): admin.runMinusOneCheck and
+  // admin.runPaxCachePurge were found calling the underscore helper directly
+  // (markEmptyCellsAsMinusOne_/purgeStalePaxCache_), skipping the GasLogger.run-wrapped,
+  // trigger-named entry point the real installed trigger actually calls — so their own "on
+  // demand … for live SIT verification" claim was never quite true. Both now call the
+  // trigger-named wrapper instead (WebApp.js), node-tested to do so
+  // (test_admin_trigger_wrapper_dispatch.js, test_mark_minus_one.js, test_pax_cache.js). That
+  // closes the "does the dispatch call the right function" half of the gap; the other half —
+  // proving GAS's own scheduler actually invokes a time-based trigger — has no drivable path at
+  // all: `clasp run` (the only way to invoke a GAS function on demand without a real trigger
+  // firing) was rejected for this project (ADR-009), and installing a fresh short-interval test
+  // trigger to force one is blocked outright by the SIT per-script trigger quota (bd memory
+  // F3Go30-sit-trigger-quota-exceeded) — so these stay deferred, now [permanent] rather than
+  // [backlog], since the blocker is structural (a standing architecture decision), not a
+  // transient quota that will clear.
   handleFormSubmit_:
-    '[backlog] handler logic is node-tested (test_form_submit_dispatch.js, test_add_response_on_submit.js); nothing proves the installed trigger fires against a real Form submission — F3Go30-y8j7.3',
+    '[permanent] handler logic is node-tested (test_form_submit_dispatch.js, test_add_response_on_submit.js); proving the installed trigger fires would need a live Playwright drive of the tracker\'s actual linked Google Form, but (unlike handleTrackerEdit_\'s Sheets grid, whose click coordinates were calibrated against a previously-viewed live layout) this project\'s live-check authoring has no live visual access to calibrate the Form\'s real question layout against, and that layout is Template content, not a stable code constant — the same blind-calibration objection tracker-edit-trigger-live-check.spec.js already declines for its header-row/Bonus-Tracker cases — F3Go30-y8j7.3',
   autoGenerateNextMonthTracker:
-    '[backlog] same body as admin.runAutoGenerate, reached from the monthly trigger; blocked on the SIT trigger quota — F3Go30-y8j7.3',
+    '[backlog] same body as admin.runAutoGenerate, which already calls this exact trigger-named function (not an _ helper) — the dispatch is correct today; only blocked live by the SIT trigger quota (bd memory F3Go30-sit-trigger-quota-exceeded), which is transient ops state, not a structural blocker — F3Go30-y8j7.3',
   markEmptyCellsAsMinusOne:
-    '[backlog] node-tested including the TrackerDB dispatch (ADR-010); no live call-site — F3Go30-y8j7.3',
+    '[permanent] node-tested including the TrackerDB dispatch (ADR-010) and, now, the trigger-named wrapper itself (test_mark_minus_one.js); admin.runMinusOneCheck drives that same wrapper live, but proving GAS\'s scheduler fires it for real needs clasp run (rejected, ADR-009) or a fresh test trigger (blocked by SIT quota) — F3Go30-y8j7.3',
   sendNagEmail:
     '[permanent] the trigger form of runNagCheck — sends real email; same objection — F3Go30-y8j7.3',
   purgeStalePaxCache:
-    '[backlog] no live call-site; the age bound is node-tested — F3Go30-y8j7.3',
+    '[permanent] the age bound is node-tested, and now so is the trigger-named wrapper itself (test_pax_cache.js); admin.runPaxCachePurge drives that same wrapper live, same clasp-run/quota objection as markEmptyCellsAsMinusOne — F3Go30-y8j7.3',
   cleanupStaleCheckinSessions:
-    '[backlog] no live call-site; the expiry decision is node-tested (test_checkin_sessions.js) — F3Go30-y8j7.3',
+    '[permanent] the expiry decision is node-tested (test_checkin_sessions.js); no admin action exposes this trigger-named wrapper at all today, and even adding one would hit the same clasp-run/quota objection as its siblings — F3Go30-y8j7.3',
 
   // ── menu items (F3Go30-y8j7.4) ────────────────────────────────────────────────────────────
   initializeTemplateDispatchTriggers:

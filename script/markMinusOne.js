@@ -253,6 +253,7 @@ function applyMinusOneToTrackerSheet_(spreadsheet, contextDate, historyScopeId) 
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    markEmptyCellsAsMinusOne: markEmptyCellsAsMinusOne,
     markEmptyCellsAsMinusOne_: markEmptyCellsAsMinusOne_,
     applyMinusOneToTrackerSheet_: applyMinusOneToTrackerSheet_,
     refreshPaxCacheForSheet_: refreshPaxCacheForSheet_,

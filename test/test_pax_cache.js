@@ -35,7 +35,11 @@ global.LockService = {
     return { waitLock: function() {}, releaseLock: function() {} };
   },
 };
-global.GasLogger = { log: function() {}, run: function(name, fn) { return fn(); } };
+var gasLoggerRunCalls_ = [];
+global.GasLogger = {
+  log: function() {},
+  run: function(name, fn) { gasLoggerRunCalls_.push(name); return fn(); },
+};
 
 // In-memory stand-in for CacheService.getScriptCache() — wipePaxCacheAndRelatedCachesForSheet_
 // also clears dashboardWebapp.js's full-roster cache keys (go30dash:trackerValues:/
@@ -68,6 +72,7 @@ const {
   getPaxCacheRequestStats_,
   resetPaxCacheRequestStats_,
   purgeStalePaxCache_,
+  purgeStalePaxCache,
   PAX_CACHE_PURGE_RETENTION_DAYS_,
   collectKnownTrackerSheetIds_,
   extractSheetIdFromPaxCacheKey_,
@@ -980,6 +985,26 @@ var SCOPE_B_ = 'scope-b';
   var result = purgeStalePaxCache_(now, spreadsheet);
   assert.equal(result.orphanedSheetsPurged, 1);
   assert.equal(getPaxGoalsEntry_('torn-down-scope', 'Old Pax'), null);
+})();
+
+// The trigger-named wrapper (F3Go30-y8j7.3, see script/PaxCache.js) is what the real installed
+// nightly trigger calls (see onOpen.js) and what admin.runPaxCachePurge now calls too (WebApp.js)
+// — it must GasLogger.run-wrap the exact same purgeStalePaxCache_ logic, against the active
+// spreadsheet, threading an optional pinned "now" through for on-demand verification.
+(function testPurgeStalePaxCacheWrapperRunsUnderTriggerName() {
+  resetProps_();
+  var now = new Date(2026, 6, 16);
+  var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
+  var activeSpreadsheet = makeFakeTrackerDbSpreadsheet_([{ sheetId: 'sheet-recent', startDate: recentStart }]);
+  global.SpreadsheetApp = { getActiveSpreadsheet: function() { return activeSpreadsheet; } };
+
+  gasLoggerRunCalls_.length = 0;
+  var result = purgeStalePaxCache(now);
+  assert.ok(gasLoggerRunCalls_.indexOf('purgeStalePaxCache') !== -1, 'expected GasLogger.run to be called with the trigger name');
+  assert.equal(result.checked, 1);
+  assert.equal(result.purged, 0);
+
+  delete global.SpreadsheetApp;
 })();
 
 console.log('test_pax_cache.js: all assertions passed');

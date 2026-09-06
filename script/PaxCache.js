@@ -616,10 +616,15 @@ function purgeStalePaxCache_(now, spreadsheet) {
   return result;
 }
 
-/** GasLogger-wrapped entry point for the nightly trigger (see onOpen.js). */
-function purgeStalePaxCache() {
+/**
+ * GasLogger-wrapped entry point for the nightly trigger (see onOpen.js).
+ * @param {Date|string=} now Injectable for on-demand verification (admin.runPaxCachePurge,
+ *   F3Go30-y8j7.3); the real nightly trigger call in onOpen.js passes nothing, so this stays a
+ *   real Date default for that path.
+ */
+function purgeStalePaxCache(now) {
   return GasLogger.run('purgeStalePaxCache', function() {
-    return purgeStalePaxCache_();
+    return purgeStalePaxCache_(now ? new Date(now) : undefined);
   });
 }
 
@@ -1189,6 +1194,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getPaxCacheRequestStats_: getPaxCacheRequestStats_,
     resetPaxCacheRequestStats_: resetPaxCacheRequestStats_,
     purgeStalePaxCache_: purgeStalePaxCache_,
+    purgeStalePaxCache: purgeStalePaxCache,
     PAX_CACHE_PURGE_RETENTION_DAYS_: PAX_CACHE_PURGE_RETENTION_DAYS_,
     collectKnownTrackerSheetIds_: collectKnownTrackerSheetIds_,
     extractSheetIdFromPaxCacheKey_: extractSheetIdFromPaxCacheKey_,
