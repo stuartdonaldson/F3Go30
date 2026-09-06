@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const {
   planTrackerTriggerSync_,
   clearAllPerTrackerTriggersBySheetId_,
-  ttlMonthStart_
+  ttlMonthStart_,
+  ttlMergeTrackerRowsAcrossNamespaces_
 } = require('../script/TrackerTriggerLifecycle.js');
 
 // ── planTrackerTriggerSync_ — pure decision function ────────────────────────────────────────
@@ -128,6 +129,79 @@ assert.equal(ttlMonthStart_(new Date('2026-01-05T00:00:00'), -1).getTime(), new 
   assert.equal(removed, 3, 'removes edit + form-submit + legacy form-submit triggers for tracker-a only');
   assert.deepEqual(deleted.map(function(t) { return t.getHandlerFunction(); }).sort(),
     ['handleFormSubmit_', 'handleTrackerEdit_', 'onFormSubmit']);
+})();
+
+// ── ttlMergeTrackerRowsAcrossNamespaces_ — multi-namespace sweep (F3Go30-jykq) ──────────────
+// syncTrackerTriggers_ only ever read the bound (Template) spreadsheet's own TrackerDB, so a
+// tracker created inside an ADR-014 namespace-provisioned copy (tools/smokeTestNamespace.js)
+// was invisible to the sweep and its per-tracker triggers could never be cleaned up. This merge
+// step unions the bound spreadsheet's TrackerDB rows with every registered namespace's own
+// TrackerDB rows before handing the combined list to planTrackerTriggerSync_ (unchanged) — same
+// "enumerate NamespaceDB, best-effort per namespace" shape as PaxCache.js's
+// collectKnownTrackerSheetIds_ (F3Go30-440b.2 follow-up).
+
+// Unions bound + every namespace's rows, deduped by sheetId (first sighting wins).
+(function testMergeUnionsBoundAndEveryNamespace() {
+  var boundState = { bySheetId: { 'bound-1': { sheetId: 'bound-1', startDate: new Date('2026-07-01') } } };
+  var namespaceRows = [
+    { namespace: 'sit-smoke', templateId: 'ns-tmpl-1' },
+    { namespace: 'sit-demo', templateId: 'ns-tmpl-2' }
+  ];
+  function readNamespaceTrackerStateFn(templateId) {
+    if (templateId === 'ns-tmpl-1') {
+      return { bySheetId: { 'ns1-tracker': { sheetId: 'ns1-tracker', startDate: new Date('2026-07-01') } } };
+    }
+    if (templateId === 'ns-tmpl-2') {
+      return { bySheetId: { 'ns2-tracker': { sheetId: 'ns2-tracker', startDate: new Date('2026-07-01') } } };
+    }
+    throw new Error('unexpected templateId: ' + templateId);
+  }
+  var rows = ttlMergeTrackerRowsAcrossNamespaces_(boundState, namespaceRows, readNamespaceTrackerStateFn);
+  assert.deepEqual(rows.map(function(r) { return r.sheetId; }).sort(),
+    ['bound-1', 'ns1-tracker', 'ns2-tracker']);
+})();
+
+// A namespace whose spreadsheet can no longer be opened (trashed, or torn down but a stray
+// NamespaceDB row survives) contributes nothing and is reported via the callback, not thrown —
+// one unreachable namespace must never abort the whole sweep.
+(function testMergeSkipsUnreachableNamespaceAndReportsIt() {
+  var boundState = { bySheetId: { 'bound-1': { sheetId: 'bound-1', startDate: new Date('2026-07-01') } } };
+  var namespaceRows = [{ namespace: 'gone', templateId: 'ns-tmpl-gone' }];
+  function readNamespaceTrackerStateFn() { throw new Error('spreadsheet not found'); }
+  var unreachable = [];
+  var rows = ttlMergeTrackerRowsAcrossNamespaces_(boundState, namespaceRows, readNamespaceTrackerStateFn,
+    function(nsRow, err) { unreachable.push({ namespace: nsRow.namespace, error: err.message }); });
+  assert.deepEqual(rows.map(function(r) { return r.sheetId; }), ['bound-1']);
+  assert.deepEqual(unreachable, [{ namespace: 'gone', error: 'spreadsheet not found' }]);
+})();
+
+// Same sheetId appearing in two sources (should never happen in practice — each tracker belongs
+// to exactly one TrackerDB — but dedup must not double-count if it ever did) keeps one entry.
+(function testMergeDedupesSameSheetIdAcrossSources() {
+  var boundState = { bySheetId: { 'dup': { sheetId: 'dup', startDate: new Date('2026-06-01') } } };
+  var namespaceRows = [{ namespace: 'ns', templateId: 'ns-tmpl' }];
+  function readNamespaceTrackerStateFn() {
+    return { bySheetId: { 'dup': { sheetId: 'dup', startDate: new Date('2026-08-01') } } };
+  }
+  var rows = ttlMergeTrackerRowsAcrossNamespaces_(boundState, namespaceRows, readNamespaceTrackerStateFn);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].startDate.getTime(), new Date('2026-06-01').getTime(), 'first sighting (bound) wins');
+})();
+
+// A namespace row with no templateId (malformed registry row) is skipped without attempting a read.
+(function testMergeSkipsNamespaceRowWithNoTemplateId() {
+  var boundState = { bySheetId: {} };
+  var namespaceRows = [{ namespace: 'broken', templateId: '' }];
+  function readNamespaceTrackerStateFn() { throw new Error('should never be called'); }
+  var rows = ttlMergeTrackerRowsAcrossNamespaces_(boundState, namespaceRows, readNamespaceTrackerStateFn);
+  assert.deepEqual(rows, []);
+})();
+
+// No namespaces registered at all — behaves exactly like the old single-spreadsheet read.
+(function testMergeWithNoNamespacesReturnsJustBoundRows() {
+  var boundState = { bySheetId: { 'bound-only': { sheetId: 'bound-only', startDate: new Date('2026-07-01') } } };
+  var rows = ttlMergeTrackerRowsAcrossNamespaces_(boundState, [], function() { throw new Error('should never be called'); });
+  assert.deepEqual(rows.map(function(r) { return r.sheetId; }), ['bound-only']);
 })();
 
 console.log('test_tracker_trigger_lifecycle.js: all assertions passed');

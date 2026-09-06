@@ -26,6 +26,14 @@ var trackerTriggerLifecycleEditModule_ = (typeof module !== 'undefined' && modul
   : null;
 var ttlSetupTrackerEditTrigger_ = (trackerTriggerLifecycleEditModule_ && trackerTriggerLifecycleEditModule_.setupTrackerEditTrigger_)
   || (typeof globalThis !== 'undefined' && globalThis.setupTrackerEditTrigger_);
+
+var trackerTriggerLifecycleGo30ToolsModule_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./go30tools.js')
+  : null;
+var ttlReadTrackerDbRowsBySheetId_ = (trackerTriggerLifecycleGo30ToolsModule_ && trackerTriggerLifecycleGo30ToolsModule_._readTrackerDbRowsBySheetId_)
+  || (typeof globalThis !== 'undefined' && globalThis._readTrackerDbRowsBySheetId_);
+var ttlListNamespaceRegistryRows_ = (trackerTriggerLifecycleGo30ToolsModule_ && trackerTriggerLifecycleGo30ToolsModule_._listNamespaceRegistryRows_)
+  || (typeof globalThis !== 'undefined' && globalThis._listNamespaceRegistryRows_);
 var TTL_TRACKER_EDIT_HANDLER_ = 'handleTrackerEdit_';
 var TTL_FORM_SUBMIT_HANDLER_ = (typeof globalThis !== 'undefined' && globalThis.FORM_SUBMIT_HANDLER_) || 'handleFormSubmit_';
 var TTL_LEGACY_FORM_SUBMIT_HANDLER_ = (typeof globalThis !== 'undefined' && globalThis.LEGACY_FORM_SUBMIT_HANDLER_) || 'onFormSubmit';
@@ -105,6 +113,54 @@ function planTrackerTriggerSync_(trackerRows, existingEditTriggerSourceIds, toda
 }
 
 /**
+ * Unions TrackerDB rows from the bound (Template) spreadsheet with every registered namespace's
+ * own copied TrackerDB (ADR-014; tools/smokeTestNamespace.js's copyTemplate/teardownEnvironment
+ * pattern), deduped by sheetId (first sighting — the bound spreadsheet — wins on a collision that
+ * should never legitimately happen). F3Go30-jykq: syncTrackerTriggers_ previously read only the
+ * bound spreadsheet's TrackerDB, so a tracker created inside a namespace-provisioned copy was
+ * invisible to the sweep and its per-tracker triggers could never be cleaned up if teardown was
+ * skipped or a smoke run aborted mid-way. No GAS API calls itself — namespace enumeration and
+ * per-namespace TrackerDB reads are injected, so this merge/dedup/unreachable-skip behaviour is
+ * unit-testable without SpreadsheetApp/DriveApp. Mirrors PaxCache.js's
+ * collectKnownTrackerSheetIds_ pattern (F3Go30-440b.2 follow-up): a namespace whose spreadsheet
+ * can no longer be opened (trashed, or torn down but a stray NamespaceDB row survives)
+ * contributes nothing and is reported via `onNamespaceUnreachable`, not thrown — one unreachable
+ * namespace must never abort the whole sweep. planTrackerTriggerSync_ itself is untouched: it
+ * stays generic over whatever trackerRows list it's handed.
+ * @param {{bySheetId: Object}} boundTrackerState _readTrackerDbRowsBySheetId_'s return value for the bound spreadsheet.
+ * @param {Array<{namespace:string, templateId:string}>} namespaceRows _listNamespaceRegistryRows_'s output.
+ * @param {function(string):{bySheetId:Object}} readNamespaceTrackerStateFn Given a namespace's templateId, returns (or throws resolving) that namespace's own TrackerDB state.
+ * @param {function({namespace:string,templateId:string}, Error)=} onNamespaceUnreachable Called once per namespace whose read threw.
+ * @returns {Array<{sheetId:string, startDate:*}>}
+ */
+function ttlMergeTrackerRowsAcrossNamespaces_(boundTrackerState, namespaceRows, readNamespaceTrackerStateFn, onNamespaceUnreachable) {
+  var seen = {};
+  var rows = [];
+
+  function addFrom(bySheetId) {
+    Object.keys(bySheetId || {}).forEach(function(sheetId) {
+      if (seen[sheetId]) return;
+      seen[sheetId] = true;
+      rows.push(bySheetId[sheetId]);
+    });
+  }
+
+  addFrom((boundTrackerState || {}).bySheetId);
+
+  (namespaceRows || []).forEach(function(nsRow) {
+    if (!nsRow || !nsRow.templateId) return;
+    try {
+      var nsState = readNamespaceTrackerStateFn(nsRow.templateId);
+      addFrom((nsState || {}).bySheetId);
+    } catch (err) {
+      if (onNamespaceUnreachable) onNamespaceUnreachable(nsRow, err);
+    }
+  });
+
+  return rows;
+}
+
+/**
  * Removes every per-tracker installable trigger (form-submit + edit, current and legacy
  * handler names) whose source matches sheetId — direct ScriptApp filtering, same pattern as
  * WebApp.js's deleteOrphanedTriggers, deliberately not routed through
@@ -131,13 +187,26 @@ function clearAllPerTrackerTriggersBySheetId_(sheetId) {
  * rows missing one, and clearing every per-tracker trigger for trashed/aged-out rows. Returns
  * a summary matching the shape of WebApp.js's other admin actions (listTriggers,
  * deleteOrphanedTriggers): counts plus per-tracker detail.
- * @param {Spreadsheet} spreadsheet The Template spreadsheet (holds TrackerDB).
+ * F3Go30-jykq: the sweep is no longer scoped to just `spreadsheet`'s own TrackerDB — it also
+ * enumerates every namespace registered in `spreadsheet`'s NamespaceDB (ADR-014) and pulls each
+ * one's own TrackerDB rows into the same plan (ttlMergeTrackerRowsAcrossNamespaces_), so a
+ * namespace-provisioned tracker's per-tracker triggers get backfilled/cleaned up exactly like the
+ * Template's own.
+ * @param {Spreadsheet} spreadsheet The Template spreadsheet (holds TrackerDB and NamespaceDB).
  * @param {Date=} today Defaults to `new Date()` — override for deterministic tests/backfills.
  * @returns {{ok:true, backfilledCount:number, cleanedCount:number, detail:Array<Object>}}
  */
 function syncTrackerTriggers_(spreadsheet, today) {
-  var trackerState = _readTrackerDbRowsBySheetId_(spreadsheet);
-  var trackerRows = Object.keys(trackerState.bySheetId).map(function(id) { return trackerState.bySheetId[id]; });
+  var boundTrackerState = ttlReadTrackerDbRowsBySheetId_(spreadsheet);
+  var namespaceRows = ttlListNamespaceRegistryRows_ ? ttlListNamespaceRegistryRows_(spreadsheet) : [];
+  var trackerRows = ttlMergeTrackerRowsAcrossNamespaces_(
+    boundTrackerState,
+    namespaceRows,
+    function(templateId) { return ttlReadTrackerDbRowsBySheetId_(SpreadsheetApp.openById(templateId)); },
+    function(nsRow, err) {
+      GasLogger.log('syncTrackerTriggers_.namespaceUnreachable', { namespace: nsRow.namespace, templateId: nsRow.templateId, error: err.message });
+    }
+  );
 
   var existingEditTriggerSourceIds = ScriptApp.getProjectTriggers()
     .filter(function(trigger) { return trigger.getHandlerFunction() === TTL_TRACKER_EDIT_HANDLER_; })
@@ -184,6 +253,7 @@ function syncTrackerTriggers_(spreadsheet, today) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     planTrackerTriggerSync_: planTrackerTriggerSync_,
+    ttlMergeTrackerRowsAcrossNamespaces_: ttlMergeTrackerRowsAcrossNamespaces_,
     clearAllPerTrackerTriggersBySheetId_: clearAllPerTrackerTriggersBySheetId_,
     syncTrackerTriggers_: syncTrackerTriggers_,
     ttlParseDateish_: ttlParseDateish_,
