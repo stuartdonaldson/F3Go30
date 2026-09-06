@@ -359,7 +359,8 @@ function initializeTemplateDispatchTriggers() {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     parseContextDateMenuInput_: parseContextDateMenuInput_,
-    setContextDateMenuAction: setContextDateMenuAction
+    setContextDateMenuAction: setContextDateMenuAction,
+    invalidateCacheMenuAction: invalidateCacheMenuAction
   };
 }
 

@@ -300,6 +300,31 @@ const ENTRY_POINT_DEFERRED = {
     '[permanent] the expiry decision is node-tested (test_checkin_sessions.js); no admin action exposes this trigger-named wrapper at all today, and even adding one would hit the same clasp-run/quota objection as its siblings — F3Go30-y8j7.3',
 
   // ── menu items (F3Go30-y8j7.4) ────────────────────────────────────────────────────────────
+  // Investigated per-function, not just re-stamped. The trigger-management three are confirmed
+  // permanent: each mutates deployment-wide trigger state (install or delete), the SIT project
+  // is already at its trigger quota (bd memory F3Go30-sit-trigger-quota-exceeded), and there is
+  // no per-run sandbox to contain the blast radius — same shared-state objection the .2/.3
+  // siblings already established for admin.deleteOrphanedTriggers/syncTrackerTriggers and the
+  // trigger-class deferrals above.
+  //
+  // The other two were originally assumed drivable "from the same GAS-editor harness copy-and-
+  // init already uses" (copy-and-init.spec.js / gas-editor-helpers.js). On inspection that
+  // assumption is false: that harness only ever navigates to the Apps Script *editor*
+  // (script.google.com/home/projects/{id}/edit) and never opens the bound spreadsheet itself.
+  // Both functions call SpreadsheetApp.getUi().alert()/prompt(), which requires an active UI
+  // session tied to an open container document — a bare editor "Run" click has no such session,
+  // so clicking Run against either function through this harness would throw (or hang) before
+  // any of the logic under test ran at all. A real call-site would need the *other* live-UI
+  // pattern this project already uses (tracker-edit-trigger-live-check.spec.js's approach of
+  // driving the actual Sheets tab, not the script editor) to open the real "F3 Go30" custom menu
+  // and interact with the in-page dialog — that is new harness work, not a tagging exercise, so
+  // both stay [backlog] with the reason corrected rather than being converted or force-fit into
+  // [permanent]. In the meantime both menu wrappers (dialog wiring, credential guard, HTTP
+  // dispatch, success/failure/exception alerts) are now fully node-tested end to end
+  // (test_onopen_invalidate_cache_menu.js, test_onopen_context_date_menu.js) — closing the
+  // "wiring is untested" half of the gap the same way admin.setContextDate's own deferral
+  // entry above stays [backlog] despite full node coverage: a node test proves the dispatch is
+  // correct, not that a live click reaches it.
   initializeTemplateDispatchTriggers:
     '[permanent] installs deployment-wide triggers; driving it mid-suite mutates shared trigger state, and the SIT project is already at its trigger quota — F3Go30-y8j7.4',
   initializeMonthlyTrigger:
@@ -307,9 +332,9 @@ const ENTRY_POINT_DEFERRED = {
   clearAllTriggers:
     '[permanent] deletes every trigger in the project; running it would break every subsequent trigger-dependent behaviour on that deployment — F3Go30-y8j7.4',
   invalidateCacheMenuAction:
-    '[backlog] the menu twin of admin.invalidateAllCache, which pax-history-reload-live-check.spec.js does cover through the admin route; the menu wrapper itself is undriven and is reachable from the same GAS-editor harness copy-and-init uses — F3Go30-y8j7.4',
+    '[backlog] the menu twin of admin.invalidateAllCache, which pax-history-reload-live-check.spec.js does cover through the admin route; on inspection (F3Go30-y8j7.4) the assumed GAS-editor harness (copy-and-init.spec.js) never opens the bound spreadsheet, so it cannot satisfy this function\'s SpreadsheetApp.getUi() call — a real call-site needs the tracker-edit-trigger-live-check.spec.js live-Sheets-UI pattern instead. The full dialog/guard/HTTP wiring is now node-tested (test_onopen_invalidate_cache_menu.js) — F3Go30-y8j7.4',
   setContextDateMenuAction:
-    '[backlog] validator and PROD guard are node-tested (test_onopen_context_date_menu.js); the menu wiring is not — F3Go30-y8j7.4',
+    '[backlog] validator and PROD guard were already node-tested (test_onopen_context_date_menu.js); the rest of the menu wiring (prompt input, credential guard, HTTP dispatch, success/failure/exception alerts) is now node-tested too. Same GAS-editor-harness correction as invalidateCacheMenuAction above — getUi().prompt() needs a live Sheets-UI call-site, not the script-editor harness — F3Go30-y8j7.4',
 };
 
 /**
