@@ -66,6 +66,14 @@ Notes:
       collapses alongside VIEW CHECKIN/CHECKIN/DASHBOARD/BONUS. The viewer's identity comes only
       from the resolvedContext handle echoed on the request (never re-resolved server-side), so a
       stale/missing handle reports as an unknown viewer ('?') rather than being dropped.
+    - [SCORECARD] lines are Scorecard (HIM Ladder / Top Teams) navigation — opening it, switching
+      the Ladder/Teams tab, switching the ranked metric, paging its month nav
+      (static-pages/src/index.html's openScorecard_ and friends). Scorecard renders entirely
+      client-side from the already-fetched dashboard payload, so none of this issues its own
+      server call; each is instead captured via the F3Go30-xyri clientTelemetry pipeline (kind
+      'scorecardView') and uploaded opportunistically on the next real request, so a line can
+      trail its actual click by a while if the PAX doesn't do anything else right away. Grouped
+      into the PAX's session like PAX VIEW/DASHBOARD/BONUS.
     - [REDIRECT] lines are legacy ?cmd=checkin/?cmd=signup/home arrivals landing on the GAS
       "has moved" interstitial (logStaticRedirect_, script/WebApp.js) before the PAX taps through
       to the static front end. Never attributable to a PAX from Axiom alone (no f3Name is logged
@@ -378,6 +386,33 @@ def _classify(event: dict, entry_index: dict = None, legacy_exec_ids: set = None
                     'label': 'RECONNECT GAVE UP',
                     'detail': f"{f3_name}: still unreachable after {attempt} attempts (~{elapsed_s}) — gave up auto-retrying, reload button offered"}
         return None
+
+    # Scorecard (HIM Ladder / Top Teams) renders entirely client-side from the dashboard payload
+    # already cached in state.board (static-pages/src/index.html's openScorecard_/
+    # loadScorecardMonthData_) — opening it, switching the Ladder/Teams tab, switching the ranked
+    # metric, and paging its month nav none of them issue a dedicated server call, so this
+    # clientTelemetry kind ('scorecardView', captured at each of those call sites) is the only way
+    # any of it reaches this log. `ts` is stamped at the moment of the click, not the (possibly
+    # much later, opportunistic) upload, so ordering against the rest of the PAX's session is
+    # accurate. Grouped into the PAX's _SESSION like PAX VIEW/DASHBOARD/BONUS above — it's part of
+    # the same sitting, not a standalone event.
+    if name == 'clientTelemetry' and data.get('kind') == 'scorecardView':
+        f3_name = data.get('f3Name') or '?'
+        sub_action = data.get('action') or '?'
+        month_key = data.get('monthKey') or '?'
+        if sub_action == 'open':
+            detail = f"opened Scorecard ({data.get('view', '?')} view, month={month_key})"
+        elif sub_action == 'tab':
+            detail = f"Scorecard tab → {data.get('view', '?')} (month={month_key})"
+        elif sub_action == 'metric':
+            detail = f"Scorecard metric → {data.get('metric', '?')} (month={month_key})"
+        elif sub_action == 'month':
+            direction = 'forward' if (data.get('delta') or 0) > 0 else 'back'
+            detail = f"Scorecard month nav {direction} → {month_key}"
+        else:
+            detail = f"Scorecard {sub_action} (month={month_key})"
+        return {'ts': epoch, 'ts_str': ts_str, 'group': _SESSION, 'f3Name': f3_name,
+                'label': 'SCORECARD', 'detail': detail}
 
     # Any server-side caught exception: either GasLogger.run()'s own catch-all (tag 'error', every
     # trigger/entry point) or a hand-rolled dispatcher catch logged via GasLogger.logError (tag

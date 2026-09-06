@@ -380,9 +380,38 @@ test.describe('Static check-in front end (client, live SIT)', () => {
 
     // Log Bonus Points (F3Go30-1pqo.9) — reuses openBonusManage_, same as the header's existing
     // trophy-icon shortcut; this just proves the menu reaches it too.
+    //
+    // F3Go30-y8j7.1: checkin.bonusAdd/checkin.bonusEdit had no charter-journey call-site — only
+    // demo-screenshots.spec.js drove this same add-then-edit sequence, and that spec is a purpose
+    // exclusion (tier: excluded), not a tiered journey. Extending this test to actually add and
+    // edit a bonus entry, rather than just opening and closing the panel, makes this the real
+    // call-site for both. NoSadClown is the same disposable fixture PAX checkin-advanced-grid.spec.js
+    // documents as safe to write to destructively; there is no delete affordance in the UI, so the
+    // entry (message text makes it self-identifying) is left behind rather than restored, same as
+    // the feedback email below.
     await page.locator('#headerIdentityBtn').click();
     await page.locator('#settingsBonusBtn').click();
     await expect(page.locator('#step-bonus')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+
+    await page.locator('#bonusAddBtn').click();
+    await expect(page.locator('#bonusFormCard')).toBeVisible();
+    const bonusMessage = `Playwright live-check — please ignore (${Date.now()}).`;
+    await page.locator('#bonusType').selectOption({ index: 1 });
+    await page.locator('#bonusMessage').fill(bonusMessage);
+    await page.locator('#bonusSaveBtn').click();
+    await expect(page.locator('#bonusFormCard')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
+    await expect(page.locator('#bonusList')).toContainText(bonusMessage, { timeout: LIVE_ROUND_TRIP_MS });
+
+    const bonusEntry = page.locator('.bonus-entry', { hasText: bonusMessage }).first();
+    await bonusEntry.locator('.bonus-edit-btn').click();
+    await expect(page.locator('#bonusFormCard')).toBeVisible();
+    await expect(page.locator('#bonusFormHeading')).toHaveText('Edit Bonus');
+    const bonusMessageEdited = `${bonusMessage} (edited)`;
+    await page.locator('#bonusMessage').fill(bonusMessageEdited);
+    await page.locator('#bonusSaveBtn').click();
+    await expect(page.locator('#bonusFormCard')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
+    await expect(page.locator('#bonusList')).toContainText(bonusMessageEdited, { timeout: LIVE_ROUND_TRIP_MS });
+
     await page.locator('#headerBackBtn').click();
     await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
 

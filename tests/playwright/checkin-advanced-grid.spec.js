@@ -277,6 +277,54 @@ test.describe('Advanced calendar grid (client, live SIT)', () => {
       await page.unroute('**/exec?cmd=checkin*');
     });
 
+    // F3Go30-y8j7.1 — checkin.clientTelemetry has no live call-site: handleClientTelemetryPost_'s
+    // logic is node-tested (test_client_telemetry_log.js), but nothing proved the client actually
+    // uploads a batch end to end, or that the server's id-based dedupe actually dedupes a real
+    // resend rather than just the in-memory Set the node test drives directly. Piggybacks on the
+    // flush that every successful callApi() round trip already triggers (F3Go30-jsrf) instead of
+    // a dedicated action, since that IS the real call-site a PAX's browser drives.
+    test('a client telemetry flush uploads a batch and the server dedupes an identical resend', async ({ page, request }) => {
+      let telemetryBody = null;
+      await page.route('**/exec?cmd=checkin*', async (route) => {
+        const body = JSON.parse(route.request().postData());
+        if (body.action === 'clientTelemetry' && !telemetryBody) telemetryBody = body;
+        await route.continue();
+      });
+
+      // Any real checkin round trip is enough to piggyback a flush — today's status is captured
+      // and restored exactly like the future-day probe above, so this test leaves no residue.
+      const todayCell = app.locator(`.cal-cell[data-date="${todayIso}"]`);
+      const originalClass = await todayCell.getAttribute('class');
+      const originalStatus = /st-(done|missed|pending|absent)/.exec(originalClass)[1];
+      test.skip(originalStatus === 'pending', 'today has no recorded value yet to safely round-trip');
+
+      await todayCell.click();
+      const probeBtn = originalStatus === 'missed' ? '#selYesBtn' : '#selNoBtn';
+      await app.locator(probeBtn).click();
+      await expect(app.locator(probeBtn)).toHaveClass(/current/);
+
+      const restoreBtn = { done: '#selYesBtn', missed: '#selNoBtn', absent: '#selFailBtn' }[originalStatus];
+      await app.locator(restoreBtn).click();
+      await expect(todayCell).toHaveClass(new RegExp('st-' + originalStatus));
+
+      await expect.poll(() => telemetryBody, { timeout: 15000 }).not.toBeNull();
+      await page.unroute('**/exec?cmd=checkin*');
+      expect(Array.isArray(telemetryBody.records)).toBe(true);
+      expect(telemetryBody.records.length).toBeGreaterThan(0);
+
+      // Resend the exact same batch directly, bypassing the browser — the server's id-based
+      // dedupe must skip every record it already logged, proving the dedupe half end to end.
+      const resend = await request.post(execUrl + '?cmd=checkin', {
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        data: JSON.stringify(telemetryBody),
+        maxRedirects: 5,
+      });
+      const resendJson = await resend.json();
+      expect(resendJson.ok).toBe(true);
+      expect(resendJson.logged).toBe(0);
+      expect(resendJson.skipped).toBe(telemetryBody.records.length);
+    });
+
     // Test surface #3 — the ✕ mark renders only on an 'absent' cell, and only there. Captures
     // the target cell's original value and restores it afterwards (see note above).
     test('marking a past day Failed renders the ✕ mark on that cell, and clearing it removes it', async () => {

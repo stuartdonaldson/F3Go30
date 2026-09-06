@@ -426,8 +426,8 @@ properties — same pair `tools/query_axiom.py` gates on), else the Drive LogFil
 It is **passive** — it does not trigger a dedicated GAS execution. It queries for *recent*
 `side=='gas'` activity (default: last 15 minutes) on the assumption this runs as part of a
 regression pass that already exercised the webapp moments earlier (checkin/signup/dashboard,
-each wrapped in `GasLogger.run()`). `regression:sit` runs it last, after the other live-check
-specs, for exactly that reason. There is no dedicated-execution variant: an earlier version of
+each wrapped in `GasLogger.run()`). `pnpm run test:live` (and therefore `test:regression`) runs
+it last, after the live Playwright tier, for exactly that reason. There is no dedicated-execution variant: an earlier version of
 this test drove `testGasLogger()` through the Apps Script editor via Playwright and polled the
 Drive file for it — retired (2026-08-21, kq0t) because browser automation of the editor added
 flakiness this pipe check doesn't need, and `buildAxiomRows_`'s own flush/newLog/execId
@@ -440,7 +440,7 @@ pnpm run test:gaslogger
 ```
 
 **If it fails:**
-- No recent Axiom rows → run one of the other `regression:sit` live-check specs first, or
+- No recent Axiom rows → run `pnpm run test:live` (or one of its live-check specs) first, or
   widen `--since`
 - Axiom query errors → check `axiomQueryToken` in `local.settings.json` hasn't expired
 - Falls back to Drive polling and `GAS_LOGGER_LOCAL_PATH` isn't mounted → ensure Google Drive

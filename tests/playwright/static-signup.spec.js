@@ -261,6 +261,40 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     expect(new URL(page.url()).origin).toBe(staticOrigin);
   });
 
+  // F3Go30-y8j7.1 — signup.feedback had no charter-journey call-site. The static front end has
+  // no UI hook for it at all (removed along with SignupApp.html by DR-04), so this drives the
+  // server route directly — the same "verify server-side, independent of the browser" pattern
+  // the edit test above already uses for its own assertions, just with no UI half to drive first.
+  // Unlike checkin.siteFeedback / the guide §7 note that assumed the same problem, this handler
+  // never calls sendConfiguredEmail_ — it only writes feedbackRating/feedbackComment onto the row
+  // already on file, so there is no email side effect to suppress before driving it live.
+  test('signup feedback: writes onto the matched row, and is rejected for an unmatched one (direct API, no UI hook exists)', async ({ request }) => {
+    const hit = await request.post(checkinUrl + '?cmd=signup', {
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      data: JSON.stringify({
+        action: 'feedback', f3Name: STATIC_SIGNUP_PAX.f3Name, email: STATIC_SIGNUP_PAX.email,
+        targetMonth: 'current', feedbackRating: 4,
+        feedbackComment: 'Playwright live-check — please ignore.',
+      }),
+      maxRedirects: 5,
+    });
+    expect((await hit.json()).ok).toBe(true);
+
+    // Proves the handler is doing a real row match rather than unconditionally reporting success:
+    // an f3Name/email pair with no Responses row anywhere is rejected, not silently accepted.
+    const miss = await request.post(checkinUrl + '?cmd=signup', {
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      data: JSON.stringify({
+        action: 'feedback', f3Name: 'NoSuchSignupFeedbackPax', email: 'nosuchsignupfeedback@example.com',
+        targetMonth: 'current', feedbackRating: 4, feedbackComment: 'should never be written',
+      }),
+      maxRedirects: 5,
+    });
+    const missJson = await miss.json();
+    expect(missJson.ok).toBe(false);
+    expect(missJson.error).toBe('signup_not_found');
+  });
+
   // ── Month-boundary knownPaxNotRegistered path (mirrors identity-token-flow.spec.js's ─────────
   //    "typed identify for a known-but-unregistered PAX redirects into prefilled signup", but the
   //    static page opens the in-page signup step instead of navigating to a different document.

@@ -25,6 +25,8 @@
 | Roadmap, funnel | docs/ROADMAP.md |
 | Release notes (user-facing, version-stamped) | docs/CHANGELOG.md |
 | Go30 Q tutorial narration script | /docs/references/go30-q-tutorial-script.md |
+| Testing conventions, journey charter, dispositions | docs/atdd/project-testing-guide.md |
+| Harness `H1`–`H13` conformance, waivers, entry-point registry | docs/atdd/harness-design.md |
 
 ## Placement Rules
 - New capabilities → docs/CONTEXT.md §Capabilities + use case if actor-driven
@@ -34,6 +36,8 @@
 - New terms → docs/CONTEXT.md §Glossary
 - New risk identified → `bd remember`
 - New initiative → docs/ROADMAP.md §Funnel
+- New journey, testing convention, or disposition → docs/atdd/project-testing-guide.md
+- `H`-standard conformance change or waiver → docs/atdd/harness-design.md §9a
 - User/admin-facing change worth announcing → docs/CHANGELOG.md §Unreleased (minor-series level;
   NOT per-deploy/patch/build — see that file's "What belongs here")
 
@@ -48,6 +52,44 @@
   consolidating it — don't silently work around it.
   (Captured as a lesson-learned in DevStandard, 2026-07-20: no gate or skill currently checks
   for this automatically, so it depends on this standing instruction until resolved upstream.)
+
+## Testing
+
+**Testing: atdd-bdd — $DEVSTANDARD/test-framework/README.md**
+
+Principles (`T1`–`T25`, `I1`–`I12`, `H1`–`H13`) are cited from DevStandard, never restated here.
+This project's own testing facts live in two documents:
+
+| Content | Location |
+|---------|---------|
+| Stack, surfaces, journey charter, entry-point matrix, disposition record | docs/atdd/project-testing-guide.md |
+| `H1`–`H13` conformance table, waivers, entry-point registry | docs/atdd/harness-design.md |
+
+Adopted 2026-09-06 as a first-pass scaffold, then carried through EPIC `F3Go30-emwk`'s 7 staged
+beads (closed 2026-09-06): `H1`, `H2`, `H4`–`H8`, `H11`–`H13` are `conformant`, `H3` is `declined`
+by design, `H9`/`H10` stay `waived` on unstaged bead `F3Go30-emwk.12` (blocked on upstream `T24`
+ratification). Dispositions on `[TST]` beads bind forward from 2026-09-06 and are audited by
+`node tools/audit-disposition.js` (`docs/atdd/project-testing-guide.md` §9). The approved
+adoption plan and its staged execution doc are retired (`staged-plan` Mode C) now that every
+stage is complete — the stage boundaries and per-stage findings survive only in `F3Go30-emwk`'s
+close reason (`bd show F3Go30-emwk`, closed).
+Before writing implementation code, invoke the **implementation-gate** skill (global CLAUDE.md §8).
+
+**`pnpm run test:regression` is the `H13` one-regression-entry-point.** It composes
+`test:local` (56 network-free node files + the one network-free Playwright spec) then
+`test:live` (the full declared live Playwright tier + the GasLogger/Axiom check) with a real
+`&&` gate — `test:live` never opens a live session unless `test:local` is green. Run just one
+tier with `pnpm run test:local` / `pnpm run test:live`. (The node tier is 60 files as of
+`F3Go30-emwk.8`; it is glob-discovered, so the count moves with `test/test_*.js` — never
+hand-maintain it as a list.)
+
+**Every run ends with an outcome summary** — pass / assertion failure / **boundary fault**, the
+execution failure rate, the share of wall time spent failing, and the retry count (`H6`/`H7`/`H8`,
+`F3Go30-emwk.6`). A *boundary fault* means Google, not this code: the run is still red, but it
+says so. Classification lives in exactly one place, `tests/harness/outcomes.js` — **never** add a
+`try`/`catch` to a test to label a failure as infrastructure, and never type a retry count into
+`playwright.config.js`; add a row to `BOUNDARY_SIGNATURES` or change `RETRY_POLICY` there instead
+(retry is live-tier-only and bounded, enforced by `retriesFor()`).
 
 ## Maintenance Protocol
 
@@ -195,6 +237,11 @@ never leave it calling a dead URL. For `--cmd admin` (the default) it also injec
 secret — into the POST body only, never argv, never the query string, never printed. Other `cmd`
 endpoints (`signup`, `checkin`, `version`) are not secret-gated and never receive it.
 Default: `--cmd admin --env sit`.
+
+> **The authoritative enumeration of entry points is `test/contract/entryPointRegistry.js`**
+> (`H12`, `F3Go30-emwk.8`), not the prose below. What follows is an operator quick-reference for
+> the actions worth typing by hand; the registry is what a coverage check reads, and it also
+> records which actions are read-only and which are knowingly uncovered.
 
 Common admin actions: `setScriptProperties`, `cleanupTracker`,
 `runScanTrackers`, `getSheet`, `runAutoGenerate`, `createTrackerForMonth`, `copyTemplate`,

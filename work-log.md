@@ -2576,3 +2576,181 @@ Rationale: Bonus Points always scoped its list to the check-in day-nav's current
 Outcome [user-facing]: Bonus Points now has its own month-nav header (prev/next arrows + label), capped two months back and forward to the real current month, matching Scorecard's pattern; paging back loads and lets you edit that month's entries.
 Outcome [developer-facing]: Added bonusState_/bonusMonthBounds_/navigateBonusMonth_/renderBonusMonthNav_ to static-pages/src/index.html; loadBonusList_ now scopes by its own monthKey instead of state.viewDate. Extracted a shared monthNavBounds_ helper so Scorecard and Bonus Points share one bounds calculation instead of two copies. Fixed the Add/Edit form's date-input range to follow the viewed bonus month (bonusContextDate_) rather than always today, so editing an entry two months back doesn't hand the date picker an out-of-range value. Removed formatMonthLabel_, dead after the rewire. New test/test_bonus_month_nav.js (TDD red→green, 7 assertions extracting the real functions out of index.html) wired into pnpm test; test_scorecard_loading_ui.js updated for the shared-helper refactor. Full suite green. Tracked as bd issue F3Go30-5ire (closed). No backend change needed — resolveBonusSheet_ already resolves the Bonus Tracker sheet by an arbitrary date.
 Outcome [user-facing]: Deployed to PROD as v2.6.2.
+
+## 2026-09-06 02:30:48
+_session f268662b-2ae7-4688-bebd-689a74d18a24 · v3 · 09-06_
+
+### Objective 1: Make the test suite invocable as a real, gated regression run
+Rationale: F3Go30 had 67 test files and no way to run them as a suite — `pnpm test` was a
+hand-typed 56-entry `&&` chain that stopped at the first failure, and the 11 Playwright specs
+shared one heavy, attended config with no unattended/CI-runnable subset and no measurement of
+any kind. Stage 1 (`runner-and-tiers`) of the `atdd-bdd` adoption plan fixes the invocation first
+so later stages (boundary-fault classification, coverage registries, budget, enforcement) have a
+real command and real measurements to build on.
+Outcome [developer-facing]: `pnpm test` now runs `node --test "test/test_*.js"` — glob discovery,
+verified byte-for-byte same 56-file set as the old chain, and a deliberately-broken file no
+longer hides the other 55 (55 pass / 1 fail, non-zero exit). Declared tier markers in the new
+`tests/playwright/tiers.js` (`no_live_session` / `live`, live by construction as the default),
+verified against all 11 specs to match the adoption plan's read-back exactly. Split
+`playwright.config.js` into three projects built from that module (`no_live_session`, `live`,
+`demo`) — verified the network-free project completes unattended with `.auth/user.json`
+physically removed. Added JUnit emission from both runners (`test-results/node-junit.xml`,
+`test-results/playwright-junit.xml`; had to move Playwright's `outputDir` off `test-results/`
+itself, which it wipes every run and was silently deleting the node tier's file). Added
+`pnpm run test:local` / `test:live` / `test:regression` with a real gate and retired the
+hand-picked 6-of-11 `regression:sit` script outright. Ran the stage's operator check live:
+`test:regression` with auth removed ran the full network-free tier to completion (61 tests) then
+opened the live tier, which is exactly what failed (2 passed / 24 failed on missing storage
+state / 26 not run) — confirming no live session opens unless the fast tier is green. Updated
+`docs/atdd/harness-design.md` §9a (`H1`, `H2`, `H13` now `conformant`; `H3` `declined`; `H4`/`H8`
+noted measurement-landed), project `CLAUDE.md` §Testing, `docs/OPERATIONS.md`, and
+`docs/atdd/project-testing-guide.md` to match.
+
+### Objective 2: Tell a red run whether the code broke or Google did
+Rationale: 10 live Playwright specs run against Google infrastructure, so a 5xx, an
+edge-propagation race, a quota trip or a dead deployment all reported as assertion failures — a
+suite where a material share of red is not the project's fault trains everyone to ignore red.
+Stage 2 (`boundary-faults`) of the `atdd-bdd` adoption plan (`F3Go30-emwk.6`, `H6`/`H7`/`H8`),
+building on stage 1's measurement.
+Outcome [developer-facing]: New `tests/harness/outcomes.js` is the one owning classifier (`I12`):
+`classifyExecution()` returns pass / assertion failure / boundary fault on two independent kinds
+of evidence — a curated `BOUNDARY_SIGNATURES` list (Apps Script error pages, Google quota and
+authorization errors, socket/DNS/TLS, `net::ERR_*`, navigation timeouts against a Google origin, a
+non-JSON body where the live contract says JSON) and a once-per-run `?cmd=version` probe of the
+deployment the live tier targets, which reclassifies live-tier failures when the boundary itself
+could not answer. The same module holds `RETRY_POLICY`, now the only place any retry number exists
+(`I6`): `playwright.config.js` calls `retriesFor(<project>)` instead of literals, and that function
+throws if a non-live tier is ever given a retry or the bound is exceeded. `tests/harness/
+playwright-outcome-reporter.js` records the attempt count (the only place `result.retry` is
+visible) and deliberately classifies nothing; `tools/test-outcome-report.js` reads node JUnit plus
+those records and prints the summary; `tools/test-outcome-run.js` wraps each runner so the summary
+prints on red runs too and then exits with the runner's own code untouched — a boundary fault is
+never converted to a pass. New `test/test_outcome_classifier.js` covers the helper network-free.
+No test file was edited to make any of this work, which was the point. Operator check run live:
+`testDeploymentId` temporarily repointed at a non-existent deployment made the same spec that had
+just passed green report `boundary fault: 1 / assertion failure: 0`, 100% failure rate, 2 attempts,
+`boundary probe: UNHEALTHY — sit /exec?cmd=version → HTTP 404`, exit 1; settings restored and
+verified byte-identical. The converse checked too: a deliberately broken node test read
+`assertion failure: 1 / boundary fault: 0`. `H6`, `H7`, `H8` flipped to `conformant` in
+`docs/atdd/harness-design.md` §9a; stage roll-up, handoff and change log updated in
+`docs/staging/test-framework-adoption-stages.md`; convention recorded in
+`docs/atdd/project-testing-guide.md` §2 and project `CLAUDE.md` §Testing.
+Open: `pnpm run test:gaslogger` (the Python leg of `test:live`) emits neither JUnit nor execution
+records, so it is the one runner the outcome summary cannot see. Next: stage 3 (`registries`).
+
+### Objective 3: Make coverage a computable quantity for the first time
+Rationale: nothing in this project enumerated what the tests are *obliged* to hold or what
+call-sites exist to be held — the AC list was per-issue prose in bd and the entry-point list was
+prose in project `CLAUDE.md` §Web app calls, which is exactly the hand-maintained enumeration
+`H12` exists to remove. Without both, coverage has no denominator: the diagnostics tool reported
+`ac_ratio` as `unknown` and every uncovered entry point was uncovered silently. Stage 3
+(`registries`) of the `atdd-bdd` adoption plan (`F3Go30-emwk.7`, `.8`; `H10`'s registry half and
+`H12`), and the input stage 4's charter and stage 6's disposition record are computed against.
+Outcome [developer-facing]: New `test/contract/` holds the two registries. `acRegistry.js` carries
+`AC_REGISTRY` — 75 behavioural AC ids shaped `<domain> <behaviour-slug>`, sourced from the journey
+charter and from the behaviour each `test/test_*.js` file was written to hold — with bead ids
+confined to descriptions, plus a sibling `AC_SELFTEST_FIXTURES` that `listAcIds()` excludes and
+nothing computing coverage reads (in the reference implementation those tags lived inside the
+registry and inflated the denominator by 27%, permanently uncovered). It doubles as its own CLI:
+`node test/contract/acRegistry.js` prints one id per line, which is what
+`test-suite-diagnostics.py --ac-list-cmd` consumes — `ac_ratio` now reads `0.0:1 (0 functions /
+75 ACs)` instead of `unknown`. `entryPointRegistry.js` carries `ENTRY_POINT_REGISTRY` (43
+state-modifying entry points across all six call-site classes) and `ENTRY_POINT_DEFERRED` (33,
+each with a reason, a `[backlog]`/`[permanent]` label and a bead), plus two maps that move
+judgement calls out of prose into something auditable: `ENTRY_POINT_CLASSES` and
+`ENTRY_POINT_READ_ONLY_EXEMPT` (16 routes, renders and menu items claimed read-only, each with
+its reason). Testing guide §7 and harness-design §9a/§9b became computed *views* of the registry:
+`test/test_entry_point_registry_view.js` compares every table cell and bold total against it and
+fails both when a number disagrees and when the prose is reworded so a number can no longer be
+found — verified both ways this session, with the doc restored byte-identical after each.
+`test/test_ac_registry.js` does the same for the AC counts and enforces `H11` mechanically. Node
+suite 59 files, 59/59 green. `H12` flipped to `conformant`; `H10` recorded registry-half-landed
+but still `waived` on `F3Go30-emwk.12`, since nothing emits a per-test AC tag yet.
+The stage's operator check — read the AC ids and confirm none names a bead rather than a
+behaviour — found one id wrong on a different axis: `announce config-restored-after-test` stated
+fixture discipline, an obligation on the *suite* rather than a behaviour of the system, which no
+product test could ever drain. Removed rather than left sitting permanently uncovered in the
+denominator, with the decision recorded in the module and the underlying gap tracked as
+`F3Go30-emwk.13`.
+Outcome [internal]: Stage close re-verified independently rather than taken on trust — both drift
+guards were made to fire (a per-class 3→4 edit and a reworded bold total, then a 75→74 AC-count
+edit), with the docs restored and sha256-confirmed byte-identical after each. Corrected four
+present-tense node-file counts that stage 3 itself invalidated by adding two test files (project
+`CLAUDE.md` §Testing, `docs/atdd/project-testing-guide.md` §2/§5, `docs/atdd/harness-design.md` §2)
+— the CLAUDE.md one now says the tier is glob-discovered so the number is not hand-maintained.
+Open: 33 of 43 entry points are deferred, which is the honest read of this project's live
+coverage — filed as new EPIC `F3Go30-y8j7` (`.1`–`.4`, partitioned by call-site class),
+deliberately outside the adoption EPIC since it is coverage backlog, not adoption work. Part of
+that deferral is forced rather than chosen: the SIT script project is at the Apps Script
+per-script trigger quota, so anything needing a fresh trigger install is blocked until a human
+prunes it. `test/contract/` is still *not* a contract module — it enumerates obligations and
+entry points, not field shapes, so a wire-shape change fails loudly nowhere; recorded in
+harness-design §7 and §10 so the gap is not read as closed. Next: stage 4 (`charter`).
+
+### Objective 4: Make the journey charter a document a test author can actually decide against
+Rationale: the charter seeded at adoption listed 11 built Playwright specs with their failure
+domains and "why separate" lines, but its AC-ids column read uniformly `‹pending›` and its
+entry-point column was prose that named no registry key. That made it undecidable: a `[TST]`
+author asked to "extend an existing journey rather than create a new one" had nothing to check
+that claim against, and the disposition record (stage 6) cannot bind to a table nobody can join.
+Stage 4 (`charter`) of the `atdd-bdd` adoption is the join between the two registries stage 3
+built and the charter stage 0 seeded.
+Outcome [developer-facing]: the charter is now `test/contract/journeyCharter.js`, not prose — 11
+journeys, each carrying the AC ids it drains (keys of `AC_REGISTRY`), the entry points it drives
+(keys of `ENTRY_POINT_REGISTRY`), its tier grade, its "why separate" line and an explicit
+`invariants` statement. Testing guide §6 became a *view* of it, guarded by the new
+`test/test_journey_charter_view.js`, which compares every journey, key, id, tier and status cell by
+cell and fails just as loudly when the prose is reworded past recognition as when a value
+disagrees — verified three ways this session (a bogus AC id, a dropped entry-point key, and the
+counts sentence respelled in words), doc restored byte-identical after each. Not one `‹pending›`
+remains, and the check asserts that as the bead's own acceptance criterion. Node suite 60 files,
+60/60 green plus 5 network-free Playwright tests, exit 0.
+Outcome [internal]: the real deliverable is the join, not the filled column.
+`assertDeferralIsComputed()` requires the union of every journey's entry points to equal
+`ENTRY_POINT_REGISTRY` minus `ENTRY_POINT_DEFERRED` exactly, in both directions — so
+`ENTRY_POINT_DEFERRED`'s complement stopped being an authored claim and became a computed one.
+Its first run found `admin.createTrackerForMonth` carried as *covered* on the strength of a prose
+cell reading `copyAndInit / createTrackerForMonth`, when `copy-and-init.spec.js` drives the
+`copyAndInit` menu entry through the GAS editor and never that admin route, and no other spec
+calls it. Deferred with a reason and `F3Go30-y8j7.2`; the split moved 10/33 → 9/34 and every
+stated count was regenerated with `--counts` rather than hand-edited across guide §7 and
+harness-design §9a/§9b — stage 3's drift guard failed on each until it was, which is the guard
+doing its job. Also verified the new join guard fires, by temporarily restoring the unearned
+claim and confirming the exact "registered, not deferred, and no journey drives it" failure.
+Outcome [internal]: the stage's operator check — confirm each "why separate" line still holds once
+the real AC ids are visible — was run as a subset test over all 10 tiered journeys and found **no
+merge candidate**; nothing was merged and no bead was filed. Two pairs that looked like candidates
+before the ids existed both survived on evidence: `static-checkin` vs `checkin-advanced-grid` share
+only `checkin submit-writes-day`, and the two authenticated-browser-session journeys
+(`copy-and-init`, `tracker-edit-trigger-live-check`) are disjoint.
+`assertNoUnrecordedMergeCandidates()` re-runs that test every network-free run; a future subset
+pair fails it and the remedy is a recorded `MERGE_CANDIDATES` entry with a bead, never a merge —
+consolidation stays under its own disposition and the `H5` resolution order.
+Open: 24 of the registry's 75 ACs are drained by journeys; the other 51 are held by network-free
+`test/test_*.js` files, which are not journeys. Said so explicitly in the guide before someone
+reads 24/75 as a coverage number. No `H` row flipped this stage and that is correct — the charter
+is a `T`-layer artifact, so §9a carries a paragraph saying so rather than leaving a reader to infer
+it from an unchanged table. `H12`'s row records that its covered set is now computed. Next:
+stage 5 (`budget`), `F3Go30-emwk.10`.
+## 2026-09-06 06:29:00
+_session f268662b · v3 · 09-06_
+
+### Objective 1: Give the test suite a per-test cost budget with teeth, so a test that quietly grows slow gets reported as its own category instead of hiding inside a passing run
+Rationale: Stage 5 (`budget`) of the DevStandard test-framework adoption (F3Go30-emwk.10) — `H4`'s standard text is explicit that "an unbounded per-test cost is what lets [a skewed duration distribution] form unnoticed" and that "a test exceeding its ceiling is a harness-reported failure, not a slow pass." The prior stage (F3Go30-emwk.4) had already landed the *measurement* half (JUnit durations from both runners); this stage supplied the missing *budget* half — one declared ceiling, read from exactly one place, with a waiver mechanism that can't be reached for free.
+Rejected: considered lowering Playwright's `live`/`demo` project `timeout` (120000ms) to match the new 60s live ceiling, which would have given the ceiling literal enforcement teeth via a hard kill. Rejected on two grounds: (1) `H4`'s own standard text frames the ceiling as a *reported budget*, not a kill switch — the standard's "done means" is "reported as a distinct category," never "aborted"; (2) four live specs already self-declare a longer `test.describe.configure({ timeout })` (120s–240s) predating this bead, evidence their own authors already knew the project default was insufficient — lowering the shared default to 60s without first measuring those four would have silently converted "over budget" into "killed mid-test," an untested behavior change this session had no cheap way to verify safely.
+Outcome [developer-facing]: `DURATION_CEILING_MS` (`{live: 60000, other: 30000}`, `H4`'s stated defaults) added to `tests/harness/outcomes.js` alongside `ceilingMsFor(tier)`/`isOverCeiling(execution)`, mirroring `RETRY_POLICY`'s existing single-source shape. Read by two real consumers: `playwright.config.js`'s `no_live_session` project `timeout` (replacing a literal `30000` that was already an accidental duplicate of the value this stage declared) and `tools/test-outcome-report.js` (classification + a new orthogonal `over ceiling (H4): N (X live > 60.0s, Y other > 30.0s)` summary line, plus one `OVER CEILING (H4)` line per over-budget execution — a slow *pass* is counted here while still counting as a pass in `H6`'s three classes). `test/test_outcome_classifier.js` extended to cover the new exports and both dimensions on one fixture record.
+Outcome [internal]: Measured this session with real evidence rather than re-quoting the DevStandard tool's defaults: node suite 60/60 (max 5.7s), `no_live_session` Playwright 5/5 (max 25.3s), and one live spec run against SIT (`checkin-advanced-grid.spec.js --project=live`, 9 tests + 2 retries, max 25.8s) — 0 over ceiling throughout. The waiver table in `docs/atdd/harness-design.md` §9a stays empty on that evidence, and the doc says so explicitly rather than implying the whole live tier was checked — the other 9 live specs (4 with pre-existing longer self-overrides) were not measured this session, flagged for a human to check via a full `test:live` run. `H4`/`H5` flipped to `conformant`. Filed `F3Go30-jsrf` for an unrelated real assertion failure the live measurement run surfaced (`checkin-advanced-grid.spec.js`'s future-day Hit/Miss/No-check-in test), not fixed — out of this bead's scope. `docs/staging/test-framework-adoption-stages.md` updated (roll-up, execution order, Stage 5 handoff, Change Log, Status/Next Step → stage 6 `enforcement`).
+
+## 2026-09-06 (stage 6 close)
+_session f268662b · v3 · 09-06_
+
+### Objective 1: Enforce that a [TST] bead cannot reach a merge boundary without a recorded ADR-0011 disposition, and close out the test-framework adoption
+Rationale: Stages 0-5 built the measurement, registries and charter a disposition decision binds to; stage 6 was the last gap — the disposition carrier (`disp:<n>` label + `## Disposition` section) existed in `bd` but was entirely unaudited, so nothing stopped a `[TST]` bead landing without one.
+Outcome [developer-facing]: `tools/audit-disposition.js` added (ported from the reference implementation, `GActionSheet/scripts/audit_disposition.py`, to Node/CommonJS to match this project's own `tools/*.js` — no new scripting language on the audit path). `--ids ID,...` audits exactly the named beads, date-blind by design (the `merge-gate` Step 2.5 wiring); `--since DATE` (default `2026-09-06`) audits the whole tracker forward-binding (the periodic health check). Flags a `[TST]` bead with no `disp:<n>` label, or with more than one, or with no `## Disposition` section; exits 0 clean, 1 on any violation. `test/test_audit_disposition.js` covers the scope-selection and compliance-check logic network-free (12 cases, no live `bd` subprocess) — node suite now 61 files, 61/61 green.
+Outcome [developer-facing]: `docs/atdd/project-testing-guide.md` §9 placeholders (audit command, gate wiring) replaced with the built command and its role. `docs/atdd/harness-design.md` §9a records that stage 6 flipped no `H` row — same reasoning as stage 4's charter: `ADR-0011` is a `T`-layer decision-carrier concern, not something any `H1`-`H13` standard is about.
+Outcome [internal]: Operator check run live: a deliberately malformed `[TST]` bead (`F3Go30-edo9`) created, flagged `MISSING` via `--ids`, then deleted; a pre-2026-09-06 `[TST]` bead (`F3Go30-th22.3`) confirmed absent from the `--since` default (whole-tracker) output. Found, not fixed: the `--since` default run surfaced 6 real, currently-undispositioned `[TST]` beads (`F3Go30-jsrf`, `F3Go30-y8j7` + `.1`-`.4`) — all filed 2026-09-06 by earlier stages of this same adoption, correctly in scope under the forward-binding rule, correctly flagged. Left for a human decision rather than retroactively disposition-labelled, since that is a judgement call about each bead's real verification obligation, not this bead's AC.
+Outcome [developer-facing]: `F3Go30-emwk.11` closed; EPIC `F3Go30-emwk` closed with the full 7-stage roll-up copied into its close reason (the surviving record of the stage boundaries). `F3Go30-emwk.12`/`.13`/`.14` confirmed to remain OPEN, unstaged, with their triggering conditions untouched by the EPIC close (`bd close` does not cascade to children). `docs/staging/test-framework-adoption-stages.md` and the consumed `docs/staging/test-framework-adoption-plan.md` retired per `staged-plan` Mode C; the handful of remaining path-references to them in `CLAUDE.md`, `docs/atdd/harness-design.md`, `docs/atdd/project-testing-guide.md` and `tests/playwright/tiers.js` repointed to `bd show F3Go30-emwk` (closed).
+Outcome [internal]: A `.beads/issues.jsonl`/Dolt inconsistency from the throwaway `F3Go30-edo9` create+delete blocked auto-export ("refusing to overwrite") until an explicit `bd export -o .beads/issues.jsonl` (then, after an over-broad `--include-memories` re-export tripped a shrink guard, a second plain export) resynced it — recorded as a Key Learning below.
+
+### Key Learnings:
+`bd close` on a parent bead does not cascade to its children — a task-typed "EPIC" (not `issue_type: epic`; `bd epic status`/`close-eligible` only recognize real epics) can be closed with open children and they are untouched. Creating then deleting a bead within a session can leave `.beads/issues.jsonl` holding a JSONL-only record absent from the live Dolt store, which silently blocks every subsequent auto-export ("refusing to overwrite") until `bd export -o .beads/issues.jsonl` is run explicitly to resync it from Dolt (the source of truth) — and `bd export --include-memories` should not be used for this resync, since the extra memory records then trip the auto-export shrink guard on the next plain write.
