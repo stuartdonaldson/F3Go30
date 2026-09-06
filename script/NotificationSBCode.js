@@ -6,6 +6,17 @@
 // copyAndInit() and reinitializeSheets()). Outside that context, NoticeLog() silently
 // discards messages; NoticePrompt() will block indefinitely. Trigger-fired and
 // background functions MUST use Logger.log() directly instead.
+//
+// NO-UI TOLERANCE (F3Go30-behq): SpreadsheetApp.getUi() throws "Cannot call
+// SpreadsheetApp.getUi() from this context" when copyAndInit_/reinitializeSheets are invoked
+// with no bound spreadsheet UI session attached -- e.g. via the Apps Script editor's Run
+// button/clasp run, which is how the live-check test (tests/playwright/copy-and-init.spec.js)
+// and plausibly a human operator outside the Sheet's own menu, drive them. NoticeLogInit
+// catches that and falls back to Logger.log/GasLogger.log instead of the sidebar; that also
+// flips noticeSidebarAvailable_ false so NoticePrompt() returns null immediately instead of
+// blocking up to 2 minutes for a sidebar response that can never arrive. The caller (e.g.
+// copyAndInit_) already treats a null prompt response as "Operation canceled" and returns
+// cleanly -- this reaches that same, already-handled path instead of crashing.
 
 // Test function to populate the sidebar with different types of messages
 function testNotificationSidebar() {
@@ -36,9 +47,17 @@ function createHtmlLink( text, link ) {
   return '<a href="' + link + '" target="_blank">' + escapeHtml_(text) + '</a>';
 }
 
+// Set false by NoticeLogInit() when no bound spreadsheet UI session is available (see
+// NO-UI TOLERANCE in the file header). NoticePrompt() checks this to avoid blocking on a
+// sidebar response that will never arrive.
+var noticeSidebarAvailable_ = true;
+
 /**
  * NoticeLogInit - Opens the notification sidebar and initializes the message queues.
  * SIDEBAR-ONLY (see file header). Must be called before NoticeLog() or NoticePrompt().
+ * Tolerates absence of a bound UI session (see NO-UI TOLERANCE, file header): logs via
+ * Logger.log/GasLogger.log instead of opening the sidebar, and sets noticeSidebarAvailable_
+ * false so NoticePrompt() doesn't block waiting on a sidebar that can't exist.
  * @param {string} title - Sidebar title
  * @param {string} desc  - HTML description shown below the title
  */
@@ -52,8 +71,15 @@ function NoticeLogInit( title, desc ) {
   };
   // Function to show the sidebar
   var html = HtmlService.createHtmlOutputFromFile('NotificationSidebar');
-  SpreadsheetApp.getUi().showSidebar(html);
-  
+  try {
+    SpreadsheetApp.getUi().showSidebar(html);
+    noticeSidebarAvailable_ = true;
+  } catch (e) {
+    noticeSidebarAvailable_ = false;
+    Logger.log('NoticeLogInit: no bound UI session available (' + e.message + ') -- ' + title + ': ' + desc);
+    GasLogger.log('NoticeLogInit.noUiContext', { title: title, error: e.message });
+  }
+
   initMessageQueues();
   sendToClient(messages);
 }
@@ -71,12 +97,18 @@ function NoticeLog( log ) {
   
 /**
  * NoticePrompt - Sends a prompt to the sidebar and blocks until the user responds.
- * SIDEBAR-ONLY (see file header). Returns null if the sidebar closes or times out.
+ * SIDEBAR-ONLY (see file header). Returns null if the sidebar closes or times out, or
+ * immediately if NoticeLogInit() found no bound UI session to show a sidebar in (see
+ * NO-UI TOLERANCE, file header) -- there's no client that could ever answer the prompt.
  * @param {string} prompt - Prompt text displayed in the sidebar
- * @returns {string|null} User's response, or null on timeout/close
+ * @returns {string|null} User's response, or null on timeout/close/no-UI
  */
 function NoticePrompt(prompt) {
-  var message = { prompt: prompt }; 
+  if (!noticeSidebarAvailable_) {
+    Logger.log('NoticePrompt: no sidebar available -- returning null immediately for prompt: ' + prompt);
+    return null;
+  }
+  var message = { prompt: prompt };
   sendToClient(message);
   updateClientActivityTime(); // update the last client activity time to prevent timeout
 
