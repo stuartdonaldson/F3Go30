@@ -242,7 +242,7 @@ const ENTRY_POINT_DEFERRED = {
   'admin.createTrackerForMonth':
     '[backlog] driven only by an operator from the command line (tools/callWebapp.js, the backfill path for a skipped month). The charter join at F3Go30-emwk.9 found no journey drives it: copy-and-init.spec.js runs the copyAndInit MENU entry through the GAS editor, never this admin route, so the covered claim stage 3 authored for it was unearned. Same SIT trigger-quota block as runAutoGenerate — F3Go30-y8j7.2',
   'admin.cleanupTracker':
-    '[backlog] exercised for real by tools/smokeTestNamespace.js\'s teardown; needs tagging there rather than a new call-site — F3Go30-y8j7.2',
+    '[permanent] trashes one named tracker\'s spreadsheet and its TrackerDB/PaxDB rows; on inspection (F3Go30-y8j7.2) tools/smokeTestNamespace.js\'s teardown calls admin.teardownEnvironment, a distinct whole-namespace action, not this one — cleanupTracker has no automated call-site anywhere and CLAUDE.md documents it as the operator\'s manual backfill-undo path (tools/callWebapp.js cleanupTracker) only, which a suite run should not invoke against real data — F3Go30-y8j7.2',
   'admin.deleteOrphanedTriggers':
     '[permanent] deletes triggers project-wide on the shared deployment, outside any per-run sandbox — F3Go30-y8j7.2',
   'admin.syncTrackerTriggers':
@@ -254,7 +254,7 @@ const ENTRY_POINT_DEFERRED = {
   'admin.resetCheckinSession':
     '[backlog] no call-site; would pair naturally with a signup or check-in journey that needs a cold session — F3Go30-y8j7.2',
   'admin.runScanTrackers':
-    '[backlog] exercised by tools/smokeTestNamespace.js provisioning; needs tagging there — F3Go30-y8j7.2',
+    '[permanent] rescans the entire live tracker Drive folder and upserts TrackerDB project-wide; on inspection (F3Go30-y8j7.2) tools/smokeTestNamespace.js provisions via admin.copyTemplate, not this action — runScanTrackers has no automated call-site, and driving it in a suite run would touch every tracker in the shared environment, not a disposable namespace, the same shared-state objection as admin.syncTrackerTriggers — F3Go30-y8j7.2',
   'admin.sortTracker':
     '[backlog] no call-site and no node test; a genuine gap, low blast radius — F3Go30-y8j7.2',
   'admin.runMinusOneCheck':
@@ -266,9 +266,9 @@ const ENTRY_POINT_DEFERRED = {
   'admin.benchmarkPropertiesService':
     '[permanent] a performance probe that asserts nothing; a tagged call-site would record coverage of a measurement, not a behaviour — F3Go30-y8j7.2',
   'admin.copyTemplate':
-    '[backlog] tools/smokeTestNamespace.js provisions through it every run; needs tagging there — F3Go30-y8j7.2',
+    '[permanent] tagged (F3Go30-y8j7.2) as the real call-site in tools/smokeTestNamespace.js\'s provisioning step, driven every smoke run — not folded into the Playwright journey charter because it is namespace-lifecycle operator tooling, not a product journey (charter §6 is scoped to built specs), so it stays deferred by design rather than by omission — F3Go30-y8j7.2',
   'admin.teardownEnvironment':
-    '[backlog] same — the teardown half of the same tool — F3Go30-y8j7.2',
+    '[permanent] tagged (F3Go30-y8j7.2) as the real call-site in tools/smokeTestNamespace.js — both the stale-namespace disposal step and the end-of-run teardown — same charter-scope reasoning as copyTemplate — F3Go30-y8j7.2',
 
   // ── triggers (F3Go30-y8j7.3) ──────────────────────────────────────────────────────────────
   handleFormSubmit_:

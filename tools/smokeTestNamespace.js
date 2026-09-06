@@ -176,6 +176,7 @@ async function disposeStaleSmokeNamespaces_({ env, settings }) {
   }
   for (const { nameSpace } of stale) {
     console.log(`   Disposing stale smoke namespace "${nameSpace}"...`);
+    // Entry-point tag (F3Go30-y8j7.2, H12/T17): this is a real call-site for admin.teardownEnvironment.
     const result = await callAdmin('teardownEnvironment', { nameSpace, trashFolder: true }, { env, settings });
     if (!result?.ok) {
       console.warn(`   ⚠️  Failed to dispose "${nameSpace}": ${result?.error || 'unknown error'} — leaving it in place, continuing.`);
@@ -227,6 +228,7 @@ async function main() {
 
   // Step 1: Provision
   console.log(`1️⃣  Provisioning namespace "${folderName}" from ${template.toUpperCase()} Template ${sourceTemplateId}...`);
+  // Entry-point tag (F3Go30-y8j7.2, H12/T17): this is a real call-site for admin.copyTemplate.
   const provision = await callAdmin('copyTemplate', {
     folderName,
     sourceTemplateId,
@@ -364,6 +366,7 @@ async function main() {
     // scenario didn't behave as expected.
     console.log('');
     console.log(`5️⃣  Tearing down namespace "${ns}"...`);
+    // Entry-point tag (F3Go30-y8j7.2, H12/T17): this is a real call-site for admin.teardownEnvironment.
     const teardown = await callAdmin('teardownEnvironment', { nameSpace: ns, trashFolder: true }, { env, settings });
     if (!teardown?.ok) {
       console.warn(`   ⚠️  Auto-teardown failed: ${teardown?.error || 'unknown error'} — falling back to manual cleanup.`);
