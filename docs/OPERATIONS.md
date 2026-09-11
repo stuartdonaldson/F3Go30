@@ -260,6 +260,49 @@ web app, re-linking forms) is a separate, manual step — see `script/CopyTempla
 header. Teardown (removing the `NamespaceDB` row and optionally trashing the folder) is the
 `teardownEnvironment` admin action / `teardownNamespaceEnvironment_` — see ADR-014 D6.
 
+### Refreshing SIT's current-month tracker with PROD data (F3Go30-956l)
+
+Unlike CopyTemplate above (which stands up whole new *files*), `copyProdTrackerToSit` refreshes
+the *data* in SIT's own already-existing current-month tracker — for when SIT needs a realistic
+snapshot of this month's real signups/scores without a full namespace stand-up:
+
+```bash
+node tools/callWebapp.js copyProdTrackerToSit --env sit \
+  --body '{"sourceTemplateId":"<PROD templateSpreadsheetId>"}'
+```
+
+1. Resolves the **source**'s current-month tracker (via `getCurrentAndNextMonths_` against the
+   opened `sourceTemplateId` spreadsheet — pass PROD's `templateSpreadsheetId` from
+   `local.settings.json`) and the **destination**'s (SIT's own) current-month tracker the same
+   way. Either side missing a current-month tracker fails outright
+   (`source_current_tracker_not_found` / `destination_current_tracker_not_found`) — it never
+   creates one (use `createTrackerForMonth` first if SIT has none for the target month).
+2. Overlays PROD's `Tracker`, `Bonus Tracker` and `Responses` cell *values* onto SIT's
+   already-existing same-named sheets, in place, one whole column at a time — it never deletes or
+   replaces the destination sheet itself. A COLUMN is skipped entirely (left completely untouched)
+   if a formula appears anywhere in it on either side, so a calculated column is never clobbered
+   and a source formula's text is never copied in literally (column-, not cell-, granularity: a
+   per-cell merge that is still written back with one `Range.setValues()` call has no way to skip
+   individual cells — that call silently overwrites every formula cell in its range with a plain
+   value, an earlier version of this tool did exactly that live). Any data validation on a copied
+   column is cleared before writing, since a destination validation rule (e.g. a dropdown list)
+   copied from the Template can otherwise reject a legitimate value from the real source data. This
+   also means the destination sheet's identity, formatting, tab position, and any linked Google
+   Form survive untouched (F3Go30-956l live-test finding: the original whole-sheet copy+delete
+   approach failed live because Sheets refuses to delete a sheet with a linked Form — SIT's
+   Responses sheet has one). A sheet missing on the source, or missing on the destination, is
+   skipped (logged), not a hard failure; a failure partway through one sheet's columns is reported
+   with that sheet's name attached (`Failed copying "<name>" sheet: ...`).
+3. Wipes PaxCache and the dependent dashboard caches for the destination sheetId, then runs
+   `scanTrackers()` so `TrackerDB`/`PaxDB` metrics reflect the copied data immediately — a
+   programmatic sheet copy fires no `onEdit` trigger, so without this the caches would go stale
+   until their TTL expired.
+
+**Refuses outright on PROD** (`APP_DEPLOY_TARGET === 'TEMPLATE'`), same rationale as
+`setContextDate`/`setConfigValue` — this is a SIT-refresh tool, never a PROD write path. Never
+copies FROM SIT — `sourceTemplateId` always names the spreadsheet to copy *from*, and running
+this action only ever writes to the deployment it's called against (`--env sit`).
+
 ### Performance Testing — Check-in Round-Trip Harness (F3Go30-qi26.5)
 
 `tools/measureCheckinPerformance.js` provides a repeatable performance measurement harness for the
@@ -445,6 +488,48 @@ pnpm run test:gaslogger
 - Axiom query errors → check `axiomQueryToken` in `local.settings.json` hasn't expired
 - Falls back to Drive polling and `GAS_LOGGER_LOCAL_PATH` isn't mounted → ensure Google Drive
   for Desktop is running and mounted (only relevant when Axiom isn't configured)
+
+### Axiom monitor on `bootstrapAdminSecret_` (F3Go30-4xgj, REVIEW-260910 finding 15)
+
+`bootstrapAdminSecret_` (`script/WebApp.js`) is an unauthenticated race by design — the webapp is
+deployed `ANYONE_ANONYMOUS`, so bootstrap must work before any secret exists (§3.2 above). In
+steady-state PROD this is closed (the property is set and stays set); the exposure is any window
+where it isn't. Two log events now exist to make that window observable:
+
+- `bootstrapAdminSecret_.bootstrapped` — a secret was just set. On PROD, after initial go-live,
+  this should never fire again; if it does, something reset the property (a recreated
+  deployment, a cleared script property, or a genuine attacker who found the window) and it needs
+  attention within minutes, not whenever someone happens to read the logs.
+- `bootstrapAdminSecret_.alreadyBootstrapped` (added by F3Go30-4xgj) — someone called
+  `bootstrapSecret` on a deployment that already has one. A single occurrence is unremarkable
+  (a stale client retry); a *pattern* of them is exactly the probing REVIEW-260910 finding 15
+  flagged as invisible before this change.
+
+**This repo cannot create the actual Axiom monitor object.** `tools/query_axiom.py` and
+`GasLogger.js`'s ingest path use `axiomQueryToken`/`axiomToken` — dataset-scoped read/ingest
+tokens (`local.settings.json`), not an org-scoped API token with monitor-management
+(`monitors:write`) permission. Creating alerting infrastructure in a third-party paid service is
+also not something to do unattended from a coding session. The monitor itself is therefore an
+**operator step**, done once in the Axiom console (or via its API with a suitably-scoped token,
+if preferred) against the `axiomDataset` from `local.settings.json`:
+
+```
+# Suggested Axiom Monitor definition (APL, Monitors -> New Monitor -> Threshold):
+['<axiomDataset>']
+| where name == 'bootstrapAdminSecret_.bootstrapped'
+```
+Threshold: **count > 0** in the shortest evaluation window Axiom's plan allows (e.g. 5 minutes),
+notifying whatever channel the team already uses for other Axiom alerts. On PROD this should
+almost never fire post-go-live, so any hit is worth looking at immediately. A second monitor on
+`bootstrapAdminSecret_.alreadyBootstrapped` (count > N over a longer window, e.g. 1 hour) is
+optional — a low, steady trickle is expected noise (stale/misconfigured clients), a spike is the
+probing pattern worth paging on.
+
+Until that console step is done, `tools/query_axiom.py --name bootstrapAdminSecret_` is the
+manual equivalent:
+```bash
+python tools/query_axiom.py --name bootstrapAdminSecret_ --since 1h
+```
 
 ### Testing the Web App (cmd=signup, cmd=checkin, and similar)
 

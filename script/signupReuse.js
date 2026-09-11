@@ -10,48 +10,28 @@
  * - Prior to PaxDB, this walked back to the previous tracker via Config 'Last Month
  *   Tracker'. That mechanism is gone; PaxDB is now the single source of prior values.
  */
-var responseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
-    ? require('./response_utils.js')
-    : null;
-var signupReuseUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
-    ? require('./Utilities.js')
-    : null;
-var signupReuseGo30ToolsModule_ = (typeof module !== 'undefined' && module.exports)
-    ? require('./go30tools.js')
-    : null;
-var signupReuseCreateNewTrackerModule_ = (typeof module !== 'undefined' && module.exports)
-    ? require('./CreateNewTracker.js')
-    : null;
-var signupReuseCheckinSessionsModule_ = (typeof module !== 'undefined' && module.exports)
-    ? require('./CheckinSessions.js')
-    : null;
-var resolveOrCreateCheckinSessionGuid_sr_ = (signupReuseCheckinSessionsModule_ && signupReuseCheckinSessionsModule_.resolveOrCreateCheckinSessionGuid_)
-    || (typeof globalThis !== 'undefined' && globalThis.resolveOrCreateCheckinSessionGuid_);
+var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
+var responseUtilsModule_ = gasRequire_('./response_utils.js', ['RESPONSE_COLUMN_MAP', 'getResponseFieldTitles_', 'sanitizeTextForEmailLine_', 'sanitizeEmailAddressForSend_', 'buildGoalSummaryLines_', 'getResponseEmailValue_', 'resolveResponseColumns']);
+var signupReuseUtilitiesModule_ = gasRequire_('./Utilities.js', ['sendConfiguredEmail_']);
+var signupReuseGo30ToolsModule_ = gasRequire_('./go30tools.js', ['findMostRecentPaxRecordForName_']);
+var signupReuseCreateNewTrackerModule_ = gasRequire_('./CreateNewTracker.js', ['getTemplateSpreadsheetForInit_']);
+var signupReuseCheckinSessionsModule_ = gasRequire_('./CheckinSessions.js', ['resolveOrCreateCheckinSessionGuid_']);
+var resolveOrCreateCheckinSessionGuid_sr_ = signupReuseCheckinSessionsModule_.resolveOrCreateCheckinSessionGuid_;
 
-var findMostRecentPaxRecordForName_ = (signupReuseGo30ToolsModule_ && signupReuseGo30ToolsModule_.findMostRecentPaxRecordForName_)
-    || (typeof globalThis !== 'undefined' && globalThis.findMostRecentPaxRecordForName_);
-var getTemplateSpreadsheetForInit_ = (signupReuseCreateNewTrackerModule_ && signupReuseCreateNewTrackerModule_.getTemplateSpreadsheetForInit_)
-    || (typeof globalThis !== 'undefined' && globalThis.getTemplateSpreadsheetForInit_);
+var findMostRecentPaxRecordForName_ = signupReuseGo30ToolsModule_.findMostRecentPaxRecordForName_;
+var getTemplateSpreadsheetForInit_ = signupReuseCreateNewTrackerModule_.getTemplateSpreadsheetForInit_;
 
-var RESPONSE_COLUMN_MAP = (responseUtilsModule_ && responseUtilsModule_.RESPONSE_COLUMN_MAP)
-    || (typeof globalThis !== 'undefined' && globalThis.RESPONSE_COLUMN_MAP);
-var getResponseFieldTitles_ = (responseUtilsModule_ && responseUtilsModule_.getResponseFieldTitles_)
-    || (typeof globalThis !== 'undefined' && globalThis.getResponseFieldTitles_);
-var sanitizeTextForEmailLine_ = (responseUtilsModule_ && responseUtilsModule_.sanitizeTextForEmailLine_)
-    || (typeof globalThis !== 'undefined' && globalThis.sanitizeTextForEmailLine_);
-var sanitizeEmailAddressForSend_ = (responseUtilsModule_ && responseUtilsModule_.sanitizeEmailAddressForSend_)
-    || (typeof globalThis !== 'undefined' && globalThis.sanitizeEmailAddressForSend_);
-var buildGoalSummaryLines_ = (responseUtilsModule_ && responseUtilsModule_.buildGoalSummaryLines_)
-    || (typeof globalThis !== 'undefined' && globalThis.buildGoalSummaryLines_);
-var getResponseEmailValue_ = (responseUtilsModule_ && responseUtilsModule_.getResponseEmailValue_)
-    || (typeof globalThis !== 'undefined' && globalThis.getResponseEmailValue_);
-var resolveResponseColumns = (responseUtilsModule_ && responseUtilsModule_.resolveResponseColumns)
-    || (typeof globalThis !== 'undefined' && globalThis.resolveResponseColumns);
+var RESPONSE_COLUMN_MAP = responseUtilsModule_.RESPONSE_COLUMN_MAP;
+var getResponseFieldTitles_ = responseUtilsModule_.getResponseFieldTitles_;
+var sanitizeTextForEmailLine_ = responseUtilsModule_.sanitizeTextForEmailLine_;
+var sanitizeEmailAddressForSend_ = responseUtilsModule_.sanitizeEmailAddressForSend_;
+var buildGoalSummaryLines_ = responseUtilsModule_.buildGoalSummaryLines_;
+var getResponseEmailValue_ = responseUtilsModule_.getResponseEmailValue_;
+var resolveResponseColumns = responseUtilsModule_.resolveResponseColumns;
 var resolveResponseColumns_ = (responseUtilsModule_ && responseUtilsModule_.resolveResponseColumns_)
     || (typeof globalThis !== 'undefined' && globalThis.resolveResponseColumns_)
     || resolveResponseColumns;
-var sendConfiguredEmail_ = (signupReuseUtilitiesModule_ && signupReuseUtilitiesModule_.sendConfiguredEmail_)
-    || (typeof globalThis !== 'undefined' && globalThis.sendConfiguredEmail_);
+var sendConfiguredEmail_ = signupReuseUtilitiesModule_.sendConfiguredEmail_;
 
 function getResponseValue_(responseRow, columnMap, key) {
     if (!columnMap || typeof columnMap[key] !== 'number') throw new Error('Missing header mapping for ' + key);

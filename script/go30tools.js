@@ -597,6 +597,11 @@ function resolveTrackerForContextDate(contextDate, spreadsheet) {
  * so a contextDate override must never be honored on a live PROD deployment even if a client
  * or a stale Config row carries one — this is what makes the override safe to leave wired up
  * without a separate kill switch.
+ *
+ * F3Go30-6daa: the Config-sheet leg is memoized per execution (_configContextDateMemoized_) —
+ * the PROD guard and the explicit override are evaluated on every call, unchanged, and only the
+ * sheet read is shared. "Real now" is deliberately NOT memoized: a long execution must still see
+ * the clock advance.
  * @param {Object} spreadsheet The resolved (possibly ns-scoped) template/tracker spreadsheet.
  * @param {string=} contextDateOverride Explicit per-request ISO date string, if the caller has
  *   one (payload.contextDate on a POST, e.parameter.contextDate on a GET).
@@ -610,13 +615,56 @@ function resolveContextDate_(spreadsheet, contextDateOverride) {
 	var explicit = _parseContextDateLocal_(contextDateOverride);
 	if (explicit) return explicit;
 
-	if (spreadsheet && typeof openConfigSheet === 'function') {
-		var configSheet = openConfigSheet(spreadsheet);
-		var configured = configSheet ? _parseContextDateLocal_(configSheet.getValue('Context Date')) : null;
-		if (configured) return configured;
-	}
+	var configured = _configContextDateMemoized_(spreadsheet);
+	if (configured) return new Date(configured.getTime());
 
 	return new Date();
+}
+
+/**
+ * Per-execution memo of the Config-sheet "Context Date" lookup (F3Go30-6daa).
+ *
+ * WHY A MEMO IS SAFE HERE — Apps Script's one-execution-one-request guarantee: each web-app
+ * request, trigger firing and menu invocation runs as its own execution with freshly-evaluated
+ * globals, so this module-level memo is created and discarded inside a single request and is
+ * never visible to a concurrent or later one. The only staleness window is within one execution,
+ * between a Config write and a later read — closed by invalidateContextDateMemo_(), which every
+ * Config-sheet write path that can touch "Context Date" calls (handleAdminPost_'s setContextDate
+ * and setConfigValue, WebApp.js — the only writers).
+ *
+ * Why it is worth memoizing: resolveContextDate_ is called several times per request on the
+ * dashboard/bonus paths (resolveBonusSheet_ alone calls it twice back to back), and each call was
+ * a fresh Config-sheet read. On PROD the guard above returns before ever reaching here, so this
+ * is purely SIT cost — which is exactly why it distorted SIT timings against PROD's.
+ *
+ * Keyed by spreadsheet object identity rather than getId(): identity is exact, costs no RPC of
+ * its own, and an execution only ever touches one or two spreadsheets. NEGATIVE results are
+ * memoized too (a no-Config-value read is the common case and costs the same sheet open).
+ * @param {Object} spreadsheet
+ * @returns {?Date} The Config-sheet date, or null when there isn't one.
+ */
+function _configContextDateMemoized_(spreadsheet) {
+	if (!spreadsheet || typeof openConfigSheet !== 'function') return null;
+	for (var i = 0; i < _contextDateMemo_.length; i++) {
+		if (_contextDateMemo_[i].spreadsheet === spreadsheet) return _contextDateMemo_[i].date;
+	}
+	var configSheet = openConfigSheet(spreadsheet);
+	var configured = configSheet ? _parseContextDateLocal_(configSheet.getValue('Context Date')) : null;
+	_contextDateMemo_.push({ spreadsheet: spreadsheet, date: configured });
+	return configured;
+}
+
+/** Per-execution [{spreadsheet, date}] memo for _configContextDateMemoized_ — see its docstring
+ *  for the one-execution-one-request guarantee this rests on. */
+var _contextDateMemo_ = [];
+
+/**
+ * Drops the memoized Config "Context Date" for every spreadsheet. MUST be called by any path
+ * that writes the Config sheet within an execution (WebApp.js's setContextDate/setConfigValue),
+ * so a write-then-read in the same request sees the value it just wrote, not the pre-write memo.
+ */
+function invalidateContextDateMemo_() {
+	_contextDateMemo_ = [];
 }
 
 /**
@@ -1833,6 +1881,7 @@ if (typeof module !== 'undefined' && module.exports) {
 		_readTrackerDbRowsBySheetId_: _readTrackerDbRowsBySheetId_,
 		resolveTemplateSpreadsheet_: resolveTemplateSpreadsheet_,
 		resolveContextDate_: resolveContextDate_,
+		invalidateContextDateMemo_: invalidateContextDateMemo_,
 		_lookupNamespaceTemplateId_: _lookupNamespaceTemplateId_,
 		_lookupNamespaceRegistryRow_: _lookupNamespaceRegistryRow_,
 		_listNamespaceRegistryRows_: _listNamespaceRegistryRows_,

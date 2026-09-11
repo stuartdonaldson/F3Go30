@@ -1,26 +1,14 @@
-var libSheetsModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./libSheets.js')
-  : null;
-var responseUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./Utilities.js')
-  : null;
-var responseUtilsGo30ToolsModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./go30tools.js')
-  : null;
-var responseUtilsCreateNewTrackerModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./CreateNewTracker.js')
-  : null;
+var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
+var libSheetsModule_ = gasRequire_('./libSheets.js', ['resolveManagedHeaderMap_', 'findRowIndexByNormalizedValue_']);
+var responseUtilitiesModule_ = gasRequire_('./Utilities.js', ['sendConfiguredEmail_']);
+var responseUtilsGo30ToolsModule_ = gasRequire_('./go30tools.js', ['findMostRecentPaxRecordForEmail_']);
+var responseUtilsCreateNewTrackerModule_ = gasRequire_('./CreateNewTracker.js', ['getTemplateSpreadsheetForInit_']);
 
-var resolveManagedHeaderMap_ = (libSheetsModule_ && libSheetsModule_.resolveManagedHeaderMap_)
-  || (typeof globalThis !== 'undefined' && globalThis.resolveManagedHeaderMap_);
-var findRowIndexByNormalizedValue_ = (libSheetsModule_ && libSheetsModule_.findRowIndexByNormalizedValue_)
-  || (typeof globalThis !== 'undefined' && globalThis.findRowIndexByNormalizedValue_);
-var sendConfiguredEmail_ = (responseUtilitiesModule_ && responseUtilitiesModule_.sendConfiguredEmail_)
-  || (typeof globalThis !== 'undefined' && globalThis.sendConfiguredEmail_);
-var findMostRecentPaxRecordForEmail_ = (responseUtilsGo30ToolsModule_ && responseUtilsGo30ToolsModule_.findMostRecentPaxRecordForEmail_)
-  || (typeof globalThis !== 'undefined' && globalThis.findMostRecentPaxRecordForEmail_);
-var getTemplateSpreadsheetForInit_ = (responseUtilsCreateNewTrackerModule_ && responseUtilsCreateNewTrackerModule_.getTemplateSpreadsheetForInit_)
-  || (typeof globalThis !== 'undefined' && globalThis.getTemplateSpreadsheetForInit_);
+var resolveManagedHeaderMap_ = libSheetsModule_.resolveManagedHeaderMap_;
+var findRowIndexByNormalizedValue_ = libSheetsModule_.findRowIndexByNormalizedValue_;
+var sendConfiguredEmail_ = responseUtilitiesModule_.sendConfiguredEmail_;
+var findMostRecentPaxRecordForEmail_ = responseUtilsGo30ToolsModule_.findMostRecentPaxRecordForEmail_;
+var getTemplateSpreadsheetForInit_ = responseUtilsCreateNewTrackerModule_.getTemplateSpreadsheetForInit_;
 
 var RESPONSE_COLUMN_MAP = {
   EMAIL: { header: 'Email Address', aliases: ['Email'] },
@@ -306,11 +294,8 @@ function sendResponseSettingsEmail(spreadsheet, email, recipientName, data) {
   if (!data || !Array.isArray(data)) throw new Error('data required');
   var safeRecipientName = sanitizeTextForEmailLine_(recipientName) || 'there';
 
-  var responseSettingsEmailModule_ = (typeof module !== 'undefined' && module.exports)
-    ? require('./responseSettingsEmail.js')
-    : null;
-  var buildResponseSettingsEmailTemplate_ = (responseSettingsEmailModule_ && responseSettingsEmailModule_.buildResponseSettingsEmailTemplate_)
-    || (typeof globalThis !== 'undefined' && globalThis.buildResponseSettingsEmailTemplate_);
+  var responseSettingsEmailModule_ = gasRequire_('./responseSettingsEmail.js', ['buildResponseSettingsEmailTemplate_']);
+  var buildResponseSettingsEmailTemplate_ = responseSettingsEmailModule_.buildResponseSettingsEmailTemplate_;
 
   if (typeof buildResponseSettingsEmailTemplate_ !== 'function') {
     throw new Error('buildResponseSettingsEmailTemplate_ is unavailable');

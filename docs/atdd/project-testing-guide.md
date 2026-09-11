@@ -43,8 +43,20 @@ conformance, or a waiver under `H5`, and it does so in the harness design's §9a
   hosted on GitHub Pages) is the only check-in/signup client. Two deployment environments,
   SIT and PROD (project `CLAUDE.md` §Deployment Environments). Logs go to Axiom.
 - **Test runner / harness:** three surfaces, no unifying harness package exists.
-  - `test/test_*.js` (56 files) — bare `node` scripts using `node:assert/strict`, each stubbing
-    the GAS globals it needs in its own process. No runner, no framework, no shared fixture.
+  - `test/test_*.js` — glob-discovered by `node --test` (never hand-count them; the count moves
+    with the glob), using `node:assert/strict`. Two granularities coexist, deliberately:
+    - **Per-case (`describe`/`it` from `node:test`) — the convention for any file you touch.**
+      Each case is its own execution, so a failure names the behaviour and the `H6`/`H7`/`H8`
+      denominators count cases rather than files.
+    - **Whole-file** (bare script, top-level assertions) — the original shape, still valid. Files
+      migrate to per-case **on touch**, not in one sweep (`F3Go30-emwk.14`); an untouched
+      whole-file test is not a defect.
+  - GAS globals come from **`test/helpers/gasEnv.js`** (`F3Go30-taag`) — composable fakes for
+    `PropertiesService`, `CacheService`, `GasLogger`, `LockService` and `SpreadsheetApp`'s `Ui`,
+    either used directly (`makeFakeProperties_()`) or installed as a set (`installGasEnv_({...})`).
+    Do not hand-roll a new copy of one of those: extend the helper. Per-test sheet/spreadsheet
+    mocks stay local to their file — their shapes are genuinely different per test, which is why
+    the helper deliberately does not offer a generic one.
   - `tests/playwright/*.spec.js` (11 specs) — Playwright/Chromium; 10 cross a live boundary.
   - `test/test_gas_logger_axiom.py` (1) — Python, queries the live Axiom service.
 - **Platform execution ceiling (if any):** Apps Script enforces a 6-minute ceiling per
@@ -63,7 +75,10 @@ Realizes `T2`, `T4`, `T10`.
   (e.g. `test_checkin_snapshot_day_boundary.js`, `test_signup_reuse.js`). Measured conformant to
   `H11`: **no** filename or function name in the repo encodes a tracker id (diagnostics
   2026-09-06, `--ticket-pattern "F3Go30-[a-z0-9]+"`, 0 hits). The bead id lives in the file's
-  header comment, which is where `H11` wants it.
+  header comment, which is where `H11` wants it. **`describe`/`it` titles are test names for
+  `H11` purposes** — a per-case migration must not carry a bead id into a title (one did, and was
+  removed, during `F3Go30-emwk.14`'s first cohort); it goes in the header comment like every
+  other bead reference.
 - **Scenario/journey naming convention:** `tests/playwright/<surface-or-behaviour>.spec.js`.
   The `-live-check` suffix **is not load-bearing and must not be treated as a tier marker** —
   discovery measured it wrong for 5 of 11 specs (see §6 and plan escalation E3). It is
@@ -300,8 +315,8 @@ make judgement calls auditable instead of prose: `ENTRY_POINT_CLASSES` (which of
 classes each entry belongs to) and `ENTRY_POINT_READ_ONLY_EXEMPT` (every route, render or menu
 item deliberately *not* registered, each with the reason it writes nothing).
 
-The registry holds **43** state-modifying entry points, of which **14** carry a charter-journey
-call-site today and **29** are explicitly enumerated as **deferred** (umbrella bead `F3Go30-y8j7`,
+The registry holds **44** state-modifying entry points, of which **14** carry a charter-journey
+call-site today and **30** are explicitly enumerated as **deferred** (umbrella bead `F3Go30-y8j7`,
 partitioned by call-site class into `.1`–`.4`; `.1` — the `cmd=checkin`/`cmd=signup` product
 entry points — closed all five of its entries). Each deferral opens with `[backlog]` (a real gap
 a bead converts) or `[permanent]` (driving it inside a suite run is destructive or meaningless —
@@ -317,7 +332,7 @@ numbers with `node test/contract/entryPointRegistry.js --counts`.
 |---|---|---|---|---|
 | `cmd=checkin` doPost actions | 6 | 6 | 0 | `script/dashboardWebapp.js` — all six covered: `identify`, `checkin`, `bonusAdd`, `bonusEdit`, `clientTelemetry`, `siteFeedback` (F3Go30-y8j7.1) |
 | `cmd=signup` doPost actions | 3 | 3 | 0 | `script/WebApp.js` → `script/signupWebapp.js` — all three covered: `identify`, `save`, `feedback` (F3Go30-y8j7.1) |
-| `cmd=admin` doPost actions | 20 | 2 | 18 | `script/WebApp.js` — mostly operator/test tooling; registered because it writes, deferred because it is not product surface |
+| `cmd=admin` doPost actions | 21 | 2 | 19 | `script/WebApp.js` — mostly operator/test tooling; registered because it writes, deferred because it is not product surface |
 | `doGet` / `doPost` routes | 1 | 1 | 0 | `script/WebApp.js` — `doPost` is the single front door (secret gate + entry log); the four `doGet` routes render or read and are exempt |
 | Installable and simple triggers | 7 | 1 | 6 | `handleTrackerEdit_` covered; form-submit, auto-generate, minus-one, nag and the two cleanup sweeps deferred |
 | Sheet menu items | 6 | 1 | 5 | `script/onOpen.js` — `copyAndInit` covered; the trigger-management items are permanent exemptions |

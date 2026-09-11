@@ -1,3 +1,12 @@
+// F3Go30-h4xt: script-properties writes go through ScriptProperties.js's invalidating facade, so
+// the per-execution whole-store memo (getScriptPropertiesSnapshot_) can never serve a value this
+// same execution has already overwritten. Resolved lazily inside the accessor because in GAS
+// these are plain globals whose defining file may evaluate after this one.
+var scriptPropertiesModule_util_ = (typeof require === 'function') ? require('./ScriptProperties.js') : null;
+function scriptProps_util_() {
+  return scriptPropertiesModule_util_ ? scriptPropertiesModule_util_.scriptPropertiesStore_() : scriptPropertiesStore_();
+}
+
 /**
  * Escapes HTML special characters in a string to prevent XSS when embedding
  * user-controlled values in innerHTML or HTML attribute values.
@@ -374,7 +383,7 @@ function buildSignupSlackMessage_(year, month, signupUrl, trackerUrl, formUrl) {
  * Sets F3GO30_TEST_RUN_ID='gaslogger-test' so entries are identifiable if you go looking.
  */
 function testGasLogger() {
-  PropertiesService.getScriptProperties().setProperty('F3GO30_TEST_RUN_ID', 'gaslogger-test');
+  scriptProps_util_().setProperty('F3GO30_TEST_RUN_ID', 'gaslogger-test');
   GasLogger.init('testGasLogger');
 
   // AC2: Normal run — two entries flushed together into one Drive file.

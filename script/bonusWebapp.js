@@ -20,13 +20,10 @@
  * live spreadsheet source of truth and must be kept in sync by hand.
  */
 
-var bonusWebappBonusTypesModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./BonusTypes.js')
-  : null;
-var bonusTypeDef_bw_ = (bonusWebappBonusTypesModule_ && bonusWebappBonusTypesModule_.bonusTypeDef_)
-  || (typeof globalThis !== 'undefined' && globalThis.bonusTypeDef_);
-var bonusTypeClientRules_bw_ = (bonusWebappBonusTypesModule_ && bonusWebappBonusTypesModule_.bonusTypeClientRules_)
-  || (typeof globalThis !== 'undefined' && globalThis.bonusTypeClientRules_);
+var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
+var bonusWebappBonusTypesModule_ = gasRequire_('./BonusTypes.js', ['bonusTypeDef_', 'bonusTypeClientRules_']);
+var bonusTypeDef_bw_ = bonusWebappBonusTypesModule_.bonusTypeDef_;
+var bonusTypeClientRules_bw_ = bonusWebappBonusTypesModule_.bonusTypeClientRules_;
 
 /** {typeName: {multiplier, requiresLink}} — kept as a plain object (not a function call) since
  *  this is also what's sent to the check-in client as-is (static-pages/src/index.html's
@@ -41,11 +38,8 @@ var BONUS_TRACKER_WHAT_COL_ = 8;   // H
 var BONUS_TRACKER_LINK_COL_ = 9;   // I
 var BONUS_TRACKER_LAST_ENTERED_COL_ = 9; // I is the last PAX-entered column
 
-var bonusWebappPaxCacheModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./PaxCache.js')
-  : null;
-var paxCacheNormalizeName_bw_ = (bonusWebappPaxCacheModule_ && bonusWebappPaxCacheModule_.paxCacheNormalizeName_)
-  || (typeof globalThis !== 'undefined' && globalThis.paxCacheNormalizeName_);
+var bonusWebappPaxCacheModule_ = gasRequire_('./PaxCache.js', ['paxCacheNormalizeName_']);
+var paxCacheNormalizeName_bw_ = bonusWebappPaxCacheModule_.paxCacheNormalizeName_;
 
 var BONUS_LINK_PATTERN_ = /^https?:\/\/\S+$/i;
 

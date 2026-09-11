@@ -45,19 +45,33 @@ var PAX_CACHE_ROSTER_PREFIX_ = 'go30idx:';
 // one month), so nothing still in active use is ever purged.
 var PAX_CACHE_PURGE_RETENTION_DAYS_ = 60;
 
-var paxCacheGo30ToolsModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./go30tools.js')
-  : null;
-var readTrackerDbRowsBySheetId_pc_ = (paxCacheGo30ToolsModule_ && paxCacheGo30ToolsModule_._readTrackerDbRowsBySheetId_)
-  || (typeof globalThis !== 'undefined' && globalThis._readTrackerDbRowsBySheetId_);
-var listNamespaceRegistryRows_pc_ = (paxCacheGo30ToolsModule_ && paxCacheGo30ToolsModule_._listNamespaceRegistryRows_)
-  || (typeof globalThis !== 'undefined' && globalThis._listNamespaceRegistryRows_);
+var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
+var paxCacheGo30ToolsModule_ = gasRequire_('./go30tools.js', ['_readTrackerDbRowsBySheetId_', '_listNamespaceRegistryRows_']);
+var readTrackerDbRowsBySheetId_pc_ = paxCacheGo30ToolsModule_._readTrackerDbRowsBySheetId_;
+var listNamespaceRegistryRows_pc_ = paxCacheGo30ToolsModule_._listNamespaceRegistryRows_;
 
-var paxCacheCheckinSessionsModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./CheckinSessions.js')
+var paxCacheCheckinSessionsModule_ = gasRequire_('./CheckinSessions.js', ['listActiveCheckinSessionF3Names_']);
+var listActiveCheckinSessionF3Names_pc_ = paxCacheCheckinSessionsModule_.listActiveCheckinSessionF3Names_;
+
+// F3Go30-h4xt: every script-properties access in this file goes through ScriptProperties.js —
+// reads of the WHOLE store through the per-execution memo (getScriptPropertiesSnapshot_pc_), and
+// every write through the invalidating facade (scriptProps_pc_). See that file's header for the
+// one-execution-one-request guarantee the memo rests on. Resolved lazily rather than captured at
+// load time because in GAS these are plain globals whose defining file may evaluate after this one.
+var scriptPropertiesModule_pc_ = (typeof module !== 'undefined' && module.exports)
+  ? require('./ScriptProperties.js')
   : null;
-var listActiveCheckinSessionF3Names_pc_ = (paxCacheCheckinSessionsModule_ && paxCacheCheckinSessionsModule_.listActiveCheckinSessionF3Names_)
-  || (typeof globalThis !== 'undefined' && globalThis.listActiveCheckinSessionF3Names_);
+function scriptProps_pc_() {
+  return scriptPropertiesModule_pc_ ? scriptPropertiesModule_pc_.scriptPropertiesStore_() : scriptPropertiesStore_();
+}
+function getScriptPropertiesSnapshot_pc_() {
+  return scriptPropertiesModule_pc_ ? scriptPropertiesModule_pc_.getScriptPropertiesSnapshot_() : getScriptPropertiesSnapshot_();
+}
+function measureScriptPropertiesSize_pc_(store) {
+  return scriptPropertiesModule_pc_
+    ? scriptPropertiesModule_pc_.measureScriptPropertiesSize_(store)
+    : measureScriptPropertiesSize_(store);
+}
 
 // Per-execution hit/miss/wipe counters (F3Go30-440b.1) — folded into the caller's own
 // per-request GasLogger event (dashboardWebapp.js's checkinWebapp.resolveIdentity.timing /
@@ -65,7 +79,12 @@ var listActiveCheckinSessionF3Names_pc_ = (paxCacheCheckinSessionsModule_ && pax
 // cache effectiveness becomes queryable in Axiom with zero new log volume (see file header).
 // Naturally reset every execution (GAS re-evaluates top-level script state fresh each time) —
 // resetPaxCacheRequestStats_ exists for tests only.
-var paxCacheRequestStats_ = { wiped: false, rosterHit: 0, rosterMiss: 0, rowHit: 0, rowMiss: 0 };
+// F3Go30-dyj9: lockFailed/lockWaitMs fold the same way — every LockService.getScriptLock() site
+// in this file that guards a check-in write-through routes through paxCacheAcquireLock_ below, so
+// whether the single global script lock is actually contended at current scale becomes a question
+// data can answer (via the caller's own per-request event, same as the cache hit/miss counters)
+// instead of a guess. Recording data only — see file's callers for the AC this satisfies.
+var paxCacheRequestStats_ = { wiped: false, rosterHit: 0, rosterMiss: 0, rowHit: 0, rowMiss: 0, lockFailed: 0, lockWaitMs: 0 };
 
 function paxCacheNormalizeName_(name) {
   return String(name || '').trim().toLowerCase();
@@ -95,7 +114,7 @@ function paxCacheDeserializeRow_(row) {
 /** Returns the cached row for {kind, sheetId, name}, or null on a miss (never throws). */
 function getPaxCacheRow_(kind, sheetId, name) {
   try {
-    var raw = PropertiesService.getScriptProperties().getProperty(paxCacheRowKey_(kind, sheetId, name));
+    var raw = scriptProps_pc_().getProperty(paxCacheRowKey_(kind, sheetId, name));
     if (!raw) { paxCacheRequestStats_.rowMiss++; return null; }
     paxCacheRequestStats_.rowHit++;
     return paxCacheDeserializeRow_(JSON.parse(raw));
@@ -108,6 +127,8 @@ function getPaxCacheRow_(kind, sheetId, name) {
 /**
  * Bulk read counterpart to getPaxCacheRow_ — fetches the whole PropertiesService store in one
  * getProperties() call rather than one getProperty() RPC per name (F3Go30 perf finding, 2026-07:
+ * F3Go30-h4xt: that whole-store fetch is now the per-execution memo in ScriptProperties.js, shared
+ * with getPaxHistoryEntriesBulk_ — one getProperties() per request instead of one per bulk reader.
  * a per-key loop over a ~24-PAX roster measured ~13x slower than a single getProperties() call,
  * since per-call RPC overhead dominates over payload size — see buildTrackerValuesFromPaxCache_,
  * dashboardWebapp.js, the only caller). Same hit/miss stats + deserialize behavior as
@@ -120,10 +141,10 @@ function getPaxCacheRow_(kind, sheetId, name) {
  */
 function getPaxCacheRowsBulk_(kind, sheetId, names) {
   var result = {};
-  var store;
-  try {
-    store = PropertiesService.getScriptProperties().getProperties();
-  } catch (e) {
+  var store = getScriptPropertiesSnapshot_pc_();
+  if (!store || !Object.keys(store).length) {
+    // Empty store or a PropertiesService failure (the snapshot degrades to {} and does not
+    // memoize the failure) — every requested name is a miss, same as before the memo.
     (names || []).forEach(function() { paxCacheRequestStats_.rowMiss++; });
     return result;
   }
@@ -142,14 +163,14 @@ function getPaxCacheRowsBulk_(kind, sheetId, names) {
 
 function setPaxCacheRow_(kind, sheetId, name, rowValues) {
   try {
-    PropertiesService.getScriptProperties().setProperty(
+    scriptProps_pc_().setProperty(
       paxCacheRowKey_(kind, sheetId, name), JSON.stringify(paxCacheSerializeRow_(rowValues))
     );
   } catch (e) { /* payload too large or Properties unavailable — caller still has the live read */ }
 }
 
 function deletePaxCacheRow_(kind, sheetId, name) {
-  try { PropertiesService.getScriptProperties().deleteProperty(paxCacheRowKey_(kind, sheetId, name)); } catch (e) { /* best-effort */ }
+  try { scriptProps_pc_().deleteProperty(paxCacheRowKey_(kind, sheetId, name)); } catch (e) { /* best-effort */ }
 }
 
 /**
@@ -172,14 +193,14 @@ function setPaxCacheRowsBulk_(kind, sheetId, rowsByName, rosterIndex) {
       batch[paxCacheRowKey_(kind, sheetId, name)] = JSON.stringify(paxCacheSerializeRow_(rowsByName[name]));
     });
     batch[paxCacheRosterKey_(kind, sheetId)] = JSON.stringify(rosterIndex || {});
-    PropertiesService.getScriptProperties().setProperties(batch);
+    scriptProps_pc_().setProperties(batch);
   } catch (e) { /* payload too large or Properties unavailable — caller still has the live read */ }
 }
 
 /** Returns the {name: rowIndex} roster index for {kind, sheetId}, or null if not cached. */
 function getPaxRosterIndex_(kind, sheetId) {
   try {
-    var raw = PropertiesService.getScriptProperties().getProperty(paxCacheRosterKey_(kind, sheetId));
+    var raw = scriptProps_pc_().getProperty(paxCacheRosterKey_(kind, sheetId));
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
     return null;
@@ -188,12 +209,12 @@ function getPaxRosterIndex_(kind, sheetId) {
 
 function setPaxRosterIndex_(kind, sheetId, indexObj) {
   try {
-    PropertiesService.getScriptProperties().setProperty(paxCacheRosterKey_(kind, sheetId), JSON.stringify(indexObj || {}));
+    scriptProps_pc_().setProperty(paxCacheRosterKey_(kind, sheetId), JSON.stringify(indexObj || {}));
   } catch (e) { /* payload too large or Properties unavailable */ }
 }
 
 function deletePaxRosterIndex_(kind, sheetId) {
-  try { PropertiesService.getScriptProperties().deleteProperty(paxCacheRosterKey_(kind, sheetId)); } catch (e) { /* best-effort */ }
+  try { scriptProps_pc_().deleteProperty(paxCacheRosterKey_(kind, sheetId)); } catch (e) { /* best-effort */ }
 }
 
 /**
@@ -275,11 +296,8 @@ function patchPaxRosterIndex_(kind, sheetId, name, rowIndex) {
  * @param {number} sheetRow 1-based sheet row number that was written.
  */
 function refreshPaxCacheRowFromSheet_(kind, sheetId, name, sheet, sheetRow) {
-  var lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(10000);
-  } catch (e) {
-    GasLogger.log('refreshPaxCacheRowFromSheet_.lockFailed', { kind: kind, sheetId: sheetId, error: e.message });
+  var lock = paxCacheAcquireLock_(10000, 'refreshPaxCacheRowFromSheet_.lockFailed', { kind: kind, sheetId: sheetId });
+  if (!lock) {
     deletePaxCacheRow_(kind, sheetId, name);
     return;
   }
@@ -303,7 +321,7 @@ function refreshPaxCacheRowFromSheet_(kind, sheetId, name, sheet, sheetRow) {
  */
 function wipePaxCacheForSheet_(kind, sheetId) {
   try {
-    var props = PropertiesService.getScriptProperties();
+    var props = scriptProps_pc_();
     var prefix = paxCacheRowPrefix_(kind, sheetId);
     props.getKeys().forEach(function(key) {
       if (key.indexOf(prefix) === 0) props.deleteProperty(key);
@@ -328,7 +346,7 @@ function wipePaxCacheForSheet_(kind, sheetId) {
 function wipeAllPaxCache_() {
   var wiped = 0;
   try {
-    var props = PropertiesService.getScriptProperties();
+    var props = scriptProps_pc_();
     props.getKeys().forEach(function(key) {
       // PAX_HISTORY_PREFIX_ (F3Go30-5uk2's f3Name-keyed rolling history window) included here too
       // — it's the same PropertiesService store, and a wrong/stale streak needs the same "force a
@@ -390,13 +408,47 @@ function getPaxCacheRequestStats_() {
     paxRosterMiss: paxCacheRequestStats_.rosterMiss,
     paxRowHit: paxCacheRequestStats_.rowHit,
     paxRowMiss: paxCacheRequestStats_.rowMiss,
+    // F3Go30-dyj9: lockFailed count + total lock wait duration for this execution, folded into
+    // the caller's own per-request event (dashboardWebapp.js's checkinWebapp.checkin) the same
+    // way the cache hit/miss counters already are.
+    paxLockFailed: paxCacheRequestStats_.lockFailed,
+    paxLockWaitMs: paxCacheRequestStats_.lockWaitMs,
   };
 }
 
 /** Resets the per-execution request-stats counters — test-only; production never needs to since
  *  Apps Script re-evaluates top-level script state fresh on every execution. */
 function resetPaxCacheRequestStats_() {
-  paxCacheRequestStats_ = { wiped: false, rosterHit: 0, rosterMiss: 0, rowHit: 0, rowMiss: 0 };
+  paxCacheRequestStats_ = { wiped: false, rosterHit: 0, rosterMiss: 0, rowHit: 0, rowMiss: 0, lockFailed: 0, lockWaitMs: 0 };
+}
+
+/**
+ * Acquires the script lock with per-execution wait/failure accounting (F3Go30-dyj9), so the
+ * single-global-lock contention question can be answered by data before any design change.
+ * Every call site here already did LockService.getScriptLock() + lock.waitLock(waitMs) inside its
+ * own try/catch, logging its own tag on failure and falling back to its own best-effort/explicit-
+ * failure behavior — none of that changes. This only measures how long the wait took (success or
+ * failure) and counts failures into paxCacheRequestStats_, so the numbers ride the caller's own
+ * per-request GasLogger event (getPaxCacheRequestStats_) instead of adding new log volume.
+ * @param {number} waitMs
+ * @param {string} logTag The site's own existing GasLogger tag for a failed acquire.
+ * @param {Object=} logContext The site's own existing extra fields for that log line.
+ * @returns {?Lock} The acquired lock, or null on failure (caller decides what to do next, exactly
+ *   as before this change).
+ */
+function paxCacheAcquireLock_(waitMs, logTag, logContext) {
+  var lock = LockService.getScriptLock();
+  var t0 = Date.now();
+  try {
+    lock.waitLock(waitMs);
+  } catch (e) {
+    paxCacheRequestStats_.lockWaitMs += (Date.now() - t0);
+    paxCacheRequestStats_.lockFailed++;
+    GasLogger.log(logTag, Object.assign({ error: e.message }, logContext || {}));
+    return null;
+  }
+  paxCacheRequestStats_.lockWaitMs += (Date.now() - t0);
+  return lock;
 }
 
 /**
@@ -487,7 +539,7 @@ function extractSheetIdFromPaxCacheKey_(key) {
  *  previously these entries carried no sheet/namespace discriminator at all). */
 function wipePaxHistoryForScope_(scopeId) {
   try {
-    var props = PropertiesService.getScriptProperties();
+    var props = scriptProps_pc_();
     var prefix = PAX_HISTORY_PREFIX_ + scopeId + ':';
     props.getKeys().forEach(function(key) {
       if (key.indexOf(prefix) === 0) props.deleteProperty(key);
@@ -565,7 +617,7 @@ function purgeStalePaxCache_(now, spreadsheet) {
   if (Object.keys(knownSheetIds).length) {
     var orphanSheetIds = {};
     try {
-      PropertiesService.getScriptProperties().getKeys().forEach(function(key) {
+      scriptProps_pc_().getKeys().forEach(function(key) {
         var sheetId = extractSheetIdFromPaxCacheKey_(key);
         if (sheetId && !knownSheetIds[sheetId] && !purgedSheetIds[sheetId]) orphanSheetIds[sheetId] = true;
       });
@@ -600,7 +652,7 @@ function purgeStalePaxCache_(now, spreadsheet) {
     try {
       var boundScopeId = spreadsheet.getId();
       var historyPrefix = PAX_HISTORY_PREFIX_ + boundScopeId + ':';
-      var scriptProps = PropertiesService.getScriptProperties();
+      var scriptProps = scriptProps_pc_();
       scriptProps.getKeys().forEach(function(key) {
         if (key.indexOf(historyPrefix) !== 0) return;
         var normName = key.slice(historyPrefix.length);
@@ -809,7 +861,7 @@ function anchorPaxHistoryValues_(entry, anchorIso) {
  *  on a miss. @param {string} scopeId See paxHistoryKey_. */
 function getPaxHistoryEntry_(scopeId, f3Name) {
   try {
-    var raw = PropertiesService.getScriptProperties().getProperty(paxHistoryKey_(scopeId, f3Name));
+    var raw = scriptProps_pc_().getProperty(paxHistoryKey_(scopeId, f3Name));
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
     return null;
@@ -818,7 +870,9 @@ function getPaxHistoryEntry_(scopeId, f3Name) {
 
 /**
  * Bulk counterpart to getPaxHistoryEntry_ (F3Go30-uz9e.2): one whole-store getProperties() call
- * for a whole roster instead of one getProperty() RPC per name. Same justification as
+ * for a whole roster instead of one getProperty() RPC per name — and, since F3Go30-h4xt, that
+ * fetch is the shared per-execution snapshot (ScriptProperties.js), not a second RPC of its own.
+ * Same justification as
  * getPaxCacheRowsBulk_ above — the dashboard reads a history entry inside its per-row loop, so the
  * per-key form cost one PropertiesService round trip per PAX on every dashboard load.
  * @param {string} scopeId See paxHistoryKey_.
@@ -828,12 +882,7 @@ function getPaxHistoryEntry_(scopeId, f3Name) {
  */
 function getPaxHistoryEntriesBulk_(scopeId, f3Names) {
   var entries = {};
-  var store;
-  try {
-    store = PropertiesService.getScriptProperties().getProperties() || {};
-  } catch (e) {
-    return entries;
-  }
+  var store = getScriptPropertiesSnapshot_pc_();
   (f3Names || []).forEach(function(f3Name) {
     var norm = paxCacheNormalizeName_(f3Name);
     if (!norm || Object.prototype.hasOwnProperty.call(entries, norm)) return;
@@ -849,7 +898,7 @@ function getPaxHistoryEntriesBulk_(scopeId, f3Names) {
 /** @param {string} scopeId See paxHistoryKey_. */
 function setPaxHistoryEntry_(scopeId, f3Name, entry) {
   try {
-    PropertiesService.getScriptProperties().setProperty(paxHistoryKey_(scopeId, f3Name), JSON.stringify(entry));
+    scriptProps_pc_().setProperty(paxHistoryKey_(scopeId, f3Name), JSON.stringify(entry));
   } catch (e) { /* best-effort — payload too large or Properties unavailable */ }
 }
 
@@ -870,7 +919,7 @@ function setPaxHistoryEntriesBulk_(scopeId, entriesByName) {
       batch[paxHistoryKey_(scopeId, name)] = JSON.stringify(entriesByName[name]);
     });
     if (!Object.keys(batch).length) return;
-    PropertiesService.getScriptProperties().setProperties(batch);
+    scriptProps_pc_().setProperties(batch);
   } catch (e) { /* best-effort — payload too large or Properties unavailable */ }
 }
 
@@ -906,13 +955,8 @@ function advancePaxHistoryDay_(scopeId, f3Name, date, value, todayIso) {
     return;
   }
 
-  var lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(10000);
-  } catch (e) {
-    GasLogger.log('advancePaxHistoryDay_.lockFailed', { f3Name: f3Name, error: e.message });
-    return;
-  }
+  var lock = paxCacheAcquireLock_(10000, 'advancePaxHistoryDay_.lockFailed', { f3Name: f3Name });
+  if (!lock) return;
   try {
     var dateIso = paxHistoryFormatIsoLocal_(date);
     var entry = getPaxHistoryEntry_(scopeId, f3Name);
@@ -958,7 +1002,7 @@ function paxGoalsKey_(scopeId, f3Name) {
  *  on a miss (never throws). @param {string} scopeId See paxGoalsKey_. */
 function getPaxGoalsEntry_(scopeId, f3Name) {
   try {
-    var raw = PropertiesService.getScriptProperties().getProperty(paxGoalsKey_(scopeId, f3Name));
+    var raw = scriptProps_pc_().getProperty(paxGoalsKey_(scopeId, f3Name));
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
     return null;
@@ -967,7 +1011,7 @@ function getPaxGoalsEntry_(scopeId, f3Name) {
 
 /** @param {string} scopeId See paxGoalsKey_. */
 function setPaxGoalsEntry_(scopeId, f3Name, entry) {
-  PropertiesService.getScriptProperties().setProperty(paxGoalsKey_(scopeId, f3Name), JSON.stringify(entry));
+  scriptProps_pc_().setProperty(paxGoalsKey_(scopeId, f3Name), JSON.stringify(entry));
 }
 
 /**
@@ -1075,7 +1119,7 @@ function upsertPaxGoalsForMonth_(scopeId, f3Name, monthKey, who, what, how) {
  *  entries don't outlive it forever. */
 function wipePaxGoalsForScope_(scopeId) {
   try {
-    var props = PropertiesService.getScriptProperties();
+    var props = scriptProps_pc_();
     var prefix = PAX_GOALS_PREFIX_ + scopeId + ':';
     props.getKeys().forEach(function(key) {
       if (key.indexOf(prefix) === 0) props.deleteProperty(key);
@@ -1120,7 +1164,7 @@ function setupPaxCachePurgeTrigger_() {
  */
 function benchmarkPaxCacheReads_(sheetId, iterations) {
   iterations = iterations || 5;
-  var props = PropertiesService.getScriptProperties();
+  var props = scriptProps_pc_();
   var rosterIndex = getPaxRosterIndex_('tracker', sheetId);
   if (!rosterIndex) return { error: 'no cached roster index for sheetId ' + sheetId };
   var names = Object.keys(rosterIndex);
@@ -1140,9 +1184,12 @@ function benchmarkPaxCacheReads_(sheetId, iterations) {
     bulkGetPropertiesMs.push(Date.now() - t1);
   }
 
-  var storeKeyCount = Object.keys(lastSnapshot).length;
-  var storeBytesApprox = 0;
-  Object.keys(lastSnapshot).forEach(function(k) { storeBytesApprox += (lastSnapshot[k] || '').length; });
+  // F3Go30-h4xt: sizing now uses ScriptProperties.js's measureScriptPropertiesSize_, the same
+  // measurement the dashboard telemetry gauge reports, instead of a second local copy of the
+  // sum-the-values loop (it also counts key names, which the quota does too).
+  var storeSize = measureScriptPropertiesSize_pc_(lastSnapshot);
+  var storeKeyCount = storeSize.keys;
+  var storeBytesApprox = storeSize.bytes;
 
   // Single-blob variant: this sheet's N rows combined into one JSON value under a throwaway key.
   var blobObj = {};

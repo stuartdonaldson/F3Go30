@@ -36,10 +36,16 @@ global.openConfigSheet = function(spreadsheet) {
   return {
     upsertValue: function(key, primary, secondary) { upsertedCalls_.push({ key: key, value: primary, secondary: secondary, ns: spreadsheet.__ns }); },
     getPair: function(key) { return Object.prototype.hasOwnProperty.call(configRowsForRead_, key) ? configRowsForRead_[key] : null; },
+    // F3Go30-6daa: resolveContextDate_ reads "Context Date" through getValue — needed by the
+    // memo-invalidation tests at the bottom of this file.
+    getValue: function(key) { configReads_++; return key === 'Context Date' ? contextDateCellValue_ : null; },
   };
 };
+var configReads_ = 0;
+var contextDateCellValue_ = null;
 
 const { handleAdminPost_ } = require('../script/WebApp.js');
+const { resolveContextDate_, invalidateContextDateMemo_ } = require('../script/go30tools.js');
 
 function callAdmin_(action, extra) {
   var payload = Object.assign({ action: action, adminSecret: 'test-secret' }, extra || {});
@@ -167,6 +173,66 @@ withDeployTarget_('TEST', function() {
   assert.equal(result.ok, false);
   assert.equal(result.error, 'config_sheet_not_found');
   configSheetAvailable_ = true;
+});
+
+// ── memo invalidation (F3Go30-6daa): both Config-sheet WRITE actions must drop
+// resolveContextDate_'s per-execution memo, so a write-then-read inside ONE execution (a
+// live-check script's setContextDate followed by a dashboard call in the same request, or
+// setConfigValue overwriting the same row) reads the value just written, not the pre-write memo.
+
+function primeContextDateMemo_(spreadsheet, value) {
+  invalidateContextDateMemo_();
+  contextDateCellValue_ = value;
+  configReads_ = 0;
+  resolveContextDate_(spreadsheet, null);
+  assert.equal(configReads_, 1, 'memo prime should have read Config once');
+  resolveContextDate_(spreadsheet, null);
+  assert.equal(configReads_, 1, 'memo should be serving the second call');
+}
+
+// 13. setContextDate invalidates the memo.
+withDeployTarget_('TEST', function() {
+  var spreadsheet = { __ns: 'sit-smoke' };
+  primeContextDateMemo_(spreadsheet, '2026-03-01');
+
+  contextDateCellValue_ = '2026-04-02';                 // what the upsert would have persisted
+  var result = callAdmin_('setContextDate', { ns: 'sit-smoke', contextDate: '2026-04-02' });
+  assert.equal(result.ok, true);
+
+  var after = resolveContextDate_(spreadsheet, null);
+  assert.equal(configReads_, 2, 'the write must have forced a re-read');
+  assert.equal(after.toISOString().slice(0, 10), '2026-04-02',
+    'the same execution must see the context date it just wrote');
+});
+
+// 14. setConfigValue invalidates it too — it writes the same Config sheet, and can target the
+//     "Context Date" row itself.
+withDeployTarget_('TEST', function() {
+  var spreadsheet = { __ns: 'sit-smoke' };
+  primeContextDateMemo_(spreadsheet, '2026-05-01');
+
+  contextDateCellValue_ = '2026-06-03';
+  var result = callAdmin_('setConfigValue', { ns: 'sit-smoke', key: 'Context Date', primary: '2026-06-03' });
+  assert.equal(result.ok, true);
+
+  var after = resolveContextDate_(spreadsheet, null);
+  assert.equal(configReads_, 2, 'the write must have forced a re-read');
+  assert.equal(after.toISOString().slice(0, 10), '2026-06-03');
+});
+
+// 15. A REFUSED write (PROD guard, missing key, missing Config sheet) writes nothing, so the memo
+//     it never invalidated is still correct — asserted so a future change that moves the
+//     invalidation ahead of the guards is caught.
+withDeployTarget_('TEMPLATE', function() {
+  var spreadsheet = { __ns: 'sit-smoke' };
+  global.APP_DEPLOY_TARGET = 'TEST';
+  primeContextDateMemo_(spreadsheet, '2026-07-01');
+  global.APP_DEPLOY_TARGET = 'TEMPLATE';
+
+  var result = callAdmin_('setContextDate', { ns: 'sit-smoke', contextDate: '2026-08-08' });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'forbidden_in_prod');
+  assert.equal(configReads_, 1, 'a refused write must not have invalidated anything');
 });
 
 console.log('test_set_context_date_admin.js: all assertions passed');

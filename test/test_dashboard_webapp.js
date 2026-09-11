@@ -43,6 +43,8 @@ const {
   dayValueStatus_,
   groupByTeam_,
   firstActiveDayIndex_,
+  computeRawScoreFromDayValues_,
+  sumBonusPillValues_,
   buildDashboardPaxRow_,
   getPaxHistoryWindowValues_,
   buildDaySegments_,
@@ -203,6 +205,31 @@ var { upsertPaxGoalsForMonth_: upsertPaxGoalsForMonth_dwTest_ } = require('../sc
   assert.equal(groups[2].name, 'Unassigned');
 })();
 
+// F3Go30-9ywo (REVIEW-260910 finding 6): the avgScore sort had no tiebreak, so two groups tied
+// on average (every team is 0.0 early in a month) fell to Array.prototype.sort's behaviour on
+// equal keys — order could flicker between two loads with identical data. localeCompare on the
+// team name makes the order deterministic.
+(function testGroupByTeamTiebreaksEqualAvgScoreByName() {
+  var rows = [
+    { name: 'Dredd', team: 'Zulu', score: 10 },
+    { name: 'Blaze', team: 'Alpha', score: 10 },
+    { name: 'Cowboy', team: 'Mike', score: 10 },
+  ];
+  var groups = groupByTeam_(rows);
+  assert.deepEqual(groups.map(function(g) { return g.name; }), ['Alpha', 'Mike', 'Zulu'],
+    'AC: teams tied on avgScore must sort alphabetically by name, not by insertion/hash order');
+})();
+
+(function testGroupByTeamTiebreakOnlyAppliesToGenuineTies() {
+  var rows = [
+    { name: 'Dredd', team: 'Zulu', score: 20 },
+    { name: 'Blaze', team: 'Alpha', score: 5 },
+  ];
+  var groups = groupByTeam_(rows);
+  assert.deepEqual(groups.map(function(g) { return g.name; }), ['Zulu', 'Alpha'],
+    'AC: the name tiebreak must never override a genuine avgScore difference');
+})();
+
 // ── buildDashboardPaxRow_ ──────────────────────────────────────────────────
 // F3Go30-y55y: the team/board view only ever showed day-grid/score/streak — bonusByType is a
 // per-PAX board field, same as score/streak, not something only the logged-in PAX's own tile
@@ -232,6 +259,25 @@ var { upsertPaxGoalsForMonth_: upsertPaxGoalsForMonth_dwTest_ } = require('../sc
   assert.equal(firstActiveDayIndex_([-1, -1, -1]), -1);
   assert.equal(firstActiveDayIndex_([]), -1);
   assert.equal(firstActiveDayIndex_(['', '']), -1);
+})();
+
+// ── computeRawScoreFromDayValues_ / sumBonusPillValues_ (F3Go30-h8tt) ───────
+// The caller (handleCheckinDashboard_) only ever passes an already-cutoff-limited dayValues
+// array (days at/before today) — these two just count/sum what they're handed. The cutoff
+// itself is reportedDayCols'/reportedCutoff's job, covered by the future-dated-entry
+// integration test in this file.
+(function testComputeRawScoreFromDayValuesCountsOnlyOnes() {
+  assert.equal(computeRawScoreFromDayValues_([1, 1, 0, 1]), 3);
+  assert.equal(computeRawScoreFromDayValues_([0, -1, '']), 0);
+  assert.equal(computeRawScoreFromDayValues_([]), 0);
+  assert.equal(computeRawScoreFromDayValues_(undefined), 0);
+})();
+
+(function testSumBonusPillValuesSumsAllTypes() {
+  assert.equal(sumBonusPillValues_({ fe: 3, q: 2, ins: 1, eh: 0 }), 6);
+  assert.equal(sumBonusPillValues_({}), 0);
+  assert.equal(sumBonusPillValues_(null), 0);
+  assert.equal(sumBonusPillValues_(undefined), 0);
 })();
 
 // ── buildDashboardPaxRow_ scorePct: per-PAX denominator (F3Go30-nhge.1) ─────
@@ -363,6 +409,20 @@ var { upsertPaxGoalsForMonth_: upsertPaxGoalsForMonth_dwTest_ } = require('../sc
   assert.equal(series2[2], 0); // window ['', 0] -> only 0 counts
 })();
 
+// F3Go30-7p61: values are rounded to 3 decimals before they are serialized — the client renders
+// them into an SVG polyline where nothing past ~2 decimals is visible, while a raw IEEE double
+// costs ~19 JSON bytes per point, on every roster row, on every dashboard load.
+(function testBuildRollingAverageRoundsToThreeDecimals() {
+  assert.equal(buildRollingAverage_([1, 1, 0], 3)[2], 0.667);   // 2/3, not 0.6666666666666666
+  assert.equal(buildRollingAverage_([1, 0, -1, 1, 1, 1, 1], 7)[6], 0.571); // 4/7
+  buildRollingAverage_([1, 0, -1, 1, 1, 1, 1, 0, -1, 1], 7).forEach(function(v) {
+    assert.equal(v, Math.round(v * 1000) / 1000, 'no value may carry more than 3 decimals');
+    assert.equal(typeof v, 'number', 'stays a plain number for installed clients');
+  });
+  // Exact values that already fit in 3 decimals are unchanged, not perturbed by the round-trip.
+  assert.deepEqual(buildRollingAverage_([1, 1, 1, 0], 4), [1, 1, 1, 0.75]);
+})();
+
 // ── buildDashboardPaxRow_ rollingAverage (F3Go30-uz9e.1) ────────────────────
 // rollingAverage must be sourced from historyValues (spans the month boundary), the same way
 // maxStreak30 already is (F3Go30-5uk2) — not from dayValues (this month only), which is what
@@ -377,7 +437,7 @@ var { upsertPaxGoalsForMonth_: upsertPaxGoalsForMonth_dwTest_ } = require('../sc
   // Day 1: window = last 5 prior + day1 = [1,1,1,1,1,1] -> 1
   assert.equal(row.rollingAverage[0], 1);
   // Day 2: window = last 5 prior + day1 + day2 = [1,1,1,1,1,1,0] (7 days) -> 6/7
-  assert.ok(Math.abs(row.rollingAverage[1] - 6 / 7) < 1e-9);
+  assert.ok(Math.abs(row.rollingAverage[1] - 6 / 7) <= 5e-4); // 3-decimal rounding (F3Go30-7p61)
 })();
 
 (function testBuildDashboardPaxRowRollingAverageFallsBackToDayValuesWithoutHistory() {
@@ -1137,6 +1197,9 @@ function installCountingSpreadsheetApp_(bySheetId) {
       if (!Object.prototype.hasOwnProperty.call(bySheetId, id)) throw new Error('no such spreadsheet: ' + id);
       return bySheetId[id];
     },
+    // Same no-op as installFakeSpreadsheetById_'s — present so a counting fixture can also be
+    // used on write-touching paths (PaxCache's post-write refresh calls it).
+    flush: function() {},
   };
   return calls;
 }
@@ -1641,7 +1704,7 @@ function makeLeanIdentityResponsesSheet_(rows) {
 // trackerFromCache plus a per-load count/duration of getPaxHistoryWindowValues_ calls that fell
 // through to the prior-month backfill, so a rollover-driven latency spike is diagnosable from
 // Axiom alone rather than needing a live reproduction (the reasoning §prior-month-bulk's operator
-// check in PLAN-pax-history-model.md relies on).
+// check in docs/staging/pax-history-model.md relies on).
 (function testDashboardLogsHistoryBackfillTelemetryAndTrackerFromCache() {
   installFakePropertiesStore_();
   fakeScriptCache_ = makeFakeScriptCache_();
@@ -1705,6 +1768,114 @@ function makeLeanIdentityResponsesSheet_(rows) {
   global.resolveContextDate_ = function() { return new Date(); };
 })();
 
+// handleCheckinDashboard_ integration — F3Go30-xzm2: the prior-month backfill is hoisted OUT of
+// the roster loop. Three PAX all carrying a truncated (agreeing-but-uncovered) window at rollover
+// each need the prior month's tail, but the prior month must be resolved ONCE per request
+// (resolveTrackerForContextDate) and its Tracker opened ONCE (SpreadsheetApp.openById), not once
+// per PAX — while every PAX still gets exactly the same cross-month values the per-PAX path
+// produced. Before the hoist this fixture opened sheet-aug three times (layout cached after the
+// first PAX, but each subsequent PAX still opened the spreadsheet for its own single row).
+(function testDashboardResolvesPriorMonthOncePerRequestForWholeRoster() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 8, 1, 9, 0); }; // "today" = Sept 1
+
+  var augRow2 = ['', '', '', '', '', '', '', '', '', ''];
+  var augRow3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 7, 30), new Date(2026, 7, 31)];
+  var augTrackerRows = [
+    ['Rollover', 'Crucible', '', '', '', '', 5, 0.5, 1, 1],
+    ['Slaw', 'Crucible', '', '', '', '', 3, 0.3, 1, 0],
+    ['Anchor', 'Crucible', '', '', '', '', 4, 0.4, 0, 1],
+  ];
+  var sepRow2 = ['', '', '', '', '', '', '', ''];
+  var sepRow3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1)];
+  var sepTrackerRows = [
+    ['Rollover', 'Crucible', '', '', '', '', 1, 1.0, 1],
+    ['Slaw', 'Crucible', '', '', '', '', 1, 1.0, 1],
+    ['Anchor', 'Crucible', '', '', '', '', 1, 1.0, 1],
+  ];
+  var emptyBonusSheet = { getLastRow: function() { return 1; }, getRange: function() { return { getValues: function() { return []; } }; } };
+  var opens = installCountingSpreadsheetApp_({
+    'sheet-aug': { getSheetByName: function(n) { return n === 'Tracker' ? makeFakeTrackerSheet_(augRow2, augRow3, augTrackerRows) : null; } },
+    'sheet-sep': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') return makeFakeTrackerSheet_(sepRow2, sepRow3, sepTrackerRows);
+        if (n === 'Bonus Tracker') return emptyBonusSheet;
+        return null;
+      },
+    },
+  });
+  var monthResolves = 0;
+  global.resolveTrackerForContextDate = function(targetDate) {
+    monthResolves++;
+    if (targetDate.getFullYear() === 2026 && targetDate.getMonth() === 7) {
+      return { sheetId: 'sheet-aug', trackerUrl: 'https://x/aug', startDate: new Date(2026, 7, 1) };
+    }
+    throw new Error('no tracker for ' + targetDate);
+  };
+  global.formatRegistrationMonth_ = function() { return 'August 2026'; };
+
+  var PaxCache = require('../script/PaxCache.js');
+  ['Rollover', 'Slaw', 'Anchor'].forEach(function(name) {
+    PaxCache.setPaxHistoryEntry_('', name, { historyEndDate: '2026-09-01', days: '1' });
+  });
+
+  var monthInfo = { sheetId: 'sheet-sep', trackerUrl: 'https://x/sep', label: 'September 2026', startDate: new Date(2026, 8, 1) };
+  var handle = buildResolvedContextHandle_(monthInfo, 0, 'Rollover');
+
+  var loggedEvents = [];
+  var realLog = global.GasLogger.log;
+  global.GasLogger.log = function(name, payload) { loggedEvents.push({ name: name, payload: payload }); };
+  var result;
+  try {
+    result = handleCheckinDashboard_({}, { f3Name: 'Rollover', email: 'r@x.com', dateISO: '2026-09-01', resolvedContext: handle });
+  } finally {
+    global.GasLogger.log = realLog;
+  }
+  assert.equal(result.ok, true);
+
+  // Equivalence: every PAX's window is the prior month's own two days plus Sept 1, exactly what
+  // the per-PAX path produced.
+  var byName = {};
+  result.myTeam.forEach(function(r) { byName[r.name] = r; });
+  assert.equal(byName.Rollover.streak, 3);   // 1,1,1
+  assert.equal(byName.Slaw.streak, 1);       // 1,0,1 -> current streak is Sept 1 alone
+  assert.equal(byName.Anchor.streak, 2);     // 0,1,1
+  assert.deepEqual(PaxCache.getPaxHistoryEntry_('', 'Rollover'), { historyEndDate: '2026-09-01', days: '111' });
+  assert.deepEqual(PaxCache.getPaxHistoryEntry_('', 'Slaw'), { historyEndDate: '2026-09-01', days: '101' });
+  assert.deepEqual(PaxCache.getPaxHistoryEntry_('', 'Anchor'), { historyEndDate: '2026-09-01', days: '011' });
+
+  // The hoist itself: one prior-month resolution and one prior-month Tracker open for the whole
+  // roster, not three of each.
+  assert.equal(monthResolves, 1, 'prior month must be resolved once per request, not once per PAX');
+  var augOpens = opens.filter(function(id) { return id === 'sheet-aug'; }).length;
+  assert.equal(augOpens, 1, 'prior month Tracker must be opened once per request, not once per PAX');
+
+  var dashboardEvent = loggedEvents.find(function(e) { return e.name === 'checkinWebapp.dashboard'; });
+  assert.equal(dashboardEvent.payload.historyBackfillCount, 3, 'all three PAX still fall through to the backfill');
+  assert.equal(dashboardEvent.payload.priorMonthResolves, 1);
+  assert.equal(dashboardEvent.payload.priorMonthOpens, 1);
+
+  // A second request in the same execution re-resolves (the memo is dropped at request entry) but
+  // now serves every PAX from the warmed layout + PaxCache rows: no prior-month open at all.
+  opens.length = 0;
+  monthResolves = 0;
+  ['Rollover', 'Slaw', 'Anchor'].forEach(function(name) {
+    PaxCache.setPaxHistoryEntry_('', name, { historyEndDate: '2026-09-01', days: '1' });
+  });
+  var second = handleCheckinDashboard_({}, { f3Name: 'Rollover', email: 'r@x.com', dateISO: '2026-09-01', resolvedContext: handle });
+  assert.equal(second.ok, true);
+  assert.equal(monthResolves, 1, 'the memo is request-scoped: a fresh request resolves once again');
+  assert.equal(opens.filter(function(id) { return id === 'sheet-aug'; }).length, 0,
+    'a warm prior month is served from the layout + PaxCache rows the first request stored');
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
 // handleCheckinDashboard_ integration — the actual bug this issue fixes: EVERY board row's
 // streak/maxStreak30 must reflect the cross-month rolling window, not just the logged-in viewer's.
 // With the old computeStreak_(dayValues) (this month's own 2 tracker columns only), a teammate's
@@ -1758,6 +1929,54 @@ function makeLeanIdentityResponsesSheet_(rows) {
   global.resolveContextDate_ = function() { return new Date(); };
 })();
 
+// handleCheckinDashboard_ integration (F3Go30-h8tt): a PAX who has pre-marked a FUTURE calendar
+// day 1 in the Tracker sheet must not get an inflated score/rawScore on the dashboard, even
+// though the sheet's own Raw Score/Score (G/H) formulas already sum that future day (they span
+// the whole row with no date cutoff — docs/sheet-reference.md). "today" is Aug 2; the row also
+// has an Aug 3 (future) day column marked 1, and the sheet-provided Raw Score/Score cells (5/5)
+// already reflect all three 1s. The served rawScore/score must reflect only the two days at or
+// before today (2/2), not the sheet's 5/5.
+(function testDashboardScoreExcludesFutureDatedTrackerEntries() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 7, 2, 9, 0); }; // "today" = Aug 2
+
+  var row2 = ['', '', '', '', '', '', '', '', '', '', ''];
+  var row3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 7, 1), new Date(2026, 7, 2), new Date(2026, 7, 3)];
+  // Sheet's own Raw Score/Score (cols G/H) sum ALL three day columns (Aug1, Aug2, and the
+  // future Aug3), same as the real =SUM($I4:$AS4)/=SUMIF(...) formulas would.
+  var paxRows = [
+    ['Anchor', 'Crucible', '', '', '', '', 5, 5, 1, 1, 1],
+  ];
+  var emptyBonusSheet = { getLastRow: function() { return 1; }, getRange: function() { return { getValues: function() { return []; } }; } };
+  installFakeSpreadsheetById_({
+    'sheet-aug-future': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') return makeFakeTrackerSheet_(row2, row3, paxRows);
+        if (n === 'Bonus Tracker') return emptyBonusSheet;
+        return null;
+      },
+    },
+  });
+
+  var monthInfo = { sheetId: 'sheet-aug-future', trackerUrl: 'https://x/aug-future', label: 'August 2026', startDate: new Date(2026, 7, 1) };
+  var handle = buildResolvedContextHandle_(monthInfo, 0, 'Anchor');
+
+  var result = handleCheckinDashboard_({}, { f3Name: 'Anchor', email: 'a@x.com', dateISO: '2026-08-02', resolvedContext: handle });
+  assert.equal(result.ok, true);
+  assert.equal(result.rawScore, 2, 'rawScore must count only days at/before today (Aug1+Aug2), not the sheet\'s future-inclusive 5');
+  assert.equal(result.score, 2, 'score must likewise exclude the future-dated day, not the sheet\'s future-inclusive 5');
+
+  var anchorRow = result.myTeam.filter(function(r) { return r.name === 'Anchor'; })[0];
+  assert.ok(anchorRow, 'Anchor must appear on myTeam');
+  assert.equal(anchorRow.rawScore, 2);
+  assert.equal(anchorRow.score, 2);
+
+  delete global.SpreadsheetApp;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
 // handleCheckinDashboard_ integration (F3Go30-uz9e.1) — the rollingAverage counterpart to the
 // streak test above: EVERY board row's 7-day rolling average must reflect the cross-month
 // history window, not just the logged-in viewer's. Uses a mixed (not all-1) history so a
@@ -1802,10 +2021,10 @@ function makeLeanIdentityResponsesSheet_(rows) {
   assert.ok(slawRow, 'Slaw must appear on myTeam');
   assert.equal(slawRow.rollingAverage.length, 2, 'aligned to this month\'s 2 reported days, not the 7-day history window');
   // Aug 1 (history index 5): window = [0,0,0,0,0,1] (6 days available) -> 1/6
-  assert.ok(Math.abs(slawRow.rollingAverage[0] - 1 / 6) < 1e-9,
+  assert.ok(Math.abs(slawRow.rollingAverage[0] - 1 / 6) <= 5e-4,
     'teammate rollingAverage must span the month boundary, not just this month\'s 1 reported day so far');
   // Aug 2 (history index 6): window = [0,0,0,0,0,1,1] (full 7 days) -> 2/7
-  assert.ok(Math.abs(slawRow.rollingAverage[1] - 2 / 7) < 1e-9);
+  assert.ok(Math.abs(slawRow.rollingAverage[1] - 2 / 7) <= 5e-4);
   // F3Go30-uz9e.1: the teammate's own priorMonthDayValues must also be populated — this is what
   // lets the client-side pax-detail popup pad Slaw's chart display window across the month
   // boundary too, not just the viewer's (the live SIT symptom this issue was reopened for).
@@ -1814,8 +2033,8 @@ function makeLeanIdentityResponsesSheet_(rows) {
   // The viewer's own top-level rollingAverage comes from the same shared per-row computation now
   // — no separate userRollingAverage override left to disagree with it.
   assert.equal(result.rollingAverage.length, 2);
-  assert.ok(Math.abs(result.rollingAverage[0] - 1 / 6) < 1e-9);
-  assert.ok(Math.abs(result.rollingAverage[1] - 2 / 7) < 1e-9);
+  assert.ok(Math.abs(result.rollingAverage[0] - 1 / 6) <= 5e-4);
+  assert.ok(Math.abs(result.rollingAverage[1] - 2 / 7) <= 5e-4);
   // priorMonthDayValues (client date-nav padding) is still populated for the viewer, now sourced
   // from the already-fetched historyValues rather than a second getPriorMonthTailValues_ call.
   assert.deepEqual(result.priorMonthDayValues, [0, 0, 0, 0, 0]);
@@ -2447,6 +2666,48 @@ function makeUncheckedFixture_() {
   delete global.SpreadsheetApp;
   delete global.LockService;
   global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// F3Go30-dyj9: the checkinWebapp.checkin telemetry event must carry lockFailed count + lock wait
+// duration, so whether the single global script lock is actually contended at current scale is
+// answerable from data. Verified by intercepting GasLogger.log on the checkin event itself, the
+// same convention testResolveIdentityTimingLogCarriesPaxCacheStats above uses for the
+// resolveIdentity.timing event — the point is that the fields land IN the request's own log line.
+(function testCheckinLogCarriesPaxLockStats() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installFakeLockService_({ failWaitLock: true });
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); };
+  PaxCache.resetPaxCacheRequestStats_();
+
+  var fx = makeUncheckedFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
+
+  var loggedEvents = [];
+  var realLog = global.GasLogger.log;
+  global.GasLogger.log = function(name, payload) { loggedEvents.push({ name: name, payload: payload }); };
+  try {
+    var res = handleCheckinSubmit_({ getSheetByName: function() { throw new Error('full resolution must not run'); } },
+      { f3Name: 'Anchor', email: 'a@x.com', day: 'today', value: 1, resolvedContext: handle });
+    assert.equal(res.ok, true, 'a lock failure must not fail the check-in');
+  } finally {
+    global.GasLogger.log = realLog;
+  }
+
+  var checkinEvent = loggedEvents.find(function(e) { return e.name === 'checkinWebapp.checkin'; });
+  assert.ok(checkinEvent, 'checkinWebapp.checkin must be logged');
+  assert.equal(typeof checkinEvent.payload.paxLockFailed, 'number');
+  assert.equal(typeof checkinEvent.payload.paxLockWaitMs, 'number');
+  // Both the PaxCache row refresh and the history-window advance acquire the lock on this write
+  // path (see file header above) — with the fake lock failing every waitLock(), both count.
+  assert.equal(checkinEvent.payload.paxLockFailed, 2);
+
+  delete global.SpreadsheetApp;
+  delete global.LockService;
+  global.resolveContextDate_ = function() { return new Date(); };
+  PaxCache.resetPaxCacheRequestStats_();
 })();
 
 // AC3: the cross-month branch of resolveCheckinDayTarget_ carries the identical hazard and must go

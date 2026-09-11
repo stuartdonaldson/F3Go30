@@ -762,4 +762,23 @@ function makeBannerHarness_(fromGas, opts) {
     "Logout must reuse notYouLink's already-computed (webapp/ns/contextDate, no id) href to land back on a pre-filled identify form, rather than recomputing it");
 })();
 
+// ── F3Go30-f3fa (REVIEW-260910 findings 1+2): every "today" site routes through one ────────────
+//    context-aware clock (contextToday_/contextTodayIso_), not a bare isoDate_(new Date()) — a
+//    bare call silently drops the CONTEXT_DATE_ (?contextDate=) override, re-arming the exact
+//    drift the review found (bonusContextDate_ grew a context-aware helper; six other sites did
+//    not). Source-level guard, same style as the NS_/CONTEXT_DATE_ checks above: count every
+//    literal occurrence of the bare call and subtract the one inside contextTodayIso_'s own body.
+
+(function testStaticPageHasNoBareIsoDateOfNewDateOutsideContextTodayIso() {
+  var src = readStaticPage_();
+  assert.ok(src.indexOf('function contextTodayIso_') !== -1,
+    'contextTodayIso_ helper not found in index.html');
+  var bareCallPattern = /isoDate_\(new Date\(\)\)/g;
+  var count = (src.match(bareCallPattern) || []).length;
+  assert.equal(count, 0,
+    'every "today" site must call contextTodayIso_()/contextToday_() instead of a bare ' +
+    'isoDate_(new Date()) — a bare call ignores the CONTEXT_DATE_ override (contextTodayIso_ ' +
+    'itself calls isoDate_(contextToday_()), never the literal bare pattern)');
+})();
+
 console.log('test_static_page_client_invariants.js: all assertions passed');

@@ -245,7 +245,17 @@ Default: `--cmd admin --env sit`.
 
 Common admin actions: `setScriptProperties`, `cleanupTracker`,
 `runScanTrackers`, `getSheet`, `runAutoGenerate`, `createTrackerForMonth`, `copyTemplate`,
-`teardownEnvironment`, `setContextDate`, `setConfigValue`, `getConfigValue`
+`copyProdTrackerToSit`, `teardownEnvironment`, `setContextDate`, `setConfigValue`, `getConfigValue`
+
+- `copyProdTrackerToSit` (F3Go30-956l) overlays a source deployment's current-month tracker's
+  `Tracker`/`Bonus Tracker`/`Responses` values onto the target deployment's own current-month
+  tracker's same-named sheets in place, one whole column at a time (a column with a formula
+  anywhere in it, on either side, is skipped entirely — never deletes/replaces the destination
+  sheet, so it's safe with a linked Form; clears data validation on each copied column first) and
+  re-syncs `TrackerDB`/`PaxDB`/PaxCache — see docs/OPERATIONS.md §Refreshing SIT's current-month
+  tracker with PROD data. Requires
+  `sourceTemplateId`; fails if either side has no current-month tracker (never auto-creates one).
+  Same PROD refusal as `setContextDate`/`setConfigValue`.
 
 - `setContextDate` (F3Go30-31w5.1) persists a `{ns, contextDate}` override into the ns-resolved
   spreadsheet's Config sheet ("Context Date"), read as a fallback by every webapp entry point's

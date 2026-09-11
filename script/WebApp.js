@@ -280,12 +280,42 @@ function handleSignupPost_(e) {
  * secret going forward. Never settable again via the web app; clearing it requires
  * the Apps Script editor's Script Properties UI by hand (F3Go30-w6y3).
  */
+// F3Go30-h4xt: script-properties writes go through ScriptProperties.js's invalidating facade, so
+// the per-execution whole-store memo (getScriptPropertiesSnapshot_) can never serve a value this
+// same execution has already overwritten. Resolved lazily inside the accessor because in GAS
+// these are plain globals whose defining file may evaluate after this one.
+var scriptPropertiesModule_wa_ = (typeof require === 'function') ? require('./ScriptProperties.js') : null;
+function scriptProps_wa_() {
+  return scriptPropertiesModule_wa_ ? scriptPropertiesModule_wa_.scriptPropertiesStore_() : scriptPropertiesStore_();
+}
+
+// F3Go30-6daa: resolveContextDate_ memoizes the Config-sheet "Context Date" read for the life of
+// an execution, so the two admin actions below that WRITE the Config sheet must drop that memo —
+// otherwise a write-then-read inside one request (a live-check script's setContextDate followed by
+// a dashboard call, or setConfigValue overwriting the same row) would read the pre-write value.
+// Resolved through the GAS global first, falling back to a lazy require in node tests.
+var go30toolsModule_wa_ = null;
+function invalidateContextDateMemo_wa_() {
+  if (typeof invalidateContextDateMemo_ === 'function') { invalidateContextDateMemo_(); return; }
+  if (typeof require !== 'function') return;
+  if (!go30toolsModule_wa_) {
+    try { go30toolsModule_wa_ = require('./go30tools.js'); } catch (e) { return; }
+  }
+  if (go30toolsModule_wa_ && typeof go30toolsModule_wa_.invalidateContextDateMemo_ === 'function') {
+    go30toolsModule_wa_.invalidateContextDateMemo_();
+  }
+}
+
 function bootstrapAdminSecret_(secret) {
   if (!secret || String(secret).length < 16) {
     return { ok: false, error: 'secret must be at least 16 characters' };
   }
-  var props = PropertiesService.getScriptProperties();
+  var props = scriptProps_wa_();
   if (props.getProperty('ADMIN_SHARED_SECRET')) {
+    // F3Go30-4xgj: previously silent — the rejection is the only signal that someone is probing
+    // the anonymous bootstrap route on a deployment that already has a secret (REVIEW-260910
+    // finding 15). Logged, not fixed: the bootstrap flow itself is unchanged.
+    GasLogger.log('bootstrapAdminSecret_.alreadyBootstrapped', {});
     return { ok: false, error: 'already_bootstrapped' };
   }
   props.setProperty('ADMIN_SHARED_SECRET', String(secret));
@@ -294,10 +324,560 @@ function bootstrapAdminSecret_(secret) {
 }
 
 /**
+ * cmd=admin ACTION HANDLERS (F3Go30-4hee).
+ *
+ * Each handler is `function(payload, e) -> ContentService output` and is registered exactly once
+ * in ADMIN_ACTIONS_ below. Bodies are the same code the old 26-way `if (payload.action === …)`
+ * chain in handleAdminPost_ ran — only the dispatch mechanism changed, never an action's
+ * semantics, response shape, PROD guard or log line (installed PWA/operator clients depend on
+ * those shapes unchanged; see docs/OPERATIONS.md §API compatibility with installed clients).
+ */
+
+function adminBootstrapSecret_(payload, e) {
+  return jsonOutput_(bootstrapAdminSecret_(payload.secret));
+}
+
+function adminSetScriptProperties_(payload, e) {
+  var keys = Object.keys(payload.properties || {});
+  scriptProps_wa_().setProperties(payload.properties || {});
+  GasLogger.log('handleAdminPost_.setScriptProperties', { keys: keys });
+  return jsonOutput_({ ok: true, keysSet: keys });
+}
+
+function adminRunAutoGenerate_(payload, e) {
+  autoGenerateNextMonthTracker();
+  return jsonOutput_({ ok: true });
+}
+
+function adminCreateTrackerForMonth_(payload, e) {
+  // Headless equivalent of the Template's "Create New Tracker" sidebar (copyAndInit_),
+  // for an explicit target month — unlike runAutoGenerate (always real-today + 1 month),
+  // this can backfill a month that auto-generate skipped because it ran late (see
+  // createTrackerForMonth_'s docstring, CreateNewTracker.js).
+  if (!payload.startDateIso) {
+    return jsonOutput_({ ok: false, error: 'startDateIso is required (YYYY-MM-DD)' });
+  }
+  var newTrackerStartDate = new Date(payload.startDateIso + 'T00:00:00');
+  if (isNaN(newTrackerStartDate.getTime())) {
+    return jsonOutput_({ ok: false, error: 'invalid_date' });
+  }
+  // Catch JS date rollover (e.g. 2025-02-30 → March 2), same check copyAndInit_ does.
+  var newTrackerInputMonth = parseInt(payload.startDateIso.split('-')[1], 10);
+  if (newTrackerStartDate.getMonth() + 1 !== newTrackerInputMonth) {
+    return jsonOutput_({ ok: false, error: 'date_does_not_exist' });
+  }
+  var createTrackerLog = [];
+  try {
+    var createTrackerResult = createTrackerForMonth_(
+      resolveTemplateSpreadsheet_(e, payload), newTrackerStartDate,
+      function(msg) { createTrackerLog.push(msg); }
+    );
+    return jsonOutput_({
+      ok: true,
+      sheetId: createTrackerResult.newSpreadsheetId,
+      spreadsheetName: createTrackerResult.newSpreadsheetName,
+      trackerUrl: createTrackerResult.trackerSheetShortUrl,
+      formUrl: createTrackerResult.formShortUrl,
+      log: createTrackerLog,
+    });
+  } catch (err) {
+    GasLogger.log('handleAdminPost_.createTrackerForMonth.error', { error: err.message });
+    return jsonOutput_({ ok: false, error: 'server_error', detail: err.message, log: createTrackerLog });
+  }
+}
+
+function adminCleanupTracker_(payload, e) {
+  // Removes a tracker from TrackerDB, its PaxDB rows, and optionally trashes the
+  // spreadsheet and its linked HC form. Primary use case: smoke test teardown.
+  // cleanupTrackerArtifact_ (go30tools.js) holds the actual implementation — it's shared
+  // with scanTrackers()'s interactive "remove" choice (F3Go30-xj1q.2) so behavior can't
+  // drift between the two entry points.
+  if (!payload.sheetId) {
+    return jsonOutput_({ ok: false, error: 'sheetId is required' });
+  }
+  var cleanupResult = cleanupTrackerArtifact_(payload.sheetId, !!payload.trashSpreadsheet);
+  GasLogger.log('handleAdminPost_.cleanupTracker', Object.assign({ sheetId: payload.sheetId }, cleanupResult));
+  return jsonOutput_(Object.assign({ ok: true }, cleanupResult));
+}
+
+function adminListTriggers_(payload, e) {
+  // Diagnostic: every trigger on this script project plus whether its source file
+  // (spreadsheet/form) still exists. A trashed/missing source with a lingering trigger
+  // is exactly what accumulates toward the project's trigger-count cap (cleanupTracker
+  // now clears these going forward, but pre-existing leaks need this to find).
+  var allTriggers = ScriptApp.getProjectTriggers().map(function(trigger) {
+    var sourceId = trigger.getTriggerSourceId();
+    var sourceExists = null;
+    if (sourceId) {
+      try {
+        sourceExists = !DriveApp.getFileById(sourceId).isTrashed();
+      } catch (e) {
+        sourceExists = false; // file gone entirely
+      }
+    }
+    return {
+      handlerFunction: trigger.getHandlerFunction(),
+      eventType: String(trigger.getEventType()),
+      sourceId: sourceId || null,
+      sourceExists: sourceExists
+    };
+  });
+  return jsonOutput_({ ok: true, count: allTriggers.length, triggers: allTriggers });
+}
+
+function adminDeleteOrphanedTriggers_(payload, e) {
+  // Removes only per-tracker installable triggers (form-submit + edit — every trigger type
+  // that's registered per-Tracker-spreadsheet, F3Go30-440b.4) whose source spreadsheet is
+  // trashed or gone — the leak cleanupTracker used to leave behind before it started
+  // calling clearFormSubmitTrigger/clearTrackerEditTrigger_. Never touches other trigger
+  // types (e.g. the monthly auto-generate trigger) regardless of source state.
+  var formHandlers = [FORM_SUBMIT_HANDLER_, LEGACY_FORM_SUBMIT_HANDLER_, TRACKER_EDIT_HANDLER_];
+  var removed = [];
+  ScriptApp.getProjectTriggers().forEach(function(trigger) {
+    if (formHandlers.indexOf(trigger.getHandlerFunction()) === -1) return;
+    var sourceId = trigger.getTriggerSourceId();
+    var orphaned = false;
+    if (!sourceId) {
+      orphaned = true;
+    } else {
+      try {
+        orphaned = DriveApp.getFileById(sourceId).isTrashed();
+      } catch (e) {
+        orphaned = true; // file gone entirely
+      }
+    }
+    if (orphaned) {
+      removed.push({ handlerFunction: trigger.getHandlerFunction(), sourceId: sourceId || null });
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+  GasLogger.log('handleAdminPost_.deleteOrphanedTriggers', { removedCount: removed.length });
+  return jsonOutput_({ ok: true, removedCount: removed.length, removed: removed });
+}
+
+function adminSyncTrackerTriggers_(payload, e) {
+  // F3Go30-440b.5: combined backfill (register the edit trigger on any active TrackerDB row
+  // missing one) + cleanup (clear both per-tracker trigger types for any row whose
+  // spreadsheet is trashed, has aged out past the previous month, or isn't yet within the
+  // next-month window) sweep — see TrackerTriggerLifecycle.js's docstring and
+  // docs/staging/tracker-edit-cache-invalidation.md "Trigger lifecycle". Callable on-demand
+  // here, and also invoked automatically on every deploy (manage-deployments.js) and nightly
+  // from markEmptyCellsAsMinusOne_ (markMinusOne.js) — see those call sites.
+  var syncSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+  var syncContextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
+  var syncResult = syncTrackerTriggers_(syncSpreadsheet, syncContextDate);
+  return jsonOutput_(syncResult);
+}
+
+function adminInvalidateAllCache_(payload, e) {
+  // Runs inside this deployed webapp's own script project — the only PropertiesService
+  // store PaxCache entries actually live in (see PaxCache.js's wipeAllPaxCache_ docstring
+  // for why a monthly Tracker's own script copy can't do this locally). onOpen.js's
+  // "Invalidate Cache" menu item calls this over HTTP for exactly that reason.
+  var wipedCount = wipeAllPaxCache_();
+  var layoutCleared = 0;
+  try {
+    // Stays bound (ADR-014 D2/D4): PaxCache/layout cache keys live in this executing
+    // deployment's own PropertiesService/CacheService store, never in a namespace copy.
+    var trackerState = _readTrackerDbRowsBySheetId_(SpreadsheetApp.getActiveSpreadsheet());
+    var sheetIds = Object.keys(trackerState.bySheetId);
+    var layoutKeys = sheetIds.map(trackerLayoutCacheKey_).concat(sheetIds.map(responsesLayoutCacheKey_));
+    if (layoutKeys.length) {
+      CacheService.getScriptCache().removeAll(layoutKeys);
+      layoutCleared = layoutKeys.length;
+    }
+  } catch (err) {
+    GasLogger.log('handleAdminPost_.invalidateAllCache.layoutClearFailed', { error: err.message });
+  }
+  // Reload immediately rather than leaving every PAX cold (F3Go30-uz9e.3). This action's
+  // callers are all operator/deploy-time — the onOpen "Invalidate Cache" menu item and
+  // tools/manage-deployments.js's post-deploy step — so the rebuild is paid here instead of
+  // by whichever PAX happens to load the dashboard first. Lock-guarded and best-effort: a
+  // skipped reload just means the old cold-start behavior, so it never fails the wipe.
+  var reloaded = { skipped: true };
+  try {
+    reloaded = reloadPaxCacheForCurrentAndPriorMonth_(SpreadsheetApp.getActiveSpreadsheet());
+  } catch (reloadErr) {
+    GasLogger.log('handleAdminPost_.invalidateAllCache.reloadFailed', { error: reloadErr.message });
+  }
+  GasLogger.log('handleAdminPost_.invalidateAllCache', { wiped: wipedCount, layoutCleared: layoutCleared, reloaded: reloaded });
+  return jsonOutput_({ ok: true, wiped: wipedCount, layoutCleared: layoutCleared, reloaded: reloaded });
+}
+
+function adminSetWebappUrl_(payload, e) {
+  // Sets WEBAPP_URL script property with the current webapp deployment URL.
+  // Called from the webapp itself, so it captures the actual running deployment.
+  var url = ScriptApp.getService().getUrl();
+  scriptProps_wa_().setProperty('WEBAPP_URL', url);
+  GasLogger.log('handleAdminPost_.setWebappUrl', { webappUrl: url });
+  return jsonOutput_({ ok: true, webappUrl: url });
+}
+
+function adminSetContextDate_(payload, e) {
+  // Persists a per-namespace contextDate override (F3Go30-31w5.1) into the ns-resolved
+  // spreadsheet's Config sheet, read by resolveContextDate_ (go30tools.js) as the fallback
+  // when a request doesn't carry its own payload.contextDate. Refused outright on PROD —
+  // resolveContextDate_'s own PROD guard would ignore it anyway, but failing loudly here
+  // avoids an operator believing a PROD Config write actually did something.
+  if (typeof APP_DEPLOY_TARGET !== 'undefined' && APP_DEPLOY_TARGET === 'TEMPLATE') {
+    return jsonOutput_({ ok: false, error: 'forbidden_in_prod' });
+  }
+  var contextDateSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+  var contextDateConfigSheet = openConfigSheet(contextDateSpreadsheet);
+  if (!contextDateConfigSheet) {
+    return jsonOutput_({ ok: false, error: 'config_sheet_not_found' });
+  }
+  contextDateConfigSheet.upsertValue('Context Date', payload.contextDate || '');
+  invalidateContextDateMemo_wa_();
+  GasLogger.log('handleAdminPost_.setContextDate', { ns: payload.ns || null, contextDate: payload.contextDate || null });
+  return jsonOutput_({ ok: true, contextDate: payload.contextDate || null });
+}
+
+function adminSetConfigValue_(payload, e) {
+  // F3Go30-g9bi: generic dev/test-support Config-sheet write, generalizing setContextDate's
+  // shape (same PROD guard, same resolveTemplateSpreadsheet_/openConfigSheet path) — needed
+  // to live-verify Config-driven features (e.g. Announce.<day> splash rows) against a real
+  // SIT tracker without hand-editing the sheet. Same PROD refusal rationale as setContextDate:
+  // failing loudly here beats a silent no-op write.
+  if (typeof APP_DEPLOY_TARGET !== 'undefined' && APP_DEPLOY_TARGET === 'TEMPLATE') {
+    return jsonOutput_({ ok: false, error: 'forbidden_in_prod' });
+  }
+  if (!payload.key) {
+    return jsonOutput_({ ok: false, error: 'key is required' });
+  }
+  var setConfigSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+  var setConfigSheet = openConfigSheet(setConfigSpreadsheet);
+  if (!setConfigSheet) {
+    return jsonOutput_({ ok: false, error: 'config_sheet_not_found' });
+  }
+  setConfigSheet.upsertValue(payload.key, payload.primary || '', payload.secondary || '');
+  invalidateContextDateMemo_wa_();
+  GasLogger.log('handleAdminPost_.setConfigValue', { ns: payload.ns || null, key: payload.key });
+  return jsonOutput_({ ok: true, key: payload.key });
+}
+
+function adminGetConfigValue_(payload, e) {
+  // F3Go30-g9bi: read-only counterpart to setConfigValue — lets a live-check script capture a
+  // Config row's current value BEFORE overwriting it for a test, so it can restore the exact
+  // original afterward instead of blindly blanking a row that might carry real, human-authored
+  // content (e.g. an active Announce.<day> notice). No PROD guard: this is a plain read, same
+  // risk class as getSheet (also unguarded) — nothing here can mutate state.
+  if (!payload.key) {
+    return jsonOutput_({ ok: false, error: 'key is required' });
+  }
+  var getConfigSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+  var getConfigSheet = openConfigSheet(getConfigSpreadsheet);
+  if (!getConfigSheet) {
+    return jsonOutput_({ ok: false, error: 'config_sheet_not_found' });
+  }
+  var found = getConfigSheet.getPair(payload.key);
+  return jsonOutput_({ ok: true, key: payload.key, found: !!found, primary: found ? found.primary : null, secondary: found ? found.secondary : null });
+}
+
+function adminResetCheckinSession_(payload, e) {
+  // Test-support only (F3Go30 identity-token-flow.spec.js): removes every CheckinSessions
+  // row bound to {f3Name, email} so a Playwright spec asserting exact "first use"
+  // (createdAt === lastUsedAt) semantics can start a fixture PAX from a clean slate on
+  // every run instead of perpetually reusing a session an earlier run already touched.
+  // See deleteCheckinSessionsByIdentity_ (CheckinSessions.js).
+  if (!payload.f3Name || !payload.email) {
+    return jsonOutput_({ ok: false, error: 'f3Name and email are required' });
+  }
+  var resetSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+  var removedCount = deleteCheckinSessionsByIdentity_(resetSpreadsheet, payload.f3Name, payload.email);
+  GasLogger.log('handleAdminPost_.resetCheckinSession', { f3Name: payload.f3Name, removed: removedCount });
+  return jsonOutput_({ ok: true, removed: removedCount });
+}
+
+function adminListSheets_(payload, e) {
+  // Stays bound (ADR-014 D2): diagnostic listing for this executing deployment's own
+  // Template, not a tenant-data read — no sheetId/ns override needed, unlike getSheet.
+  var allSheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
+  return jsonOutput_({ ok: true, sheets: allSheets.map(function(s) {
+    return { name: s.getName(), hidden: s.isSheetHidden(), index: s.getIndex() };
+  })});
+}
+
+function adminGetSheet_(payload, e) {
+  if (!payload.sheetName) {
+    return jsonOutput_({ ok: false, error: 'sheetName is required' });
+  }
+  // Stays bound absent sheetId (ADR-014 D2): admin's own explicit-sheetId override is
+  // the targeting mechanism here, not ns — this is the precedent pattern the ADR cites.
+  var getSheetSs = payload.sheetId
+    ? SpreadsheetApp.openById(payload.sheetId)
+    : SpreadsheetApp.getActiveSpreadsheet();
+  var targetSheet = getSheetSs.getSheetByName(payload.sheetName);
+  if (!targetSheet) {
+    return jsonOutput_({ ok: false, error: 'sheet_not_found' });
+  }
+  var rows = targetSheet.getDataRange().getValues();
+  var csv = rows.map(function(row) {
+    return row.map(function(cell) {
+      var s = String(cell == null ? '' : cell);
+      return s.indexOf('\t') !== -1 ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }).join('\t');
+  }).join('\n');
+  return jsonOutput_({ ok: true, csv: csv });
+}
+
+function adminRunScanTrackers_(payload, e) {
+  // Scans sibling tracker spreadsheets and refreshes TrackerDB/PaxDB.
+  var scanResult = scanTrackers();
+  return jsonOutput_({ ok: true, result: scanResult });
+}
+
+function adminGetSheetHeaders_(payload, e) {
+  if (!payload.sheetId || !payload.sheetName) {
+    return jsonOutput_({ ok: false, error: 'sheetId and sheetName are required' });
+  }
+  // Column names only — never row data — so this stays safe even though it's read-only
+  // structural inspection of an arbitrary spreadsheet by ID (F3Go30-w6y3 diagnostics).
+  var sheet = SpreadsheetApp.openById(payload.sheetId).getSheetByName(payload.sheetName);
+  if (!sheet) {
+    return jsonOutput_({ ok: false, error: 'sheet_not_found' });
+  }
+  var sheetHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  return jsonOutput_({ ok: true, headers: sheetHeaders });
+}
+
+function adminGetSheetFormulas_(payload, e) {
+  // Read-only formula inspection (row 1..N as authored) for reverse-engineering scoring
+  // logic against the live sheet — same admin-secret gate as getSheet, formulas instead of
+  // values. Ad hoc diagnostic; not part of any PAX-facing flow.
+  if (!payload.sheetName) {
+    return jsonOutput_({ ok: false, error: 'sheetName is required' });
+  }
+  // Stays bound absent sheetId (ADR-014 D2) — same precedent as getSheet above.
+  var formulaSs = payload.sheetId
+    ? SpreadsheetApp.openById(payload.sheetId)
+    : SpreadsheetApp.getActiveSpreadsheet();
+  var formulaSheet = formulaSs.getSheetByName(payload.sheetName);
+  if (!formulaSheet) {
+    return jsonOutput_({ ok: false, error: 'sheet_not_found' });
+  }
+  var formulaRows = payload.maxRows
+    ? formulaSheet.getRange(1, 1, Math.min(payload.maxRows, formulaSheet.getMaxRows()), formulaSheet.getLastColumn()).getFormulas()
+    : formulaSheet.getDataRange().getFormulas();
+  return jsonOutput_({ ok: true, formulas: formulaRows });
+}
+
+function adminSortTracker_(payload, e) {
+  // Re-sorts an arbitrary tracker's Tracker sheet by column B then column A — the same
+  // sort handleFormSubmit_/handleSignupSave_ apply on every write (addResponseOnSubmit.js
+  // sortTrackerSheet_). Exposed as a standalone admin action so a tracker written to by a
+  // save path that predates that sort being wired up can be fixed without a full re-deploy.
+  if (!payload.sheetId) {
+    return jsonOutput_({ ok: false, error: 'sheetId is required' });
+  }
+  var sortTrackerSs = SpreadsheetApp.openById(payload.sheetId);
+  var sortTrackerSheetObj = sortTrackerSs.getSheetByName('Tracker');
+  if (!sortTrackerSheetObj) {
+    return jsonOutput_({ ok: false, error: 'sheet_not_found' });
+  }
+  sortTrackerSheet_(sortTrackerSheetObj);
+  return jsonOutput_({ ok: true });
+}
+
+function adminRunMinusOneCheck_(payload, e) {
+  // Runs the daily minus-one marking for a specific context date (default: today).
+  // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload. Calls the
+  // trigger-named wrapper (not the _ helper) so this on-demand run exercises the exact same
+  // GasLogger.run-wrapped code path the real daily trigger invokes (F3Go30-y8j7.3) — the
+  // underscore direct-call this replaced skipped that wrapper, so its Axiom trace never
+  // matched what a genuine trigger fire produces.
+  var contextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
+  var result = markEmptyCellsAsMinusOne(contextDate);
+  return jsonOutput_({ ok: true, result: result });
+}
+
+function adminRunNagCheck_(payload, e) {
+  // Runs the daily nag email dispatch for a specific context date (default: today).
+  // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload.
+  var contextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
+  var result = sendNagEmail_(contextDate);
+  return jsonOutput_({ ok: true, result: result });
+}
+
+function adminRunPaxCachePurge_(payload, e) {
+  // Runs the nightly PaxCache purge (F3Go30-440b.2) on demand, for live SIT verification.
+  // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload to test against a
+  // pinned "now" rather than the real clock. Calls the trigger-named wrapper (not the _
+  // helper) so this on-demand run exercises the exact same GasLogger.run-wrapped code path
+  // the real nightly trigger invokes (F3Go30-y8j7.3).
+  var purgeContextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
+  var purgeResult = purgeStalePaxCache(purgeContextDate);
+  return jsonOutput_({ ok: true, result: purgeResult });
+}
+
+function adminBenchmarkPropertiesService_(payload, e) {
+  // One-off diagnostic (F3Go30 script-properties perf question, 2026-07) — times the
+  // per-key getProperty() loop buildTrackerValuesFromPaxCache_ actually runs today against
+  // a single whole-store getProperties() call and a single-blob write/read, for a real
+  // cached roster. Requires payload.sheetId to already have a cached PaxCache roster index
+  // (a tracker that's had at least one dashboard/identify load). Not part of any hot path.
+  if (!payload.sheetId) {
+    return jsonOutput_({ ok: false, error: 'sheetId is required' });
+  }
+  var benchResult = benchmarkPaxCacheReads_(payload.sheetId, payload.iterations);
+  GasLogger.log('handleAdminPost_.benchmarkPropertiesService', { sheetId: payload.sheetId });
+  return jsonOutput_({ ok: true, result: benchResult });
+}
+
+function adminCopyTemplate_(payload, e) {
+  // Stands up a new environment's files: copies a source Template (+ bound script,
+  // typically PROD's) and the N most recent real trackers into a new sibling Drive
+  // folder, rebuilds that copy's TrackerDB/PaxDB from only the copied trackers, and
+  // registers it as a NamespaceDB row in the active (destination) deployment, typically
+  // SIT — see CopyTemplate.js file header and ADR-014 D6. Deliberately does not touch
+  // triggers/forms/short links or deploy anything.
+  if (!payload.folderName) {
+    return jsonOutput_({ ok: false, error: 'folderName is required' });
+  }
+  if (!payload.sourceTemplateId) {
+    return jsonOutput_({ ok: false, error: 'sourceTemplateId is required' });
+  }
+  var copyTemplateLog = [];
+  try {
+    var copyResult = copyTemplateToNewEnvironment_(
+      payload.folderName, payload.sourceTemplateId, payload.trackerCount || 3, payload.kind || 'smoke',
+      function(msg) { copyTemplateLog.push(msg); }
+    );
+    GasLogger.log('handleAdminPost_.copyTemplate', {
+      newFolderId: copyResult.newFolderId,
+      newTemplateId: copyResult.newTemplateId,
+      copiedTrackers: copyResult.copiedTrackers.length
+    });
+    return jsonOutput_({ ok: true, log: copyTemplateLog, result: copyResult });
+  } catch (err) {
+    GasLogger.log('handleAdminPost_.copyTemplate.error', { error: err.message });
+    return jsonOutput_({ ok: false, error: 'server_error', detail: err.message, log: copyTemplateLog });
+  }
+}
+
+function adminCopyProdTrackerToSit_(payload, e) {
+  // Copies PROD's current-month tracker's Tracker/Bonus Tracker/Responses sheets into this
+  // (SIT) deployment's own current-month tracker, replacing SIT's copies in place, then
+  // re-syncs TrackerDB/PaxDB/PaxCache (F3Go30-956l; copyCurrentMonthTrackerDataFromSource_,
+  // CopyTemplate.js) — a lighter-weight refresh than copyTemplate's whole-environment stand-up,
+  // for when SIT's already-existing current-month tracker just needs realistic PROD data.
+  // Refused on PROD outright, same rationale as setContextDate/setConfigValue: this only ever
+  // makes sense as a SIT-refresh operation, and failing loudly here beats an operator believing
+  // a PROD run did something.
+  if (typeof APP_DEPLOY_TARGET !== 'undefined' && APP_DEPLOY_TARGET === 'TEMPLATE') {
+    return jsonOutput_({ ok: false, error: 'forbidden_in_prod' });
+  }
+  if (!payload.sourceTemplateId) {
+    return jsonOutput_({ ok: false, error: 'sourceTemplateId is required' });
+  }
+  var copyProdTrackerLog = [];
+  try {
+    var destinationSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+    var copyProdTrackerResult = copyCurrentMonthTrackerDataFromSource_(
+      payload.sourceTemplateId, destinationSpreadsheet, payload.contextDate,
+      function(msg) { copyProdTrackerLog.push(msg); }
+    );
+    GasLogger.log('handleAdminPost_.copyProdTrackerToSit', {
+      sourceSheetId: copyProdTrackerResult.sourceSheetId,
+      destinationSheetId: copyProdTrackerResult.destinationSheetId,
+      sheets: copyProdTrackerResult.sheets
+    });
+    return jsonOutput_({ ok: true, log: copyProdTrackerLog, result: copyProdTrackerResult });
+  } catch (err) {
+    // source_current_tracker_not_found / destination_current_tracker_not_found (AC3/AC4) are
+    // expected, actionable outcomes, not server errors — surfaced as their own error code
+    // rather than folded into the generic server_error branch below.
+    var knownCopyProdTrackerErrors_ = { source_current_tracker_not_found: true, destination_current_tracker_not_found: true };
+    if (knownCopyProdTrackerErrors_[err.message]) {
+      return jsonOutput_({ ok: false, error: err.message, log: copyProdTrackerLog });
+    }
+    GasLogger.log('handleAdminPost_.copyProdTrackerToSit.error', { error: err.message });
+    return jsonOutput_({ ok: false, error: 'server_error', detail: err.message, log: copyProdTrackerLog });
+  }
+}
+
+function adminTeardownEnvironment_(payload, e) {
+  // Whole-environment counterpart to cleanupTracker (which only tears down one tracker):
+  // removes the NamespaceDB row for `nameSpace` (the primary safety cut — makes it
+  // unresolvable immediately) and, if trashFolder is set, trashes the environment's whole
+  // Drive folder (Template copy + every tracker copied alongside it by copyTemplate) — see
+  // teardownNamespaceEnvironment_ (CopyTemplate.js) and ADR-014 D6.
+  if (!payload.nameSpace) {
+    return jsonOutput_({ ok: false, error: 'nameSpace is required' });
+  }
+  try {
+    var teardownResult = teardownNamespaceEnvironment_(payload.nameSpace, !!payload.trashFolder, function() {});
+    GasLogger.log('handleAdminPost_.teardownEnvironment', Object.assign({ nameSpace: payload.nameSpace }, teardownResult));
+    return jsonOutput_(Object.assign({ ok: true }, teardownResult));
+  } catch (err) {
+    GasLogger.log('handleAdminPost_.teardownEnvironment.error', { error: err.message });
+    return jsonOutput_({ ok: false, error: 'server_error', detail: err.message });
+  }
+}
+
+/**
+ * THE cmd=admin ACTION TABLE (F3Go30-4hee) — one row per action, replacing the 26-way
+ * sequential `if (payload.action === …)` chain handleAdminPost_ used to be.
+ *
+ * Each row: `{ handler, readOnly, preAuth? }`.
+ *   • `handler`  — `function(payload, e)` returning a ContentService output.
+ *   • `readOnly` — true when the action modifies no durable state. This is the SAME judgement
+ *                  test/contract/entryPointRegistry.js records: a `readOnly: false` row must be
+ *                  registered there as `admin.<action>` (state-modifying, H12), and a
+ *                  `readOnly: true` row must appear in its ENTRY_POINT_READ_ONLY_EXEMPT map.
+ *                  `test/test_entry_point_registry_view.js` diffs the two both ways, so this
+ *                  table is a real coverage oracle for the registry rather than a second list
+ *                  that can drift from it.
+ *   • `preAuth`  — the one action (bootstrapSecret) that runs BEFORE the admin-secret gate,
+ *                  because it is what sets the secret in the first place.
+ *
+ * Adding an action means adding a row here — and then the registry, or the test fails.
+ */
+var ADMIN_ACTIONS_ = {
+  bootstrapSecret: { handler: adminBootstrapSecret_, readOnly: false, preAuth: true },
+  setScriptProperties: { handler: adminSetScriptProperties_, readOnly: false },
+  runAutoGenerate: { handler: adminRunAutoGenerate_, readOnly: false },
+  createTrackerForMonth: { handler: adminCreateTrackerForMonth_, readOnly: false },
+  cleanupTracker: { handler: adminCleanupTracker_, readOnly: false },
+  listTriggers: { handler: adminListTriggers_, readOnly: true },
+  deleteOrphanedTriggers: { handler: adminDeleteOrphanedTriggers_, readOnly: false },
+  syncTrackerTriggers: { handler: adminSyncTrackerTriggers_, readOnly: false },
+  invalidateAllCache: { handler: adminInvalidateAllCache_, readOnly: false },
+  setWebappUrl: { handler: adminSetWebappUrl_, readOnly: false },
+  setContextDate: { handler: adminSetContextDate_, readOnly: false },
+  setConfigValue: { handler: adminSetConfigValue_, readOnly: false },
+  getConfigValue: { handler: adminGetConfigValue_, readOnly: true },
+  resetCheckinSession: { handler: adminResetCheckinSession_, readOnly: false },
+  listSheets: { handler: adminListSheets_, readOnly: true },
+  getSheet: { handler: adminGetSheet_, readOnly: true },
+  runScanTrackers: { handler: adminRunScanTrackers_, readOnly: false },
+  getSheetHeaders: { handler: adminGetSheetHeaders_, readOnly: true },
+  getSheetFormulas: { handler: adminGetSheetFormulas_, readOnly: true },
+  sortTracker: { handler: adminSortTracker_, readOnly: false },
+  runMinusOneCheck: { handler: adminRunMinusOneCheck_, readOnly: false },
+  runNagCheck: { handler: adminRunNagCheck_, readOnly: false },
+  runPaxCachePurge: { handler: adminRunPaxCachePurge_, readOnly: false },
+  benchmarkPropertiesService: { handler: adminBenchmarkPropertiesService_, readOnly: false },
+  copyTemplate: { handler: adminCopyTemplate_, readOnly: false },
+  copyProdTrackerToSit: { handler: adminCopyProdTrackerToSit_, readOnly: false },
+  teardownEnvironment: { handler: adminTeardownEnvironment_, readOnly: false },
+};
+
+/** Own-property lookup only — an action name like "constructor" must resolve to no row. */
+function lookupAdminAction_(action) {
+  return Object.prototype.hasOwnProperty.call(ADMIN_ACTIONS_, action) ? ADMIN_ACTIONS_[action] : null;
+}
+
+/**
  * Dispatches a cmd=admin doPost JSON body to administrative actions, gated by
  * ADMIN_SHARED_SECRET (set once via bootstrapSecret — never typed in by hand). Every
  * other action must echo the secret back in the POST body (never the query string,
  * so it never lands in access logs / curl history).
+ *
+ * The action set lives in ADMIN_ACTIONS_ above; the order of the checks here is the order
+ * the old sequential chain applied them, and must stay that way: bootstrapSecret runs before
+ * the secret gate, and an unknown action still answers `forbidden` (not `unknown_action`)
+ * when the secret is wrong, so a bad-secret caller cannot probe which actions exist.
  */
 function handleAdminPost_(e) {
   var payload;
@@ -307,8 +887,10 @@ function handleAdminPost_(e) {
     return jsonOutput_({ ok: false, error: 'invalid_json' });
   }
 
-  if (payload.action === 'bootstrapSecret') {
-    return jsonOutput_(bootstrapAdminSecret_(payload.secret));
+  var actionEntry = lookupAdminAction_(payload.action);
+
+  if (actionEntry && actionEntry.preAuth) {
+    return actionEntry.handler(payload, e);
   }
 
   var storedSecret = PropertiesService.getScriptProperties().getProperty('ADMIN_SHARED_SECRET');
@@ -318,417 +900,10 @@ function handleAdminPost_(e) {
   }
 
   try {
-    if (payload.action === 'setScriptProperties') {
-      var keys = Object.keys(payload.properties || {});
-      PropertiesService.getScriptProperties().setProperties(payload.properties || {});
-      GasLogger.log('handleAdminPost_.setScriptProperties', { keys: keys });
-      return jsonOutput_({ ok: true, keysSet: keys });
+    if (!actionEntry) {
+      return jsonOutput_({ ok: false, error: 'unknown_action' });
     }
-    if (payload.action === 'runAutoGenerate') {
-      autoGenerateNextMonthTracker();
-      return jsonOutput_({ ok: true });
-    }
-    if (payload.action === 'createTrackerForMonth') {
-      // Headless equivalent of the Template's "Create New Tracker" sidebar (copyAndInit_),
-      // for an explicit target month — unlike runAutoGenerate (always real-today + 1 month),
-      // this can backfill a month that auto-generate skipped because it ran late (see
-      // createTrackerForMonth_'s docstring, CreateNewTracker.js).
-      if (!payload.startDateIso) {
-        return jsonOutput_({ ok: false, error: 'startDateIso is required (YYYY-MM-DD)' });
-      }
-      var newTrackerStartDate = new Date(payload.startDateIso + 'T00:00:00');
-      if (isNaN(newTrackerStartDate.getTime())) {
-        return jsonOutput_({ ok: false, error: 'invalid_date' });
-      }
-      // Catch JS date rollover (e.g. 2025-02-30 → March 2), same check copyAndInit_ does.
-      var newTrackerInputMonth = parseInt(payload.startDateIso.split('-')[1], 10);
-      if (newTrackerStartDate.getMonth() + 1 !== newTrackerInputMonth) {
-        return jsonOutput_({ ok: false, error: 'date_does_not_exist' });
-      }
-      var createTrackerLog = [];
-      try {
-        var createTrackerResult = createTrackerForMonth_(
-          resolveTemplateSpreadsheet_(e, payload), newTrackerStartDate,
-          function(msg) { createTrackerLog.push(msg); }
-        );
-        return jsonOutput_({
-          ok: true,
-          sheetId: createTrackerResult.newSpreadsheetId,
-          spreadsheetName: createTrackerResult.newSpreadsheetName,
-          trackerUrl: createTrackerResult.trackerSheetShortUrl,
-          formUrl: createTrackerResult.formShortUrl,
-          log: createTrackerLog,
-        });
-      } catch (err) {
-        GasLogger.log('handleAdminPost_.createTrackerForMonth.error', { error: err.message });
-        return jsonOutput_({ ok: false, error: 'server_error', detail: err.message, log: createTrackerLog });
-      }
-    }
-    if (payload.action === 'cleanupTracker') {
-      // Removes a tracker from TrackerDB, its PaxDB rows, and optionally trashes the
-      // spreadsheet and its linked HC form. Primary use case: smoke test teardown.
-      // cleanupTrackerArtifact_ (go30tools.js) holds the actual implementation — it's shared
-      // with scanTrackers()'s interactive "remove" choice (F3Go30-xj1q.2) so behavior can't
-      // drift between the two entry points.
-      if (!payload.sheetId) {
-        return jsonOutput_({ ok: false, error: 'sheetId is required' });
-      }
-      var cleanupResult = cleanupTrackerArtifact_(payload.sheetId, !!payload.trashSpreadsheet);
-      GasLogger.log('handleAdminPost_.cleanupTracker', Object.assign({ sheetId: payload.sheetId }, cleanupResult));
-      return jsonOutput_(Object.assign({ ok: true }, cleanupResult));
-    }
-    if (payload.action === 'listTriggers') {
-      // Diagnostic: every trigger on this script project plus whether its source file
-      // (spreadsheet/form) still exists. A trashed/missing source with a lingering trigger
-      // is exactly what accumulates toward the project's trigger-count cap (cleanupTracker
-      // now clears these going forward, but pre-existing leaks need this to find).
-      var allTriggers = ScriptApp.getProjectTriggers().map(function(trigger) {
-        var sourceId = trigger.getTriggerSourceId();
-        var sourceExists = null;
-        if (sourceId) {
-          try {
-            sourceExists = !DriveApp.getFileById(sourceId).isTrashed();
-          } catch (e) {
-            sourceExists = false; // file gone entirely
-          }
-        }
-        return {
-          handlerFunction: trigger.getHandlerFunction(),
-          eventType: String(trigger.getEventType()),
-          sourceId: sourceId || null,
-          sourceExists: sourceExists
-        };
-      });
-      return jsonOutput_({ ok: true, count: allTriggers.length, triggers: allTriggers });
-    }
-    if (payload.action === 'deleteOrphanedTriggers') {
-      // Removes only per-tracker installable triggers (form-submit + edit — every trigger type
-      // that's registered per-Tracker-spreadsheet, F3Go30-440b.4) whose source spreadsheet is
-      // trashed or gone — the leak cleanupTracker used to leave behind before it started
-      // calling clearFormSubmitTrigger/clearTrackerEditTrigger_. Never touches other trigger
-      // types (e.g. the monthly auto-generate trigger) regardless of source state.
-      var formHandlers = [FORM_SUBMIT_HANDLER_, LEGACY_FORM_SUBMIT_HANDLER_, TRACKER_EDIT_HANDLER_];
-      var removed = [];
-      ScriptApp.getProjectTriggers().forEach(function(trigger) {
-        if (formHandlers.indexOf(trigger.getHandlerFunction()) === -1) return;
-        var sourceId = trigger.getTriggerSourceId();
-        var orphaned = false;
-        if (!sourceId) {
-          orphaned = true;
-        } else {
-          try {
-            orphaned = DriveApp.getFileById(sourceId).isTrashed();
-          } catch (e) {
-            orphaned = true; // file gone entirely
-          }
-        }
-        if (orphaned) {
-          removed.push({ handlerFunction: trigger.getHandlerFunction(), sourceId: sourceId || null });
-          ScriptApp.deleteTrigger(trigger);
-        }
-      });
-      GasLogger.log('handleAdminPost_.deleteOrphanedTriggers', { removedCount: removed.length });
-      return jsonOutput_({ ok: true, removedCount: removed.length, removed: removed });
-    }
-    if (payload.action === 'syncTrackerTriggers') {
-      // F3Go30-440b.5: combined backfill (register the edit trigger on any active TrackerDB row
-      // missing one) + cleanup (clear both per-tracker trigger types for any row whose
-      // spreadsheet is trashed, has aged out past the previous month, or isn't yet within the
-      // next-month window) sweep — see TrackerTriggerLifecycle.js's docstring and
-      // docs/staging/tracker-edit-cache-invalidation.md "Trigger lifecycle". Callable on-demand
-      // here, and also invoked automatically on every deploy (manage-deployments.js) and nightly
-      // from markEmptyCellsAsMinusOne_ (markMinusOne.js) — see those call sites.
-      var syncSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
-      var syncContextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
-      var syncResult = syncTrackerTriggers_(syncSpreadsheet, syncContextDate);
-      return jsonOutput_(syncResult);
-    }
-    if (payload.action === 'invalidateAllCache') {
-      // Runs inside this deployed webapp's own script project — the only PropertiesService
-      // store PaxCache entries actually live in (see PaxCache.js's wipeAllPaxCache_ docstring
-      // for why a monthly Tracker's own script copy can't do this locally). onOpen.js's
-      // "Invalidate Cache" menu item calls this over HTTP for exactly that reason.
-      var wipedCount = wipeAllPaxCache_();
-      var layoutCleared = 0;
-      try {
-        // Stays bound (ADR-014 D2/D4): PaxCache/layout cache keys live in this executing
-        // deployment's own PropertiesService/CacheService store, never in a namespace copy.
-        var trackerState = _readTrackerDbRowsBySheetId_(SpreadsheetApp.getActiveSpreadsheet());
-        var sheetIds = Object.keys(trackerState.bySheetId);
-        var layoutKeys = sheetIds.map(trackerLayoutCacheKey_).concat(sheetIds.map(responsesLayoutCacheKey_));
-        if (layoutKeys.length) {
-          CacheService.getScriptCache().removeAll(layoutKeys);
-          layoutCleared = layoutKeys.length;
-        }
-      } catch (err) {
-        GasLogger.log('handleAdminPost_.invalidateAllCache.layoutClearFailed', { error: err.message });
-      }
-      // Reload immediately rather than leaving every PAX cold (F3Go30-uz9e.3). This action's
-      // callers are all operator/deploy-time — the onOpen "Invalidate Cache" menu item and
-      // tools/manage-deployments.js's post-deploy step — so the rebuild is paid here instead of
-      // by whichever PAX happens to load the dashboard first. Lock-guarded and best-effort: a
-      // skipped reload just means the old cold-start behavior, so it never fails the wipe.
-      var reloaded = { skipped: true };
-      try {
-        reloaded = reloadPaxCacheForCurrentAndPriorMonth_(SpreadsheetApp.getActiveSpreadsheet());
-      } catch (reloadErr) {
-        GasLogger.log('handleAdminPost_.invalidateAllCache.reloadFailed', { error: reloadErr.message });
-      }
-      GasLogger.log('handleAdminPost_.invalidateAllCache', { wiped: wipedCount, layoutCleared: layoutCleared, reloaded: reloaded });
-      return jsonOutput_({ ok: true, wiped: wipedCount, layoutCleared: layoutCleared, reloaded: reloaded });
-    }
-    if (payload.action === 'setWebappUrl') {
-      // Sets WEBAPP_URL script property with the current webapp deployment URL.
-      // Called from the webapp itself, so it captures the actual running deployment.
-      var url = ScriptApp.getService().getUrl();
-      PropertiesService.getScriptProperties().setProperty('WEBAPP_URL', url);
-      GasLogger.log('handleAdminPost_.setWebappUrl', { webappUrl: url });
-      return jsonOutput_({ ok: true, webappUrl: url });
-    }
-    if (payload.action === 'setContextDate') {
-      // Persists a per-namespace contextDate override (F3Go30-31w5.1) into the ns-resolved
-      // spreadsheet's Config sheet, read by resolveContextDate_ (go30tools.js) as the fallback
-      // when a request doesn't carry its own payload.contextDate. Refused outright on PROD —
-      // resolveContextDate_'s own PROD guard would ignore it anyway, but failing loudly here
-      // avoids an operator believing a PROD Config write actually did something.
-      if (typeof APP_DEPLOY_TARGET !== 'undefined' && APP_DEPLOY_TARGET === 'TEMPLATE') {
-        return jsonOutput_({ ok: false, error: 'forbidden_in_prod' });
-      }
-      var contextDateSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
-      var contextDateConfigSheet = openConfigSheet(contextDateSpreadsheet);
-      if (!contextDateConfigSheet) {
-        return jsonOutput_({ ok: false, error: 'config_sheet_not_found' });
-      }
-      contextDateConfigSheet.upsertValue('Context Date', payload.contextDate || '');
-      GasLogger.log('handleAdminPost_.setContextDate', { ns: payload.ns || null, contextDate: payload.contextDate || null });
-      return jsonOutput_({ ok: true, contextDate: payload.contextDate || null });
-    }
-    if (payload.action === 'setConfigValue') {
-      // F3Go30-g9bi: generic dev/test-support Config-sheet write, generalizing setContextDate's
-      // shape (same PROD guard, same resolveTemplateSpreadsheet_/openConfigSheet path) — needed
-      // to live-verify Config-driven features (e.g. Announce.<day> splash rows) against a real
-      // SIT tracker without hand-editing the sheet. Same PROD refusal rationale as setContextDate:
-      // failing loudly here beats a silent no-op write.
-      if (typeof APP_DEPLOY_TARGET !== 'undefined' && APP_DEPLOY_TARGET === 'TEMPLATE') {
-        return jsonOutput_({ ok: false, error: 'forbidden_in_prod' });
-      }
-      if (!payload.key) {
-        return jsonOutput_({ ok: false, error: 'key is required' });
-      }
-      var setConfigSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
-      var setConfigSheet = openConfigSheet(setConfigSpreadsheet);
-      if (!setConfigSheet) {
-        return jsonOutput_({ ok: false, error: 'config_sheet_not_found' });
-      }
-      setConfigSheet.upsertValue(payload.key, payload.primary || '', payload.secondary || '');
-      GasLogger.log('handleAdminPost_.setConfigValue', { ns: payload.ns || null, key: payload.key });
-      return jsonOutput_({ ok: true, key: payload.key });
-    }
-    if (payload.action === 'getConfigValue') {
-      // F3Go30-g9bi: read-only counterpart to setConfigValue — lets a live-check script capture a
-      // Config row's current value BEFORE overwriting it for a test, so it can restore the exact
-      // original afterward instead of blindly blanking a row that might carry real, human-authored
-      // content (e.g. an active Announce.<day> notice). No PROD guard: this is a plain read, same
-      // risk class as getSheet (also unguarded) — nothing here can mutate state.
-      if (!payload.key) {
-        return jsonOutput_({ ok: false, error: 'key is required' });
-      }
-      var getConfigSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
-      var getConfigSheet = openConfigSheet(getConfigSpreadsheet);
-      if (!getConfigSheet) {
-        return jsonOutput_({ ok: false, error: 'config_sheet_not_found' });
-      }
-      var found = getConfigSheet.getPair(payload.key);
-      return jsonOutput_({ ok: true, key: payload.key, found: !!found, primary: found ? found.primary : null, secondary: found ? found.secondary : null });
-    }
-    if (payload.action === 'resetCheckinSession') {
-      // Test-support only (F3Go30 identity-token-flow.spec.js): removes every CheckinSessions
-      // row bound to {f3Name, email} so a Playwright spec asserting exact "first use"
-      // (createdAt === lastUsedAt) semantics can start a fixture PAX from a clean slate on
-      // every run instead of perpetually reusing a session an earlier run already touched.
-      // See deleteCheckinSessionsByIdentity_ (CheckinSessions.js).
-      if (!payload.f3Name || !payload.email) {
-        return jsonOutput_({ ok: false, error: 'f3Name and email are required' });
-      }
-      var resetSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
-      var removedCount = deleteCheckinSessionsByIdentity_(resetSpreadsheet, payload.f3Name, payload.email);
-      GasLogger.log('handleAdminPost_.resetCheckinSession', { f3Name: payload.f3Name, removed: removedCount });
-      return jsonOutput_({ ok: true, removed: removedCount });
-    }
-    if (payload.action === 'listSheets') {
-      // Stays bound (ADR-014 D2): diagnostic listing for this executing deployment's own
-      // Template, not a tenant-data read — no sheetId/ns override needed, unlike getSheet.
-      var allSheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
-      return jsonOutput_({ ok: true, sheets: allSheets.map(function(s) {
-        return { name: s.getName(), hidden: s.isSheetHidden(), index: s.getIndex() };
-      })});
-    }
-    if (payload.action === 'getSheet') {
-      if (!payload.sheetName) {
-        return jsonOutput_({ ok: false, error: 'sheetName is required' });
-      }
-      // Stays bound absent sheetId (ADR-014 D2): admin's own explicit-sheetId override is
-      // the targeting mechanism here, not ns — this is the precedent pattern the ADR cites.
-      var getSheetSs = payload.sheetId
-        ? SpreadsheetApp.openById(payload.sheetId)
-        : SpreadsheetApp.getActiveSpreadsheet();
-      var targetSheet = getSheetSs.getSheetByName(payload.sheetName);
-      if (!targetSheet) {
-        return jsonOutput_({ ok: false, error: 'sheet_not_found' });
-      }
-      var rows = targetSheet.getDataRange().getValues();
-      var csv = rows.map(function(row) {
-        return row.map(function(cell) {
-          var s = String(cell == null ? '' : cell);
-          return s.indexOf('\t') !== -1 ? '"' + s.replace(/"/g, '""') + '"' : s;
-        }).join('\t');
-      }).join('\n');
-      return jsonOutput_({ ok: true, csv: csv });
-    }
-    if (payload.action === 'runScanTrackers') {
-      // Scans sibling tracker spreadsheets and refreshes TrackerDB/PaxDB.
-      var scanResult = scanTrackers();
-      return jsonOutput_({ ok: true, result: scanResult });
-    }
-    if (payload.action === 'getSheetHeaders') {
-      if (!payload.sheetId || !payload.sheetName) {
-        return jsonOutput_({ ok: false, error: 'sheetId and sheetName are required' });
-      }
-      // Column names only — never row data — so this stays safe even though it's read-only
-      // structural inspection of an arbitrary spreadsheet by ID (F3Go30-w6y3 diagnostics).
-      var sheet = SpreadsheetApp.openById(payload.sheetId).getSheetByName(payload.sheetName);
-      if (!sheet) {
-        return jsonOutput_({ ok: false, error: 'sheet_not_found' });
-      }
-      var sheetHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-      return jsonOutput_({ ok: true, headers: sheetHeaders });
-    }
-    if (payload.action === 'getSheetFormulas') {
-      // Read-only formula inspection (row 1..N as authored) for reverse-engineering scoring
-      // logic against the live sheet — same admin-secret gate as getSheet, formulas instead of
-      // values. Ad hoc diagnostic; not part of any PAX-facing flow.
-      if (!payload.sheetName) {
-        return jsonOutput_({ ok: false, error: 'sheetName is required' });
-      }
-      // Stays bound absent sheetId (ADR-014 D2) — same precedent as getSheet above.
-      var formulaSs = payload.sheetId
-        ? SpreadsheetApp.openById(payload.sheetId)
-        : SpreadsheetApp.getActiveSpreadsheet();
-      var formulaSheet = formulaSs.getSheetByName(payload.sheetName);
-      if (!formulaSheet) {
-        return jsonOutput_({ ok: false, error: 'sheet_not_found' });
-      }
-      var formulaRows = payload.maxRows
-        ? formulaSheet.getRange(1, 1, Math.min(payload.maxRows, formulaSheet.getMaxRows()), formulaSheet.getLastColumn()).getFormulas()
-        : formulaSheet.getDataRange().getFormulas();
-      return jsonOutput_({ ok: true, formulas: formulaRows });
-    }
-    if (payload.action === 'sortTracker') {
-      // Re-sorts an arbitrary tracker's Tracker sheet by column B then column A — the same
-      // sort handleFormSubmit_/handleSignupSave_ apply on every write (addResponseOnSubmit.js
-      // sortTrackerSheet_). Exposed as a standalone admin action so a tracker written to by a
-      // save path that predates that sort being wired up can be fixed without a full re-deploy.
-      if (!payload.sheetId) {
-        return jsonOutput_({ ok: false, error: 'sheetId is required' });
-      }
-      var sortTrackerSs = SpreadsheetApp.openById(payload.sheetId);
-      var sortTrackerSheetObj = sortTrackerSs.getSheetByName('Tracker');
-      if (!sortTrackerSheetObj) {
-        return jsonOutput_({ ok: false, error: 'sheet_not_found' });
-      }
-      sortTrackerSheet_(sortTrackerSheetObj);
-      return jsonOutput_({ ok: true });
-    }
-    if (payload.action === 'runMinusOneCheck') {
-      // Runs the daily minus-one marking for a specific context date (default: today).
-      // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload. Calls the
-      // trigger-named wrapper (not the _ helper) so this on-demand run exercises the exact same
-      // GasLogger.run-wrapped code path the real daily trigger invokes (F3Go30-y8j7.3) — the
-      // underscore direct-call this replaced skipped that wrapper, so its Axiom trace never
-      // matched what a genuine trigger fire produces.
-      var contextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
-      var result = markEmptyCellsAsMinusOne(contextDate);
-      return jsonOutput_({ ok: true, result: result });
-    }
-    if (payload.action === 'runNagCheck') {
-      // Runs the daily nag email dispatch for a specific context date (default: today).
-      // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload.
-      var contextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
-      var result = sendNagEmail_(contextDate);
-      return jsonOutput_({ ok: true, result: result });
-    }
-    if (payload.action === 'runPaxCachePurge') {
-      // Runs the nightly PaxCache purge (F3Go30-440b.2) on demand, for live SIT verification.
-      // Pass contextDate as ISO string (e.g., '2026-06-25') in the payload to test against a
-      // pinned "now" rather than the real clock. Calls the trigger-named wrapper (not the _
-      // helper) so this on-demand run exercises the exact same GasLogger.run-wrapped code path
-      // the real nightly trigger invokes (F3Go30-y8j7.3).
-      var purgeContextDate = payload.contextDate ? new Date(payload.contextDate) : new Date();
-      var purgeResult = purgeStalePaxCache(purgeContextDate);
-      return jsonOutput_({ ok: true, result: purgeResult });
-    }
-    if (payload.action === 'benchmarkPropertiesService') {
-      // One-off diagnostic (F3Go30 script-properties perf question, 2026-07) — times the
-      // per-key getProperty() loop buildTrackerValuesFromPaxCache_ actually runs today against
-      // a single whole-store getProperties() call and a single-blob write/read, for a real
-      // cached roster. Requires payload.sheetId to already have a cached PaxCache roster index
-      // (a tracker that's had at least one dashboard/identify load). Not part of any hot path.
-      if (!payload.sheetId) {
-        return jsonOutput_({ ok: false, error: 'sheetId is required' });
-      }
-      var benchResult = benchmarkPaxCacheReads_(payload.sheetId, payload.iterations);
-      GasLogger.log('handleAdminPost_.benchmarkPropertiesService', { sheetId: payload.sheetId });
-      return jsonOutput_({ ok: true, result: benchResult });
-    }
-    if (payload.action === 'copyTemplate') {
-      // Stands up a new environment's files: copies a source Template (+ bound script,
-      // typically PROD's) and the N most recent real trackers into a new sibling Drive
-      // folder, rebuilds that copy's TrackerDB/PaxDB from only the copied trackers, and
-      // registers it as a NamespaceDB row in the active (destination) deployment, typically
-      // SIT — see CopyTemplate.js file header and ADR-014 D6. Deliberately does not touch
-      // triggers/forms/short links or deploy anything.
-      if (!payload.folderName) {
-        return jsonOutput_({ ok: false, error: 'folderName is required' });
-      }
-      if (!payload.sourceTemplateId) {
-        return jsonOutput_({ ok: false, error: 'sourceTemplateId is required' });
-      }
-      var copyTemplateLog = [];
-      try {
-        var copyResult = copyTemplateToNewEnvironment_(
-          payload.folderName, payload.sourceTemplateId, payload.trackerCount || 3, payload.kind || 'smoke',
-          function(msg) { copyTemplateLog.push(msg); }
-        );
-        GasLogger.log('handleAdminPost_.copyTemplate', {
-          newFolderId: copyResult.newFolderId,
-          newTemplateId: copyResult.newTemplateId,
-          copiedTrackers: copyResult.copiedTrackers.length
-        });
-        return jsonOutput_({ ok: true, log: copyTemplateLog, result: copyResult });
-      } catch (err) {
-        GasLogger.log('handleAdminPost_.copyTemplate.error', { error: err.message });
-        return jsonOutput_({ ok: false, error: 'server_error', detail: err.message, log: copyTemplateLog });
-      }
-    }
-    if (payload.action === 'teardownEnvironment') {
-      // Whole-environment counterpart to cleanupTracker (which only tears down one tracker):
-      // removes the NamespaceDB row for `nameSpace` (the primary safety cut — makes it
-      // unresolvable immediately) and, if trashFolder is set, trashes the environment's whole
-      // Drive folder (Template copy + every tracker copied alongside it by copyTemplate) — see
-      // teardownNamespaceEnvironment_ (CopyTemplate.js) and ADR-014 D6.
-      if (!payload.nameSpace) {
-        return jsonOutput_({ ok: false, error: 'nameSpace is required' });
-      }
-      try {
-        var teardownResult = teardownNamespaceEnvironment_(payload.nameSpace, !!payload.trashFolder, function() {});
-        GasLogger.log('handleAdminPost_.teardownEnvironment', Object.assign({ nameSpace: payload.nameSpace }, teardownResult));
-        return jsonOutput_(Object.assign({ ok: true }, teardownResult));
-      } catch (err) {
-        GasLogger.log('handleAdminPost_.teardownEnvironment.error', { error: err.message });
-        return jsonOutput_({ ok: false, error: 'server_error', detail: err.message });
-      }
-    }
-    return jsonOutput_({ ok: false, error: 'unknown_action' });
+    return actionEntry.handler(payload, e);
   } catch (err) {
     GasLogger.logError('handleAdminPost_.error', err, { action: payload.action });
     return jsonOutput_({ ok: false, error: 'server_error' });
@@ -782,6 +957,9 @@ if (typeof module !== 'undefined' && module.exports) {
     logStaticRedirect_: logStaticRedirect_,
     renderHomePage_: renderHomePage_,
     handleAdminPost_: handleAdminPost_,
+    // Exported so test/test_entry_point_registry_view.js can diff the action table against
+    // test/contract/entryPointRegistry.js in both directions (F3Go30-4hee).
+    ADMIN_ACTIONS_: ADMIN_ACTIONS_,
     buildWebAppRequestLog_: buildWebAppRequestLog_,
     handleVersionRequest_: handleVersionRequest_,
     extractDeploymentIdFromUrl_: extractDeploymentIdFromUrl_,

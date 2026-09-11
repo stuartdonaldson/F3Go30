@@ -72,9 +72,18 @@ function _getCheckinSessionRosterIndex_() {
   }
 }
 
+// F3Go30-h4xt: script-properties writes go through ScriptProperties.js's invalidating facade, so
+// the per-execution whole-store memo (getScriptPropertiesSnapshot_) can never serve a value this
+// same execution has already overwritten. Resolved lazily inside the accessor because in GAS
+// these are plain globals whose defining file may evaluate after this one.
+var scriptPropertiesModule_cs_ = (typeof require === 'function') ? require('./ScriptProperties.js') : null;
+function scriptProps_cs_() {
+  return scriptPropertiesModule_cs_ ? scriptPropertiesModule_cs_.scriptPropertiesStore_() : scriptPropertiesStore_();
+}
+
 function _setCheckinSessionRosterIndex_(index) {
   try {
-    PropertiesService.getScriptProperties().setProperty(CHECKIN_SESSION_ROSTER_PROPERTY_, JSON.stringify(index || {}));
+    scriptProps_cs_().setProperty(CHECKIN_SESSION_ROSTER_PROPERTY_, JSON.stringify(index || {}));
   } catch (e) { /* best-effort — next resolve/cleanup rebuilds it from the live sheet anyway */ }
 }
 

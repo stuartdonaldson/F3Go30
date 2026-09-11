@@ -1,4 +1,10 @@
-# docs/staging/tracker-edit-cache-invalidation.md
+# docs/archive/tracker-edit-cache-invalidation.md
+
+**Superseded 2026-09-10 — implemented.** All open questions below resolved 2026-07-17;
+delivered as epic `F3Go30-o39s` (`script/TrackerEditTrigger.js`, `script/TrackerTriggerLifecycle.js`)
+and [ADR-016](/adr/016-onedit-authoritative-cache-retire-drive-modtime-poll.md), which went
+further than this doc's own resolved lean — the Drive-modtime poll (`ensurePaxCacheFresh_`) was
+retired outright rather than kept as a backstop. Archived, not staging: no remaining work here.
 
 ## Scope
 

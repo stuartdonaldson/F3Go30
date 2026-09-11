@@ -162,6 +162,63 @@ assert.equal(
   );
 }
 
+// --- the cmd=admin dispatch table IS the admin half of the registry (F3Go30-4hee) --------------
+//
+// script/WebApp.js's ADMIN_ACTIONS_ replaced a 26-way sequential `if (payload.action === …)`
+// chain. That chain could not be enumerated by anything, so the registry's admin.* keys were
+// hand-kept in step with it. The table can be, so it is diffed BOTH ways here: every row must be
+// declared in the registry (state-modifying) or in ENTRY_POINT_READ_ONLY_EXEMPT (read-only), and
+// every admin.* key in either map must have a row. `readOnly` on the row and the map the key
+// lives in are the same judgement, so a row that lies about being read-only fails here too.
+
+{
+  const { ADMIN_ACTIONS_ } = require(path.join(__dirname, '..', 'script', 'WebApp.js'));
+
+  const tableActions = Object.keys(ADMIN_ACTIONS_).sort();
+  assert.ok(tableActions.length > 0, 'ADMIN_ACTIONS_ is empty');
+
+  for (const action of tableActions) {
+    const row = ADMIN_ACTIONS_[action];
+    assert.equal(
+      typeof row.handler, 'function',
+      `ADMIN_ACTIONS_.${action} has no handler function`
+    );
+    assert.equal(
+      typeof row.readOnly, 'boolean',
+      `ADMIN_ACTIONS_.${action} carries no readOnly flag — the flag is what the registry diff below reads`
+    );
+  }
+
+  const registeredAdmin = Object.keys(ENTRY_POINT_REGISTRY)
+    .filter((k) => k.startsWith('admin.')).map((k) => k.slice('admin.'.length)).sort();
+  const exemptAdmin = Object.keys(ENTRY_POINT_READ_ONLY_EXEMPT)
+    .filter((k) => k.startsWith('admin.')).map((k) => k.slice('admin.'.length)).sort();
+
+  const tableWriting = tableActions.filter((a) => !ADMIN_ACTIONS_[a].readOnly).sort();
+  const tableReadOnly = tableActions.filter((a) => ADMIN_ACTIONS_[a].readOnly).sort();
+
+  assert.deepEqual(
+    tableWriting, registeredAdmin,
+    'ADMIN_ACTIONS_\'s state-modifying rows and the registry\'s admin.* keys disagree. Every ' +
+      '`readOnly: false` action must be registered as admin.<action> in ' +
+      'test/contract/entryPointRegistry.js, and nothing else may be. ' +
+      `(table: ${JSON.stringify(tableWriting)}, registry: ${JSON.stringify(registeredAdmin)})`
+  );
+  assert.deepEqual(
+    tableReadOnly, exemptAdmin,
+    'ADMIN_ACTIONS_\'s read-only rows and ENTRY_POINT_READ_ONLY_EXEMPT\'s admin.* keys disagree. ' +
+      'A `readOnly: true` action must claim its exemption there, with a reason. ' +
+      `(table: ${JSON.stringify(tableReadOnly)}, exempt: ${JSON.stringify(exemptAdmin)})`
+  );
+
+  // Exactly one action may run before the admin-secret gate; bootstrapSecret is what sets it.
+  const preAuth = tableActions.filter((a) => ADMIN_ACTIONS_[a].preAuth);
+  assert.deepEqual(
+    preAuth, ['bootstrapSecret'],
+    'only bootstrapSecret may be marked preAuth — every other admin action is secret-gated'
+  );
+}
+
 // --- the CLI enumeration -----------------------------------------------------------------------
 
 {
@@ -189,5 +246,6 @@ console.log(
   `test_entry_point_registry_view: OK — ${counts.total} entry points ` +
     `(${counts.covered} covered, ${counts.deferred} deferred), ` +
     `${Object.keys(ENTRY_POINT_READ_ONLY_EXEMPT).length} read-only exemptions; ` +
-    'guide §7 and harness-design §9a/§9b agree'
+    `ADMIN_ACTIONS_ (${Object.keys(require(path.join(__dirname, '..', 'script', 'WebApp.js')).ADMIN_ACTIONS_).length} actions) ` +
+    'matches the registry both ways; guide §7 and harness-design §9a/§9b agree'
 );

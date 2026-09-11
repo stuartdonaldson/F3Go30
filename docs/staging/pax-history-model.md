@@ -63,7 +63,7 @@ existing owner gate on a real datastore; unchanged by this plan).
 | 1 | `rollover-patch` | F3Go30-b6jy | ● | BUG: a too-short history window is served instead of rebuilt at rollover |
 | 1 | `rollover-patch` | F3Go30-5p3z | ● | Client telemetry: dashboard request/response and empty-render census |
 | 1 | `rollover-patch` | F3Go30-kyyy | ● | Server telemetry: dashboard cache and backfill counters |
-| 2 | `prior-month-bulk` | F3Go30-xzm2 | ○ | Hoist the prior-month backfill out of the dashboard roster loop |
+| 2 | `prior-month-bulk` | F3Go30-xzm2 | ● | Hoist the prior-month backfill out of the dashboard roster loop |
 | 2 | `prior-month-bulk` | F3Go30-m732 | ○ | Cache the unthrottled TrackerDB availableMonths read |
 | 3 | `history-model` | F3Go30-b0s1 | ○ | Store only the lead: drop the current-month overlap |
 | 4 | `profile-design` | F3Go30-3vd1 | ○ | Design pass: PaxProfile backfill mechanics |
@@ -77,7 +77,7 @@ existing owner gate on a real datastore; unchanged by this plan).
 |---|---|---|---|---|
 | 0 | `plan-open` | complete | 2026-09-02 | See §0 — plan-open below |
 | 1 | `rollover-patch` | code+tests complete, deploy pending | — | See §1 — rollover-patch below |
-| 2 | `prior-month-bulk` | pending | — | — |
+| 2 | `prior-month-bulk` | in progress (`F3Go30-xzm2` closed; `F3Go30-m732` open) | — | See §2 — prior-month-bulk below |
 | 3 | `history-model` | pending | — | — |
 | 4 | `profile-design` | pending | — | — |
 
@@ -188,6 +188,27 @@ in scope; a new persisted cache is not — that is the trap `F3Go30-m732`'s own 
 **Order note:** stage 1 fixing correctness makes *more* windows fall through to the backfill path,
 so this stage gets hotter as a direct result of the previous one. That is the reason it sits second
 and not later, and it is a preference asserted here rather than a dependency in the graph.
+
+- **Found (`F3Go30-xzm2`, 2026-09-10):** the operator check ran against SIT v2.6.2.8 on the real
+  26-PAX roster. Worst case — every PAX needing a backfill at rollover — went from
+  `rosterLoopMs` 26504 / `historyBackfillMs` 25325 to 6821 / 4143. Median cost per backfilled PAX
+  fell from 863 ms (n=27 pre-deploy loads) to 205 ms (n=7 post-deploy). `priorMonthResolves` and
+  `priorMonthOpens` are now 1 apiece regardless of roster size, which is the hoist's own evidence.
+  `rosterLoopMs` is usable as a before/after number again: the backfill share of it dropped from
+  ~97% (the blocker recorded in REVIEW-260910 stage 3 and §3 of that doc) to ~60%.
+- **Shape:** the once-per-request half (which month precedes the viewed one, plus that month's
+  layout and rows) lives in `getPriorMonthTailContext_`/`ensurePriorMonthTailRoster_` in
+  `script/dashboardIdentity.js`, memoized per execution and dropped by
+  `resetPriorMonthTailContextMemo_` at `handleCheckinDashboard_` entry. Only the per-PAX row
+  lookup stays per-PAX. This honours the stage's Must-not: a memo with no invalidation contract of
+  its own, never outliving the request — not a second persisted cache.
+- **Deliberately lazy:** the context resolves on first use, not eagerly before the roster loop. A
+  fully warm dashboard load never reaches the backfill at all, so eager resolution would add a
+  TrackerDB read to exactly the loads that currently cost nothing.
+- **Next stages must know:** PROD is still on older code — its `checkinWebapp.dashboard` events
+  carry no `historyBackfill*`/`priorMonth*` fields at all. The SIT numbers above are the only
+  measured ones. `F3Go30-m732` (the other half of this stage, the raw `_readTrackerDbRowsBySheetId_`
+  read) is untouched and still open.
 
 ### 3 — `history-model`
 

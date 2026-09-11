@@ -32,8 +32,17 @@ var IDENTITY_TOKEN_SECRET_PROPERTY_ = 'IDENTITY_TOKEN_SECRET';
 /** Lazily generates and persists the HMAC signing secret on first use — no manual bootstrap
  *  step, unlike ADMIN_SHARED_SECRET, since this key only needs to resist forgery, not gate
  *  administrative access. */
+// F3Go30-h4xt: script-properties writes go through ScriptProperties.js's invalidating facade, so
+// the per-execution whole-store memo (getScriptPropertiesSnapshot_) can never serve a value this
+// same execution has already overwritten. Resolved lazily inside the accessor because in GAS
+// these are plain globals whose defining file may evaluate after this one.
+var scriptPropertiesModule_it_ = (typeof require === 'function') ? require('./ScriptProperties.js') : null;
+function scriptProps_it_() {
+  return scriptPropertiesModule_it_ ? scriptPropertiesModule_it_.scriptPropertiesStore_() : scriptPropertiesStore_();
+}
+
 function getOrCreateIdentityTokenSecret_() {
-  var props = PropertiesService.getScriptProperties();
+  var props = scriptProps_it_();
   var secret = props.getProperty(IDENTITY_TOKEN_SECRET_PROPERTY_);
   if (!secret) {
     secret = Utilities.getUuid() + Utilities.getUuid();

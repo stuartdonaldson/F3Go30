@@ -23,23 +23,15 @@
  * out of scope here — tracked separately as F3Go30-440b.5.
  */
 
-var trackerEditTriggerPaxCacheModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./PaxCache.js')
-  : null;
-var wipePaxCacheAndRelatedCachesForSheet_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.wipePaxCacheAndRelatedCachesForSheet_)
-  || (typeof globalThis !== 'undefined' && globalThis.wipePaxCacheAndRelatedCachesForSheet_);
-var getPaxCacheRow_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.getPaxCacheRow_)
-  || (typeof globalThis !== 'undefined' && globalThis.getPaxCacheRow_);
-var setPaxCacheRow_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.setPaxCacheRow_)
-  || (typeof globalThis !== 'undefined' && globalThis.setPaxCacheRow_);
-var getPaxRosterIndex_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.getPaxRosterIndex_)
-  || (typeof globalThis !== 'undefined' && globalThis.getPaxRosterIndex_);
-var setPaxRosterIndex_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.setPaxRosterIndex_)
-  || (typeof globalThis !== 'undefined' && globalThis.setPaxRosterIndex_);
-var buildRosterIndexFromNames_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.buildRosterIndexFromNames_)
-  || (typeof globalThis !== 'undefined' && globalThis.buildRosterIndexFromNames_);
-var paxCacheNormalizeName_te_ = (trackerEditTriggerPaxCacheModule_ && trackerEditTriggerPaxCacheModule_.paxCacheNormalizeName_)
-  || (typeof globalThis !== 'undefined' && globalThis.paxCacheNormalizeName_);
+var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
+var trackerEditTriggerPaxCacheModule_ = gasRequire_('./PaxCache.js', ['wipePaxCacheAndRelatedCachesForSheet_', 'getPaxCacheRow_', 'setPaxCacheRow_', 'getPaxRosterIndex_', 'setPaxRosterIndex_', 'buildRosterIndexFromNames_', 'paxCacheNormalizeName_']);
+var wipePaxCacheAndRelatedCachesForSheet_te_ = trackerEditTriggerPaxCacheModule_.wipePaxCacheAndRelatedCachesForSheet_;
+var getPaxCacheRow_te_ = trackerEditTriggerPaxCacheModule_.getPaxCacheRow_;
+var setPaxCacheRow_te_ = trackerEditTriggerPaxCacheModule_.setPaxCacheRow_;
+var getPaxRosterIndex_te_ = trackerEditTriggerPaxCacheModule_.getPaxRosterIndex_;
+var setPaxRosterIndex_te_ = trackerEditTriggerPaxCacheModule_.setPaxRosterIndex_;
+var buildRosterIndexFromNames_te_ = trackerEditTriggerPaxCacheModule_.buildRosterIndexFromNames_;
+var paxCacheNormalizeName_te_ = trackerEditTriggerPaxCacheModule_.paxCacheNormalizeName_;
 
 // Named with trailing underscore so GAS does not auto-register it as a simple trigger.
 var TRACKER_EDIT_HANDLER_ = 'handleTrackerEdit_';
@@ -61,14 +53,14 @@ var TRACKER_EDIT_HEADER_ROWS_ = { 'Tracker': 4, 'Responses': 2 };
 // Tracker's F3 Name column is fixed (column A) — mirrors dashboardWebapp.js's TRACKER_NAME_COL_.
 var TRACKER_EDIT_NAME_COL_ZERO_BASED_ = 0;
 
-// Duplicated cache-key strings/TTL for dashboardWebapp.js's Responses layout + full-roster
-// CacheService blobs (responsesLayoutCacheKey_/responsesValuesCacheKey_, FULL_ROSTER_CACHE_TTL_
-// SECONDS_) — same convention PaxCache.js's wipePaxCacheAndRelatedCachesForSheet_ already uses
-// (see its comment) to avoid a circular dependency between this file and dashboardWebapp.js.
-// Keep in sync if either changes.
-var RESPONSES_LAYOUT_CACHE_PREFIX_TE_ = 'go30dash:responsesLayout:';
-var RESPONSES_VALUES_CACHE_PREFIX_TE_ = 'go30dash:responsesValues:';
-var FULL_ROSTER_CACHE_TTL_SECONDS_TE_ = 21600; // CacheService's max.
+// F3Go30-mk3a: the Responses layout/values cache keys are dashboardCache.js's — required
+// directly (no circularity: dashboardCache.js doesn't depend back on this file), replacing the
+// hand-copied prefix-string constants that used to live here.
+var trackerEditTriggerCacheModule_ = gasRequire_('./dashboardCache.js', ['responsesLayoutCacheKey_', 'responsesValuesCacheKey_']);
+var responsesLayoutCacheKey_te_ = trackerEditTriggerCacheModule_.responsesLayoutCacheKey_;
+var responsesValuesCacheKey_te_ = trackerEditTriggerCacheModule_.responsesValuesCacheKey_;
+var FULL_ROSTER_CACHE_TTL_SECONDS_TE_ = 21600; // CacheService's max. TTL kept local (not part of
+                                                // this bead's key-string consolidation).
 
 /**
  * Reads the Responses sheet's F3 Name column index (zero-based) from dashboardWebapp.js's own
@@ -79,7 +71,7 @@ var FULL_ROSTER_CACHE_TTL_SECONDS_TE_ = 21600; // CacheService's max.
  */
 function resolveResponsesNameColFromCachedLayout_te_(sheetId) {
   try {
-    var raw = CacheService.getScriptCache().get(RESPONSES_LAYOUT_CACHE_PREFIX_TE_ + sheetId);
+    var raw = CacheService.getScriptCache().get(responsesLayoutCacheKey_te_(sheetId));
     if (!raw) return null;
     var layout = JSON.parse(raw);
     var col = layout && layout.columns && layout.columns.F3_NAME;
@@ -112,7 +104,7 @@ function resolveNameColumn_te_(kind, sheetId) {
  * touched cell rather than a full deserialize/reserialize round trip of every row.
  */
 function patchResponsesFullRosterCache_te_(sheetId, sheetRow, sheetCol, newValue) {
-  var cacheKey = RESPONSES_VALUES_CACHE_PREFIX_TE_ + sheetId;
+  var cacheKey = responsesValuesCacheKey_te_(sheetId);
   try {
     var cache = CacheService.getScriptCache();
     var raw = cache.get(cacheKey);

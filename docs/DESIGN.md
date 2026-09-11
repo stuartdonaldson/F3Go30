@@ -90,7 +90,7 @@ class BG1,BG3 lightgreen
 | Bonus Rules | `BonusTypes.js` | Centralized bonus-type registry (rule definitions: points, link requirement, cap) consumed by `dashboardWebapp.js`/`bonusWebapp.js` chip rendering and validation |
 | Email | `onboardingEmail.js`, `responseSettingsEmail.js`, `signupEmail.js`, `signupReuse.js` + matching `*Template.html` files | Site-Q onboarding email, response-settings confirmation email, sign-up confirmation email, and repeat-signup detection/reuse |
 | UI / Notifications | `NotificationSBCode.js`, `NotificationSidebar.html` | Sidebar panel: log streaming, prompts, HTML link generation |
-| Utilities | `logActivity.js`, `urlShortener.js`, `Utilities.js`, `libSheets.js`, `response_utils.js`, `PaxCache.js`, `GasLogger.js`, `logFile.js`, `version.js` | Activity logging, URL shortening (TinyURL/Bitly), cell utilities, Config sheet reads, sheet-access helpers, response-parsing helpers, PAX lookup caching, Axiom log sink, log-file download support, version/About constants |
+| Utilities | `logActivity.js`, `urlShortener.js`, `Utilities.js`, `libSheets.js`, `response_utils.js`, `PaxCache.js`, `ScriptProperties.js`, `GasLogger.js`, `logFile.js`, `version.js` | Activity logging, URL shortening (TinyURL/Bitly), cell utilities, Config sheet reads, sheet-access helpers, response-parsing helpers, PAX lookup caching, the per-execution script-properties snapshot + the invalidating write facade every properties write goes through (`ScriptProperties.js`), Axiom log sink, log-file download support, version/About constants |
 
 ---
 
@@ -506,7 +506,7 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
 
 | Sheet | Purpose | Key Columns |
 |-------|---------|-------------|
-| Tracker | One row per PAX; daily check-in grid | A: F3 Name, B: Team/Goal (VLOOKUP), G: Raw Score, H: Score, columns I+ (row 3 header): a `Date` value = day column (PAX-entered 1/0, or −1 after nightly marking), the literal string `'Bonus'` = weekly bonus column (row 2 holds its period number, formula-computed); data rows 4+. `dashboardWebapp.js`'s `classifyTrackerColumns_` reads row 2/row 3 to tell day columns from bonus columns rather than hardcoding column letters |
+| Tracker | One row per PAX; daily check-in grid | A: F3 Name, B: Team/Goal (VLOOKUP), G: Raw Score, H: Score, columns I+ (row 3 header): a `Date` value = day column (PAX-entered 1/0, or −1 after nightly marking), the literal string `'Bonus'` = weekly bonus column (row 2 holds its period number, formula-computed); data rows 4+. `dashboardWebapp.js`'s `classifyTrackerColumns_` reads row 2/row 3 to tell day columns from bonus columns rather than hardcoding column letters. **G/H's own formulas sum every day column with no date cutoff** (docs/sheet-reference.md) — as of F3Go30-h8tt, `buildDashboardPaxRow_` no longer reads these two cells; it recomputes rawScore/score from the already-today-cutoff dayValues + bonus pills instead, so a PAX who pre-marks a future day doesn't get an inflated dashboard/leaderboard score. The cells themselves are untouched (still what `HIM Score`/`Team Score`'s spreadsheet-native `QUERY`s read, so those two sheets can diverge from the app's numbers for a PAX with a pre-marked future day) |
 | Responses | Raw Google Form submission data | Col 4 (index 3): F3 Name, Col 6: Team |
 | Config | Runtime configuration read by the script | A: variable name, B: primary value, C: secondary value |
 | Help | Operational links and config values | A: Label, B: URL |

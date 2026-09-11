@@ -304,9 +304,18 @@ var GasLogger = {
   }
 };
 
+// F3Go30-h4xt: script-properties writes go through ScriptProperties.js's invalidating facade, so
+// the per-execution whole-store memo (getScriptPropertiesSnapshot_) can never serve a value this
+// same execution has already overwritten. Resolved lazily inside the accessor because in GAS
+// these are plain globals whose defining file may evaluate after this one.
+var scriptPropertiesModule_gl_ = (typeof require === 'function') ? require('./ScriptProperties.js') : null;
+function scriptProps_gl_() {
+  return scriptPropertiesModule_gl_ ? scriptPropertiesModule_gl_.scriptPropertiesStore_() : scriptPropertiesStore_();
+}
+
 /** Run from GAS editor to configure without opening Script Properties UI manually. */
 function setScriptProperty(key, value) {
-  PropertiesService.getScriptProperties().setProperty(key, value);
+  scriptProps_gl_().setProperty(key, value);
 }
 
 function getScriptProperty(key) {

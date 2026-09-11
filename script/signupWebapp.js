@@ -7,46 +7,27 @@
  * the same net effect on the Responses/Tracker sheets (see requirements doc §8, §11).
  */
 
-var signupWebappResponseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./response_utils.js')
-  : null;
-var getResponseEmailValue_ = (signupWebappResponseUtilsModule_ && signupWebappResponseUtilsModule_.getResponseEmailValue_)
-  || (typeof globalThis !== 'undefined' && globalThis.getResponseEmailValue_);
+var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
+var signupWebappResponseUtilsModule_ = gasRequire_('./response_utils.js', ['getResponseEmailValue_', 'resolveResponseColumns']);
+var getResponseEmailValue_ = signupWebappResponseUtilsModule_.getResponseEmailValue_;
 
-var signupWebappAddResponseModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./addResponseOnSubmit.js')
-  : null;
-var formatRegistrationMonth_ = (signupWebappAddResponseModule_ && signupWebappAddResponseModule_.formatRegistrationMonth_)
-  || (typeof globalThis !== 'undefined' && globalThis.formatRegistrationMonth_);
-var sortTrackerSheet_ = (signupWebappAddResponseModule_ && signupWebappAddResponseModule_.sortTrackerSheet_)
-  || (typeof globalThis !== 'undefined' && globalThis.sortTrackerSheet_);
+var signupWebappAddResponseModule_ = gasRequire_('./addResponseOnSubmit.js', ['formatRegistrationMonth_', 'sortTrackerSheet_']);
+var formatRegistrationMonth_ = signupWebappAddResponseModule_.formatRegistrationMonth_;
+var sortTrackerSheet_ = signupWebappAddResponseModule_.sortTrackerSheet_;
 
-var resolveResponseColumns = (signupWebappResponseUtilsModule_ && signupWebappResponseUtilsModule_.resolveResponseColumns)
-  || (typeof globalThis !== 'undefined' && globalThis.resolveResponseColumns);
+var resolveResponseColumns = signupWebappResponseUtilsModule_.resolveResponseColumns;
 
-var signupWebappPaxCacheModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./PaxCache.js')
-  : null;
-var deletePaxCacheRow_sw_ = (signupWebappPaxCacheModule_ && signupWebappPaxCacheModule_.deletePaxCacheRow_)
-  || (typeof globalThis !== 'undefined' && globalThis.deletePaxCacheRow_);
-var upsertPaxGoalsForMonth_sw_ = (signupWebappPaxCacheModule_ && signupWebappPaxCacheModule_.upsertPaxGoalsForMonth_)
-  || (typeof globalThis !== 'undefined' && globalThis.upsertPaxGoalsForMonth_);
-var patchPaxRosterIndex_sw_ = (signupWebappPaxCacheModule_ && signupWebappPaxCacheModule_.patchPaxRosterIndex_)
-  || (typeof globalThis !== 'undefined' && globalThis.patchPaxRosterIndex_);
+var signupWebappPaxCacheModule_ = gasRequire_('./PaxCache.js', ['deletePaxCacheRow_', 'upsertPaxGoalsForMonth_', 'patchPaxRosterIndex_']);
+var deletePaxCacheRow_sw_ = signupWebappPaxCacheModule_.deletePaxCacheRow_;
+var upsertPaxGoalsForMonth_sw_ = signupWebappPaxCacheModule_.upsertPaxGoalsForMonth_;
+var patchPaxRosterIndex_sw_ = signupWebappPaxCacheModule_.patchPaxRosterIndex_;
 
-var signupWebappCheckinSessionsModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./CheckinSessions.js')
-  : null;
-var createOrTouchCheckinSession_sw_ = (signupWebappCheckinSessionsModule_ && signupWebappCheckinSessionsModule_.createOrTouchCheckinSession_)
-  || (typeof globalThis !== 'undefined' && globalThis.createOrTouchCheckinSession_);
-var resolveOrCreateCheckinSessionGuid_sw_ = (signupWebappCheckinSessionsModule_ && signupWebappCheckinSessionsModule_.resolveOrCreateCheckinSessionGuid_)
-  || (typeof globalThis !== 'undefined' && globalThis.resolveOrCreateCheckinSessionGuid_);
+var signupWebappCheckinSessionsModule_ = gasRequire_('./CheckinSessions.js', ['createOrTouchCheckinSession_', 'resolveOrCreateCheckinSessionGuid_']);
+var createOrTouchCheckinSession_sw_ = signupWebappCheckinSessionsModule_.createOrTouchCheckinSession_;
+var resolveOrCreateCheckinSessionGuid_sw_ = signupWebappCheckinSessionsModule_.resolveOrCreateCheckinSessionGuid_;
 
-var signupWebappEmailModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./signupEmail.js')
-  : null;
-var resolveCheckinLinks_sw_ = (signupWebappEmailModule_ && signupWebappEmailModule_.resolveCheckinLinks_)
-  || (typeof globalThis !== 'undefined' && globalThis.resolveCheckinLinks_);
+var signupWebappEmailModule_ = gasRequire_('./signupEmail.js', ['resolveCheckinLinks_']);
+var resolveCheckinLinks_sw_ = signupWebappEmailModule_.resolveCheckinLinks_;
 
 function normalizeTeamValue_(value) {
   return String(value || '').trim();

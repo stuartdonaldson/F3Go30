@@ -1,60 +1,24 @@
 const assert = require('node:assert/strict');
+const { describe, it } = require('node:test');
 
-// In-memory stand-in for PropertiesService.getScriptProperties() — same shape/behavior contract
-// (getProperty/setProperty/deleteProperty/getKeys) the real GAS service exposes.
-function makeFakeProperties_() {
-  var store = {};
-  var self;
-  self = {
-    getProperty: function(key) { return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null; },
-    setProperty: function(key, value) { store[key] = value; },
-    setProperties: function(properties) {
-      Object.keys(properties || {}).forEach(function(key) { store[key] = properties[key]; });
-    },
-    deleteProperty: function(key) { delete store[key]; },
-    getKeys: function() { return Object.keys(store); },
-    getProperties: function() {
-      self._getPropertiesCalls++;
-      return Object.assign({}, store);
-    },
-    _store: store,
-    _getPropertiesCalls: 0,
-  };
-  return self;
-}
+// F3Go30-taag/F3Go30-emwk.14: the PropertiesService / CacheService / LockService / GasLogger
+// stand-ins come from test/helpers/gasEnv.js — this file used to carry its own copies, and they
+// were the copies every other test file cloned. Each case is now its own `it`, so a failure names
+// the behaviour rather than the file.
+const { makeFakeProperties_, makeFakeCache_, makeFakeLogger_, makeFakeLock_ } = require('./helpers/gasEnv.js');
 
 var fakeProps;
-global.PropertiesService = {
-  getScriptProperties: function() { return fakeProps; },
-};
+global.PropertiesService = { getScriptProperties: function() { return fakeProps; } };
 
-// In-memory stand-in for LockService.getScriptLock() — single-process tests never contend, so
-// this just needs to satisfy the waitLock/releaseLock contract patchPaxRosterIndex_ relies on.
-global.LockService = {
-  getScriptLock: function() {
-    return { waitLock: function() {}, releaseLock: function() {} };
-  },
-};
-var gasLoggerRunCalls_ = [];
-global.GasLogger = {
-  log: function() {},
-  run: function(name, fn) { gasLoggerRunCalls_.push(name); return fn(); },
-};
+var fakeLock_ = makeFakeLock_();
+global.LockService = { getScriptLock: function() { return fakeLock_; } };
 
-// In-memory stand-in for CacheService.getScriptCache() — wipePaxCacheAndRelatedCachesForSheet_
-// also clears dashboardWebapp.js's full-roster cache keys (go30dash:trackerValues:/
-// go30dash:responsesValues:); this just needs to satisfy get/put/remove.
-var fakeCache_;
-function makeFakeCache_() {
-  var store = {};
-  return {
-    get: function(key) { return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null; },
-    put: function(key, value) { store[key] = value; },
-    remove: function(key) { delete store[key]; },
-    _store: store,
-  };
-}
-fakeCache_ = makeFakeCache_();
+var fakeLogger_ = makeFakeLogger_();
+global.GasLogger = fakeLogger_;
+
+// wipePaxCacheAndRelatedCachesForSheet_ also clears dashboardWebapp.js's full-roster cache keys
+// (go30dash:trackerValues:/go30dash:responsesValues:), so the cache fake has to be live here too.
+var fakeCache_ = makeFakeCache_();
 global.CacheService = { getScriptCache: function() { return fakeCache_; } };
 
 const {
@@ -67,6 +31,7 @@ const {
   getPaxRosterIndex_,
   setPaxRosterIndex_,
   patchPaxRosterIndex_,
+  refreshPaxCacheRowFromSheet_,
   wipePaxCacheForSheet_,
   resolvePaxRowIndex_,
   getPaxCacheRequestStats_,
@@ -104,8 +69,10 @@ function resetProps_() {
   resetPaxCacheRequestStats_();
 }
 
+describe('PaxCache script-properties cache', function() {
+
 // ── per-PAX row cache ────────────────────────────────────────────────────
-(function testPerPaxRowCacheRoundTrip() {
+it('per pax row cache round trip', function() {
   resetProps_();
   assert.equal(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), null);
   setPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan', ['Crazy Ivan', 'Crucible', 1, 0, '']);
@@ -113,18 +80,18 @@ function resetProps_() {
   assert.deepEqual(cached, ['Crazy Ivan', 'Crucible', 1, 0, '']);
   deletePaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan');
   assert.equal(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), null);
-})();
+});
 
-(function testPerPaxRowCacheRoundTripsDates() {
+it('per pax row cache round trips dates', function() {
   resetProps_();
   var ts = new Date(2026, 5, 1, 12, 30);
   setPaxCacheRow_('responses', 'sheet1', 'Little John', [ts, 'Little John', 'lj@example.com']);
   var cached = getPaxCacheRow_('responses', 'sheet1', 'Little John');
   assert.ok(cached[0] instanceof Date);
   assert.equal(cached[0].getTime(), ts.getTime());
-})();
+});
 
-(function testPerPaxCacheIsolatedByKindAndSheet() {
+it('per pax cache isolated by kind and sheet', function() {
   resetProps_();
   setPaxCacheRow_('tracker', 'sheetA', 'Same Name', ['tracker-A']);
   setPaxCacheRow_('responses', 'sheetA', 'Same Name', ['responses-A']);
@@ -132,9 +99,9 @@ function resetProps_() {
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheetA', 'Same Name'), ['tracker-A']);
   assert.deepEqual(getPaxCacheRow_('responses', 'sheetA', 'Same Name'), ['responses-A']);
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheetB', 'Same Name'), ['tracker-B']);
-})();
+});
 
-(function testSetPaxCacheRowsBulkWritesRowsAndRosterIndexInOneCall() {
+it('set pax cache rows bulk writes rows and roster index in one call', function() {
   resetProps_();
   var setPropertyCalls = 0;
   var realSetProperty = fakeProps.setProperty;
@@ -149,17 +116,17 @@ function resetProps_() {
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), ['Crazy Ivan', 'Crucible', 1]);
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheet1', 'Little John'), ['Little John', 'Crucible', 0]);
   assert.deepEqual(getPaxRosterIndex_('tracker', 'sheet1'), { 'crazy ivan': 0, 'little john': 1 });
-})();
+});
 
-(function testSetPaxCacheRowsBulkDoesNotDisturbUnrelatedProperties() {
+it('set pax cache rows bulk does not disturb unrelated properties', function() {
   resetProps_();
   setPaxCacheRow_('tracker', 'sheetOther', 'Someone Else', ['untouched']);
   setPaxCacheRowsBulk_('tracker', 'sheet1', { 'Crazy Ivan': ['v1'] }, { 'crazy ivan': 0 });
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheetOther', 'Someone Else'), ['untouched']);
-})();
+});
 
 // ── roster index ─────────────────────────────────────────────────────────
-(function testResolvePaxRowIndexRebuildsOnMiss() {
+it('resolve pax row index rebuilds on miss', function() {
   resetProps_();
   var reads = 0;
   var readNameColumn = function() { reads++; return ['Little John', 'Crazy Ivan', '', 'Splinter']; };
@@ -170,9 +137,9 @@ function resetProps_() {
   // Second lookup (different name, same sheet) hits the now-cached index — no second scan.
   assert.equal(resolvePaxRowIndex_('tracker', 'sheet1', 'Splinter', readNameColumn), 3);
   assert.equal(reads, 1);
-})();
+});
 
-(function testResolvePaxRowIndexNeverCachesAMiss() {
+it('resolve pax row index never caches a miss', function() {
   resetProps_();
   var reads = 0;
   var readNameColumn = function() { reads++; return ['Little John']; };
@@ -183,23 +150,23 @@ function resetProps_() {
   // a brand-new signup that lands between these two calls must be found immediately.
   assert.equal(resolvePaxRowIndex_('tracker', 'sheet1', 'Nobody', readNameColumn), -1);
   assert.equal(reads, 2);
-})();
+});
 
-(function testPatchPaxRosterIndexNoopWhenNothingCached() {
+it('patch pax roster index noop when nothing cached', function() {
   resetProps_();
   patchPaxRosterIndex_('responses', 'sheet1', 'New Guy', 5);
   assert.equal(getPaxRosterIndex_('responses', 'sheet1'), null);
-})();
+});
 
-(function testPatchPaxRosterIndexUpdatesExistingIndex() {
+it('patch pax roster index updates existing index', function() {
   resetProps_();
   setPaxRosterIndex_('responses', 'sheet1', { 'little john': 0 });
   patchPaxRosterIndex_('responses', 'sheet1', 'New Guy', 1);
   assert.deepEqual(getPaxRosterIndex_('responses', 'sheet1'), { 'little john': 0, 'new guy': 1 });
-})();
+});
 
 // ── bulk wipe ────────────────────────────────────────────────────────────
-(function testWipePaxCacheForSheetClearsRowsAndIndexOnlyForThatSheet() {
+it('wipe pax cache for sheet clears rows and index only for that sheet', function() {
   resetProps_();
   setPaxCacheRow_('tracker', 'sheetA', 'PAX One', ['a']);
   setPaxCacheRow_('tracker', 'sheetA', 'PAX Two', ['b']);
@@ -215,16 +182,16 @@ function resetProps_() {
   // sheetB is untouched.
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheetB', 'PAX Three'), ['c']);
   assert.deepEqual(getPaxRosterIndex_('tracker', 'sheetB'), { 'pax three': 0 });
-})();
+});
 
-(function testPaxCacheNormalizeName() {
+it('pax cache normalize name', function() {
   assert.equal(paxCacheNormalizeName_('  Crazy Ivan  '), 'crazy ivan');
   assert.equal(paxCacheNormalizeName_(''), '');
   assert.equal(paxCacheNormalizeName_(null), '');
-})();
+});
 
 // ── request stats (F3Go30-440b.1) ────────────────────────────────────────
-(function testRequestStatsTrackRowHitAndMiss() {
+it('request stats track row hit and miss', function() {
   resetProps_();
   getPaxCacheRow_('tracker', 'sheet1', 'Nobody'); // miss
   setPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan', ['v1']);
@@ -232,9 +199,9 @@ function resetProps_() {
   var stats = getPaxCacheRequestStats_();
   assert.equal(stats.paxRowMiss, 1);
   assert.equal(stats.paxRowHit, 1);
-})();
+});
 
-(function testRequestStatsTrackRosterHitAndMiss() {
+it('request stats track roster hit and miss', function() {
   resetProps_();
   var readNameColumn = function() { return ['Crazy Ivan']; };
   resolvePaxRowIndex_('tracker', 'sheet1', 'Crazy Ivan', readNameColumn); // no cached index yet — miss (rebuild)
@@ -242,27 +209,57 @@ function resetProps_() {
   var stats = getPaxCacheRequestStats_();
   assert.equal(stats.paxRosterMiss, 1);
   assert.equal(stats.paxRosterHit, 1);
-})();
+});
 
 // paxCacheWiped has no remaining writer since the Drive-modtime freshness gate was retired
 // (F3Go30-o39s.7) — wipes now happen via wipePaxCacheForSheet_/wipePaxCacheAndRelatedCachesForSheet_
 // (TrackerEditTrigger.js's onEdit path), which don't set this per-request flag.
-(function testRequestStatsWipeFlagStaysFalse() {
+it('request stats wipe flag stays false', function() {
   resetProps_();
   resetPaxCacheRequestStats_();
   getPaxCacheRow_('tracker', 'sheet1', 'Nobody');
   assert.equal(getPaxCacheRequestStats_().paxCacheWiped, false);
-})();
+});
 
-(function testRequestStatsResetClearsAllCounters() {
+it('request stats reset clears all counters', function() {
   resetProps_();
   getPaxCacheRow_('tracker', 'sheet1', 'Nobody');
   resolvePaxRowIndex_('tracker', 'sheet1', 'Nobody', function() { return []; });
   resetPaxCacheRequestStats_();
   assert.deepEqual(getPaxCacheRequestStats_(), {
     paxCacheWiped: false, paxRosterHit: 0, paxRosterMiss: 0, paxRowHit: 0, paxRowMiss: 0,
+    paxLockFailed: 0, paxLockWaitMs: 0,
   });
-})();
+});
+
+// F3Go30-dyj9: lockFailed count + lock wait duration, folded into the same stats snapshot the
+// cache hit/miss counters use, so a check-in's own telemetry event can answer whether the single
+// global script lock is actually contended at current scale.
+it('request stats track lock wait duration on success', function() {
+  resetProps_();
+  global.SpreadsheetApp = { flush: function() {} };
+  var fakeRange_ = { getValues: function() { return [['Crazy Ivan']]; } };
+  var fakeSheet_ = { getLastColumn: function() { return 1; }, getRange: function() { return fakeRange_; } };
+  refreshPaxCacheRowFromSheet_('tracker', 'sheet1', 'Crazy Ivan', fakeSheet_, 4);
+  var stats = getPaxCacheRequestStats_();
+  assert.equal(stats.paxLockFailed, 0);
+  assert.equal(typeof stats.paxLockWaitMs, 'number');
+  assert.ok(stats.paxLockWaitMs >= 0);
+  delete global.SpreadsheetApp;
+});
+
+it('refresh pax cache row from sheet lock failure counts as a failure with wait duration recorded', function() {
+  resetProps_();
+  var realLock = global.LockService;
+  global.LockService = { getScriptLock: function() { return { waitLock: function() { throw new Error('busy'); }, releaseLock: function() {} }; } };
+  refreshPaxCacheRowFromSheet_('tracker', 'sheet1', 'Crazy Ivan', { getLastColumn: function() { throw new Error('must not be reached'); } }, 4);
+  var stats = getPaxCacheRequestStats_();
+  assert.equal(stats.paxLockFailed, 1);
+  assert.equal(typeof stats.paxLockWaitMs, 'number');
+  assert.ok(stats.paxLockWaitMs >= 0);
+  assert.equal(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), null, 'entry must still be dropped, unchanged from before this bead');
+  global.LockService = realLock;
+});
 
 // ── nightly purge (F3Go30-440b.2) ────────────────────────────────────────
 var TRACKER_DB_HEADERS_FOR_TEST_ = [
@@ -339,7 +336,7 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId
   };
 }
 
-(function testPurgeWipesOnlySheetsOlderThanRetention() {
+it('purge wipes only sheets older than retention', function() {
   resetProps_();
   var now = new Date(2026, 6, 16); // Jul 16 2026
   var oldStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ + 5) * 24 * 60 * 60 * 1000);
@@ -365,18 +362,18 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId
 
   // Current-month entries untouched.
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheet-recent', 'Little John'), ['recent']);
-})();
+});
 
-(function testPurgeKeepsRowWithUnparseableStartDate() {
+it('purge keeps row with unparseable start date', function() {
   resetProps_();
   setPaxCacheRow_('tracker', 'sheet-bad', 'PAX', ['v']);
   var spreadsheet = makeFakeTrackerDbSpreadsheet_([{ sheetId: 'sheet-bad', startDate: 'not-a-date' }]);
   var result = purgeStalePaxCache_(new Date(2026, 6, 16), spreadsheet);
   assert.deepEqual(result, { checked: 1, purged: 0, kept: 1, paxRowsPurged: 0, orphanedSheetsPurged: 0, historyEntriesPurged: 0 });
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheet-bad', 'PAX'), ['v']);
-})();
+});
 
-(function testPurgeRemovesPaxRowsNotInCheckinSessions() {
+it('purge removes pax rows not in checkin sessions', function() {
   resetProps_();
   var now = new Date(2026, 6, 16);
   var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
@@ -399,12 +396,12 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheet-recent', 'Crazy Ivan'), ['active']);
   assert.equal(getPaxCacheRow_('tracker', 'sheet-recent', 'Ghost Pax'), null);
   assert.equal(getPaxCacheRow_('responses', 'sheet-recent', 'Ghost Pax'), null);
-})();
+});
 
 // A missing/empty CheckinSessions sheet means "nobody currently active," per
 // listActiveCheckinSessionF3Names_'s own contract (F3Go30 — read-only, never provisions the
 // sheet) — so every cached PAX row on a kept sheet is purged, same as any genuinely inactive PAX.
-(function testPurgePurgesEveryPaxRowWhenNoOneHasACheckinSession() {
+it('purge purges every pax row when no one has a checkin session', function() {
   resetProps_();
   var now = new Date(2026, 6, 16);
   var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
@@ -417,26 +414,26 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId
   var result = purgeStalePaxCache_(now, spreadsheet);
   assert.deepEqual(result, { checked: 1, purged: 0, kept: 1, paxRowsPurged: 1, orphanedSheetsPurged: 0, historyEntriesPurged: 0 });
   assert.equal(getPaxCacheRow_('tracker', 'sheet-recent', 'Crazy Ivan'), null);
-})();
+});
 
-(function testPurgeNoOpWhenTrackerDbMissing() {
+it('purge no op when tracker db missing', function() {
   resetProps_();
   var spreadsheet = { getSheetByName: function() { return null; } };
   var result = purgeStalePaxCache_(new Date(2026, 6, 16), spreadsheet);
   assert.deepEqual(result, { checked: 0, purged: 0, kept: 0, paxRowsPurged: 0, orphanedSheetsPurged: 0, historyEntriesPurged: 0 });
-})();
+});
 
 // ── orphan sweep (F3Go30-440b.2 follow-up) ───────────────────────────────
-(function testExtractSheetIdFromPaxCacheKeyParsesBothPrefixes() {
+it('extract sheet id from pax cache key parses both prefixes', function() {
   assert.equal(extractSheetIdFromPaxCacheKey_('go30pax:tracker:sheet1:crazy ivan'), 'sheet1');
   assert.equal(extractSheetIdFromPaxCacheKey_('go30idx:responses:sheet2'), 'sheet2');
   // go30hist: (DR-01) places its discriminator one segment earlier than go30pax:/go30idx: —
   // scopeId:name, not kind:sheetId:name.
   assert.equal(extractSheetIdFromPaxCacheKey_('go30hist:tmpl-scope-1:crazy ivan'), 'tmpl-scope-1');
   assert.equal(extractSheetIdFromPaxCacheKey_('WEBAPP_URL'), null);
-})();
+});
 
-(function testCollectKnownTrackerSheetIdsUnionsBoundAndEveryNamespace() {
+it('collect known tracker sheet ids unions bound and every namespace', function() {
   var spreadsheet = makeFakeTrackerDbSpreadsheet_(
     [{ sheetId: 'bound-tracker', startDate: new Date(2026, 6, 1) }],
     null,
@@ -445,9 +442,9 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId
   var known = collectKnownTrackerSheetIds_(spreadsheet);
   assert.deepEqual(known, { 'bound-scope': true, 'bound-tracker': true, 'ns-tmpl-1': true, 'ns-tracker-1': true });
   delete global.SpreadsheetApp;
-})();
+});
 
-(function testCollectKnownTrackerSheetIdsSkipsUnreachableNamespaceAndLogs() {
+it('collect known tracker sheet ids skips unreachable namespace and logs', function() {
   var logged = [];
   var realLog = global.GasLogger.log;
   global.GasLogger.log = function(name, data) { logged.push({ name: name, data: data }); };
@@ -465,9 +462,9 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId
 
   global.GasLogger.log = realLog;
   delete global.SpreadsheetApp;
-})();
+});
 
-(function testPurgeOrphanSweepWipesEntriesForDeletedTracker() {
+it('purge orphan sweep wipes entries for deleted tracker', function() {
   resetProps_();
   var now = new Date(2026, 6, 16);
   var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
@@ -493,9 +490,9 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId
   assert.equal(fakeProps.getProperty('go30idx:tracker:sheet-deleted'), null);
   // The still-registered, still-active tracker is untouched.
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheet-recent', 'Crazy Ivan'), ['active']);
-})();
+});
 
-(function testPurgeOrphanSweepDoesNotWipeLiveNamespaceTrackerCache() {
+it('purge orphan sweep does not wipe live namespace tracker cache', function() {
   resetProps_();
   var now = new Date(2026, 6, 16);
   var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
@@ -516,9 +513,9 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId
   assert.equal(result.orphanedSheetsPurged, 0);
   assert.deepEqual(getPaxCacheRow_('tracker', 'ns-tracker-1', 'Namespace Pax'), ['alive']);
   delete global.SpreadsheetApp;
-})();
+});
 
-(function testPurgeOrphanSweepSkippedWhenKnownSheetIdsEmpty() {
+it('purge orphan sweep skipped when known sheet ids empty', function() {
   resetProps_();
   setPaxCacheRow_('tracker', 'sheet-anything', 'Someone', ['v']);
 
@@ -528,11 +525,11 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId
   var result = purgeStalePaxCache_(new Date(2026, 6, 16), spreadsheet);
   assert.equal(result.orphanedSheetsPurged, 0);
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheet-anything', 'Someone'), ['v']);
-})();
+});
 
 // ── f3Name-keyed rolling history window (F3Go30-5uk2) ──────────────────────
 
-(function testHistoryEncodeDecodeRoundTrip() {
+it('history encode decode round trip', function() {
   assert.equal(paxHistoryEncodeValue_(1), '1');
   assert.equal(paxHistoryEncodeValue_(0), '0');
   assert.equal(paxHistoryEncodeValue_(-1), 'X');
@@ -541,33 +538,33 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId
   assert.deepEqual(paxHistoryDaysToValues_('10X.'), [1, 0, -1, '']);
   assert.equal(paxHistoryDecodeChar_('1'), 1);
   assert.equal(paxHistoryDecodeChar_('Q'), ''); // unknown char degrades to blank, never throws
-})();
+});
 
-(function testHistoryDayDiff() {
+it('history day diff', function() {
   assert.equal(paxHistoryDayDiff_('2026-07-31', '2026-08-01'), 1);
   assert.equal(paxHistoryDayDiff_('2026-08-01', '2026-07-31'), -1);
   assert.equal(paxHistoryDayDiff_('2026-08-01', '2026-08-01'), 0);
-})();
+});
 
-(function testAdvanceEntryColdStart() {
+it('advance entry cold start', function() {
   var next = advancePaxHistoryEntry_(null, '2026-08-01', 1);
   assert.deepEqual(next, { historyEndDate: '2026-08-01', days: '1' });
-})();
+});
 
-(function testAdvanceEntrySameDayRewrite() {
+it('advance entry same day rewrite', function() {
   var entry = { historyEndDate: '2026-08-01', days: '110' };
   // A PAX correcting today's own value before month-boundary logic ever advances the day.
   var next = advancePaxHistoryEntry_(entry, '2026-08-01', 1);
   assert.deepEqual(next, { historyEndDate: '2026-08-01', days: '111' });
-})();
+});
 
-(function testAdvanceEntryNextDayAppendsAndShifts() {
+it('advance entry next day appends and shifts', function() {
   var entry = { historyEndDate: '2026-08-01', days: '110' };
   var next = advancePaxHistoryEntry_(entry, '2026-08-02', 0);
   assert.deepEqual(next, { historyEndDate: '2026-08-02', days: '1100' });
-})();
+});
 
-(function testAdvanceEntryWindowCapsAtMaxLength() {
+it('advance entry window caps at max length', function() {
   var days = '';
   for (var i = 0; i < PAX_HISTORY_WINDOW_DAYS_; i++) days += '1';
   var entry = { historyEndDate: '2026-08-01', days: days };
@@ -575,28 +572,28 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId
   assert.equal(next.days.length, PAX_HISTORY_WINDOW_DAYS_);
   assert.equal(next.days.slice(-1), '0'); // newest day retained
   assert.equal(next.historyEndDate, '2026-08-02');
-})();
+});
 
-(function testAdvanceEntryGapIsPaddedWithBlanks() {
+it('advance entry gap is padded with blanks', function() {
   // Nightly job missed a few runs — the gap between historyEndDate and the new day must be
   // represented as unknown ('.'), not silently skipped (which would misalign every earlier day).
   var entry = { historyEndDate: '2026-08-01', days: '1' };
   var next = advancePaxHistoryEntry_(entry, '2026-08-04', -1);
   assert.deepEqual(next, { historyEndDate: '2026-08-04', days: '1..X' });
-})();
+});
 
-(function testAdvanceEntryPastDayEditWithinWindowPatchesInPlace() {
+it('advance entry past day edit within window patches in place', function() {
   // "Yesterday" edited after today's own write already advanced the window past it.
   var entry = { historyEndDate: '2026-08-02', days: '101' };
   var next = advancePaxHistoryEntry_(entry, '2026-08-01', 1);
   assert.deepEqual(next, { historyEndDate: '2026-08-02', days: '111' });
-})();
+});
 
-(function testAdvanceEntryPastDayOlderThanWindowIsIgnored() {
+it('advance entry past day older than window is ignored', function() {
   var entry = { historyEndDate: '2026-08-02', days: '01' };
   var next = advancePaxHistoryEntry_(entry, '2026-07-01', 1);
   assert.deepEqual(next, entry); // outside the represented window — not silently corrupted
-})();
+});
 
 // Namespace scope id used by the tests below that don't exercise purge (any two distinct
 // namespaces' windows must never collide — DR-01) — purge-specific tests use
@@ -604,44 +601,49 @@ function makeFakeTrackerDbSpreadsheet_(rows, sessionF3Names, namespaces, boundId
 var SCOPE_A_ = 'scope-a';
 var SCOPE_B_ = 'scope-b';
 
-(function testHistoryEntryRoundTripGetSet() {
+it('history entry round trip get set', function() {
   resetProps_();
   assert.equal(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), null);
   setPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan', { historyEndDate: '2026-08-01', days: '1' });
   assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'crazy ivan'), { historyEndDate: '2026-08-01', days: '1' }); // case/space-insensitive
-})();
+});
 
 // Two namespaces sharing the same PropertiesService store (ADR-014) must never collide on the
 // same PAX name — the defect DR-01 fixes.
-(function testHistoryEntryIsScopedByNamespaceNotJustName() {
+it('history entry is scoped by namespace not just name', function() {
   resetProps_();
   setPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan', { historyEndDate: '2026-08-01', days: '1' });
   assert.equal(getPaxHistoryEntry_(SCOPE_B_, 'Crazy Ivan'), null);
   setPaxHistoryEntry_(SCOPE_B_, 'Crazy Ivan', { historyEndDate: '2026-08-01', days: '0' });
   assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), { historyEndDate: '2026-08-01', days: '1' });
   assert.deepEqual(getPaxHistoryEntry_(SCOPE_B_, 'Crazy Ivan'), { historyEndDate: '2026-08-01', days: '0' });
-})();
+});
 
-(function testAdvancePaxHistoryDayWriteThroughIsLockGuarded() {
+it('advance pax history day write through is lock guarded', function() {
   resetProps_();
   advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 1), 1);
   advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 2), 0);
   assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), { historyEndDate: '2026-08-02', days: '10' });
-})();
+});
 
-(function testAdvancePaxHistoryDayLockFailureIsBestEffort() {
+it('advance pax history day lock failure is best effort', function() {
   resetProps_();
   var realLock = global.LockService;
   global.LockService = { getScriptLock: function() { return { waitLock: function() { throw new Error('busy'); }, releaseLock: function() {} }; } };
   advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 1), 1); // must not throw
   assert.equal(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), null);
+  // F3Go30-dyj9: the same lock failure must also be visible in the per-execution stats snapshot.
+  var stats = getPaxCacheRequestStats_();
+  assert.equal(stats.paxLockFailed, 1);
+  assert.equal(typeof stats.paxLockWaitMs, 'number');
+  assert.ok(stats.paxLockWaitMs >= 0);
   global.LockService = realLock;
-})();
+});
 
 // wipeAllPaxCache_ (the admin invalidateAllCache action's "force a reload" escape hatch, WebApp.js)
 // must clear go30hist: entries too, not just the two original PaxCache prefixes — otherwise a
 // wrong/stale streak has no way to self-heal short of waiting out a write-through.
-(function testWipeAllPaxCacheAlsoClearsHistoryEntries() {
+it('wipe all pax cache also clears history entries', function() {
   resetProps_();
   setPaxCacheRow_('tracker', 'sheet-x', 'Someone', ['v']);
   setPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan', { historyEndDate: '2026-08-01', days: '1' });
@@ -649,7 +651,7 @@ var SCOPE_B_ = 'scope-b';
   assert.ok(wiped >= 2);
   assert.equal(getPaxCacheRow_('tracker', 'sheet-x', 'Someone'), null);
   assert.equal(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), null);
-})();
+});
 
 // ── F3Go30-uz9e.2: anchoring the stored window to the caller's context date ────────────────
 //
@@ -657,27 +659,27 @@ var SCOPE_B_ = 'scope-b';
 // window was silently assumed to end "now" no matter when it was last written. These cover the
 // four branches anchorPaxHistoryValues_ has to get right for the read side to mean anything.
 
-(function testAnchorHistoryValuesAtExactAnchorIsUnchanged() {
+it('anchor history values at exact anchor is unchanged', function() {
   assert.deepEqual(anchorPaxHistoryValues_({ historyEndDate: '2026-08-02', days: '1101' }, '2026-08-02'), [1, 1, 0, 1]);
-})();
+});
 
-(function testAnchorHistoryValuesTrimsWindowEndingAfterAnchor() {
+it('anchor history values trims window ending after anchor', function() {
   // Advance check-in: the PAX pre-marked Aug 5 on Aug 2, so the write padded Aug 3-4 with '.'
   // and stamped historyEndDate three days into the future. As of the Aug 2 context date, those
   // three characters do not exist yet — dropping them restores the real Aug 2 window.
   var entry = { historyEndDate: '2026-08-05', days: '1111..1' };
   assert.deepEqual(anchorPaxHistoryValues_(entry, '2026-08-02'), [1, 1, 1, 1]);
-})();
+});
 
-(function testAnchorHistoryValuesPadsWindowEndingBeforeAnchor() {
+it('anchor history values pads window ending before anchor', function() {
   // Nothing has been written for this PAX for two days (no check-in, nightly job not yet run).
   // Padding at the TAIL specifically is safe: computeStreak_ trims trailing blanks before
   // counting, so "not reported yet" does not read as a broken streak.
   var entry = { historyEndDate: '2026-08-02', days: '111' };
   assert.deepEqual(anchorPaxHistoryValues_(entry, '2026-08-04'), [1, 1, 1, '', '']);
-})();
+});
 
-(function testAnchorHistoryValuesReturnsNullWhenWindowCannotReachAnchor() {
+it('anchor history values returns null when window cannot reach anchor', function() {
   // Every stored character would be padded away — nothing real is left to tail-align, so the
   // caller must fall through to the tracker rather than serve an all-blank window.
   assert.equal(anchorPaxHistoryValues_({ historyEndDate: '2026-08-02', days: '111' }, '2026-08-05'), null);
@@ -686,19 +688,19 @@ var SCOPE_B_ = 'scope-b';
   assert.equal(anchorPaxHistoryValues_({ historyEndDate: '2026-08-02', days: '111' }, '2026-06-30'), null);
   assert.equal(anchorPaxHistoryValues_(null, '2026-08-02'), null);
   assert.equal(anchorPaxHistoryValues_({ historyEndDate: '2026-08-02', days: '' }, '2026-08-02'), null);
-})();
+});
 
-(function testAnchorHistoryValuesNeverExceedsWindowLength() {
+it('anchor history values never exceeds window length', function() {
   var days = '';
   for (var i = 0; i < PAX_HISTORY_WINDOW_DAYS_; i++) days += '1';
   var anchored = anchorPaxHistoryValues_({ historyEndDate: '2026-08-02', days: days }, '2026-08-04');
   assert.equal(anchored.length, PAX_HISTORY_WINDOW_DAYS_);
   assert.deepEqual(anchored.slice(-2), ['', '']);
-})();
+});
 
 // One PropertiesService round trip for the whole roster instead of one per row — the dashboard
 // calls this once per load against a quota'd service.
-(function testGetPaxHistoryEntriesBulkIsOnePropertiesRead() {
+it('get pax history entries bulk is one properties read', function() {
   resetProps_();
   setPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan', { historyEndDate: '2026-08-02', days: '11' });
   setPaxHistoryEntry_(SCOPE_A_, 'Little John', { historyEndDate: '2026-08-02', days: '10' });
@@ -709,41 +711,41 @@ var SCOPE_B_ = 'scope-b';
   assert.deepEqual(entries['crazy ivan'], { historyEndDate: '2026-08-02', days: '11' });
   assert.deepEqual(entries['little john'], { historyEndDate: '2026-08-02', days: '10' });
   assert.equal(Object.prototype.hasOwnProperty.call(entries, 'never seen'), false);
-})();
+});
 
 // Bulk read must not leak another namespace's entry for the same name (DR-01).
-(function testGetPaxHistoryEntriesBulkIsScopedByNamespace() {
+it('get pax history entries bulk is scoped by namespace', function() {
   resetProps_();
   setPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan', { historyEndDate: '2026-08-02', days: '11' });
   setPaxHistoryEntry_(SCOPE_B_, 'Crazy Ivan', { historyEndDate: '2026-08-02', days: '00' });
 
   var entries = getPaxHistoryEntriesBulk_(SCOPE_A_, ['Crazy Ivan']);
   assert.deepEqual(entries['crazy ivan'], { historyEndDate: '2026-08-02', days: '11' });
-})();
+});
 
 // Write-side clamp (F3Go30-uz9e.2, symptom 1 at source): a pre-marked FUTURE day must not
 // advance the window. Doing so pads the skipped days with '.' and shifts that many days of real
 // history off the front permanently — and the '.' gap then reads as a broken streak. The value
 // is already on the Tracker; the read side reconciles it back in when the day actually arrives.
-(function testAdvancePaxHistoryDayIgnoresFutureDays() {
+it('advance pax history day ignores future days', function() {
   resetProps_();
   advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 2), 1, '2026-08-02');
   advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 6), 1, '2026-08-02'); // pre-marked, 4 days out
   assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), { historyEndDate: '2026-08-02', days: '1' });
-})();
+});
 
-(function testAdvancePaxHistoryDayStillWritesTodayAndPastDays() {
+it('advance pax history day still writes today and past days', function() {
   resetProps_();
   advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 1), 1, '2026-08-02');
   advancePaxHistoryDay_(SCOPE_A_, 'Crazy Ivan', new Date(2026, 7, 2), 0, '2026-08-02'); // today itself
   assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), { historyEndDate: '2026-08-02', days: '10' });
-})();
+});
 
 // go30hist keys carry no sheetId, so the orphan sweep (which ages entries by tracker) could never
 // see them — every name that ever checked in, including typos and retired PAX, kept a Script
 // Property forever against the 500KB quota. Reaped off the same CheckinSessions activity signal
 // the per-PAX row pass already uses.
-(function testPurgeReapsHistoryEntriesForInactiveNames() {
+it('purge reaps history entries for inactive names', function() {
   resetProps_();
   var now = new Date(2026, 6, 16);
   var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
@@ -762,13 +764,13 @@ var SCOPE_B_ = 'scope-b';
   assert.equal(result.historyEntriesPurged, 1);
   assert.deepEqual(getPaxHistoryEntry_(TEST_BOUND_SCOPE_ID_, 'Crazy Ivan'), { historyEndDate: '2026-07-15', days: '11' });
   assert.equal(getPaxHistoryEntry_(TEST_BOUND_SCOPE_ID_, 'Ghost Pax'), null);
-})();
+});
 
 // Same contract the per-PAX row pass already follows (testPurgePurgesEveryPaxRowWhenNoOneHasA
 // CheckinSession): a missing/empty CheckinSessions sheet means "nobody currently active", so every
 // history entry is reaped. Safe because a reaped window self-heals from the Tracker on the next
 // dashboard read — unlike the row cache, this store is derived data end to end.
-(function testPurgeReapsEveryHistoryEntryWhenNoOneHasACheckinSession() {
+it('purge reaps every history entry when no one has a checkin session', function() {
   resetProps_();
   var now = new Date(2026, 6, 16);
   var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
@@ -778,12 +780,12 @@ var SCOPE_B_ = 'scope-b';
   var result = purgeStalePaxCache_(now, spreadsheet);
   assert.equal(result.historyEntriesPurged, 1);
   assert.equal(getPaxHistoryEntry_(TEST_BOUND_SCOPE_ID_, 'Ghost Pax'), null);
-})();
+});
 
 // DR-01 regression: a namespace's history entries must not be reaped by the BOUND spreadsheet's
 // activity signal — only the fourth pass's own scope, or the orphan sweep once that scope is
 // actually torn down (see testPurgeOrphanSweepAlsoReapsHistoryForDeletedScope below).
-(function testPurgeFourthPassDoesNotTouchAnotherScopesHistoryEntries() {
+it('purge fourth pass does not touch another scopes history entries', function() {
   resetProps_();
   var now = new Date(2026, 6, 16);
   var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
@@ -801,12 +803,12 @@ var SCOPE_B_ = 'scope-b';
   assert.equal(result.historyEntriesPurged, 0);
   assert.deepEqual(getPaxHistoryEntry_('other-namespace-scope', 'Ghost Pax'), { historyEndDate: '2026-05-01', days: '11' });
   delete global.SpreadsheetApp;
-})();
+});
 
 // The orphan sweep (third pass) now sees go30hist entries too, since the scoped key gives it a
 // discriminator to check against collectKnownTrackerSheetIds_ — a namespace torn down entirely
 // (its templateId no longer in NamespaceDB) no longer leaves its history windows behind forever.
-(function testPurgeOrphanSweepAlsoReapsHistoryForDeletedScope() {
+it('purge orphan sweep also reaps history for deleted scope', function() {
   resetProps_();
   var now = new Date(2026, 6, 16);
   var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
@@ -822,7 +824,7 @@ var SCOPE_B_ = 'scope-b';
   var result = purgeStalePaxCache_(now, spreadsheet);
   assert.equal(result.orphanedSheetsPurged, 1);
   assert.equal(getPaxHistoryEntry_('torn-down-scope', 'Old Pax'), null);
-})();
+});
 
 // ── F3Go30-uz9e.3: window length decoupled from the 30-day streak cap ──────────────────────
 //
@@ -832,15 +834,15 @@ var SCOPE_B_ = 'scope-b';
 // now a storage cap in its own right, sized for later migration slices; the 30-day streak cap is
 // applied at the point streaks are computed instead.
 
-(function testHistoryWindowIsLongEnoughForPriorPlusCurrentMonth() {
+it('history window is long enough for prior plus current month', function() {
   // A rebuild populates back to the start of the previous month — 31 + 31 days, worst case.
   assert.ok(PAX_HISTORY_BACKFILL_DAYS_ >= 62, 'backfill must cover a full prior + current month');
   // The stored window must be able to hold at least everything a rebuild puts in it.
   assert.ok(PAX_HISTORY_WINDOW_DAYS_ >= PAX_HISTORY_BACKFILL_DAYS_,
     'storage cap must be at least the backfill length');
-})();
+});
 
-(function testAdvancePaxHistoryEntryTrimsToStorageCapNotStreakCap() {
+it('advance pax history entry trims to storage cap not streak cap', function() {
   // Walk the window past its cap one day at a time, then confirm the trim landed on
   // PAX_HISTORY_WINDOW_DAYS_ — not on 30 (the streak cap) or 40 (the old value).
   var entry = { historyEndDate: '2026-01-01', days: '1' };
@@ -851,12 +853,12 @@ var SCOPE_B_ = 'scope-b';
   }
   assert.equal(entry.days.length, PAX_HISTORY_WINDOW_DAYS_);
   assert.equal(entry.historyEndDate, paxHistoryFormatIsoLocal_(day));
-})();
+});
 
 // Bulk history write — the post-wipe reload rebuilds a window for every PAX on the roster at
 // once, and one setProperty RPC per PAX is exactly the N+1 pattern setPaxCacheRowsBulk_ already
 // exists to avoid (same PropertiesService round-trip cost, see getPaxCacheRowsBulk_'s docstring).
-(function testSetPaxHistoryEntriesBulkIsOneWrite() {
+it('set pax history entries bulk is one write', function() {
   resetProps_();
   var setPropertyCalls = 0;
   var realSetProperty = fakeProps.setProperty;
@@ -871,11 +873,11 @@ var SCOPE_B_ = 'scope-b';
   assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Crazy Ivan'), { historyEndDate: '2026-08-02', days: '111' });
   assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'crazy ivan'), { historyEndDate: '2026-08-02', days: '111' });
   assert.deepEqual(getPaxHistoryEntry_(SCOPE_A_, 'Little John'), { historyEndDate: '2026-08-02', days: '101' });
-})();
+});
 
 // ── F3Go30-uz9e.4: f3Name-keyed versioned goals list (PAX data model migration Slice 2) ────
 
-(function testUpsertPaxGoalsEntryAppendsNewMonth() {
+it('upsert pax goals entry appends new month', function() {
   var entry = upsertPaxGoalsEntry_(null, '2026-06', 'Who1', 'What1', 'How1');
   assert.deepEqual(entry, { goals: [{ monthKey: '2026-06', who: 'Who1', what: 'What1', how: 'How1' }] });
 
@@ -885,9 +887,9 @@ var SCOPE_B_ = 'scope-b';
     { monthKey: '2026-07', who: 'Who2', what: 'What2', how: 'How2' },
   ]);
   assert.deepEqual(entry.goals.length, 1); // original untouched — pure function
-})();
+});
 
-(function testUpsertPaxGoalsEntryReplacesSameMonth() {
+it('upsert pax goals entry replaces same month', function() {
   var entry = upsertPaxGoalsEntry_(null, '2026-06', 'Who1', 'What1', 'How1');
   entry = upsertPaxGoalsEntry_(entry, '2026-07', 'Who2', 'What2', 'How2');
   var resaved = upsertPaxGoalsEntry_(entry, '2026-06', 'Who1b', 'What1b', 'How1b');
@@ -895,25 +897,25 @@ var SCOPE_B_ = 'scope-b';
     { monthKey: '2026-06', who: 'Who1b', what: 'What1b', how: 'How1b' },
     { monthKey: '2026-07', who: 'Who2', what: 'What2', how: 'How2' },
   ]);
-})();
+});
 
-(function testFindPaxGoalsForMonthIsExactMatchOnly() {
+it('find pax goals for month is exact match only', function() {
   var entry = upsertPaxGoalsEntry_(null, '2026-06', 'Who1', 'What1', 'How1');
   assert.deepEqual(findPaxGoalsForMonth_(entry, '2026-06'), { who: 'Who1', what: 'What1', how: 'How1' });
   assert.equal(findPaxGoalsForMonth_(entry, '2026-07'), null); // no nearest/most-recent fallback
   assert.equal(findPaxGoalsForMonth_(null, '2026-06'), null);
-})();
+});
 
-(function testPaxGoalsEntryRoundTripAndNamespaceScoping() {
+it('pax goals entry round trip and namespace scoping', function() {
   resetProps_();
   assert.equal(getPaxGoalsEntry_(SCOPE_A_, 'Crazy Ivan'), null);
   setPaxGoalsEntry_(SCOPE_A_, 'Crazy Ivan', { goals: [{ monthKey: '2026-06', who: 'W', what: 'X', how: 'Y' }] });
   assert.deepEqual(getPaxGoalsEntry_(SCOPE_A_, 'crazy ivan').goals.length, 1); // case/space-insensitive
   // Same defect class as history's DR-01 — two namespaces sharing this store must never collide.
   assert.equal(getPaxGoalsEntry_(SCOPE_B_, 'Crazy Ivan'), null);
-})();
+});
 
-(function testUpsertPaxGoalsForMonthWriteThroughIsLockGuarded() {
+it('upsert pax goals for month write through is lock guarded', function() {
   resetProps_();
   var result = upsertPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06', 'Who', 'What', 'How');
   assert.deepEqual(result, { ok: true });
@@ -923,12 +925,12 @@ var SCOPE_B_ = 'scope-b';
   upsertPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06', 'Who2', 'What2', 'How2');
   assert.deepEqual(getPaxGoalsEntry_(SCOPE_A_, 'Crazy Ivan').goals.length, 1);
   assert.deepEqual(getPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06'), { who: 'Who2', what: 'What2', how: 'How2' });
-})();
+});
 
 // Unlike advancePaxHistoryDay_'s log-and-continue on lock failure, a dropped goal save must be
 // reported back to the caller (invariant 3/§5 Slice 2) — not silently swallowed — so
 // handleSignupSave_ can surface it.
-(function testUpsertPaxGoalsForMonthLockFailureIsReportedNotSwallowed() {
+it('upsert pax goals for month lock failure is reported not swallowed', function() {
   resetProps_();
   var realLock = global.LockService;
   global.LockService = { getScriptLock: function() { return { waitLock: function() { throw new Error('busy'); }, releaseLock: function() {} }; } };
@@ -937,17 +939,17 @@ var SCOPE_B_ = 'scope-b';
   assert.equal(result.error, 'lock_failed');
   assert.equal(getPaxGoalsEntry_(SCOPE_A_, 'Crazy Ivan'), null); // nothing written
   global.LockService = realLock;
-})();
+});
 
-(function testGetPaxGoalsForMonthMissFallsThroughAsNullNeverEmptyObject() {
+it('get pax goals for month miss falls through as null never empty object', function() {
   resetProps_();
   assert.equal(getPaxGoalsForMonth_(SCOPE_A_, 'Nobody Home', '2026-06'), null); // whole entry missing
   upsertPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06', 'Who', 'What', 'How');
   assert.equal(getPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2027-01'), null); // entry exists, month doesn't
-})();
+});
 
 // wipeAllPaxCache_ must also clear go30goals: entries, same escape-hatch guarantee as go30hist:.
-(function testWipeAllPaxCacheAlsoClearsGoalsEntries() {
+it('wipe all pax cache also clears goals entries', function() {
   resetProps_();
   setPaxCacheRow_('tracker', 'sheet-x', 'Someone', ['v']);
   upsertPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06', 'Who', 'What', 'How');
@@ -955,21 +957,21 @@ var SCOPE_B_ = 'scope-b';
   assert.ok(wiped >= 2);
   assert.equal(getPaxCacheRow_('tracker', 'sheet-x', 'Someone'), null);
   assert.equal(getPaxGoalsEntry_(SCOPE_A_, 'Crazy Ivan'), null);
-})();
+});
 
-(function testWipePaxGoalsForScopeOnlyClearsThatScope() {
+it('wipe pax goals for scope only clears that scope', function() {
   resetProps_();
   upsertPaxGoalsForMonth_(SCOPE_A_, 'Crazy Ivan', '2026-06', 'Who', 'What', 'How');
   upsertPaxGoalsForMonth_(SCOPE_B_, 'Crazy Ivan', '2026-06', 'Who', 'What', 'How');
   wipePaxGoalsForScope_(SCOPE_A_);
   assert.equal(getPaxGoalsEntry_(SCOPE_A_, 'Crazy Ivan'), null);
   assert.ok(getPaxGoalsEntry_(SCOPE_B_, 'Crazy Ivan'));
-})();
+});
 
 // The orphan sweep (purgeStalePaxCache_'s third pass) must reap go30goals: entries for a scope
 // whose TrackerDB row(s) are entirely gone, same as it already does for go30hist: — otherwise a
 // torn-down namespace's goals entries accumulate against the store cap forever.
-(function testOrphanSweepReapsGoalsEntriesForUnknownScope() {
+it('orphan sweep reaps goals entries for unknown scope', function() {
   resetProps_();
   var now = new Date(2026, 6, 16);
   var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
@@ -985,26 +987,26 @@ var SCOPE_B_ = 'scope-b';
   var result = purgeStalePaxCache_(now, spreadsheet);
   assert.equal(result.orphanedSheetsPurged, 1);
   assert.equal(getPaxGoalsEntry_('torn-down-scope', 'Old Pax'), null);
-})();
+});
 
 // The trigger-named wrapper (F3Go30-y8j7.3, see script/PaxCache.js) is what the real installed
 // nightly trigger calls (see onOpen.js) and what admin.runPaxCachePurge now calls too (WebApp.js)
 // — it must GasLogger.run-wrap the exact same purgeStalePaxCache_ logic, against the active
 // spreadsheet, threading an optional pinned "now" through for on-demand verification.
-(function testPurgeStalePaxCacheWrapperRunsUnderTriggerName() {
+it('purge stale pax cache wrapper runs under trigger name', function() {
   resetProps_();
   var now = new Date(2026, 6, 16);
   var recentStart = new Date(now.getTime() - (PAX_CACHE_PURGE_RETENTION_DAYS_ - 5) * 24 * 60 * 60 * 1000);
   var activeSpreadsheet = makeFakeTrackerDbSpreadsheet_([{ sheetId: 'sheet-recent', startDate: recentStart }]);
   global.SpreadsheetApp = { getActiveSpreadsheet: function() { return activeSpreadsheet; } };
 
-  gasLoggerRunCalls_.length = 0;
+  fakeLogger_._runs.length = 0;
   var result = purgeStalePaxCache(now);
-  assert.ok(gasLoggerRunCalls_.indexOf('purgeStalePaxCache') !== -1, 'expected GasLogger.run to be called with the trigger name');
+  assert.ok(fakeLogger_._runs.indexOf('purgeStalePaxCache') !== -1, 'expected GasLogger.run to be called with the trigger name');
   assert.equal(result.checked, 1);
   assert.equal(result.purged, 0);
 
   delete global.SpreadsheetApp;
-})();
+});
 
-console.log('test_pax_cache.js: all assertions passed');
+});

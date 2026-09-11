@@ -55,6 +55,7 @@ function makeDashboardHarness_(state, callApiImpl) {
     'state', '$', 'callApi', 'renderDashboard_', 'setButtonLoading_', 'hideApiError_', 'showApiError_',
     'isoDate_', 'monthKeyOf_', 'patchOwnDayIntoPayload_', 'renderDateNav_', 'captureDashboardRenderTelemetry_',
     'requestGen_', 'reconcileDashboardWithLocalWrites_', 'restoreWiderBoardDayFacts_',
+    'contextToday_', 'contextTodayIso_',
     // The dashboardBtn block is a bare $('dashboardBtn').addEventListener(...) statement, not a
     // named function — running it registers the real click handler onto the fake $ element below,
     // which the test then triggers directly rather than trying to name-bind an anonymous function.
@@ -75,7 +76,12 @@ function makeDashboardHarness_(state, callApiImpl) {
     // F3Go30-jsrf: requestGen_/reconcileDashboardWithLocalWrites_/restoreWiderBoardDayFacts_ are
     // exercised by their own dedicated tests (test_checkin_board_consolidation.js) — no-op
     // stand-ins here keep this harness scoped to stale-while-revalidate behavior.
-    0, function() {}, function() {}
+    0, function() {}, function() {},
+    // F3Go30-f3fa: this harness never sets a CONTEXT_DATE_ override — real device clock, same as
+    // the isoDate_/monthKeyOf_ stand-ins above, so behavior here is unchanged by the context-clock
+    // fix (that override path is covered by test_static_page_client_invariants.js's source guard
+    // and the context-date-dashboard live-check spec, not this harness).
+    function() { return new Date(); }, todayIso_
   );
   return { fns: fns, elements: elements, renderCalls: renderCalls, setButtonLoadingCalls: setButtonLoadingCalls };
 }

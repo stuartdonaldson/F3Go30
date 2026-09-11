@@ -8,29 +8,25 @@ var addResponseResponseUtilsModule_ = (typeof module !== 'undefined' && module.e
 // PaxCache write-through (F3Go30-o39s.4) — same require()/globalThis fallback pattern as
 // signupWebapp.js. This handler runs via the centralized onFormSubmit installable trigger
 // (ADR-010), so — like TrackerEditTrigger.js — it can reach the shared PaxCache store.
-var addResponsePaxCacheModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./PaxCache.js')
-  : null;
-var patchPaxRosterIndex_ars_ = (addResponsePaxCacheModule_ && addResponsePaxCacheModule_.patchPaxRosterIndex_)
-  || (typeof globalThis !== 'undefined' && globalThis.patchPaxRosterIndex_);
-var deletePaxCacheRow_ars_ = (addResponsePaxCacheModule_ && addResponsePaxCacheModule_.deletePaxCacheRow_)
-  || (typeof globalThis !== 'undefined' && globalThis.deletePaxCacheRow_);
-var deletePaxRosterIndex_ars_ = (addResponsePaxCacheModule_ && addResponsePaxCacheModule_.deletePaxRosterIndex_)
-  || (typeof globalThis !== 'undefined' && globalThis.deletePaxRosterIndex_);
+var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
+var addResponsePaxCacheModule_ = gasRequire_('./PaxCache.js', ['patchPaxRosterIndex_', 'deletePaxCacheRow_', 'deletePaxRosterIndex_']);
+var patchPaxRosterIndex_ars_ = addResponsePaxCacheModule_.patchPaxRosterIndex_;
+var deletePaxCacheRow_ars_ = addResponsePaxCacheModule_.deletePaxCacheRow_;
+var deletePaxRosterIndex_ars_ = addResponsePaxCacheModule_.deletePaxRosterIndex_;
 
-// Duplicated full-roster CacheService key prefixes (dashboardWebapp.js's trackerValuesCacheKey_/
-// responsesValuesCacheKey_) — same convention TrackerEditTrigger.js and PaxCache.js's
-// wipePaxCacheAndRelatedCachesForSheet_ already use to avoid a circular require (dashboardWebapp.js
-// requires signupWebapp.js, which requires this file). Keep in sync if either changes.
-var FULL_ROSTER_CACHE_PREFIX_TRACKER_ARS_ = 'go30dash:trackerValues:';
-var FULL_ROSTER_CACHE_PREFIX_RESPONSES_ARS_ = 'go30dash:responsesValues:';
+// F3Go30-mk3a: the full-roster CacheService key builders are dashboardCache.js's — required
+// directly (no circularity: dashboardCache.js doesn't depend back on this file), replacing the
+// hand-copied prefix-string constants that used to live here.
+var addResponseCacheModule_ = gasRequire_('./dashboardCache.js', ['trackerValuesCacheKey_', 'responsesValuesCacheKey_']);
+var trackerValuesCacheKey_ars_ = addResponseCacheModule_.trackerValuesCacheKey_;
+var responsesValuesCacheKey_ars_ = addResponseCacheModule_.responsesValuesCacheKey_;
 
 /** Drops the full-roster CacheService blobs (Tracker + Responses) for one tracker spreadsheet. */
 function invalidateFullRosterCachesForSheet_ars_(sheetId) {
   try {
     var cache = CacheService.getScriptCache();
-    cache.remove(FULL_ROSTER_CACHE_PREFIX_TRACKER_ARS_ + sheetId);
-    cache.remove(FULL_ROSTER_CACHE_PREFIX_RESPONSES_ARS_ + sheetId);
+    cache.remove(trackerValuesCacheKey_ars_(sheetId));
+    cache.remove(responsesValuesCacheKey_ars_(sheetId));
   } catch (e) { /* best-effort */ }
 }
 

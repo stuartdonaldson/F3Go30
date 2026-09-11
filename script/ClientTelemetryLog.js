@@ -21,11 +21,9 @@ var CLIENT_TELEMETRY_DEDUPE_PROPERTY_ = 'CLIENT_TELEMETRY_DEDUPE_SEEN_IDS';
 var CLIENT_TELEMETRY_DEDUPE_WINDOW_DAYS_ = 2;
 var CLIENT_TELEMETRY_BATCH_MAX_ = 25; // defensive cap independent of the client's own queue cap
 
-var clientTelemetryGasLoggerModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./GasLogger.js')
-  : null;
-var maskPiiForLog_ctl_ = (clientTelemetryGasLoggerModule_ && clientTelemetryGasLoggerModule_.maskPiiForLog_)
-  || (typeof globalThis !== 'undefined' && globalThis.maskPiiForLog_);
+var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
+var clientTelemetryGasLoggerModule_ = gasRequire_('./GasLogger.js', ['maskPiiForLog_']);
+var maskPiiForLog_ctl_ = clientTelemetryGasLoggerModule_.maskPiiForLog_;
 
 /**
  * Generic PropertiesService-backed "seen id" dedupe store — {id: isoTimestamp} JSON blob under a
@@ -44,9 +42,18 @@ function loadDedupeSeenIds_(propertyKey) {
   }
 }
 
+// F3Go30-h4xt: script-properties writes go through ScriptProperties.js's invalidating facade, so
+// the per-execution whole-store memo (getScriptPropertiesSnapshot_) can never serve a value this
+// same execution has already overwritten. Resolved lazily inside the accessor because in GAS
+// these are plain globals whose defining file may evaluate after this one.
+var scriptPropertiesModule_ctl_ = (typeof require === 'function') ? require('./ScriptProperties.js') : null;
+function scriptProps_ctl_() {
+  return scriptPropertiesModule_ctl_ ? scriptPropertiesModule_ctl_.scriptPropertiesStore_() : scriptPropertiesStore_();
+}
+
 function saveDedupeSeenIds_(propertyKey, map) {
   try {
-    PropertiesService.getScriptProperties().setProperty(propertyKey, JSON.stringify(map));
+    scriptProps_ctl_().setProperty(propertyKey, JSON.stringify(map));
   } catch (e) { /* best-effort — a lost write only costs one dedupe window's worth of re-processing */ }
 }
 

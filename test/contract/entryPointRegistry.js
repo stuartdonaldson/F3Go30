@@ -23,6 +23,13 @@
  * point exists. That keeps the enumeration honest and moves the argument into
  * `ENTRY_POINT_DEFERRED` where it can be read.
  *
+ * Since F3Go30-4hee those 26 actions are no longer a sequential `if (payload.action === …)` chain
+ * but one table, `ADMIN_ACTIONS_` in `script/WebApp.js`, each row carrying a `readOnly` flag.
+ * `test/test_entry_point_registry_view.js` diffs `Object.keys(ADMIN_ACTIONS_)` against this file
+ * both ways — a `readOnly: false` row must appear here as `admin.<action>`, a `readOnly: true` row
+ * must appear in `ENTRY_POINT_READ_ONLY_EXEMPT` — so the admin half of this enumeration is now
+ * checked against the code rather than hand-kept in step with it.
+ *
  * DEFERRAL. `ENTRY_POINT_DEFERRED` names every registered entry point with no charter-journey
  * call-site today. Each carries a reason and a tracking bead, so the T17 diff is green **by
  * declaration** rather than by omission. Two kinds live there, labelled inline:
@@ -129,6 +136,8 @@ const ENTRY_POINT_REGISTRY = {
     '[admin] provisions a namespace environment — copies the Template plus recent trackers and registers the NamespaceDB row (ADR-014 D6)',
   'admin.teardownEnvironment':
     '[admin] tears a namespace environment down — removes the NamespaceDB row first (the safety cut), then trashes the Drive folder',
+  'admin.copyProdTrackerToSit':
+    '[admin] copies a source tracker\'s current-month Tracker/Bonus Tracker/Responses sheets into the target deployment\'s own current-month tracker and re-syncs TrackerDB/PaxDB/PaxCache; refuses on PROD (F3Go30-956l)',
 
   // ── routes (script/WebApp.js) ─────────────────────────────────────────────────────────────
   'route.doPost':
@@ -198,6 +207,7 @@ const ENTRY_POINT_CLASSES = {
   'admin.benchmarkPropertiesService': CLASS_ADMIN,
   'admin.copyTemplate': CLASS_ADMIN,
   'admin.teardownEnvironment': CLASS_ADMIN,
+  'admin.copyProdTrackerToSit': CLASS_ADMIN,
 
   'route.doPost': CLASS_ROUTES,
 
@@ -269,6 +279,8 @@ const ENTRY_POINT_DEFERRED = {
     '[permanent] tagged (F3Go30-y8j7.2) as the real call-site in tools/smokeTestNamespace.js\'s provisioning step, driven every smoke run — not folded into the Playwright journey charter because it is namespace-lifecycle operator tooling, not a product journey (charter §6 is scoped to built specs), so it stays deferred by design rather than by omission — F3Go30-y8j7.2',
   'admin.teardownEnvironment':
     '[permanent] tagged (F3Go30-y8j7.2) as the real call-site in tools/smokeTestNamespace.js — both the stale-namespace disposal step and the end-of-run teardown — same charter-scope reasoning as copyTemplate — F3Go30-y8j7.2',
+  'admin.copyProdTrackerToSit':
+    '[backlog] operator-only, on-demand SIT data refresh tool (tools/callWebapp.js copyProdTrackerToSit) with no automated call-site — same charter-scope reasoning as createTrackerForMonth: not a product journey, so deferred by design rather than by omission — F3Go30-956l',
 
   // ── triggers (F3Go30-y8j7.3) ──────────────────────────────────────────────────────────────
   // Investigated per-function (not just re-stamped): admin.runMinusOneCheck and

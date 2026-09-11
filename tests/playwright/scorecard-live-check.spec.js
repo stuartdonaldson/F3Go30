@@ -114,7 +114,7 @@ test.describe('Scorecard screen (client, live SIT)', () => {
     await expect(page.locator('#scLadder .sc-lrow.me')).toHaveCount(1);
 
     // Switching the ranking metric re-sorts without erroring (AC2's metric toggle).
-    await page.locator('#scMetrics .sc-metric-btn', { hasText: 'Workout days' }).click();
+    await page.locator('#scMetrics .sc-metric-btn', { hasText: 'Reps Completed' }).click();
     await expect(ladderRows.first()).toBeVisible();
 
     // Top Teams view (AC3): one row per team, each carrying a roster-size chip and an avg score.

@@ -161,19 +161,117 @@ function computeBonusPillsAsOf_(entries, f3NameNorm, asOfDate, monthStart) {
 }
 
 /**
- * One computeBonusPillsAsOf_ result per date in dayDates, aligned 1:1 — lets the client scrub
- * the date-nav arrows locally against a per-day series, the same pattern already used for
+ * Buckets a month's bonus entries by nameNorm once, so the dashboard's roster loop can hand
+ * computeBonusSeriesForPax_ just this PAX's rows instead of re-filtering the whole month's array
+ * per PAX per day (F3Go30-ja7d — the name filter was ~97% of the old series cost). Built once per
+ * dashboard load, immediately before the roster loop.
+ *
+ * Null-prototype map, so a nameNorm that happens to spell `__proto__`/`constructor` is an ordinary
+ * key rather than a prototype write. Entry order within a bucket is the source array's order,
+ * which is what computeBonusPillsAsOf_'s weekly-cap tie-break already relies on.
+ * @param {Array<{nameNorm:string}>} entries See computeBonusPillsAsOf_.
+ * @returns {Object<string, Array<Object>>} Keyed by nameNorm; missing key means no entries.
+ */
+function groupBonusEntriesByPax_(entries) {
+  var byPax = Object.create(null);
+  (entries || []).forEach(function(entry) {
+    if (!entry) return;
+    var key = entry.nameNorm;
+    if (!byPax[key]) byPax[key] = [];
+    byPax[key].push(entry);
+  });
+  return byPax;
+}
+
+/**
+ * Smallest index in an ascending date array at which `date` is no longer in the future — i.e. the
+ * first day column whose computeBonusPillsAsOf_ would stop excluding an entry dated `date` via its
+ * `entry.date > asOfDate` test. -1 when the date is past every column (entry never appears).
+ * Binary search; `date > days[mid]` is monotone across an ascending array, and a missing/invalid
+ * date compares false throughout, landing at index 0 — the same "counted from the first day"
+ * behaviour the linear scan had.
+ * @param {Array<Date>} ascendingDays
+ * @param {Date} date
+ * @returns {number}
+ */
+function firstDayIndexIncluding_(ascendingDays, date) {
+  var lo = 0;
+  var hi = ascendingDays.length - 1;
+  var found = -1;
+  while (lo <= hi) {
+    var mid = (lo + hi) >> 1;
+    if (date > ascendingDays[mid]) lo = mid + 1;
+    else { found = mid; hi = mid - 1; }
+  }
+  return found;
+}
+
+/**
+ * One computeBonusPillsAsOf_-equivalent result per date in dayDates, aligned 1:1 — lets the client
+ * scrub the date-nav arrows locally against a per-day series, the same pattern already used for
  * dayValues/daySegments, instead of re-deriving pill totals with a server round trip per day.
- * @param {Array<Object>} entries See computeBonusPillsAsOf_.
- * @param {string} f3NameNorm
- * @param {Array<Date>} dayDates Calendar dates for this month's day columns, in order.
+ *
+ * Forward sweep (F3Go30-ja7d): each entry is placed at the one day column where it first counts,
+ * then the pill totals and the weekly-cap ledger accumulate across days — O(paxEntries·log days +
+ * days) instead of the old O(days × allEntries) rebuild. Output is identical to the per-day
+ * computeBonusPillsAsOf_ it replaces: as-of totals depend only on *which* (type, period) pairs
+ * have at least one complete entry dated on or before the day, not on which entry of a shared
+ * period got credited, and every entry of a shared period carries the same multiplier.
+ * computeBonusPillsAsOf_ itself is unchanged, for its single-point callers.
+ *
+ * Emits a fresh pills object per day (never a shared reference), same as before.
+ * @param {Array<Object>} paxEntries This PAX's entries only — see groupBonusEntriesByPax_.
+ * @param {Array<Date>} dayDates Calendar dates for this month's day columns, normally ascending.
  * @param {Date} monthStart
  * @returns {Array<Object<string,number>>}
  */
-function computeBonusSeriesForPax_(entries, f3NameNorm, dayDates, monthStart) {
-  return (dayDates || []).map(function(d) {
-    return computeBonusPillsAsOf_(entries, f3NameNorm, d, monthStart);
+function computeBonusSeriesForPax_(paxEntries, dayDates, monthStart) {
+  if (arguments.length > 3) {
+    // Loud rather than silent: the old (entries, f3NameNorm, dayDates, monthStart) signature would
+    // otherwise read f3NameNorm as dayDates and quietly return an empty series.
+    throw new Error('computeBonusSeriesForPax_ takes (paxEntries, dayDates, monthStart) — bucket with groupBonusEntriesByPax_ first');
+  }
+  var days = dayDates || [];
+  if (!days.length) return [];
+
+  // The sweep needs ascending days. Day columns already arrive in calendar order; an out-of-order
+  // caller is swept in date order and written back to its own positions rather than mis-summed.
+  var order = null;
+  for (var k = 1; k < days.length; k++) {
+    if (days[k] < days[k - 1]) {
+      order = days.map(function(_, i) { return i; })
+        .sort(function(a, b) { return days[a] - days[b]; });
+      break;
+    }
+  }
+  var ascending = order ? order.map(function(i) { return days[i]; }) : days;
+
+  var arrivals = new Array(ascending.length);
+  (paxEntries || []).forEach(function(entry) {
+    if (!entry || !entry.complete) return;
+    var at = firstDayIndexIncluding_(ascending, entry.date);
+    if (at < 0) return; // dated after every reported day column
+    if (!arrivals[at]) arrivals[at] = [];
+    arrivals[at].push(entry);
   });
+
+  var pills = emptyBonusPills_();
+  var periodCredited = {};
+  var series = new Array(days.length);
+  for (var i = 0; i < ascending.length; i++) {
+    (arrivals[i] || []).forEach(function(entry) {
+      var def = bonusTypeDef_(entry.type);
+      if (!def) return;
+      if (def.weeklyCap) {
+        var key = def.name + ':' + weekOfMonth_(entry.date, monthStart);
+        if (periodCredited[key]) return; // already credited this period
+        periodCredited[key] = true;
+      }
+      pills[def.pillKey] += def.multiplier;
+    });
+    series[order ? order[i] : i] = Object.assign({}, pills);
+  }
+  return series;
 }
 
 /**
@@ -261,6 +359,7 @@ if (typeof module !== 'undefined' && module.exports) {
     emptyBonusPills_: emptyBonusPills_,
     weekOfMonth_: weekOfMonth_,
     computeBonusPillsAsOf_: computeBonusPillsAsOf_,
+    groupBonusEntriesByPax_: groupBonusEntriesByPax_,
     computeBonusSeriesForPax_: computeBonusSeriesForPax_,
     annotateBonusEntryCountStatus_: annotateBonusEntryCountStatus_,
     annotateBonusEntryDuplicateLinkStatus_: annotateBonusEntryDuplicateLinkStatus_,

@@ -47,8 +47,8 @@ the single largest structural deviation from the reference implementation.
 
 `not applicable — no harness package exists`. The three test surfaces (testing guide §1) share no
 code. `tests/playwright/live-check-helpers.js` and `tests/playwright/gas-editor-helpers.js` are
-the only shared test modules; `test/helpers/` holds per-file stubs for the node suite. Nothing
-declares a build unit.
+the only shared test modules; `test/helpers/` holds the node suite's shared fixture code (see the
+third module home below). Nothing declares a build unit.
 
 One shared harness module now exists: `tests/harness/` — `outcomes.js` (the owning outcome
 classifier, the single retry policy, `F3Go30-emwk.6`, and the single duration-ceiling policy,
@@ -64,12 +64,22 @@ so each is simultaneously importable by a test and runnable as a CLI (`--ac-list
 `test/test_entry_point_registry_view.js` and `test/test_journey_charter_view.js`, which run in the
 network-free tier like any other node test — the node suite is 60 files as of this stage (F3Go30-emwk.9 added test/test_journey_charter_view.js).
 
+A third shared module home was added by `F3Go30-taag`: `test/helpers/` — `staticPageExtract.js`
+(real client code lifted out of `index.html`) and `gasEnv.js` (composable in-memory Apps Script
+services: `PropertiesService`, `CacheService`, `GasLogger`, `LockService`, `SpreadsheetApp`'s
+`Ui`). `gasEnv.js` is the reuse answer to the same shape being hand-copied into 22/17/13/7 files
+respectively; a test either calls a factory directly or installs a set with `installGasEnv_()`,
+which hands back the fakes and a `restore()`. It is fixture code, not contract data, which is why
+it lives under `test/helpers/` rather than `test/contract/`.
+
 ## 3. Ownership and dependency direction
 
 `not applicable — no harness package exists`. No assertion-ownership split exists to declare,
-because there is no session/engine/assertions separation: each of the 60 node files owns its own
-stubs and its own assertions, and each Playwright spec owns its own setup and its own
-expectations.
+because there is no session/engine/assertions separation: each node file owns its own assertions,
+and each Playwright spec owns its own setup and its own expectations. Stubs are the one part that
+is no longer per-file: since `F3Go30-taag` the uniform GAS service fakes come from
+`test/helpers/gasEnv.js`, and a file that still hand-rolls them is simply one that has not been
+touched yet (migrate on touch, not in a sweep).
 
 ## 4. The domain noun object
 
@@ -148,7 +158,7 @@ early with honest current-state verdicts is the intended use, not a chain break.
 | `H9` traceability carries outcome class | Not met, and **deliberately deferred with no stage**: `T24`'s reference implementation is not fully ratified upstream and the `T17` half is unbuilt there, so building the gap-diff here would be building against a moving target | `‹pending›` | `waived` — **`F3Go30-emwk.12`** (`Defer` — filed with no stage; its triggering condition is upstream ratification of `T24`) |
 | `H10` AC staleness check | Registry half **landed** (2026-09-06, `F3Go30-emwk.7`): `test/contract/acRegistry.js` holds 75 behavioural AC ids as `AC_REGISTRY`, enumerable one per line (`node test/contract/acRegistry.js`) and consumed by `test-suite-diagnostics.py --ac-list-cmd`, so `ac_ratio` has a real denominator. Harness self-test tags are in the sibling `AC_SELFTEST_FIXTURES` and are read by nothing that computes coverage — the 27%-denominator mistake is designed out, and `test/test_ac_registry.js` fails if they leak back. **Still not met:** nothing emits a per-test AC tag, so no id can yet be shown stale | `test/contract/acRegistry.js` · `AC_REGISTRY` / `listAcIds()` | `waived` — **`F3Go30-emwk.12`** (emission, then the staleness check itself); the registry half is done |
 | `H11` behaviour/journey-derived names | **Met.** Measured 2026-09-06 by `$DEVSTANDARD/tools/test-suite-diagnostics.py --ticket-pattern "F3Go30-[a-z0-9]+"`: **0** test filenames or function names encode a tracker id, across all 67 test files. Bead ids live in file header comments, which is where `H11` wants them. Note the invocation matters — the diagnostics' default pattern would not match this project's `F3Go30-xxxx` slugs, so a default run self-reports green vacuously | `test/`, `tests/playwright/` · the naming convention in testing guide §2 | **`conformant`** — the one genuine pass in the Phase 1 diagnostics (plan row 15) |
-| `H12` entry-point registry | **Met (2026-09-06, `F3Go30-emwk.8`).** A single machine-readable registry of 43 state-modifying entry points, with 29 explicitly deferred — `test/contract/entryPointRegistry.js`, covering all six call-site classes (testing guide §7). The prose enumeration in the project `CLAUDE.md` §Web app calls is no longer the source. Every deferral carries a reason and a tracking bead (`F3Go30-y8j7`, `.1`–`.4`) and is labelled `[backlog]` or `[permanent]`, so the `T17` diff is green by declaration, not omission. Two sibling maps make the judgement calls auditable rather than prose: `ENTRY_POINT_CLASSES` and `ENTRY_POINT_READ_ONLY_EXEMPT` (16 routes/renders/menu items claimed read-only, each with its reason). Testing guide §7 is now a **view**: `test/test_entry_point_registry_view.js` compares every cell against the registry's own counts and fails if the doc drifts — or if the doc is reworded such that the numbers can no longer be found. **Extended 2026-09-06 (`F3Go30-emwk.9`):** the covered set is no longer authored. `test/contract/journeyCharter.js` names the entry points each charter journey drives, and `assertDeferralIsComputed()` requires their union to equal `ENTRY_POINT_REGISTRY` minus `ENTRY_POINT_DEFERRED` exactly — so a covered claim with no journey behind it now fails in the network-free tier. Running that join corrected one entry (`admin.createTrackerForMonth`, covered on prose that named the admin route while the spec drives the `copyAndInit` menu entry), moving the split from 10/33 to 9/34. **`F3Go30-y8j7.1` (2026-09-06)** then closed all five `cmd=checkin`/`cmd=signup` product-route deferrals with real journey call-sites, moving the split to 14/29. See §9b | `test/contract/entryPointRegistry.js` · `ENTRY_POINT_REGISTRY` / `ENTRY_POINT_DEFERRED` | **`conformant`** |
+| `H12` entry-point registry | **Met (2026-09-06, `F3Go30-emwk.8`).** A single machine-readable registry of 44 state-modifying entry points, with 30 explicitly deferred — `test/contract/entryPointRegistry.js`, covering all six call-site classes (testing guide §7). The prose enumeration in the project `CLAUDE.md` §Web app calls is no longer the source. Every deferral carries a reason and a tracking bead (`F3Go30-y8j7`, `.1`–`.4`) and is labelled `[backlog]` or `[permanent]`, so the `T17` diff is green by declaration, not omission. Two sibling maps make the judgement calls auditable rather than prose: `ENTRY_POINT_CLASSES` and `ENTRY_POINT_READ_ONLY_EXEMPT` (16 routes/renders/menu items claimed read-only, each with its reason). Testing guide §7 is now a **view**: `test/test_entry_point_registry_view.js` compares every cell against the registry's own counts and fails if the doc drifts — or if the doc is reworded such that the numbers can no longer be found. **Extended 2026-09-06 (`F3Go30-emwk.9`):** the covered set is no longer authored. `test/contract/journeyCharter.js` names the entry points each charter journey drives, and `assertDeferralIsComputed()` requires their union to equal `ENTRY_POINT_REGISTRY` minus `ENTRY_POINT_DEFERRED` exactly — so a covered claim with no journey behind it now fails in the network-free tier. Running that join corrected one entry (`admin.createTrackerForMonth`, covered on prose that named the admin route while the spec drives the `copyAndInit` menu entry), moving the split from 10/33 to 9/34. **`F3Go30-y8j7.1` (2026-09-06)** then closed all five `cmd=checkin`/`cmd=signup` product-route deferrals with real journey call-sites, moving the split to 14/29. See §9b | `test/contract/entryPointRegistry.js` · `ENTRY_POINT_REGISTRY` / `ENTRY_POINT_DEFERRED` | **`conformant`** |
 | `H13` one regression entry point | **Met (2026-09-06, `F3Go30-emwk.5`).** `pnpm run test:regression` is the single named command, composed of the declared tiers (`H1`), cited by project `CLAUDE.md` §Testing. The hand-picked 6-of-11 `regression:sit` spec list is retired, not repointed — replaced outright by the full declared tiers | `package.json` · `scripts.test:regression`; project `CLAUDE.md` §Testing | **`conformant`** |
 
 **Stage 4 (`charter`, `F3Go30-emwk.9`) flipped no row, and that is the correct outcome.** The
@@ -168,6 +178,18 @@ audited. `H9` and `H10` remain `waived`, unreachable from this bead's scope and 
 ratification per those rows' own text) — neither depends on the disposition mechanism, and this
 bead does not touch either. Recorded explicitly, as stage 4's row was, so a reader does not have
 to infer from an unchanged table whether the stage ran.
+
+**`F3Go30-emwk.14`/`F3Go30-taag` (REVIEW-260910 stage `test-tier`) flipped no row either, and that
+too is correct — but they changed what the `H6`/`H7`/`H8` numbers are *denominated in*.** Under
+`node --test`, a whole-file test script is one execution, so the outcome summary counted files.
+Migrating a file to `describe`/`it` makes each case its own execution: the first cohort of five
+files (`test_pax_cache.js`, `test_script_properties_memo.js`, `test_context_date.js`,
+`test_client_version_logging.js`, `test_webapp_version_route.js`) took the node tier from 65
+executions to 163 with the same code under test and the same pass/fail set. No `H` mechanism
+changed — `classifyExecution()`, `RETRY_POLICY` and the summary printer are untouched — the
+population they classify simply got finer, and a failure in a migrated file now names the
+behaviour instead of the file. Migration is **on touch**, never a sweep, so the two granularities
+coexist indefinitely and a mixed denominator is expected, not a defect.
 
 **Structural finding behind three of the rows above — resolved 2026-09-06 (`F3Go30-emwk.3`).**
 `playwright.config.js` used to apply one profile to all 11 specs: `headless: false, storageState:
@@ -230,7 +252,7 @@ of this list, not a second copy of it (`I6`).
 **As built, 2026-09-06 (`F3Go30-emwk.8`).**
 
 - **Registry location and format:** `test/contract/entryPointRegistry.js`. `ENTRY_POINT_REGISTRY`
-  (`{key → description}`, 43 entries) plus `ENTRY_POINT_DEFERRED` (29) naming the subset that is
+  (`{key → description}`, 44 entries) plus `ENTRY_POINT_DEFERRED` (30) naming the subset that is
   knowingly uncovered, each with a reason and a tracking bead, so the `T17` gap-diff is green by
   design rather than by omission. Keys are `<class-prefix>.<action>` for routed actions
   (`checkin.checkin`, `admin.teardownEnvironment`) and the bare GAS function name for triggers and

@@ -6,29 +6,18 @@
  *   into the "NAG Email?" column with a list of missing people.
  */
 
-var nagUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./Utilities.js')
-  : null;
+var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
+var nagUtilitiesModule_ = gasRequire_('./Utilities.js', ['sendConfiguredEmail_', 'openAppConfigSheet_', 'readEmailDeliveryPolicyFromSheet_', 'buildEmailRecipientList_', 'sanitizeEmailDisplayName_', 'resolveWebAppBaseUrl_', 'buildStaticCheckinUrl_']);
 
-var sendConfiguredEmail_ = (nagUtilitiesModule_ && nagUtilitiesModule_.sendConfiguredEmail_)
-  || (typeof globalThis !== 'undefined' && globalThis.sendConfiguredEmail_);
-var openAppConfigSheet_ = (nagUtilitiesModule_ && nagUtilitiesModule_.openAppConfigSheet_)
-  || (typeof globalThis !== 'undefined' && globalThis.openAppConfigSheet_);
-var readEmailDeliveryPolicyFromSheet_ = (nagUtilitiesModule_ && nagUtilitiesModule_.readEmailDeliveryPolicyFromSheet_)
-  || (typeof globalThis !== 'undefined' && globalThis.readEmailDeliveryPolicyFromSheet_);
-var buildEmailRecipientList_ = (nagUtilitiesModule_ && nagUtilitiesModule_.buildEmailRecipientList_)
-  || (typeof globalThis !== 'undefined' && globalThis.buildEmailRecipientList_);
-var sanitizeEmailDisplayName_ = (nagUtilitiesModule_ && nagUtilitiesModule_.sanitizeEmailDisplayName_)
-  || (typeof globalThis !== 'undefined' && globalThis.sanitizeEmailDisplayName_);
-var resolveWebAppBaseUrl_ = (nagUtilitiesModule_ && nagUtilitiesModule_.resolveWebAppBaseUrl_)
-  || (typeof globalThis !== 'undefined' && globalThis.resolveWebAppBaseUrl_);
-var buildStaticCheckinUrl_ = (nagUtilitiesModule_ && nagUtilitiesModule_.buildStaticCheckinUrl_)
-  || (typeof globalThis !== 'undefined' && globalThis.buildStaticCheckinUrl_);
-var nagResponseUtilsModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./response_utils.js')
-  : null;
-var getResponseEmailValue_ = (nagResponseUtilsModule_ && nagResponseUtilsModule_.getResponseEmailValue_)
-  || (typeof globalThis !== 'undefined' && globalThis.getResponseEmailValue_);
+var sendConfiguredEmail_ = nagUtilitiesModule_.sendConfiguredEmail_;
+var openAppConfigSheet_ = nagUtilitiesModule_.openAppConfigSheet_;
+var readEmailDeliveryPolicyFromSheet_ = nagUtilitiesModule_.readEmailDeliveryPolicyFromSheet_;
+var buildEmailRecipientList_ = nagUtilitiesModule_.buildEmailRecipientList_;
+var sanitizeEmailDisplayName_ = nagUtilitiesModule_.sanitizeEmailDisplayName_;
+var resolveWebAppBaseUrl_ = nagUtilitiesModule_.resolveWebAppBaseUrl_;
+var buildStaticCheckinUrl_ = nagUtilitiesModule_.buildStaticCheckinUrl_;
+var nagResponseUtilsModule_ = gasRequire_('./response_utils.js', ['getResponseEmailValue_']);
+var getResponseEmailValue_ = nagResponseUtilsModule_.getResponseEmailValue_;
 
 function setupDailyNagTrigger() {
   clearDailyNagTrigger();

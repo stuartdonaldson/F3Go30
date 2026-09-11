@@ -26,37 +26,25 @@
  * fail-safe Config + rename) below.
  */
 
-var copyTemplateGo30ToolsModule_ = (typeof module !== 'undefined' && module.exports)
-	? require('./go30tools.js')
-	: null;
-var copyTemplateUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
-	? require('./Utilities.js')
-	: null;
-var copyTemplateTrackerEditTriggerModule_ = (typeof module !== 'undefined' && module.exports)
-	? require('./TrackerEditTrigger.js')
-	: null;
-var ct_setupTrackerEditTrigger_ = (copyTemplateTrackerEditTriggerModule_ && copyTemplateTrackerEditTriggerModule_.setupTrackerEditTrigger_) ||
-	(typeof globalThis !== 'undefined' && globalThis.setupTrackerEditTrigger_);
-var ct_upsertConfigSheetRow_ = (copyTemplateUtilitiesModule_ && copyTemplateUtilitiesModule_.upsertConfigSheetRow_) ||
-	(typeof globalThis !== 'undefined' && globalThis.upsertConfigSheetRow_);
-var ct_readTrackerDbRowsBySheetId_ = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_._readTrackerDbRowsBySheetId_) ||
-	(typeof globalThis !== 'undefined' && globalThis._readTrackerDbRowsBySheetId_);
-var ct_computeTrackerMetrics_ = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_._computeTrackerMetrics_) ||
-	(typeof globalThis !== 'undefined' && globalThis._computeTrackerMetrics_);
-var ct_buildTrackerMetadata_ = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_._buildTrackerMetadata_) ||
-	(typeof globalThis !== 'undefined' && globalThis._buildTrackerMetadata_);
-var ct_loadPaxData = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_._loadPaxData) ||
-	(typeof globalThis !== 'undefined' && globalThis._loadPaxData);
-var ct_updateTrackerDB = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_._updateTrackerDB) ||
-	(typeof globalThis !== 'undefined' && globalThis._updateTrackerDB);
-var ct_updatePaxDB = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_._updatePaxDB) ||
-	(typeof globalThis !== 'undefined' && globalThis._updatePaxDB);
-var ct_appendNamespaceRegistryRow_ = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_.appendNamespaceRegistryRow_) ||
-	(typeof globalThis !== 'undefined' && globalThis.appendNamespaceRegistryRow_);
-var ct_lookupNamespaceRegistryRow_ = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_._lookupNamespaceRegistryRow_) ||
-	(typeof globalThis !== 'undefined' && globalThis._lookupNamespaceRegistryRow_);
-var ct_removeNamespaceRegistryRow_ = (copyTemplateGo30ToolsModule_ && copyTemplateGo30ToolsModule_.removeNamespaceRegistryRow_) ||
-	(typeof globalThis !== 'undefined' && globalThis.removeNamespaceRegistryRow_);
+var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
+var copyTemplateGo30ToolsModule_ = gasRequire_('./go30tools.js', ['_readTrackerDbRowsBySheetId_', '_computeTrackerMetrics_', '_buildTrackerMetadata_', '_loadPaxData', '_updateTrackerDB', '_updatePaxDB', 'appendNamespaceRegistryRow_', '_lookupNamespaceRegistryRow_', 'removeNamespaceRegistryRow_']);
+var copyTemplateUtilitiesModule_ = gasRequire_('./Utilities.js', ['upsertConfigSheetRow_']);
+var copyTemplateTrackerEditTriggerModule_ = gasRequire_('./TrackerEditTrigger.js', ['setupTrackerEditTrigger_']);
+var ct_setupTrackerEditTrigger_ = copyTemplateTrackerEditTriggerModule_.setupTrackerEditTrigger_;
+var copyTemplateSignupWebappModule_ = gasRequire_('./signupWebapp.js', ['getCurrentAndNextMonths_']);
+var ct_getCurrentAndNextMonths_ = copyTemplateSignupWebappModule_.getCurrentAndNextMonths_;
+var copyTemplatePaxCacheModule_ = gasRequire_('./PaxCache.js', ['wipePaxCacheAndRelatedCachesForSheet_']);
+var ct_wipePaxCacheAndRelatedCachesForSheet_ = copyTemplatePaxCacheModule_.wipePaxCacheAndRelatedCachesForSheet_;
+var ct_upsertConfigSheetRow_ = copyTemplateUtilitiesModule_.upsertConfigSheetRow_;
+var ct_readTrackerDbRowsBySheetId_ = copyTemplateGo30ToolsModule_._readTrackerDbRowsBySheetId_;
+var ct_computeTrackerMetrics_ = copyTemplateGo30ToolsModule_._computeTrackerMetrics_;
+var ct_buildTrackerMetadata_ = copyTemplateGo30ToolsModule_._buildTrackerMetadata_;
+var ct_loadPaxData = copyTemplateGo30ToolsModule_._loadPaxData;
+var ct_updateTrackerDB = copyTemplateGo30ToolsModule_._updateTrackerDB;
+var ct_updatePaxDB = copyTemplateGo30ToolsModule_._updatePaxDB;
+var ct_appendNamespaceRegistryRow_ = copyTemplateGo30ToolsModule_.appendNamespaceRegistryRow_;
+var ct_lookupNamespaceRegistryRow_ = copyTemplateGo30ToolsModule_._lookupNamespaceRegistryRow_;
+var ct_removeNamespaceRegistryRow_ = copyTemplateGo30ToolsModule_.removeNamespaceRegistryRow_;
 
 /**
  * Filters TrackerDB rows down to real, non-smoke, non-expired monthly trackers and returns
@@ -348,10 +336,220 @@ function teardownNamespaceEnvironment_(ns, trashFolder, logFn) {
 	};
 }
 
+// F3Go30-956l: fixed set of per-tracker sheets that carry a month's actual data (as opposed to
+// Config/Links/Activity, which are structural). Shared by copyCurrentMonthTrackerDataFromSource_
+// below and TrackerEditTrigger.js's own TRACKER_EDIT_INVALIDATING_SHEETS_ (same three sheets,
+// different purpose — kept as separate constants since one drives cache invalidation and this
+// one drives which sheets get their non-formula cell values overlaid from the source).
+var TRACKER_DATA_SHEET_NAMES_ = ['Tracker', 'Bonus Tracker', 'Responses'];
+
+/**
+ * Pure planning step for copyCurrentMonthTrackerDataFromSource_: decides which of
+ * TRACKER_DATA_SHEET_NAMES_ to copy vs skip, given which sheet names actually exist on the
+ * source tracker. No Drive/Sheets calls, so it's unit-testable without live GAS services.
+ * @param {Array<string>} sheetNames
+ * @param {Object<string,boolean>} sourceSheetNamesPresent
+ * @returns {Array<{name:string, action:('copy'|'skip')}>}
+ */
+function planTrackerDataSheetCopy_(sheetNames, sourceSheetNamesPresent) {
+	return (sheetNames || []).map(function(name) {
+		return { name: name, action: (sourceSheetNamesPresent && sourceSheetNamesPresent[name]) ? 'copy' : 'skip' };
+	});
+}
+
+/**
+ * Pure planning step for copyTrackerDataSheetValues_: decides which COLUMNS are safe to overlay
+ * whole, given the formula layout of both sides. A column is 'skip' if a formula appears anywhere
+ * in it on either side, 'copy' otherwise. Column-level (not cell-level) is deliberate: an earlier
+ * cell-level design (F3Go30-956l) computed a per-cell merged grid but then wrote it back with one
+ * Range.setValues() call spanning the WHOLE sheet — Sheets has no "skip this cell" write, so that
+ * call silently overwrote every formula cell in the range with its last computed value, destroying
+ * the formula. Tracker/Bonus Tracker/Responses each have formulas clustered in whole columns
+ * (computed totals/scores), not mixed within a column, so skipping a formula-bearing column
+ * entirely — and writing every safe column in one contiguous Range.setValues() — copies real data
+ * without ever touching a formula cell. No Drive/Sheets calls, so it's unit-testable without live
+ * GAS services.
+ * @param {Array<Array<string>>} sourceFormulas From sourceSheet.getDataRange().getFormulas().
+ * @param {Array<Array<string>>} destFormulas From destinationSheet.getDataRange().getFormulas().
+ * @param {number} sourceColCount
+ * @param {number} destColCount
+ * @returns {Array<{col: number, action: ('copy'|'skip')}>} col is 0-based.
+ */
+function planTrackerDataColumnOverlay_(sourceFormulas, destFormulas, sourceColCount, destColCount) {
+	var formulaCols = {};
+	[sourceFormulas, destFormulas].forEach(function(formulas) {
+		(formulas || []).forEach(function(row) {
+			(row || []).forEach(function(f, c) {
+				if (f) { formulaCols[c] = true; }
+			});
+		});
+	});
+	var maxCols = Math.max(sourceColCount || 0, destColCount || 0);
+	var plan = [];
+	for (var c = 0; c < maxCols; c++) {
+		plan.push({ col: c, action: formulaCols[c] ? 'skip' : 'copy' });
+	}
+	return plan;
+}
+
+/**
+ * Overlays sourceSheet's non-formula-column cell values onto destinationSheet in place (see
+ * planTrackerDataColumnOverlay_ for the column-safety rule), leaving the destination sheet itself
+ * — identity, formatting, tab position, any linked Form, and every formula cell — completely
+ * untouched. Deliberately does NOT use Sheet.copyTo()/deleteSheet() (F3Go30-956l live-test
+ * finding: the destination Responses sheet can carry a linked Google Form, and Sheets refuses to
+ * delete a sheet with a linked form). Clears data validation on each copied column before writing
+ * (another F3Go30-956l live-test finding: a destination cell can carry validation — e.g. a
+ * dropdown list — that rejects a legitimate value copied in from the source). GAS orchestration
+ * only (live Sheet/Range objects) — not unit-tested; see planTrackerDataColumnOverlay_ for the
+ * testable planning logic this is driven by.
+ * @param {Object} sourceSheet
+ * @param {Object} destinationSheet
+ * @param {function(string)=} logFn Progress callback, used only to report skipped formula columns.
+ * @returns {{rows: number, cols: number, skippedFormulaColumns: Array<number>}} cols/skippedFormulaColumns are 1-based column numbers.
+ */
+function copyTrackerDataSheetValues_(sourceSheet, destinationSheet, logFn) {
+	logFn = logFn || function() {};
+	var sourceRange = sourceSheet.getDataRange();
+	var sourceValues = sourceRange.getValues();
+	var sourceFormulas = sourceRange.getFormulas();
+	var destRange = destinationSheet.getDataRange();
+	var destValues = destRange.getValues();
+	var destFormulas = destRange.getFormulas();
+
+	var sourceRows = sourceValues.length;
+	var destRows = destValues.length;
+	var rows = Math.max(sourceRows, destRows);
+	var sourceCols = sourceRows ? sourceValues[0].length : 0;
+	var destCols = destRows ? destValues[0].length : 0;
+
+	var plan = planTrackerDataColumnOverlay_(sourceFormulas, destFormulas, sourceCols, destCols);
+	var copiedCols = [];
+	var skippedFormulaColumns = [];
+
+	plan.forEach(function(step) {
+		if (step.action === 'skip') {
+			skippedFormulaColumns.push(step.col + 1);
+			return;
+		}
+		var c = step.col;
+		var columnValues = [];
+		for (var r = 0; r < rows; r++) {
+			var inSource = r < sourceRows && c < sourceCols;
+			var inDest = r < destRows && c < destCols;
+			columnValues.push([inSource ? sourceValues[r][c] : (inDest ? destValues[r][c] : '')]);
+		}
+		if (rows > 0) {
+			var columnRange = destinationSheet.getRange(1, c + 1, rows, 1);
+			columnRange.clearDataValidations();
+			columnRange.setValues(columnValues);
+		}
+		copiedCols.push(c + 1);
+	});
+
+	if (skippedFormulaColumns.length) {
+		logFn('    (left ' + skippedFormulaColumns.length + ' formula column(s) untouched: col#' + skippedFormulaColumns.join(', ') + ')');
+	}
+
+	return { rows: rows, cols: copiedCols.length, skippedFormulaColumns: skippedFormulaColumns };
+}
+
+/**
+ * Copies PROD's current-month tracker's Tracker/Bonus Tracker/Responses sheets into the
+ * destination Template's own current-month tracker, overlaying each sheet's non-formula cell
+ * values onto the destination's existing sheet in place (F3Go30-956l; see
+ * copyTrackerDataSheetValues_ — the destination sheet itself, and any linked Form, are never
+ * deleted or replaced). Intended to run from SIT only — the adminCopyProdTrackerToSit_ webapp
+ * action that calls this enforces the PROD guard; this function itself never writes to the source.
+ *
+ * Unlike copyTemplateToNewEnvironment_ above (which copies whole tracker FILES into a brand-new
+ * environment), this targets the one already-existing destination tracker for "this month" and
+ * refreshes only its three data sheets, then re-syncs TrackerDB/PaxDB/PaxCache to match — same
+ * freshness guarantee a human editing those sheets (TrackerEditTrigger.js) or an admin-triggered
+ * scanTrackers() already provides, since a programmatic Sheet.copyTo() fires no onEdit trigger.
+ *
+ * @param {string} sourceTemplateId PROD's templateSpreadsheetId — required, never defaults to
+ *   the active spreadsheet (mirrors copyTemplateToNewEnvironment_'s sourceTemplateId contract),
+ *   so SIT can never accidentally copy from itself.
+ * @param {Object} destinationTemplateSpreadsheet The ns-resolved destination Template spreadsheet
+ *   (resolveTemplateSpreadsheet_'s result) whose own current-month tracker is the copy target.
+ * @param {string=} contextDateOverride Per-request contextDate override, passed through to both
+ *   sides' getCurrentAndNextMonths_ so "current month" resolves the same way on each.
+ * @param {function(string)=} logFn Progress callback.
+ * @returns {{ok:true, sourceSheetId:string, destinationSheetId:string, sheets:Array, scanResult:Object}}
+ */
+function copyCurrentMonthTrackerDataFromSource_(sourceTemplateId, destinationTemplateSpreadsheet, contextDateOverride, logFn) {
+	logFn = logFn || function() {};
+	if (!sourceTemplateId || !String(sourceTemplateId).trim()) {
+		throw new Error('sourceTemplateId is required');
+	}
+
+	var sourceTemplateSpreadsheet = SpreadsheetApp.openById(sourceTemplateId);
+	var sourceMonths = ct_getCurrentAndNextMonths_(sourceTemplateSpreadsheet, null, contextDateOverride);
+	if (!sourceMonths.current || !sourceMonths.current.sheetId) {
+		throw new Error('source_current_tracker_not_found');
+	}
+	var destinationMonths = ct_getCurrentAndNextMonths_(destinationTemplateSpreadsheet, null, contextDateOverride);
+	if (!destinationMonths.current || !destinationMonths.current.sheetId) {
+		throw new Error('destination_current_tracker_not_found');
+	}
+
+	var sourceTrackerSpreadsheet = SpreadsheetApp.openById(sourceMonths.current.sheetId);
+	var destinationTrackerSpreadsheet = SpreadsheetApp.openById(destinationMonths.current.sheetId);
+
+	var sourceSheetNamesPresent = {};
+	TRACKER_DATA_SHEET_NAMES_.forEach(function(name) {
+		sourceSheetNamesPresent[name] = !!sourceTrackerSpreadsheet.getSheetByName(name);
+	});
+	var plan = planTrackerDataSheetCopy_(TRACKER_DATA_SHEET_NAMES_, sourceSheetNamesPresent);
+
+	plan.forEach(function(step) {
+		if (step.action === 'skip') {
+			logFn('  ⚠️  Skipping "' + step.name + '" — not found on source tracker.');
+			return;
+		}
+		var sourceSheet = sourceTrackerSpreadsheet.getSheetByName(step.name);
+		var destinationSheet = destinationTrackerSpreadsheet.getSheetByName(step.name);
+		if (!destinationSheet) {
+			logFn('  ⚠️  Skipping "' + step.name + '" — not found on destination tracker.');
+			step.action = 'skip';
+			return;
+		}
+		try {
+			var result = copyTrackerDataSheetValues_(sourceSheet, destinationSheet, logFn);
+			logFn('  Copied "' + step.name + '": ' + result.cols + ' column(s) x ' + result.rows + ' row(s) from source into destination tracker' +
+				(result.skippedFormulaColumns.length ? ' (' + result.skippedFormulaColumns.length + ' formula column(s) left untouched)' : '') + '.');
+		} catch (err) {
+			throw new Error('Failed copying "' + step.name + '" sheet: ' + err.message);
+		}
+	});
+
+	ct_wipePaxCacheAndRelatedCachesForSheet_(destinationMonths.current.sheetId);
+	logFn('Wiped PaxCache/dashboard caches for destination sheetId=' + destinationMonths.current.sheetId + '.');
+	// scanTrackers (go30tools.js) is called bare, same convention as WebApp.js's
+	// adminRunScanTrackers_ — it's GAS-orchestration-only (folder walk + full TrackerDB/PaxDB
+	// rebuild), never unit-tested, so it isn't wired through gasRequire_ like the pure helpers
+	// above.
+	var scanResult = scanTrackers();
+	logFn('Ran scanTrackers() to resync TrackerDB/PaxDB: ' + JSON.stringify(scanResult));
+
+	return {
+		ok: true,
+		sourceSheetId: sourceMonths.current.sheetId,
+		destinationSheetId: destinationMonths.current.sheetId,
+		sheets: plan,
+		scanResult: scanResult
+	};
+}
+
 if (typeof module !== 'undefined' && module.exports) {
 	module.exports = {
 		selectRecentRealTrackerRows_: selectRecentRealTrackerRows_,
 		buildCopiedTrackerDbRow_: buildCopiedTrackerDbRow_,
+		TRACKER_DATA_SHEET_NAMES_: TRACKER_DATA_SHEET_NAMES_,
+		planTrackerDataSheetCopy_: planTrackerDataSheetCopy_,
+		planTrackerDataColumnOverlay_: planTrackerDataColumnOverlay_,
+		copyCurrentMonthTrackerDataFromSource_: copyCurrentMonthTrackerDataFromSource_,
 		computeSafeConfigDefaults_: computeSafeConfigDefaults_,
 		buildRenamedTrackerName_: buildRenamedTrackerName_,
 		applySafeConfigDefaults_: applySafeConfigDefaults_,

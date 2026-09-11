@@ -1,3 +1,12 @@
+// F3Go30-h4xt: script-properties writes go through ScriptProperties.js's invalidating facade, so
+// the per-execution whole-store memo (getScriptPropertiesSnapshot_) can never serve a value this
+// same execution has already overwritten. Resolved lazily inside the accessor because in GAS
+// these are plain globals whose defining file may evaluate after this one.
+var scriptPropertiesModule_nsb_ = (typeof require === 'function') ? require('./ScriptProperties.js') : null;
+function scriptProps_nsb_() {
+  return scriptPropertiesModule_nsb_ ? scriptPropertiesModule_nsb_.scriptPropertiesStore_() : scriptPropertiesStore_();
+}
+
 // Description: Code for the Notification Sidebar
 //
 // SIDEBAR-ONLY CONTRACT
@@ -146,7 +155,7 @@ function initMessageQueues() {
 
 // setScriptProperties - set the script properties with the messages object
 function setScriptProperty(prop, messages) {
-  PropertiesService.getScriptProperties().setProperty(prop, JSON.stringify(messages));
+  scriptProps_nsb_().setProperty(prop, JSON.stringify(messages));
 }
 // getScriptProperties - get the messages object from the script properties
 function getScriptProperty(prop) {

@@ -21,19 +21,13 @@
  * SpreadsheetApp, and applies the plan.
  */
 
-var trackerTriggerLifecycleEditModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./TrackerEditTrigger.js')
-  : null;
-var ttlSetupTrackerEditTrigger_ = (trackerTriggerLifecycleEditModule_ && trackerTriggerLifecycleEditModule_.setupTrackerEditTrigger_)
-  || (typeof globalThis !== 'undefined' && globalThis.setupTrackerEditTrigger_);
+var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
+var trackerTriggerLifecycleEditModule_ = gasRequire_('./TrackerEditTrigger.js', ['setupTrackerEditTrigger_']);
+var ttlSetupTrackerEditTrigger_ = trackerTriggerLifecycleEditModule_.setupTrackerEditTrigger_;
 
-var trackerTriggerLifecycleGo30ToolsModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./go30tools.js')
-  : null;
-var ttlReadTrackerDbRowsBySheetId_ = (trackerTriggerLifecycleGo30ToolsModule_ && trackerTriggerLifecycleGo30ToolsModule_._readTrackerDbRowsBySheetId_)
-  || (typeof globalThis !== 'undefined' && globalThis._readTrackerDbRowsBySheetId_);
-var ttlListNamespaceRegistryRows_ = (trackerTriggerLifecycleGo30ToolsModule_ && trackerTriggerLifecycleGo30ToolsModule_._listNamespaceRegistryRows_)
-  || (typeof globalThis !== 'undefined' && globalThis._listNamespaceRegistryRows_);
+var trackerTriggerLifecycleGo30ToolsModule_ = gasRequire_('./go30tools.js', ['_readTrackerDbRowsBySheetId_', '_listNamespaceRegistryRows_']);
+var ttlReadTrackerDbRowsBySheetId_ = trackerTriggerLifecycleGo30ToolsModule_._readTrackerDbRowsBySheetId_;
+var ttlListNamespaceRegistryRows_ = trackerTriggerLifecycleGo30ToolsModule_._listNamespaceRegistryRows_;
 var TTL_TRACKER_EDIT_HANDLER_ = 'handleTrackerEdit_';
 var TTL_FORM_SUBMIT_HANDLER_ = (typeof globalThis !== 'undefined' && globalThis.FORM_SUBMIT_HANDLER_) || 'handleFormSubmit_';
 var TTL_LEGACY_FORM_SUBMIT_HANDLER_ = (typeof globalThis !== 'undefined' && globalThis.LEGACY_FORM_SUBMIT_HANDLER_) || 'onFormSubmit';

@@ -1,15 +1,11 @@
 /**
  * Build signup reuse email using SignupReuseEmailTemplate
  */
-var signupEmailUtilitiesModule_ = (typeof module !== 'undefined' && module.exports)
-  ? require('./Utilities.js')
-  : null;
-var resolveWebAppBaseUrl_ = (signupEmailUtilitiesModule_ && signupEmailUtilitiesModule_.resolveWebAppBaseUrl_)
-  || (typeof globalThis !== 'undefined' && globalThis.resolveWebAppBaseUrl_);
-var buildStaticCheckinUrl_ = (signupEmailUtilitiesModule_ && signupEmailUtilitiesModule_.buildStaticCheckinUrl_)
-  || (typeof globalThis !== 'undefined' && globalThis.buildStaticCheckinUrl_);
-var buildStaticSignupUrl_ = (signupEmailUtilitiesModule_ && signupEmailUtilitiesModule_.buildStaticSignupUrl_)
-  || (typeof globalThis !== 'undefined' && globalThis.buildStaticSignupUrl_);
+var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
+var signupEmailUtilitiesModule_ = gasRequire_('./Utilities.js', ['resolveWebAppBaseUrl_', 'buildStaticCheckinUrl_', 'buildStaticSignupUrl_']);
+var resolveWebAppBaseUrl_ = signupEmailUtilitiesModule_.resolveWebAppBaseUrl_;
+var buildStaticCheckinUrl_ = signupEmailUtilitiesModule_.buildStaticCheckinUrl_;
+var buildStaticSignupUrl_ = signupEmailUtilitiesModule_.buildStaticSignupUrl_;
 
 function resolveSignupEmailMode_(options) {
   if (options && options.mode) return options.mode;

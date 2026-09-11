@@ -2408,7 +2408,7 @@
     (res.monthGrid || []).forEach(function(entry) {
       if (Object.prototype.hasOwnProperty.call(local, entry.dateIso)) entry.status = local[entry.dateIso];
     });
-    var todayIso = state.todayIso || isoDate_(new Date());
+    var todayIso = state.todayIso || contextTodayIso_();
     if (Object.prototype.hasOwnProperty.call(local, todayIso)) res.todayStatus = local[todayIso];
     if (state.yesterdayIso && Object.prototype.hasOwnProperty.call(local, state.yesterdayIso)) {
       res.yesterdayStatus = local[state.yesterdayIso];
@@ -3375,8 +3375,8 @@
   // cached month payload for today at all.
   $('dashboardBtn').addEventListener('click', function() {
     var btn = this;
-    var todayIso = isoDate_(new Date());
-    var cached = state.board[monthKeyOf_(new Date())];
+    var todayIso = contextTodayIso_();
+    var cached = state.board[monthKeyOf_(contextToday_())];
     if (cached && cached.dayDates.indexOf(todayIso) !== -1) {
       renderDashboard_(cached, cached.dayDates.indexOf(todayIso));
       revalidateDashboard_();
@@ -3385,7 +3385,7 @@
     setButtonLoading_(btn, true, 'Loading…');
     var pending = state.dashboardPrefetchPromise
       ? state.dashboardPrefetchPromise.then(function() {
-          var c = state.board[monthKeyOf_(new Date())];
+          var c = state.board[monthKeyOf_(contextToday_())];
           if (c && c.dayDates.indexOf(todayIso) !== -1) {
             renderDashboard_(c, c.dayDates.indexOf(todayIso));
             return;
@@ -4211,7 +4211,7 @@
       return paxDetailNav_ && paxDetailNav_.list === list && paxDetailNav_.idx === idx;
     }
 
-    var dateISO = state.viewDate ? isoDate_(state.viewDate) : isoDate_(new Date());
+    var dateISO = state.viewDate ? isoDate_(state.viewDate) : contextTodayIso_();
     var cacheKey = paxDetailCacheKey_(view.name, dateISO);
 
     var cachedGoals = state.paxGoalsCache[cacheKey];
@@ -4349,6 +4349,17 @@
     return new Date(parts[0], parts[1] - 1, parts[2]);
   }
 
+  // F3Go30-f3fa (REVIEW-260910 findings 1+2): one client-side "what day is it", mirroring the
+  // server's resolveContextDate_ (request field -> Config row -> clock) at the one precedence
+  // step available client-side (CONTEXT_DATE_, the ?contextDate= dev/SIT override -> device
+  // clock). Every "today" site on this page must route through this pair instead of calling
+  // isoDate_ on a bare new Date() directly, or a contextDate override silently stops reaching
+  // that site the way it stopped reaching the dashboard before this fix.
+  function contextToday_() {
+    return CONTEXT_DATE_ ? parseIsoDate_(CONTEXT_DATE_) : new Date();
+  }
+  function contextTodayIso_() { return isoDate_(contextToday_()); }
+
   function formatNavDate_(d) {
     return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   }
@@ -4457,7 +4468,7 @@
 
     $('dTeamName').textContent = d.team || 'Unassigned';
 
-    var todayIndex = findDayIndex_(d.dayDates, isoDate_(new Date()));
+    var todayIndex = findDayIndex_(d.dayDates, contextTodayIso_());
     var yesterdayReal = new Date();
     yesterdayReal.setDate(yesterdayReal.getDate() - 1);
     var yesterdayIndex = findDayIndex_(d.dayDates, isoDate_(yesterdayReal));
@@ -4547,13 +4558,20 @@
     return sum;
   }
 
-  /** Stable team->color assignment for one render, in paxBoard's own order (already sorted by
-   * avgScore desc by groupByTeam_) — same map used by both the ladder's team chips and the Top
-   * Teams bars, so a team reads as the same color in both views. */
+  /** Stable team->color assignment, keyed off team name rather than paxBoard's rank order
+   * (F3Go30-9ywo / REVIEW-260910 finding 6) — assigning by index made a team's colour a function
+   * of its current avgScore rank, so colours swapped between loads whenever rankings moved, which
+   * is the entire point of the screen. Colours are assigned from a name-sorted team list instead
+   * of a name hash: order-independent like a hash, but collision-free up to
+   * SCORECARD_TEAM_COLOR_VARS_.length teams (6) rather than merely low-probability. Same map used
+   * by both the ladder's team chips and the Top Teams bars, so a team reads as the same color in
+   * both views. */
   function scorecardTeamColorMap_(paxBoard) {
     var map = {};
-    (paxBoard || []).forEach(function(group, i) {
-      map[group.name] = 'var(' + SCORECARD_TEAM_COLOR_VARS_[i % SCORECARD_TEAM_COLOR_VARS_.length] + ')';
+    var names = (paxBoard || []).map(function(group) { return group.name; })
+      .sort(function(a, b) { return a.localeCompare(b); });
+    names.forEach(function(name, i) {
+      map[name] = 'var(' + SCORECARD_TEAM_COLOR_VARS_[i % SCORECARD_TEAM_COLOR_VARS_.length] + ')';
     });
     return map;
   }
@@ -4928,7 +4946,7 @@
   function loadDashboard_(dateISO, opts) {
     var silent = !!(opts && opts.silent);
     if (!silent) hideApiError_();
-    dateISO = dateISO || isoDate_(new Date());
+    dateISO = dateISO || contextTodayIso_();
     state.dashboardLoading = true;
     if (!silent) {
       $('datePrevBtn').disabled = true;
@@ -4986,14 +5004,14 @@
   // have navigated to another day/month while this was in flight) — pendingSelfWrites patching
   // inside loadDashboard_ already protects any own-day write made in the meantime regardless.
   function revalidateDashboard_() {
-    var todayIso = isoDate_(new Date());
+    var todayIso = contextTodayIso_();
     var chain = state.dashboardPrefetchPromise || loadDashboard_(undefined, { silent: true });
     chain.then(function() {
       // A silent revalidate that resolves means we DID reach the server, so any prior
       // transport banner is stale and can be cleared. If revalidate fails, catch below
       // keeps the banner up so cached rendering never masks an ongoing outage.
       hideApiError_();
-      var fresh = state.board[monthKeyOf_(new Date())];
+      var fresh = state.board[monthKeyOf_(contextToday_())];
       // F3Go30-e4r0: by the time this background fetch resolves the PAX may have navigated to
       // another step entirely (Scorecard, Bonus, ...) — repainting here would call
       // renderDashboard_'s unconditional showStep('dashboard') and silently yank them back.
@@ -5219,7 +5237,7 @@
   function openBonusForm_(entry) {
     hideBonusSaveNotice_();
     state.bonusEditingRowIndex = entry ? entry.rowIndex : null;
-    state.bonusEditingOriginalWhenIso = entry ? (state.bonusListContextIso || isoDate_(new Date())) : null;
+    state.bonusEditingOriginalWhenIso = entry ? (state.bonusListContextIso || contextTodayIso_()) : null;
     state.bonusEditingOriginalSnapshot = entry
       ? { type: entry.type, whenIso: entry.whenIso, message: entry.message, link: entry.link }
       : null;

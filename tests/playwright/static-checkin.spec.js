@@ -396,7 +396,11 @@ test.describe('Static check-in front end (client, live SIT)', () => {
     await page.locator('#bonusAddBtn').click();
     await expect(page.locator('#bonusFormCard')).toBeVisible();
     const bonusMessage = `Playwright live-check — please ignore (${Date.now()}).`;
-    await page.locator('#bonusType').selectOption({ index: 1 });
+    // 'Fellowship' explicitly (F3Go30-r2cz follow-up finding): `{ index: 1 }` picked 'Q Point',
+    // which BonusTypes.js's requiresLink:true blocks without a Slack link — the save silently
+    // failed validation and #bonusFormCard never closed, timing out at LIVE_ROUND_TRIP_MS. Not a
+    // timing/H4 issue as first suspected; 'Fellowship' is the one type that needs no link.
+    await page.locator('#bonusType').selectOption({ label: 'Fellowship' });
     await page.locator('#bonusMessage').fill(bonusMessage);
     await page.locator('#bonusSaveBtn').click();
     await expect(page.locator('#bonusFormCard')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });

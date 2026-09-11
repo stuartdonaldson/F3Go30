@@ -13,6 +13,7 @@ const {
   emptyBonusPills_,
   weekOfMonth_,
   computeBonusPillsAsOf_,
+  groupBonusEntriesByPax_,
   computeBonusSeriesForPax_,
   annotateBonusEntryCountStatus_,
   annotateBonusEntryDuplicateLinkStatus_,
@@ -168,6 +169,28 @@ const {
   assert.deepEqual(pills, { fe: 0, q: 0, ins: 0, eh: 0 });
 })();
 
+// ── groupBonusEntriesByPax_ (F3Go30-ja7d) ───────────────────────────────────
+(function testGroupBonusEntriesByPaxBucketsByNameNorm() {
+  var a = { nameNorm: 'crazy ivan', date: new Date(2026, 6, 2), type: 'Fellowship', complete: true };
+  var b = { nameNorm: 'little john', date: new Date(2026, 6, 2), type: 'Fellowship', complete: true };
+  var c = { nameNorm: 'crazy ivan', date: new Date(2026, 6, 3), type: 'Q Point', complete: true };
+  var byPax = groupBonusEntriesByPax_([a, b, c]);
+  assert.deepEqual(byPax['crazy ivan'], [a, c]); // source order preserved within a bucket
+  assert.deepEqual(byPax['little john'], [b]);
+  assert.equal(byPax['nobody'], undefined);
+  assert.deepEqual(Object.keys(groupBonusEntriesByPax_(null)), []);
+})();
+
+(function testGroupBonusEntriesByPaxIsPrototypeSafe() {
+  // A nameNorm spelling a prototype key must be an ordinary bucket, not a prototype write, and
+  // must not make an absent PAX resolve to a function via the prototype chain.
+  var evil = { nameNorm: '__proto__', date: new Date(2026, 6, 2), type: 'Fellowship', complete: true };
+  var byPax = groupBonusEntriesByPax_([evil]);
+  assert.deepEqual(byPax['__proto__'], [evil]);
+  assert.equal(byPax['constructor'], undefined);
+  assert.equal(({}).polluted, undefined);
+})();
+
 // ── computeBonusSeriesForPax_ ────────────────────────────────────────────────
 (function testComputeBonusSeriesForPaxTracksDateOfEachEntry() {
   var monthStart = new Date(2026, 6, 1);
@@ -175,8 +198,79 @@ const {
     { nameNorm: 'crazy ivan', date: new Date(2026, 6, 2), type: 'Fellowship', complete: true },
   ];
   var dayDates = [new Date(2026, 6, 1), new Date(2026, 6, 2), new Date(2026, 6, 3)];
-  var series = computeBonusSeriesForPax_(entries, 'crazy ivan', dayDates, monthStart);
+  var series = computeBonusSeriesForPax_(groupBonusEntriesByPax_(entries)['crazy ivan'], dayDates, monthStart);
   assert.deepEqual(series.map(function(p) { return p.fe; }), [0, 1, 1]);
+})();
+
+// The forward sweep (F3Go30-ja7d) must be output-identical to the per-day computeBonusPillsAsOf_
+// rebuild it replaced — that function is the oracle, and it is deliberately left untouched for its
+// single-point callers. Exercised over a month with every wrinkle in it at once: both weekly-capped
+// and uncapped types, repeats inside one period, repeats across periods, an unknown type, an
+// incomplete entry, another PAX's rows, and an entry dated past the last reported day column.
+(function testComputeBonusSeriesForPaxMatchesPerDayComputationExactly() {
+  var monthStart = new Date(2026, 6, 1); // Jul 2026
+  var d = function(day) { return new Date(2026, 6, day); };
+  var entries = [
+    { nameNorm: 'crazy ivan', date: d(2), type: 'Fellowship', complete: true },
+    { nameNorm: 'crazy ivan', date: d(3), type: 'Fellowship', complete: true },  // same period — capped
+    { nameNorm: 'crazy ivan', date: d(8), type: 'Fellowship', complete: true },  // next period — counts
+    { nameNorm: 'crazy ivan', date: d(8), type: 'Q Point', complete: true },
+    { nameNorm: 'crazy ivan', date: d(9), type: 'Q Point', complete: false },    // incomplete
+    { nameNorm: 'crazy ivan', date: d(4), type: 'EHing FNG', complete: true },   // uncapped
+    { nameNorm: 'crazy ivan', date: d(4), type: 'EHing FNG', complete: true },
+    { nameNorm: 'crazy ivan', date: d(6), type: 'Inspire', complete: true },
+    { nameNorm: 'crazy ivan', date: d(6), type: 'Not A Real Type', complete: true },
+    { nameNorm: 'crazy ivan', date: d(20), type: 'Fellowship', complete: true }, // past the last day column
+    { nameNorm: 'little john', date: d(2), type: 'Fellowship', complete: true }, // other PAX
+  ];
+  var dayDates = [];
+  for (var day = 1; day <= 12; day++) dayDates.push(d(day));
+
+  var expected = dayDates.map(function(asOf) {
+    return computeBonusPillsAsOf_(entries, 'crazy ivan', asOf, monthStart);
+  });
+  var actual = computeBonusSeriesForPax_(groupBonusEntriesByPax_(entries)['crazy ivan'], dayDates, monthStart);
+  assert.deepEqual(actual, expected);
+  // Non-trivial oracle: at least one day must differ from its predecessor, or a series of
+  // all-zeroes would pass this comparison vacuously.
+  assert.ok(expected.some(function(p) { return p.fe > 0 || p.eh > 0; }));
+})();
+
+(function testComputeBonusSeriesForPaxEmitsADistinctPillsObjectPerDay() {
+  var monthStart = new Date(2026, 6, 1);
+  var dayDates = [new Date(2026, 6, 1), new Date(2026, 6, 2)];
+  var series = computeBonusSeriesForPax_(
+    [{ nameNorm: 'crazy ivan', date: new Date(2026, 6, 2), type: 'Fellowship', complete: true }],
+    dayDates, monthStart);
+  assert.notEqual(series[0], series[1]); // scrubbing must not mutate a shared reference
+  series[1].fe = 99;
+  assert.equal(series[0].fe, 0);
+})();
+
+(function testComputeBonusSeriesForPaxHandlesOutOfOrderDayDates() {
+  // The sweep needs ascending days; day columns already arrive in calendar order, but an
+  // out-of-order caller must still get each day's own answer rather than a mis-summed one.
+  var monthStart = new Date(2026, 6, 1);
+  var entries = [{ nameNorm: 'crazy ivan', date: new Date(2026, 6, 2), type: 'Fellowship', complete: true }];
+  var dayDates = [new Date(2026, 6, 3), new Date(2026, 6, 1), new Date(2026, 6, 2)];
+  var series = computeBonusSeriesForPax_(entries, dayDates, monthStart);
+  assert.deepEqual(series.map(function(p) { return p.fe; }), [1, 0, 1]);
+})();
+
+(function testComputeBonusSeriesForPaxEmptyInputs() {
+  var monthStart = new Date(2026, 6, 1);
+  assert.deepEqual(computeBonusSeriesForPax_([], [], monthStart), []);
+  assert.deepEqual(computeBonusSeriesForPax_(null, null, monthStart), []);
+  assert.deepEqual(computeBonusSeriesForPax_(undefined, [new Date(2026, 6, 1)], monthStart),
+    [{ fe: 0, q: 0, ins: 0, eh: 0 }]);
+})();
+
+(function testComputeBonusSeriesForPaxRejectsTheOldFourArgSignature() {
+  // The pre-F3Go30-ja7d call shape would otherwise read f3NameNorm as dayDates and silently
+  // return an empty series.
+  assert.throws(function() {
+    computeBonusSeriesForPax_([], 'crazy ivan', [new Date(2026, 6, 1)], new Date(2026, 6, 1));
+  }, /groupBonusEntriesByPax_/);
 })();
 
 // ── annotateBonusEntryCountStatus_ ──────────────────────────────────────────
