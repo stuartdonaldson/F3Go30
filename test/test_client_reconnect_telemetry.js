@@ -42,6 +42,7 @@ function makeReconnectHarness_(opts) {
   var clearedIds = [];
   var pageHandlers = {};
   var domHandlers = {};
+  var docHandlers = {};
   var els = {};
 
   function el(id) {
@@ -64,6 +65,28 @@ function makeReconnectHarness_(opts) {
     crypto: { randomUUID: function() { return 'fixed-uuid-' + (fakeWindow._uuidCalls = (fakeWindow._uuidCalls || 0) + 1); } },
   };
 
+  // F3Go30-f1cr: visibilitychange lives on `document`, not `window` — a minimal stand-in so the
+  // hide-triggered flush can be exercised the same way pageHandlers already exercises pagehide.
+  var fakeDocument = {
+    visibilityState: 'visible',
+    addEventListener: function(evt, fn) { (docHandlers[evt] = docHandlers[evt] || []).push(fn); },
+  };
+
+  // sendBeacon stand-in: records each call (url + the JSON body read back off the Blob) and, by
+  // default, reports success. opts.sendBeacon: false simulates an old browser with no sendBeacon
+  // at all (flushClientTelemetryOnHide_'s fallback path); opts.sendBeaconReturns: false simulates
+  // the browser refusing the beacon (over quota).
+  var sendBeaconCalls = [];
+  var fakeNavigatorBase = Object.prototype.hasOwnProperty.call(opts, 'navigator') ? opts.navigator : { onLine: true };
+  if (opts.sendBeacon !== false) {
+    fakeNavigatorBase = Object.assign({}, fakeNavigatorBase, {
+      sendBeacon: function(url, blob) {
+        sendBeaconCalls.push({ url: url, blob: blob });
+        return opts.sendBeaconReturns !== false;
+      },
+    });
+  }
+
   var fakeSetTimeout = function(fn, ms) {
     var id = timers.length + 1;
     timers.push({ fn: fn, ms: ms, id: id });
@@ -78,7 +101,7 @@ function makeReconnectHarness_(opts) {
   };
 
   var fakeLocalStorage = opts.localStorage || makeFakeLocalStorage_();
-  var fakeNavigator = Object.prototype.hasOwnProperty.call(opts, 'navigator') ? opts.navigator : { onLine: true };
+  var fakeNavigator = fakeNavigatorBase;
   var fakeState = opts.state || { currentStep: 'dashboard', f3Name: 'Test Pax', email: '' };
 
   // Stand-ins for the read-view loaders repaintCurrentView_ calls — these live outside the
@@ -95,7 +118,7 @@ function makeReconnectHarness_(opts) {
 
   var factory = new Function(
     'WEBAPP_URL', 'CMD_', 'NS_', 'CONTEXT_DATE_', 'STATIC_BUILD_VERSION_',
-    'fetch', 'setTimeout', 'clearTimeout', 'AbortController', '$', 'window',
+    'fetch', 'setTimeout', 'clearTimeout', 'AbortController', '$', 'window', 'document',
     'localStorage', 'navigator', 'state', 'loadDashboard_', 'loadCalMonth_', 'loadBonusList_', 'isoDate_', 'hideApiError_',
     body +
     '\nreturn {' +
@@ -104,6 +127,7 @@ function makeReconnectHarness_(opts) {
     '\n  captureClientError_: captureClientError_,' +
     '\n  extractEchoKeyInfo_: extractEchoKeyInfo_,' +
     '\n  flushClientTelemetryQueue_: flushClientTelemetryQueue_,' +
+    '\n  flushClientTelemetryOnHide_: flushClientTelemetryOnHide_,' +
     '\n  startReconnectPoll_: startReconnectPoll_,' +
     '\n  stopReconnectPoll_: stopReconnectPoll_,' +
     '\n  isPolling_: function() { return !!reconnectPollState_; },' +
@@ -114,7 +138,7 @@ function makeReconnectHarness_(opts) {
   var fns = factory(
     'https://example.test/exec', 'checkin', 'testns', '', '2.4.7.6',
     wrappedFetch, fakeSetTimeout, fakeClearTimeout, AbortController,
-    el, fakeWindow, fakeLocalStorage, fakeNavigator, fakeState,
+    el, fakeWindow, fakeDocument, fakeLocalStorage, fakeNavigator, fakeState,
     loadDashboard_, loadCalMonth_, loadBonusList_, isoDate_, hideApiError_
   );
 
@@ -124,6 +148,17 @@ function makeReconnectHarness_(opts) {
     clearedIds: clearedIds,
     loadCalls: loadCalls,
     el: el,
+    sendBeaconCalls: sendBeaconCalls,
+    /** Simulates the page being backgrounded (tab switch, PWA minimised) — fires the
+     * visibilitychange listener with document.visibilityState = 'hidden'. */
+    fireVisibilityHidden: function() {
+      fakeDocument.visibilityState = 'hidden';
+      (docHandlers.visibilitychange || []).forEach(function(fn) { fn(); });
+    },
+    /** Simulates actual page teardown — fires the pagehide listener. */
+    firePageHide: function() {
+      (pageHandlers.pagehide || []).forEach(function(fn) { fn(); });
+    },
     fakeLocalStorage: fakeLocalStorage,
     fireTimers: function() {
       var due = timers.splice(0, timers.length);
@@ -338,11 +373,7 @@ function testServerReportedErrorCarriesRedirectInfoOntoTheThrownError() {
 
 function testSuccessfulCallQueuesAnEchoKeySampleWithoutANewConnection() {
   var h = makeReconnectHarness_({
-    fetchImpl: function(url, opts) {
-      var body = JSON.parse(opts.body);
-      // The clientTelemetry flush itself must fail to leave the sample inspectable in the queue —
-      // its own retry/ack behavior is already covered by testFlushUploadsQueuedRecordsAndClearsOnAck.
-      if (body.action === 'clientTelemetry') return transportRejection_();
+    fetchImpl: function() {
       return jsonResponse_({ matched: true }, {
         url: 'https://script.googleusercontent.com/macros/echo?user_content_key=fresh-key',
         redirected: true,
@@ -350,16 +381,164 @@ function testSuccessfulCallQueuesAnEchoKeySampleWithoutANewConnection() {
     },
   });
   return h.callApi('identify', {}).then(function() {
-    return new Promise(function(resolve) { setImmediate(resolve); });
-  }).then(function() {
     var queue = JSON.parse(h.fakeLocalStorage.getItem('go30ClientTelemetryQueue:v1') || '[]');
     var sample = queue.filter(function(rec) { return rec.kind === 'echoKey'; })[0];
     assert.ok(sample, 'AC4: a successful round trip must contribute a key-identity sample');
     assert.equal(sample.redirected, true);
     assert.ok(sample.echoKeyHash);
-    // AC4: piggybacked on the existing flush, not a dedicated connection — exactly the action call
-    // plus the one opportunistic flush attempt, same shape as every other successful call today.
-    assert.equal(h.fetchCalls.length, 2, 'no extra connection may be opened to capture the sample');
+    // F3Go30-f1cr: capturing the sample must NOT open a dedicated connection — it queues locally.
+    // Unlike before this fix, it also does not immediately flush: exactly the one action call.
+    assert.equal(h.fetchCalls.length, 1, 'no extra connection may be opened to capture or flush the sample');
+  });
+}
+
+// F3Go30-f1cr AC: the echo key is sampled on CHANGE, not on every success — a repeated identical
+// key must not queue a second record, which is what used to guarantee the queue was never empty
+// (and thus that the old unconditional flush always fired a real POST).
+function testRepeatedSameEchoKeyDoesNotQueueASecondSample() {
+  var h = makeReconnectHarness_({
+    fetchImpl: function() {
+      return jsonResponse_({}, {
+        url: 'https://script.googleusercontent.com/macros/echo?user_content_key=same-key',
+        redirected: true,
+      });
+    },
+  });
+  return h.callApi('identify', {}).then(function() {
+    return h.callApi('identify', {});
+  }).then(function() {
+    return h.callApi('identify', {});
+  }).then(function() {
+    var queue = JSON.parse(h.fakeLocalStorage.getItem('go30ClientTelemetryQueue:v1') || '[]');
+    var samples = queue.filter(function(rec) { return rec.kind === 'echoKey'; });
+    assert.equal(samples.length, 1, 'three successes with the SAME key must produce exactly one baseline sample');
+  });
+}
+
+// F3Go30-f1cr AC: a key CHANGE must still be captured — this is the reuse-vs-fresh signal AC4
+// exists for, and sampling must not silently lose it.
+function testChangedEchoKeyQueuesANewSample() {
+  var keys = ['key-a', 'key-a', 'key-b'];
+  var call = 0;
+  var h = makeReconnectHarness_({
+    fetchImpl: function() {
+      return jsonResponse_({}, {
+        url: 'https://script.googleusercontent.com/macros/echo?user_content_key=' + keys[call++],
+        redirected: true,
+      });
+    },
+  });
+  return h.callApi('identify', {}).then(function() {
+    return h.callApi('identify', {});
+  }).then(function() {
+    return h.callApi('identify', {});
+  }).then(function() {
+    var queue = JSON.parse(h.fakeLocalStorage.getItem('go30ClientTelemetryQueue:v1') || '[]');
+    var samples = queue.filter(function(rec) { return rec.kind === 'echoKey'; });
+    assert.equal(samples.length, 2, 'the third call (a different key) must add a second sample, on top of the first baseline one');
+    assert.notEqual(samples[0].echoKeyHash, samples[1].echoKeyHash);
+  });
+}
+
+// F3Go30-f1cr: the defect this bead fixes, pinned directly — N successful round trips must
+// produce strictly fewer telemetry uploads than N (today, before this fix, it is exactly N: one
+// clientTelemetry POST per real request, permanently doubling load against Apps Script).
+function testManySuccessfulCallsProduceFewerTelemetryUploadsThanCalls() {
+  var N = 8;
+  var h = makeReconnectHarness_({
+    fetchImpl: function() {
+      // Every call resolves to the SAME echo key — the common healthy-traffic case — so with
+      // change-detection sampling only the first call ever queues a sample, and with no
+      // automatic post-success flush, no clientTelemetry POST is issued at all during these N
+      // calls (before this fix: N clientTelemetry POSTs, one per call).
+      return jsonResponse_({}, {
+        url: 'https://script.googleusercontent.com/macros/echo?user_content_key=steady-key',
+        redirected: true,
+      });
+    },
+  });
+  var chain = Promise.resolve();
+  for (var i = 0; i < N; i++) {
+    chain = chain.then(function() { return h.callApi('identify', {}); });
+  }
+  return chain.then(function() {
+    var telemetryUploads = h.fetchCalls.filter(function(c) { return c.body.action === 'clientTelemetry'; }).length;
+    assert.ok(telemetryUploads < N, 'telemetry uploads (' + telemetryUploads + ') must be strictly fewer than the ' + N + ' successful round trips');
+    assert.equal(telemetryUploads, 0, 'with a steady echo key and no page-hide event, no upload should fire at all yet');
+    assert.equal(h.fetchCalls.length, N, 'exactly N real requests were made — the amplification is gone, not the requests themselves');
+  });
+}
+
+// ── F3Go30-f1cr: flush moves off the per-call success path onto hide/pagehide/reconnect ────────
+
+function testFlushOnHideUsesSendBeaconAndLeavesRecordQueuedUntilAcked() {
+  var h = makeReconnectHarness_();
+  h.captureClientError_('identify', new Error('boom'));
+  h.fireVisibilityHidden();
+  assert.equal(h.sendBeaconCalls.length, 1, 'backgrounding the page must flush via sendBeacon');
+  assert.equal(h.sendBeaconCalls[0].url, 'https://example.test/exec?cmd=checkin');
+  assert.equal(h.fetchCalls.length, 0, 'sendBeacon must be used instead of a fetch-based POST');
+  // sendBeacon has no response to ack from, so the record stays queued (dedupe on the server
+  // handles a re-send) rather than being optimistically dropped.
+  var queue = JSON.parse(h.fakeLocalStorage.getItem('go30ClientTelemetryQueue:v1') || '[]');
+  assert.equal(queue.length, 1, 'a beacon-sent record is not removed until an ACKED flush confirms it');
+}
+
+function testFlushOnHideDoesNothingWhenQueueIsEmpty() {
+  var h = makeReconnectHarness_();
+  h.fireVisibilityHidden();
+  assert.equal(h.sendBeaconCalls.length, 0, 'nothing to flush means no beacon call at all');
+}
+
+function testFlushOnPageHideAlsoUsesSendBeacon() {
+  var h = makeReconnectHarness_();
+  h.captureClientError_('checkin', new Error('boom'));
+  h.firePageHide();
+  assert.equal(h.sendBeaconCalls.length, 1, 'pagehide (real unload) must also flush via sendBeacon');
+}
+
+function testFlushOnHideFallsBackToCallApiWhenSendBeaconUnavailable() {
+  var h = makeReconnectHarness_({
+    sendBeacon: false,
+    fetchImpl: function() { return jsonResponse_({}); },
+  });
+  h.captureClientError_('identify', new Error('boom'));
+  h.fireVisibilityHidden();
+  assert.equal(h.sendBeaconCalls.length, 0, 'no sendBeacon exists on this fake navigator');
+  assert.equal(h.fetchCalls.length, 1, 'must fall back to the existing callApi-based flush');
+  assert.equal(h.fetchCalls[0].body.action, 'clientTelemetry');
+}
+
+function testFlushOnHideFallsBackToCallApiWhenBeaconIsRefused() {
+  var h = makeReconnectHarness_({
+    sendBeaconReturns: false,
+    fetchImpl: function() { return jsonResponse_({}); },
+  });
+  h.captureClientError_('identify', new Error('boom'));
+  h.fireVisibilityHidden();
+  assert.equal(h.sendBeaconCalls.length, 1, 'sendBeacon was still attempted first');
+  assert.equal(h.fetchCalls.length, 1, 'a refused beacon (browser reports false) must fall back to callApi');
+}
+
+function testFlushOnHideNeverThrowsAndStaysFireAndForget() {
+  var h = makeReconnectHarness_();
+  h.captureClientError_('identify', new Error('boom'));
+  var result;
+  assert.doesNotThrow(function() { result = h.flushClientTelemetryOnHide_(); });
+  assert.equal(result, undefined, 'flushClientTelemetryOnHide_ must not return a promise the caller is meant to await');
+}
+
+// F3Go30-f1cr: "keep flush-on-reconnect" — a reconnect poll's success used to get a flush "for
+// free" as a side effect of the (now-removed) unconditional post-success flush; this pins that
+// the recovered branch now flushes explicitly instead of silently losing the behaviour.
+function testReconnectPollSuccessStillFlushesQueuedTelemetry() {
+  var h = makeReconnectHarness_({ fetchImpl: function() { return jsonResponse_({}); } });
+  h.captureClientError_('identify', new Error('boom')); // queue one record before the poll succeeds
+  h.startReconnectPoll_();
+  h.fireTimers();
+  return new Promise(function(resolve) { setImmediate(resolve); }).then(function() {
+    var telemetryUploads = h.fetchCalls.filter(function(c) { return c.body.action === 'clientTelemetry'; }).length;
+    assert.equal(telemetryUploads, 1, 'a successful reconnect poll must still flush the queue, matching pre-fix behaviour');
   });
 }
 
@@ -759,6 +938,16 @@ function run() {
     testHttpErrorResponseCarriesRedirectInfoOntoTheThrownError,
     testServerReportedErrorCarriesRedirectInfoOntoTheThrownError,
     testSuccessfulCallQueuesAnEchoKeySampleWithoutANewConnection,
+    testRepeatedSameEchoKeyDoesNotQueueASecondSample,
+    testChangedEchoKeyQueuesANewSample,
+    testManySuccessfulCallsProduceFewerTelemetryUploadsThanCalls,
+    testFlushOnHideUsesSendBeaconAndLeavesRecordQueuedUntilAcked,
+    testFlushOnHideDoesNothingWhenQueueIsEmpty,
+    testFlushOnPageHideAlsoUsesSendBeacon,
+    testFlushOnHideFallsBackToCallApiWhenSendBeaconUnavailable,
+    testFlushOnHideFallsBackToCallApiWhenBeaconIsRefused,
+    testFlushOnHideNeverThrowsAndStaysFireAndForget,
+    testReconnectPollSuccessStillFlushesQueuedTelemetry,
     testFetchAttemptMarksAbortedAtTimeoutWhenItsOwnTimeoutFires,
     testFetchAttemptDoesNotMarkAbortedAtTimeoutOnImmediateRejection,
     testCaptureClientErrorIncludesAbortTimingFieldsFromErr,

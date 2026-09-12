@@ -1371,7 +1371,12 @@
   // about — the document is already doomed and the banner would flash for an instant on the way
   // out. showApiError_ reads this flag; see AC5 on F3Go30-313u.
   var pageIsUnloading_ = false;
-  window.addEventListener('pagehide', function() { pageIsUnloading_ = true; });
+  window.addEventListener('pagehide', function() {
+    pageIsUnloading_ = true;
+    // F3Go30-f1cr: last chance to get any queued telemetry out before the document is torn down —
+    // see flushClientTelemetryOnHide_'s docstring (defined below, hoisted) for why sendBeacon.
+    flushClientTelemetryOnHide_();
+  });
 
   /** The single point where a below-HTTP failure becomes a PAX-readable one. Flagged so the
    * banner can drop the Site-Q escalation (a connectivity problem is not the Site Q's to fix)
@@ -1592,16 +1597,19 @@
         if (!json.ok) throw Object.assign(new Error(json.error || 'Server reported an error with no detail'), echoKeyInfo_);
         return json;
       }).then(function(json) {
-        // F3Go30-xyri: piggyback the queued-telemetry upload on any successful round trip rather
-        // than opening a dedicated connection for it — fire-and-forget, never blocks/degrades the
-        // call that triggered it. Excludes the upload action itself so a successful flush doesn't
-        // immediately try to flush its own (now-empty) queue again.
-        if (action !== 'clientTelemetry') {
-          // F3Go30-5c2a.1 AC4: sample the echo key on every successful round trip too — piggybacked
-          // on this same queue/flush path, no dedicated connection — so key reuse vs. fresh-per-
-          // request can be established from healthy traffic, not just failures.
+        // F3Go30-f1cr: capturing an 'echoKey' sample on EVERY successful round trip (as this used
+        // to) kept the telemetry queue permanently non-empty, so the flush that followed fired a
+        // real POST on every single request — a 1:1 amplification of Apps Script load (measured:
+        // 5 clientTelemetry POSTs against 8 real requests in one HAR window). F3Go30-5c2a.1 AC4
+        // only needs "often enough to establish reuse vs. fresh from healthy traffic", not every
+        // request, so this now samples on CHANGE: a record is captured only when the echo key's
+        // hash differs from the last one recorded, which is exactly the reuse-vs-fresh signal AC4
+        // asks for. The flush itself no longer rides this success path at all — see
+        // flushClientTelemetryOnHide_ (visibilitychange/pagehide) and the reconnect-poll success
+        // handler below for where a flush is now triggered.
+        if (action !== 'clientTelemetry' && echoKeyInfo_ && echoKeyInfo_.echoKeyHash !== lastEchoKeyHash_) {
+          lastEchoKeyHash_ = echoKeyInfo_.echoKeyHash;
           captureClientTelemetry_('echoKey', action, echoKeyInfo_);
-          flushClientTelemetryQueue_();
         }
         return json;
       }).finally(function() {
@@ -1628,6 +1636,12 @@
   var CLIENT_TELEMETRY_QUEUE_MAX_ = 25;
   var CLIENT_TELEMETRY_QUEUE_MAX_AGE_MS_ = 1000 * 60 * 60 * 24 * 7; // 7 days
   var CLIENT_TELEMETRY_UPLOAD_BATCH_MAX_ = 10;
+
+  // F3Go30-f1cr / F3Go30-5c2a.1 AC4: last echo-key hash captured by the success-path sampler
+  // below, so a record is only queued on a CHANGE (reuse vs. fresh) rather than on every request.
+  // null until the first successful round trip — any real hash (including '', "no key present")
+  // differs from null, so the very first call still establishes a baseline sample.
+  var lastEchoKeyHash_ = null;
 
   function makeClientTelemetryId_() {
     return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (String(Date.now()) + '-' + Math.random().toString(16).slice(2));
@@ -1759,6 +1773,47 @@
       .finally(function() { clientTelemetryFlushInFlight_ = false; });
   }
 
+  /** F3Go30-f1cr: flushes the queue when the page is being backgrounded or torn down —
+   * visibilitychange going 'hidden' (tab switched away, PWA backgrounded) and pagehide (actual
+   * unload) — instead of after every single successful callApi round trip. Prefers
+   * navigator.sendBeacon, which the browser guarantees is attempted even as the page is going
+   * away (a plain fetch can be cancelled mid-flight at that point); falls back to the existing
+   * callApi-based flushClientTelemetryQueue_ when sendBeacon isn't available. Same
+   * Content-Type as fetchAttempt_ (text/plain;charset=utf-8, deliberately not application/json) so
+   * this stays a CORS-simple request — the webapp has no OPTIONS handler for a preflight.
+   * Deliberately does NOT remove the batch from the queue on a successful beacon send: sendBeacon
+   * has no response to ack from, and this project's queue is only ever pruned on an ACKED batch
+   * (see flushClientTelemetryQueue_ above) — so a beacon-sent batch stays queued and is simply
+   * re-sent (server-side deduped by id, see ClientTelemetryLog.js) by the next flush that DOES get
+   * an ack. Never throws: page teardown must never be the thing that breaks. */
+  function flushClientTelemetryOnHide_() {
+    var queue = loadClientTelemetryQueue_();
+    if (!queue.length) return;
+    if (!(typeof navigator !== 'undefined' && navigator && typeof navigator.sendBeacon === 'function')) {
+      flushClientTelemetryQueue_();
+      return;
+    }
+    try {
+      var batch = queue.slice(0, CLIENT_TELEMETRY_UPLOAD_BATCH_MAX_);
+      var body = Object.assign({ records: batch }, {
+        action: 'clientTelemetry',
+        ns: (typeof NS_ !== 'undefined' ? NS_ : ''),
+        contextDate: (typeof CONTEXT_DATE_ !== 'undefined' ? CONTEXT_DATE_ : ''),
+        clientVersion: STATIC_BUILD_VERSION_
+      });
+      var url = WEBAPP_URL + '?cmd=' + CMD_;
+      var blob = new Blob([JSON.stringify(body)], { type: 'text/plain;charset=utf-8' });
+      var sent = navigator.sendBeacon(url, blob);
+      if (!sent) flushClientTelemetryQueue_(); // browser refused the beacon (e.g. over its size quota) — fall back
+    } catch (e) { /* best effort — teardown must never throw */ }
+  }
+
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'hidden') flushClientTelemetryOnHide_();
+    });
+  }
+
   window.addEventListener('error', function(e) {
     captureClientError_('window.onerror', e.error || new Error(e.message), { source: 'window.onerror' });
   });
@@ -1822,6 +1877,10 @@
 
     callApi('identify', { f3Name: state.f3Name, email: state.email }).then(function() {
       captureClientTelemetry_('reconnectPoll', 'identify', { attempt: pollState.attempts, elapsedMs: elapsedMs, outcome: 'recovered' });
+      // F3Go30-f1cr: the success path no longer flushes on every callApi round trip, so a
+      // reconnect's own recovery — previously flushed "for free" as a side effect of that removed
+      // behaviour — needs an explicit flush here to keep "flush on reconnect" working.
+      flushClientTelemetryQueue_();
       stopReconnectPoll_();
       hideApiError_();
       repaintCurrentView_();
