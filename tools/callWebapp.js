@@ -47,6 +47,27 @@ const config = {
   // Only cmd=admin gates on the secret. cmd=signup/checkin are public user-facing endpoints and
   // cmd=version is deliberately ungated (§3.2) — none of them should ever receive the secret.
   securedCmds: ['admin'],
+  // F3Go30-krks: gas-deploy's resolveEnvDeploymentId() (bin/call-webapp.js) lists `clasp
+  // deployments` against whatever project .clasp.json CURRENTLY points at, without first
+  // pointing it at the target env (unlike lib/cli.js's deploy/summary paths, which do). With no
+  // `anchor` configured per env here, the fallback chain is
+  // chain(settingsId(), soleActiveDeployment()): settingsId() correctly throws when the
+  // configured ID isn't in the (wrong) project's live list, but soleActiveDeployment() then
+  // silently succeeds if that wrong project happens to have exactly one deployment — returning
+  // an ID belonging to a DIFFERENT script project with no error. Verified live: after SIT was
+  // last pushed, `--env prod` returned SIT's deploymentId under target:"TEMPLATE".
+  //
+  // Setting this to false skips the live-list branch entirely; resolveEnvDeploymentId then
+  // reads straight from local.settings.json's per-env deploymentIdKey (testDeploymentId /
+  // templateDeploymentId), which are stored separately and cannot cross-contaminate.
+  //
+  // Trade-off, accepted deliberately: this loses the live-list staleness check that would catch
+  // a deleted/recreated deployment before use. Acceptable because (a) that staleness check is
+  // exactly the mechanism that is broken here, and (b) gas-deploy's cli.js re-records the
+  // deployment ID into local.settings.json on every deploy, so the stored value self-heals on
+  // each push. See test/test_callwebapp_env_resolution.js for the regression coverage, and
+  // F3Go30-febo for the upstream gas-deploy fix this stopgap stands in for.
+  resolveFromLiveList: false,
 };
 
 if (require.main === module) {
