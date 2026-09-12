@@ -6,6 +6,7 @@ const { describe, it } = require('node:test');
 // were the copies every other test file cloned. Each case is now its own `it`, so a failure names
 // the behaviour rather than the file.
 const { makeFakeProperties_, makeFakeCache_, makeFakeLogger_, makeFakeLock_ } = require('./helpers/gasEnv.js');
+const { invalidateScriptPropertiesSnapshot_ } = require('../script/ScriptProperties.js');
 
 var fakeProps;
 global.PropertiesService = { getScriptProperties: function() { return fakeProps; } };
@@ -32,6 +33,7 @@ const {
   setPaxRosterIndex_,
   patchPaxRosterIndex_,
   refreshPaxCacheRowFromSheet_,
+  refreshPaxCacheRowAndAdvanceHistoryForCheckin_,
   wipePaxCacheForSheet_,
   resolvePaxRowIndex_,
   getPaxCacheRequestStats_,
@@ -125,6 +127,38 @@ it('set pax cache rows bulk does not disturb unrelated properties', function() {
   assert.deepEqual(getPaxCacheRow_('tracker', 'sheetOther', 'Someone Else'), ['untouched']);
 });
 
+// F3Go30-n0wr: setPaxCacheRowsBulk_'s catch used to be empty, so a total setProperties() failure
+// (the confirmed live SIT defect) was invisible — this is the regression guard for that empty
+// catch, not just for this one function's behavior.
+it('set pax cache rows bulk logs a swallowed setProperties failure instead of staying silent', function() {
+  resetProps_();
+  fakeLogger_._logs.length = 0;
+  fakeProps._failSetProperties = true;
+
+  assert.doesNotThrow(function() {
+    setPaxCacheRowsBulk_('tracker', 'sheet1', { 'Crazy Ivan': ['v1'] }, { 'crazy ivan': 0 });
+  });
+
+  var failLog = fakeLogger_._logs.find(function(call) { return call[0] === 'setPaxCacheRowsBulk_.failed'; });
+  assert.ok(failLog, 'expected setPaxCacheRowsBulk_.failed to be logged');
+  assert.equal(failLog[1].errorName, 'Error');
+  assert.equal(failLog[1].error, 'PropertiesService unavailable');
+  assert.equal(failLog[1].sheetId, 'sheet1');
+});
+
+it('every other PaxCache best-effort write also logs a swallowed setProperties/setProperty failure', function() {
+  resetProps_();
+  fakeLogger_._logs.length = 0;
+  fakeProps.setProperty = function() { throw new Error('quota exceeded'); };
+
+  assert.doesNotThrow(function() { setPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan', ['v1']); });
+  assert.doesNotThrow(function() { setPaxRosterIndex_('tracker', 'sheet1', { 'crazy ivan': 0 }); });
+
+  var names = fakeLogger_._logs.map(function(call) { return call[0]; });
+  assert.ok(names.indexOf('setPaxCacheRow_.failed') !== -1);
+  assert.ok(names.indexOf('setPaxRosterIndex_.failed') !== -1);
+});
+
 // ── roster index ─────────────────────────────────────────────────────────
 it('resolve pax row index rebuilds on miss', function() {
   resetProps_();
@@ -163,6 +197,66 @@ it('patch pax roster index updates existing index', function() {
   setPaxRosterIndex_('responses', 'sheet1', { 'little john': 0 });
   patchPaxRosterIndex_('responses', 'sheet1', 'New Guy', 1);
   assert.deepEqual(getPaxRosterIndex_('responses', 'sheet1'), { 'little john': 0, 'new guy': 1 });
+});
+
+// F3Go30-45qt: getPaxRosterIndex_ now reads through the per-execution whole-store snapshot
+// (getScriptPropertiesSnapshot_pc_) instead of its own discrete getProperty() RPC.
+describe('getPaxRosterIndex_ reads through the per-execution snapshot (F3Go30-45qt)', function() {
+
+// AC2: a write followed by a read of the SAME key, in the same execution, must observe the
+// write — proving the write facade's memo invalidation still covers this read path now that it
+// goes through the snapshot instead of a direct getProperty().
+it('read-after-write in the same execution returns the new value', function() {
+  resetProps_();
+  setPaxRosterIndex_('tracker', 'sheet-raw', { 'old guy': 0 });
+  assert.deepEqual(getPaxRosterIndex_('tracker', 'sheet-raw'), { 'old guy': 0 });
+
+  setPaxRosterIndex_('tracker', 'sheet-raw', { 'old guy': 0, 'new guy': 1 });
+  assert.deepEqual(getPaxRosterIndex_('tracker', 'sheet-raw'), { 'old guy': 0, 'new guy': 1 },
+    'a write must be observed by an immediately-following read in the same execution');
+});
+
+// AC3: no cached roster index at all is a plain miss — null, never a throw, never {}.
+it('miss (no cached roster index) returns null, not a throw or an empty object', function() {
+  resetProps_();
+  assert.equal(getPaxRosterIndex_('tracker', 'sheet-never-cached'), null);
+});
+
+// AC4: behaviour on a PropertiesService failure is unchanged in the ways that matter to callers
+// (degrades to null, never throws) — but see the two distinct failure shapes below.
+it('a corrupted stored roster value degrades to null and logs via paxCacheLogSwallowedError_', function() {
+  resetProps_();
+  // Bypass the write facade to seed genuinely-malformed JSON under the roster key — this is the
+  // "stored value can't be parsed" failure shape, the one that still reaches getPaxRosterIndex_'s
+  // own try/catch after the conversion (JSON.parse throws on the snapshot's string, same as it
+  // would have on a direct getProperty() result before this bead).
+  fakeProps.setProperty('go30idx:tracker:sheet-corrupt', '{not valid json');
+  invalidateScriptPropertiesSnapshot_(); // the direct fakeProps write above bypasses the facade
+  var result = getPaxRosterIndex_('tracker', 'sheet-corrupt');
+  assert.equal(result, null, 'a corrupt entry must degrade to null, not throw');
+  var failLog = fakeLogger_._logs.find(function(args) { return args[0] === 'getPaxRosterIndex_.failed'; });
+  assert.ok(failLog, 'the corrupt-entry failure must still be logged via paxCacheLogSwallowedError_');
+  assert.equal(failLog[1].kind, 'tracker');
+  assert.equal(failLog[1].sheetId, 'sheet-corrupt');
+});
+
+// AC4 (documented limitation, not a regression on any existing AC): a whole-store
+// PropertiesService.getProperties() failure is absorbed by getScriptPropertiesSnapshot_pc_()
+// itself, which degrades to an empty store WITHOUT throwing and WITHOUT logging (see
+// ScriptProperties.js header + this exact behaviour already relied on by getPaxCacheRowsBulk_/
+// getPaxHistoryEntriesBulk_, test_script_properties_memo.js's failure-handling suite). So after
+// this conversion, that specific failure mode reads as a silent miss here too — consistent with
+// every other snapshot consumer in this file, but a change from the pre-fix discrete-getProperty
+// behaviour, which did log it. Recorded here rather than silently assumed away.
+it('a whole-store getProperties() failure degrades to null WITHOUT throwing (no log — matches sibling snapshot readers)', function() {
+  resetProps_();
+  setPaxRosterIndex_('tracker', 'sheet-outage', { 'someone': 0 });
+  fakeProps._failGetProperties = true;
+  invalidateScriptPropertiesSnapshot_();
+  var result = getPaxRosterIndex_('tracker', 'sheet-outage');
+  fakeProps._failGetProperties = false;
+  assert.equal(result, null, 'a whole-store fetch failure must still degrade to null, never throw');
+});
 });
 
 // ── bulk wipe ────────────────────────────────────────────────────────────
@@ -259,6 +353,107 @@ it('refresh pax cache row from sheet lock failure counts as a failure with wait 
   assert.ok(stats.paxLockWaitMs >= 0);
   assert.equal(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), null, 'entry must still be dropped, unchanged from before this bead');
   global.LockService = realLock;
+});
+
+// ── check-in write path: combined single-lock refresh + history advance (F3Go30-y0pw D4) ──
+describe('refreshPaxCacheRowAndAdvanceHistoryForCheckin_', function() {
+
+function makeFakeCheckinSheet_(rowValues) {
+  var fakeRange_ = { getValues: function() { return [rowValues.slice()]; } };
+  return { getLastColumn: function() { return rowValues.length; }, getRange: function() { return fakeRange_; } };
+}
+
+it('AC3: refreshes the row and advances history under exactly ONE lock acquisition', function() {
+  resetProps_();
+  global.SpreadsheetApp = { flush: function() {} };
+  var realLock = global.LockService;
+  var waits = 0, releases = 0;
+  global.LockService = { getScriptLock: function() { return { waitLock: function() { waits++; }, releaseLock: function() { releases++; } }; } };
+
+  var sheet = makeFakeCheckinSheet_(['Crazy Ivan', 'Crucible', 1]);
+  refreshPaxCacheRowAndAdvanceHistoryForCheckin_('tracker', 'sheet1', 'Crazy Ivan', sheet, 4, 'scope-a', new Date(2026, 7, 1), 1, '2026-08-01');
+
+  assert.equal(waits, 1, 'exactly one waitLock() call, not one per operation');
+  assert.equal(releases, 1);
+  assert.deepEqual(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), ['Crazy Ivan', 'Crucible', 1]);
+  assert.deepEqual(getPaxHistoryEntry_('scope-a', 'Crazy Ivan'), { historyEndDate: '2026-08-01', days: '1' });
+
+  global.LockService = realLock;
+  delete global.SpreadsheetApp;
+});
+
+it('AC4: a lock failure deletes the cached row AND skips the history advance — both fallbacks fire off one failed attempt', function() {
+  resetProps_();
+  setPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan', ['stale']);
+  var realLock = global.LockService;
+  var waits = 0;
+  global.LockService = { getScriptLock: function() { return { waitLock: function() { waits++; throw new Error('busy'); }, releaseLock: function() {} }; } };
+
+  refreshPaxCacheRowAndAdvanceHistoryForCheckin_(
+    'tracker', 'sheet1', 'Crazy Ivan', { getLastColumn: function() { throw new Error('must not be reached'); } }, 4,
+    'scope-a', new Date(2026, 7, 1), 1, '2026-08-01'
+  );
+
+  assert.equal(waits, 1, 'exactly one failed acquisition attempt, not two');
+  assert.equal(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), null, 'the row-refresh fallback must still fire');
+  assert.equal(getPaxHistoryEntry_('scope-a', 'Crazy Ivan'), null, 'the history-advance fallback must still fire');
+
+  global.LockService = realLock;
+});
+
+it('AC5: a post-write row whose name no longer matches is deleted-and-logged, never cached', function() {
+  resetProps_();
+  global.SpreadsheetApp = { flush: function() {} };
+  setPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan', ['stale-but-trusted']);
+  var sheet = makeFakeCheckinSheet_(['SomeoneElse', 'Crucible', 1]);
+
+  refreshPaxCacheRowAndAdvanceHistoryForCheckin_('tracker', 'sheet1', 'Crazy Ivan', sheet, 4, 'scope-a', new Date(2026, 7, 1), 1, '2026-08-01');
+
+  assert.equal(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), null, 'a name mismatch must delete rather than cache the wrong row');
+  var mismatchLog = fakeLogger_._logs.find(function(args) { return args[0] === 'refreshPaxCacheRowFromSheet_.rowNameMismatch'; });
+  assert.ok(mismatchLog, 'the mismatch must be logged');
+  assert.equal(mismatchLog[1].expected, 'Crazy Ivan');
+  assert.equal(mismatchLog[1].actual, 'SomeoneElse');
+
+  delete global.SpreadsheetApp;
+});
+
+it('AC6/AC7: the cached row is derived from the POST-write sheet state, never the pre-write snapshot', function() {
+  resetProps_();
+  global.SpreadsheetApp = { flush: function() {} };
+  // A row whose Raw Score/Score-like trailing columns only exist post-write (formula recalc) —
+  // there is no pre-write snapshot passed into this function at all, so there is no path by
+  // which a stale value could leak in (F3Go30-y0pw D2's rejected alternative).
+  var sheet = makeFakeCheckinSheet_(['Crazy Ivan', 'Crucible', 1, 0, 'post-write-score']);
+  refreshPaxCacheRowAndAdvanceHistoryForCheckin_('tracker', 'sheet1', 'Crazy Ivan', sheet, 4, 'scope-a', new Date(2026, 7, 1), 1, '2026-08-01');
+  assert.deepEqual(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), ['Crazy Ivan', 'Crucible', 1, 0, 'post-write-score']);
+  delete global.SpreadsheetApp;
+});
+
+it('AC8: the future-day clamp is evaluated even when the lock is never acquired — it does not depend on the lock', function() {
+  resetProps_();
+  var realLock = global.LockService;
+  global.LockService = { getScriptLock: function() { return { waitLock: function() { throw new Error('busy'); }, releaseLock: function() {} }; } };
+
+  refreshPaxCacheRowAndAdvanceHistoryForCheckin_(
+    'tracker', 'sheet1', 'Crazy Ivan', { getLastColumn: function() { throw new Error('must not be reached'); } }, 4,
+    'scope-a', new Date(2026, 7, 6), 1, '2026-08-02' // 4 days in the future relative to todayIso
+  );
+  var futureLog = fakeLogger_._logs.find(function(args) { return args[0] === 'advancePaxHistoryDay_.futureDaySkipped'; });
+  assert.ok(futureLog, 'the future-day clamp must be computed/logged independently of lock acquisition succeeding');
+
+  global.LockService = realLock;
+});
+
+it('history advance is skipped for a future day even when the row refresh itself succeeds', function() {
+  resetProps_();
+  global.SpreadsheetApp = { flush: function() {} };
+  var sheet = makeFakeCheckinSheet_(['Crazy Ivan', 'Crucible', 1]);
+  refreshPaxCacheRowAndAdvanceHistoryForCheckin_('tracker', 'sheet1', 'Crazy Ivan', sheet, 4, 'scope-a', new Date(2026, 7, 6), 1, '2026-08-02');
+  assert.deepEqual(getPaxCacheRow_('tracker', 'sheet1', 'Crazy Ivan'), ['Crazy Ivan', 'Crucible', 1], 'the row refresh must still happen');
+  assert.equal(getPaxHistoryEntry_('scope-a', 'Crazy Ivan'), null, 'the history advance must be skipped for a pre-marked future day');
+  delete global.SpreadsheetApp;
+});
 });
 
 // ── nightly purge (F3Go30-440b.2) ────────────────────────────────────────

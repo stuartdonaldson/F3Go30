@@ -221,10 +221,14 @@ function makeMockBonusSheet_(maxRows, names, fullRows) {
   var first = addBonusEntry_(sheet, 'Little John', payload);
   assert.equal(first.ok, true);
   assert.equal(first.rowIndex, 2);
+  // F3Go30-786l AC1/AC2: `duplicate` is derived from the actual branch taken (a real append
+  // here), not re-inferred from row content by a caller.
+  assert.equal(first.duplicate, false, 'a genuine first append must be marked duplicate:false');
 
   var retry = addBonusEntry_(sheet, 'Little John', payload);
   assert.equal(retry.ok, true);
   assert.equal(retry.rowIndex, 2, 'retry must report the original row, not a new one');
+  assert.equal(retry.duplicate, true, 'a dedupe hit must be marked duplicate:true');
 
   // No third row should have been appended — the next free row is still row 3.
   assert.equal(findNextBonusRow_(sheet), 3);

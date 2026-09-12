@@ -16,7 +16,9 @@ global.SpreadsheetApp = {
 };
 
 // In-memory stand-in for PropertiesService.getScriptProperties() — same contract as
-// test_pax_cache.js's makeFakeProperties_.
+// test_pax_cache.js's makeFakeProperties_. getProperties() (F3Go30-45qt) is required now that
+// getPaxRosterIndex_/getPaxCacheRow_ read through ScriptProperties.js's per-execution whole-store
+// memo instead of a discrete getProperty() call.
 function makeFakeProperties_() {
   var store = {};
   return {
@@ -27,6 +29,7 @@ function makeFakeProperties_() {
     },
     deleteProperty: function(key) { delete store[key]; },
     getKeys: function() { return Object.keys(store); },
+    getProperties: function() { return Object.assign({}, store); },
   };
 }
 var fakeProps = makeFakeProperties_();

@@ -90,6 +90,28 @@ function paxCacheNormalizeName_(name) {
   return String(name || '').trim().toLowerCase();
 }
 
+/**
+ * One home for the "log a swallowed error, then keep going" shape every best-effort catch in this
+ * file needs (F3Go30-n0wr) — before this, most of those catches were empty, so a total write
+ * failure (setPaxCacheRowsBulk_ throwing on every call) was invisible in Axiom. Mirrors the
+ * {...context, error: e.message} shape already used by this file's non-silent catches
+ * (patchPaxRosterIndex_.lockFailed, refreshPaxCacheRowFromSheet_.rereadFailed,
+ * advancePaxHistoryDay_.failed, upsertPaxGoalsForMonth_.failed), adding errorName so a caller can
+ * filter/group by error type in Axiom without parsing the message string.
+ * Never throws itself — a logging failure must not turn a best-effort path into a real one.
+ * @param {string} eventName GasLogger event name, "<function>_.failed" convention.
+ * @param {Object=} context Extra identifying fields (kind, sheetId, name, scopeId, ...).
+ * @param {*} error The caught value; may not be a real Error.
+ */
+function paxCacheLogSwallowedError_(eventName, context, error) {
+  try {
+    GasLogger.log(eventName, Object.assign(
+      { errorName: error && error.name, error: error && error.message },
+      context || {}
+    ));
+  } catch (e) { /* logging must never be the reason a best-effort path throws */ }
+}
+
 function paxCacheRowKey_(kind, sheetId, name) {
   return PAX_CACHE_PREFIX_ + kind + ':' + sheetId + ':' + paxCacheNormalizeName_(name);
 }
@@ -111,7 +133,21 @@ function paxCacheDeserializeRow_(row) {
   return (row || []).map(function(v) { return (v && typeof v === 'object' && v.__d) ? new Date(v.__d) : v; });
 }
 
-/** Returns the cached row for {kind, sheetId, name}, or null on a miss (never throws). */
+/**
+ * Returns the cached row for {kind, sheetId, name}, or null on a miss (never throws).
+ *
+ * F3Go30-45qt AC5 assessment: this is a real candidate — its one non-bulk caller,
+ * TrackerEditTrigger.js's tryPatchSinglePaxRow_te_, calls getPaxRosterIndex_te_ then this
+ * function moments later in the same execution, the identical duplicated-RPC shape AC1 fixes.
+ * NOT converted here: switching it to getScriptPropertiesSnapshot_pc_() was prototyped and it
+ * works, but it makes this function (like getPaxRosterIndex_ above) depend on every fake
+ * PropertiesService test stand-in implementing getProperties(), not just getProperty() — three
+ * test files (test_tracker_edit_trigger.js, test_dashboard_webapp.js,
+ * test_add_response_on_submit.js) needed stub/memo-reset fixes just to convert getPaxRosterIndex_
+ * alone (see those files' F3Go30-45qt comments). Converting this one too is architecturally sound
+ * and likely worth doing, but is left for a follow-up so this bead's diff stays scoped to the one
+ * function its AC1 names.
+ */
 function getPaxCacheRow_(kind, sheetId, name) {
   try {
     var raw = scriptProps_pc_().getProperty(paxCacheRowKey_(kind, sheetId, name));
@@ -120,6 +156,7 @@ function getPaxCacheRow_(kind, sheetId, name) {
     return paxCacheDeserializeRow_(JSON.parse(raw));
   } catch (e) {
     paxCacheRequestStats_.rowMiss++;
+    paxCacheLogSwallowedError_('getPaxCacheRow_.failed', { kind: kind, sheetId: sheetId }, e);
     return null;
   }
 }
@@ -156,6 +193,7 @@ function getPaxCacheRowsBulk_(kind, sheetId, names) {
       paxCacheRequestStats_.rowHit++;
     } catch (e) {
       paxCacheRequestStats_.rowMiss++;
+      paxCacheLogSwallowedError_('getPaxCacheRowsBulk_.rowFailed', { kind: kind, sheetId: sheetId, name: name }, e);
     }
   });
   return result;
@@ -166,11 +204,19 @@ function setPaxCacheRow_(kind, sheetId, name, rowValues) {
     scriptProps_pc_().setProperty(
       paxCacheRowKey_(kind, sheetId, name), JSON.stringify(paxCacheSerializeRow_(rowValues))
     );
-  } catch (e) { /* payload too large or Properties unavailable — caller still has the live read */ }
+  } catch (e) {
+    // caller still has the live read — this is best-effort, but now visible in Axiom instead of
+    // silently never landing (F3Go30-n0wr).
+    paxCacheLogSwallowedError_('setPaxCacheRow_.failed', { kind: kind, sheetId: sheetId, name: name }, e);
+  }
 }
 
 function deletePaxCacheRow_(kind, sheetId, name) {
-  try { scriptProps_pc_().deleteProperty(paxCacheRowKey_(kind, sheetId, name)); } catch (e) { /* best-effort */ }
+  try {
+    scriptProps_pc_().deleteProperty(paxCacheRowKey_(kind, sheetId, name));
+  } catch (e) {
+    paxCacheLogSwallowedError_('deletePaxCacheRow_.failed', { kind: kind, sheetId: sheetId, name: name }, e);
+  }
 }
 
 /**
@@ -194,15 +240,40 @@ function setPaxCacheRowsBulk_(kind, sheetId, rowsByName, rosterIndex) {
     });
     batch[paxCacheRosterKey_(kind, sheetId)] = JSON.stringify(rosterIndex || {});
     scriptProps_pc_().setProperties(batch);
-  } catch (e) { /* payload too large or Properties unavailable — caller still has the live read */ }
+  } catch (e) {
+    // caller still has the live read — this is best-effort, but now visible in Axiom instead of
+    // silently never landing (F3Go30-n0wr: this exact empty catch is what hid a total write
+    // failure on every dashboard load).
+    paxCacheLogSwallowedError_('setPaxCacheRowsBulk_.failed', { kind: kind, sheetId: sheetId, rowCount: Object.keys(rowsByName || {}).length }, e);
+  }
 }
 
-/** Returns the {name: rowIndex} roster index for {kind, sheetId}, or null if not cached. */
+/**
+ * Returns the {name: rowIndex} roster index for {kind, sheetId}, or null if not cached.
+ *
+ * F3Go30-45qt: reads through the per-execution whole-store snapshot (getScriptPropertiesSnapshot_pc_)
+ * instead of issuing its own getProperty() RPC — the caller that matters most,
+ * buildTrackerValuesFromPaxCache_ (dashboardIdentity.js), calls this immediately before
+ * getPaxCacheRowsBulk_, which already pays for that same snapshot fetch; resolvePaxRowIndex_
+ * below and TrackerEditTrigger.js's tryPatchSinglePaxRow_te_ (which reads this then
+ * getPaxCacheRow_ moments later) share the same shape. Safe by the memo's own safety argument
+ * (ScriptProperties.js header): every write to this key goes through scriptProps_pc_(), which
+ * invalidates the memo first, so a write-then-read within one execution still observes the write.
+ *
+ * NOTE on failure behaviour: getScriptPropertiesSnapshot_pc_() itself never throws — a
+ * PropertiesService.getProperties() failure degrades to an empty store silently, with no log,
+ * exactly like this file's other snapshot consumers (getPaxCacheRowsBulk_, getPaxHistoryEntriesBulk_).
+ * So a whole-store fetch failure now reads as a plain miss (null, no log) rather than the
+ * discrete-getProperty failure this function used to log via paxCacheLogSwallowedError_. The
+ * catch below still covers the case a stored roster value is corrupt JSON — that still degrades
+ * to null and still logs, matching every other malformed-entry catch in this file.
+ */
 function getPaxRosterIndex_(kind, sheetId) {
   try {
-    var raw = scriptProps_pc_().getProperty(paxCacheRosterKey_(kind, sheetId));
+    var raw = getScriptPropertiesSnapshot_pc_()[paxCacheRosterKey_(kind, sheetId)];
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
+    paxCacheLogSwallowedError_('getPaxRosterIndex_.failed', { kind: kind, sheetId: sheetId }, e);
     return null;
   }
 }
@@ -210,11 +281,17 @@ function getPaxRosterIndex_(kind, sheetId) {
 function setPaxRosterIndex_(kind, sheetId, indexObj) {
   try {
     scriptProps_pc_().setProperty(paxCacheRosterKey_(kind, sheetId), JSON.stringify(indexObj || {}));
-  } catch (e) { /* payload too large or Properties unavailable */ }
+  } catch (e) {
+    paxCacheLogSwallowedError_('setPaxRosterIndex_.failed', { kind: kind, sheetId: sheetId }, e);
+  }
 }
 
 function deletePaxRosterIndex_(kind, sheetId) {
-  try { scriptProps_pc_().deleteProperty(paxCacheRosterKey_(kind, sheetId)); } catch (e) { /* best-effort */ }
+  try {
+    scriptProps_pc_().deleteProperty(paxCacheRosterKey_(kind, sheetId));
+  } catch (e) {
+    paxCacheLogSwallowedError_('deletePaxRosterIndex_.failed', { kind: kind, sheetId: sheetId }, e);
+  }
 }
 
 /**
@@ -260,9 +337,19 @@ function patchPaxRosterIndex_(kind, sheetId, name, rowIndex) {
   }
 }
 
+// Column index of the PAX name within a Tracker row — mirrors dashboardWebapp.js's own
+// TRACKER_NAME_COL_ (always 0; every refreshPaxCacheRowFromSheet_/
+// refreshPaxCacheRowAndAdvanceHistoryForCheckin_ caller passes kind='tracker'). Not imported from
+// dashboardWebapp.js to avoid a circular dependency — same tradeoff already made for the
+// CacheService key-string duplication in wipePaxCacheAndRelatedCachesForSheet_ above. Keep in
+// sync if either changes.
+var PAX_CACHE_ROW_NAME_COL_ = 0;
+
 /**
- * Refreshes one PAX's cached row from the sheet AFTER a write to that row — the only correct way
- * to write-through a row edit (F3Go30-xg8f, F3Go30-s1a5).
+ * Re-reads one PAX's row from the sheet AFTER a write to that row and either caches it or, if it
+ * can't be trusted, deletes the entry — the lock-free core shared by refreshPaxCacheRowFromSheet_
+ * (its own lock) and refreshPaxCacheRowAndAdvanceHistoryForCheckin_ (F3Go30-y0pw D4's shared
+ * lock). Callers MUST hold the script lock for the duration of this call — see either wrapper.
  *
  * The tempting cheaper move — patch the edited column into the copy of the row the request read
  * on the way in, and cache that — is wrong for two independent reasons, both observed live:
@@ -274,7 +361,52 @@ function patchPaxRosterIndex_(kind, sheetId, name, rowIndex) {
  *   2. STALE DERIVED COLUMNS. Score / Raw Score / bonus totals are sheet formulas. A snapshot
  *      patch carries their PRE-write values forward, so a PAX's own score lags their own
  *      check-in until something rebuilds the row.
- * A row derived from post-write sheet state has neither problem by construction.
+ * A row derived from post-write sheet state has neither problem by construction. This is also
+ * why a pre-write getRange() must never be used to feed the cache (F3Go30-y0pw D2, rejected
+ * alternative — that IS the shipped F3Go30-s1a5 bug, observed live 2026-07-22).
+ *
+ * flush() first: setValue is queued, and the formula recalc it triggers is not visible to a
+ * getValues in the same execution until pending writes are applied.
+ *
+ * D3 (F3Go30-y0pw): validates row[PAX_CACHE_ROW_NAME_COL_] still normalizes to the PAX this
+ * write was for before caching it — the mitigation for D1's accepted risk (removing the pre-write
+ * getFormula() probe means a structural edit that shifted rows under this write, without firing
+ * onEdit, is no longer caught before the write; this catches it after, at zero extra read cost,
+ * same as the wrong-row-bind class fixed by F3Go30-a2hq). A mismatch is treated exactly like a
+ * failed re-read: delete rather than cache an untrustworthy derivation.
+ *
+ * On a failed re-read (including a D3 name mismatch), the entry is DELETED rather than written
+ * from a derivation that can't be trusted — the next reader rebuilds it live. Correctness over
+ * cache hit.
+ *
+ * @param {string} kind 'tracker' | 'responses'
+ * @param {string} sheetId Spreadsheet id the row lives in.
+ * @param {string} name PAX name to key the cache entry under.
+ * @param {Sheet} sheet Already-open sheet handle the write just went through.
+ * @param {number} sheetRow 1-based sheet row number that was written.
+ */
+function refreshPaxCacheRowCore_(kind, sheetId, name, sheet, sheetRow) {
+  try {
+    SpreadsheetApp.flush();
+    var row = sheet.getRange(sheetRow, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (paxCacheNormalizeName_(row[PAX_CACHE_ROW_NAME_COL_]) !== paxCacheNormalizeName_(name)) {
+      GasLogger.log('refreshPaxCacheRowFromSheet_.rowNameMismatch', {
+        kind: kind, sheetId: sheetId, sheetRow: sheetRow, expected: name, actual: row[PAX_CACHE_ROW_NAME_COL_]
+      });
+      deletePaxCacheRow_(kind, sheetId, name);
+      return;
+    }
+    setPaxCacheRow_(kind, sheetId, name, row);
+  } catch (e) {
+    GasLogger.log('refreshPaxCacheRowFromSheet_.rereadFailed', { kind: kind, sheetId: sheetId, error: e.message });
+    deletePaxCacheRow_(kind, sheetId, name);
+  }
+}
+
+/**
+ * Refreshes one PAX's cached row from the sheet AFTER a write to that row — the only correct way
+ * to write-through a row edit (F3Go30-xg8f, F3Go30-s1a5). See refreshPaxCacheRowCore_ for the
+ * actual re-read/validate/cache-or-delete logic; this wrapper only owns the lock.
  *
  * Lock-guarded over (re-read -> cache write) — same convention as patchPaxRosterIndex_ above.
  * The cell write itself deliberately stays OUTSIDE the lock: making the re-read and the cache
@@ -283,11 +415,8 @@ function patchPaxRosterIndex_(kind, sheetId, name, rowIndex) {
  * cache write always reflects every cell write that preceded it), and keeping the section down
  * to two operations avoids serializing all check-ins script-wide during a morning burst.
  *
- * flush() first: setValue is queued, and the formula recalc it triggers is not visible to a
- * getValues in the same execution until pending writes are applied.
- *
- * On lock failure or a failed re-read, the entry is DELETED rather than written from a
- * derivation that can't be trusted — the next reader rebuilds it live. Correctness over cache hit.
+ * On lock failure, the entry is DELETED rather than left holding a derivation that can't be
+ * trusted — the next reader rebuilds it live. Correctness over cache hit.
  *
  * @param {string} kind 'tracker' | 'responses'
  * @param {string} sheetId Spreadsheet id the row lives in.
@@ -302,12 +431,7 @@ function refreshPaxCacheRowFromSheet_(kind, sheetId, name, sheet, sheetRow) {
     return;
   }
   try {
-    SpreadsheetApp.flush();
-    var row = sheet.getRange(sheetRow, 1, 1, sheet.getLastColumn()).getValues()[0];
-    setPaxCacheRow_(kind, sheetId, name, row);
-  } catch (e) {
-    GasLogger.log('refreshPaxCacheRowFromSheet_.rereadFailed', { kind: kind, sheetId: sheetId, error: e.message });
-    deletePaxCacheRow_(kind, sheetId, name);
+    refreshPaxCacheRowCore_(kind, sheetId, name, sheet, sheetRow);
   } finally {
     lock.releaseLock();
   }
@@ -327,7 +451,9 @@ function wipePaxCacheForSheet_(kind, sheetId) {
       if (key.indexOf(prefix) === 0) props.deleteProperty(key);
     });
     props.deleteProperty(paxCacheRosterKey_(kind, sheetId));
-  } catch (e) { /* best-effort */ }
+  } catch (e) {
+    paxCacheLogSwallowedError_('wipePaxCacheForSheet_.failed', { kind: kind, sheetId: sheetId }, e);
+  }
 }
 
 /**
@@ -357,7 +483,9 @@ function wipeAllPaxCache_() {
         wiped++;
       }
     });
-  } catch (e) { /* best-effort */ }
+  } catch (e) {
+    paxCacheLogSwallowedError_('wipeAllPaxCache_.failed', {}, e);
+  }
   return wiped;
 }
 
@@ -392,7 +520,10 @@ function wipePaxCacheAndRelatedCachesForSheet_(sheetId) {
     // picked up on the very next request instead of after up to 6h of staleness.
     cache.remove('go30dash:trackerLayout:' + sheetId);
     cache.remove('go30dash:responsesLayout:' + sheetId);
-  } catch (e2) { /* best-effort — write-through invalidation at the point of write is the primary path */ }
+  } catch (e2) {
+    // best-effort — write-through invalidation at the point of write is the primary path
+    paxCacheLogSwallowedError_('wipePaxCacheAndRelatedCachesForSheet_.cacheClearFailed', { sheetId: sheetId }, e2);
+  }
 }
 
 /**
@@ -500,7 +631,7 @@ function collectKnownTrackerSheetIds_(boundSpreadsheet) {
   // by resolved template spreadsheet id, and requests with no ns (the parent Template itself)
   // resolve to boundSpreadsheet (resolveTemplateSpreadsheet_, go30tools.js). Without this, every
   // go30hist entry the parent Template ever writes for itself would look orphaned here.
-  try { known[boundSpreadsheet.getId()] = true; } catch (e) { /* best-effort */ }
+  try { known[boundSpreadsheet.getId()] = true; } catch (e) { paxCacheLogSwallowedError_('collectKnownTrackerSheetIds_.boundIdFailed', {}, e); }
   var boundRows = (readTrackerDbRowsBySheetId_pc_ ? readTrackerDbRowsBySheetId_pc_(boundSpreadsheet) : { bySheetId: {} }).bySheetId || {};
   Object.keys(boundRows).forEach(function(sheetId) { known[sheetId] = true; });
 
@@ -544,7 +675,9 @@ function wipePaxHistoryForScope_(scopeId) {
     props.getKeys().forEach(function(key) {
       if (key.indexOf(prefix) === 0) props.deleteProperty(key);
     });
-  } catch (e) { /* best-effort */ }
+  } catch (e) {
+    paxCacheLogSwallowedError_('wipePaxHistoryForScope_.failed', { scopeId: scopeId }, e);
+  }
 }
 
 /**
@@ -621,7 +754,9 @@ function purgeStalePaxCache_(now, spreadsheet) {
         var sheetId = extractSheetIdFromPaxCacheKey_(key);
         if (sheetId && !knownSheetIds[sheetId] && !purgedSheetIds[sheetId]) orphanSheetIds[sheetId] = true;
       });
-    } catch (e) { /* best-effort */ }
+    } catch (e) {
+      paxCacheLogSwallowedError_('purgeStalePaxCache_.orphanScanFailed', {}, e);
+    }
     Object.keys(orphanSheetIds).forEach(function(sheetId) {
       wipePaxCacheForSheet_('tracker', sheetId);
       wipePaxCacheForSheet_('responses', sheetId);
@@ -660,7 +795,10 @@ function purgeStalePaxCache_(now, spreadsheet) {
         scriptProps.deleteProperty(key);
         historyEntriesPurged++;
       });
-    } catch (e) { /* best-effort — the rest of the purge already ran */ }
+    } catch (e) {
+      // best-effort — the rest of the purge already ran
+      paxCacheLogSwallowedError_('purgeStalePaxCache_.historyPurgeFailed', {}, e);
+    }
   }
 
   var result = { checked: checked, purged: purged, kept: kept, paxRowsPurged: paxRowsPurged, orphanedSheetsPurged: orphanedSheetsPurged, historyEntriesPurged: historyEntriesPurged };
@@ -857,13 +995,26 @@ function anchorPaxHistoryValues_(entry, anchorIso) {
   return paxHistoryDaysToValues_((entry.days + pad).slice(-PAX_HISTORY_WINDOW_DAYS_));
 }
 
-/** Returns the cached {historyEndDate, days} rolling-window entry for {scopeId, f3Name}, or null
- *  on a miss. @param {string} scopeId See paxHistoryKey_. */
+/**
+ * Returns the cached {historyEndDate, days} rolling-window entry for {scopeId, f3Name}, or null
+ * on a miss. @param {string} scopeId See paxHistoryKey_.
+ *
+ * F3Go30-45qt AC5 assessment: NOT converted to getScriptPropertiesSnapshot_pc_(). Unlike
+ * getPaxRosterIndex_/getPaxCacheRow_, this function's individual (non-bulk) call site
+ * (getPaxHistoryWindowValues_'s entriesByNormName-omitted branch, dashboardWebapp.js) is a
+ * single-PAX viewer fallback, not a call paired moments apart with another same-execution
+ * snapshot consumer the way the roster-index/row-cache pair is — so there's no equivalent "the
+ * fetch is already paid for" argument here, only the general one (a whole-store getProperties()
+ * measured cheaper than one getProperty(), see this bead's cost data). Converting it is plausible
+ * future work, but same test-fixture cost as getPaxCacheRow_ above with a weaker case for this
+ * specific bead, so left alone.
+ */
 function getPaxHistoryEntry_(scopeId, f3Name) {
   try {
     var raw = scriptProps_pc_().getProperty(paxHistoryKey_(scopeId, f3Name));
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
+    paxCacheLogSwallowedError_('getPaxHistoryEntry_.failed', { scopeId: scopeId, f3Name: f3Name }, e);
     return null;
   }
 }
@@ -890,7 +1041,10 @@ function getPaxHistoryEntriesBulk_(scopeId, f3Names) {
     if (!raw) return;
     try {
       entries[norm] = JSON.parse(raw);
-    } catch (e2) { /* unparseable entry reads as a miss, same as getPaxHistoryEntry_ */ }
+    } catch (e2) {
+      // unparseable entry reads as a miss, same as getPaxHistoryEntry_
+      paxCacheLogSwallowedError_('getPaxHistoryEntriesBulk_.entryFailed', { scopeId: scopeId, f3Name: f3Name }, e2);
+    }
   });
   return entries;
 }
@@ -899,7 +1053,9 @@ function getPaxHistoryEntriesBulk_(scopeId, f3Names) {
 function setPaxHistoryEntry_(scopeId, f3Name, entry) {
   try {
     scriptProps_pc_().setProperty(paxHistoryKey_(scopeId, f3Name), JSON.stringify(entry));
-  } catch (e) { /* best-effort — payload too large or Properties unavailable */ }
+  } catch (e) {
+    paxCacheLogSwallowedError_('setPaxHistoryEntry_.failed', { scopeId: scopeId, f3Name: f3Name }, e);
+  }
 }
 
 /**
@@ -920,7 +1076,9 @@ function setPaxHistoryEntriesBulk_(scopeId, entriesByName) {
     });
     if (!Object.keys(batch).length) return;
     scriptProps_pc_().setProperties(batch);
-  } catch (e) { /* best-effort — payload too large or Properties unavailable */ }
+  } catch (e) {
+    paxCacheLogSwallowedError_('setPaxHistoryEntriesBulk_.failed', { scopeId: scopeId, entryCount: Object.keys(entriesByName || {}).length }, e);
+  }
 }
 
 /**
@@ -947,22 +1105,95 @@ function setPaxHistoryEntriesBulk_(scopeId, entriesByName) {
  * @param {string=} todayIso "YYYY-MM-DD" context date to judge "future" against; defaults to the
  *   real clock. Callers that already resolved a context date (resolveContextDate_) should pass it.
  */
-function advancePaxHistoryDay_(scopeId, f3Name, date, value, todayIso) {
+/**
+ * Returns true (and logs) when `date` is strictly after `todayIso` (or real-clock today) — the
+ * future-day clamp shared by advancePaxHistoryDay_ and
+ * refreshPaxCacheRowAndAdvanceHistoryForCheckin_ (F3Go30-y0pw AC8: this must keep running BEFORE
+ * any lock acquisition, since it's a pure date comparison, not a cache-consistency concern — see
+ * advancePaxHistoryDay_'s docstring above for why a future day is dropped rather than folded in).
+ */
+function paxHistoryFutureDayClamp_(f3Name, date, todayIso) {
   var dateIsoForClamp = paxHistoryFormatIsoLocal_(date);
   var anchorIso = todayIso || paxHistoryFormatIsoLocal_(new Date());
   if (paxHistoryDayDiff_(anchorIso, dateIsoForClamp) > 0) {
     GasLogger.log('advancePaxHistoryDay_.futureDaySkipped', { f3Name: f3Name, date: dateIsoForClamp, today: anchorIso });
-    return;
+    return true;
   }
+  return false;
+}
 
-  var lock = paxCacheAcquireLock_(10000, 'advancePaxHistoryDay_.lockFailed', { f3Name: f3Name });
-  if (!lock) return;
+/** Lock-free read-modify-write core shared by advancePaxHistoryDay_ (its own lock) and
+ *  refreshPaxCacheRowAndAdvanceHistoryForCheckin_ (F3Go30-y0pw D4's shared lock). Callers MUST
+ *  hold the script lock for the duration of this call, and MUST have already applied
+ *  paxHistoryFutureDayClamp_ before calling. */
+function advancePaxHistoryDayCore_(scopeId, f3Name, date, value) {
   try {
     var dateIso = paxHistoryFormatIsoLocal_(date);
     var entry = getPaxHistoryEntry_(scopeId, f3Name);
     setPaxHistoryEntry_(scopeId, f3Name, advancePaxHistoryEntry_(entry, dateIso, value));
   } catch (e2) {
     GasLogger.log('advancePaxHistoryDay_.failed', { f3Name: f3Name, error: e2.message });
+  }
+}
+
+function advancePaxHistoryDay_(scopeId, f3Name, date, value, todayIso) {
+  if (paxHistoryFutureDayClamp_(f3Name, date, todayIso)) return;
+
+  var lock = paxCacheAcquireLock_(10000, 'advancePaxHistoryDay_.lockFailed', { f3Name: f3Name });
+  if (!lock) return;
+  try {
+    advancePaxHistoryDayCore_(scopeId, f3Name, date, value);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Combined write-through for the check-in write path (F3Go30-y0pw D4): collapses the cached-row
+ * refresh (refreshPaxCacheRowFromSheet_) and the history-window advance (advancePaxHistoryDay_)
+ * into ONE LockService.getScriptLock() acquisition instead of two — both already take the same
+ * global script lock back-to-back on every check-in write (handleCheckinSubmit_,
+ * dashboardWebapp.js), so there is no reason to pay two acquire/wait/release round trips.
+ *
+ * Both existing lock-failure fallbacks survive unchanged, sharing the one acquisition attempt: a
+ * failed acquisition still DELETES the cached row (refreshPaxCacheRowFromSheet_'s fail-safe —
+ * never cache an untrustworthy derivation) AND still skips the history advance
+ * (advancePaxHistoryDay_'s fail-safe — never risk a lost update). This is strictly equivalent to
+ * the pre-merge behavior: both operations contended for the SAME global lock before, so a busy
+ * lock already meant both independent acquisition attempts were failing together in practice —
+ * merging them just stops paying for the second failed wait.
+ *
+ * The future-day clamp (paxHistoryFutureDayClamp_) still runs BEFORE lock acquisition, unchanged
+ * (F3Go30-y0pw AC8) — a pure date comparison, not a cache-consistency concern.
+ *
+ * refreshPaxCacheRowFromSheet_ and advancePaxHistoryDay_ remain unchanged and still used by every
+ * OTHER caller (refreshTrackerRowAfterBonusWrite_'s bonus write-through, markMinusOne.js's
+ * nightly -1 auto-mark pass) — this combined entry point exists only for handleCheckinSubmit_'s
+ * back-to-back pair.
+ *
+ * @param {string} kind 'tracker' | 'responses' — see refreshPaxCacheRowFromSheet_. Always
+ *   'tracker' for the one call site this exists for.
+ * @param {string} sheetId Spreadsheet id the row lives in.
+ * @param {string} name PAX name — keys both the row cache and the history entry (same PAX).
+ * @param {Sheet} sheet Already-open sheet handle the write just went through.
+ * @param {number} sheetRow 1-based sheet row number that was written.
+ * @param {string} scopeId See paxHistoryKey_ — the history window's namespace scope.
+ * @param {Date} date Calendar date the history write applies to.
+ * @param {number|null} value 1 | 0 | -1 | null, the day value just written.
+ * @param {string=} todayIso "YYYY-MM-DD" context date to judge "future" against; see
+ *   advancePaxHistoryDay_.
+ */
+function refreshPaxCacheRowAndAdvanceHistoryForCheckin_(kind, sheetId, name, sheet, sheetRow, scopeId, date, value, todayIso) {
+  var skipHistory = paxHistoryFutureDayClamp_(name, date, todayIso);
+
+  var lock = paxCacheAcquireLock_(10000, 'refreshPaxCacheRowAndAdvanceHistoryForCheckin_.lockFailed', { kind: kind, sheetId: sheetId });
+  if (!lock) {
+    deletePaxCacheRow_(kind, sheetId, name);
+    return; // advancePaxHistoryDay_'s own lock-failure fallback is also "skip" — nothing else to do
+  }
+  try {
+    refreshPaxCacheRowCore_(kind, sheetId, name, sheet, sheetRow);
+    if (!skipHistory) advancePaxHistoryDayCore_(scopeId, name, date, value);
   } finally {
     lock.releaseLock();
   }
@@ -998,13 +1229,22 @@ function paxGoalsKey_(scopeId, f3Name) {
   return PAX_GOALS_PREFIX_ + scopeId + ':' + paxCacheNormalizeName_(f3Name);
 }
 
-/** Returns the cached {goals: [{monthKey, who, what, how}]} entry for {scopeId, f3Name}, or null
- *  on a miss (never throws). @param {string} scopeId See paxGoalsKey_. */
+/**
+ * Returns the cached {goals: [{monthKey, who, what, how}]} entry for {scopeId, f3Name}, or null
+ * on a miss (never throws). @param {string} scopeId See paxGoalsKey_.
+ *
+ * F3Go30-45qt AC5 assessment: NOT converted — same reasoning as getPaxHistoryEntry_ above. Its
+ * one caller (getPaxGoalsForMonth_, called from upsertPaxGoalsForMonth_'s read-modify-write) is
+ * not paired with another same-execution snapshot fetch, so there's no free-fetch argument for
+ * it specifically, and converting it costs the same test-fixture updates documented on
+ * getPaxCacheRow_ above.
+ */
 function getPaxGoalsEntry_(scopeId, f3Name) {
   try {
     var raw = scriptProps_pc_().getProperty(paxGoalsKey_(scopeId, f3Name));
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
+    paxCacheLogSwallowedError_('getPaxGoalsEntry_.failed', { scopeId: scopeId, f3Name: f3Name }, e);
     return null;
   }
 }
@@ -1124,7 +1364,9 @@ function wipePaxGoalsForScope_(scopeId) {
     props.getKeys().forEach(function(key) {
       if (key.indexOf(prefix) === 0) props.deleteProperty(key);
     });
-  } catch (e) { /* best-effort */ }
+  } catch (e) {
+    paxCacheLogSwallowedError_('wipePaxGoalsForScope_.failed', { scopeId: scopeId }, e);
+  }
 }
 
 function clearPaxCachePurgeTrigger_() {
@@ -1153,7 +1395,10 @@ function setupPaxCachePurgeTrigger_() {
 
 /**
  * One-off diagnostic (F3Go30 script-properties perf question, 2026-07) — not part of any hot
- * read/write path. Compares the per-key getProperty() loop buildTrackerValuesFromPaxCache_
+ * read/write path. F3Go30-45qt AC5 assessment: its raw props.getProperty()/getProperties() calls
+ * below are deliberately NOT converted to the snapshot — the whole point of this function is
+ * measuring the RAW cost of each strategy, so routing one of them through the memo would corrupt
+ * the comparison it exists to make. Compares the per-key getProperty() loop buildTrackerValuesFromPaxCache_
  * (dashboardWebapp.js) actually runs today against a single whole-store getProperties() call, and
  * against writing/reading this sheet's whole roster as one JSON blob — to see whether it's the
  * per-call RPC overhead (favors fewer calls) or the payload size (favors many small values) that
@@ -1223,6 +1468,7 @@ function benchmarkPaxCacheReads_(sheetId, iterations) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     paxCacheNormalizeName_: paxCacheNormalizeName_,
+    paxCacheLogSwallowedError_: paxCacheLogSwallowedError_,
     getPaxCacheRow_: getPaxCacheRow_,
     getPaxCacheRowsBulk_: getPaxCacheRowsBulk_,
     setPaxCacheRow_: setPaxCacheRow_,
@@ -1234,6 +1480,7 @@ if (typeof module !== 'undefined' && module.exports) {
     deletePaxRosterIndex_: deletePaxRosterIndex_,
     patchPaxRosterIndex_: patchPaxRosterIndex_,
     refreshPaxCacheRowFromSheet_: refreshPaxCacheRowFromSheet_,
+    refreshPaxCacheRowAndAdvanceHistoryForCheckin_: refreshPaxCacheRowAndAdvanceHistoryForCheckin_,
     wipePaxCacheForSheet_: wipePaxCacheForSheet_,
     wipePaxCacheAndRelatedCachesForSheet_: wipePaxCacheAndRelatedCachesForSheet_,
     wipeAllPaxCache_: wipeAllPaxCache_,

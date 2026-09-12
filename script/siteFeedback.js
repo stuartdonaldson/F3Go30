@@ -65,7 +65,9 @@ function handleSiteFeedback_(templateSpreadsheet, payload) {
   if (feedbackKey && seenKeys[feedbackKey]) {
     // Repeat of an already-sent report within the window: report success without sending a
     // second email — the PAX must never be told a resubmission of an already-delivered report
-    // failed (AC3).
+    // failed (AC3). F3Go30-ilqx: this success return previously logged nothing at all — every
+    // other outcome of this handler (.sent, .skipped, .error) already does.
+    GasLogger.log('dashboardWebapp.siteFeedback.dedupeSkipped', { f3Name: f3Name });
     return { ok: true };
   }
 

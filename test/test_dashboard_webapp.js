@@ -17,7 +17,9 @@ global.GasLogger = { log: function() {}, logError: function() {}, run: function(
 // In-memory stand-in for PropertiesService.getScriptProperties() — needed transitively by
 // PaxCache.js/CheckinSessions.js, both of which store state via PropertiesService
 // (F3Go30-xj1q.1's handleCheckinIdentify_ PaxDB-fallback tests below).
-var fakeScriptProperties_ = { getProperty: function() { return null; } };
+// getProperties() mirrors the same always-empty contract as getProperty() (F3Go30-45qt:
+// getPaxRosterIndex_/getPaxCacheRow_ now read through the per-execution whole-store memo).
+var fakeScriptProperties_ = { getProperty: function() { return null; }, getProperties: function() { return {}; } };
 global.PropertiesService = { getScriptProperties: function() { return fakeScriptProperties_; } };
 
 // Default always-granted script lock — PaxCache's post-write row refresh (F3Go30-xg8f) takes one
@@ -88,6 +90,7 @@ const {
   buildMonthNavigationPayload_dw_,
   handleBonusAdd_,
   handleBonusEdit_,
+  handleBonusList_,
   handleSiteFeedback_,
 } = require('../script/dashboardWebapp.js');
 
@@ -919,6 +922,13 @@ console.log('test_dashboard_webapp.js: month-grid / write-contract assertions pa
 // A fuller in-memory PropertiesService than the getProperty-only stub above — PaxCache's
 // setPaxCacheRow_/setPaxCacheRowsBulk_ (called on the handle fast path to keep per-PAX rows warm)
 // wrap their writes in try/catch, but back them with a real store so a warmed row round-trips.
+//
+// F3Go30-45qt: also resets ScriptProperties.js's per-execution whole-store memo every time this
+// swaps in a fresh backing store. getPaxRosterIndex_/getPaxCacheRowsBulk_ etc. now read through
+// that memo — without this reset here, a later call in THIS test process would keep serving a
+// snapshot fetched against a PREVIOUS test's (now-replaced) store object, exactly the staleness
+// window the real memo can never have in production (Apps Script re-evaluates it fresh every
+// execution; see that file's header). This models that same fresh-execution guarantee for tests.
 function installFakePropertiesStore_() {
   var store = {};
   global.PropertiesService = {
@@ -933,6 +943,7 @@ function installFakePropertiesStore_() {
       };
     },
   };
+  require('../script/ScriptProperties.js').resetScriptPropertiesSnapshot_();
   return store;
 }
 
@@ -970,7 +981,6 @@ function makeFakeTrackerSheet_(row2, row3, paxRows) {
           }
           return out;
         },
-        getFormula: function() { return ''; },
         setValue: function(v) {
           writes.push({ row: row, col: col, value: v });
           if (paxRows[row - 4]) paxRows[row - 4][col - 1] = v;
@@ -2484,8 +2494,12 @@ function makeLeanIdentityResponsesSheet_(rows) {
 })();
 
 // Reset the module-level PropertiesService/CacheService stubs the earlier tests relied on, in case
-// any later-added assertion in this file expects the original getProperty-only stub.
-global.PropertiesService = { getScriptProperties: function() { return { getProperty: function() { return null; } }; } };
+// any later-added assertion in this file expects the original getProperty-only stub. getProperties()
+// mirrors the same always-empty contract (F3Go30-45qt: getPaxRosterIndex_/getPaxCacheRow_ now read
+// through the per-execution whole-store memo, not just getProperty()), and the memo itself is
+// reset so nothing already warmed against the previous (real) store leaks into what follows.
+global.PropertiesService = { getScriptProperties: function() { return { getProperty: function() { return null; }, getProperties: function() { return {}; } }; } };
+require('../script/ScriptProperties.js').resetScriptPropertiesSnapshot_();
 delete global.SpreadsheetApp;
 
 console.log('test_dashboard_webapp.js: resolved-context handle assertions passed');
@@ -2643,6 +2657,89 @@ function makeUncheckedFixture_() {
   global.resolveContextDate_ = function() { return new Date(); };
 })();
 
+// F3Go30-y0pw AC1/AC3: the WRITE-PATH portion of a steady-state (same-month, resolved-context
+// handle) check-in — i.e. after resolveLeanIdentityFromHandle_'s own row read, which resolves
+// identity and is unaffected by this bead (see resolveCheckinDayTarget_'s docstring: the target
+// day/column/row all come from that already-resolved identity, at no extra Sheets cost) — issues
+// exactly ONE further Sheets read (the post-write full-row re-read) and ONE Sheets write, sharing
+// ONE lock acquisition. Total reads for the whole call are therefore 2 (1 identity + 1 post-write
+// refresh), down from 2 today too — the removed cell.getFormula() probe was never a getValues()
+// call, so it never showed up in this counter; makeFakeTrackerSheet_'s getRange() no longer even
+// implements getFormula() (see its definition above), so this fixture would throw outright if the
+// removed probe were ever reintroduced. The precise "one read, one write, one lock inside the
+// write path itself" claim is unit-tested directly against refreshPaxCacheRowAndAdvanceHistoryForCheckin_
+// in test_pax_cache.js, where there is no identity-resolution read to net out.
+(function testCheckinSteadyStateReadWriteLockCounts() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  var lockState = installFakeLockService_();
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); };
+
+  var fx = makeUncheckedFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
+
+  var res = handleCheckinSubmit_({ getSheetByName: function() { throw new Error('full resolution must not run'); } },
+    { f3Name: 'Anchor', email: 'a@x.com', day: 'today', value: 1, resolvedContext: handle });
+  assert.equal(res.ok, true);
+
+  assert.equal(fx.trackerSheet._singleRowReadCount, 2,
+    'identity resolution\'s own row read (1) plus the post-write full-row re-read (1) — no cell.getFormula() read to add a third');
+  assert.equal(fx.trackerSheet._writes.length, 1, 'exactly one Sheets write — the day cell');
+  assert.equal(lockState.acquired, 1, 'exactly one LockService.getScriptLock() acquisition, down from two');
+  assert.equal(lockState.released, 1, 'the one lock acquired must also be released exactly once');
+
+  delete global.SpreadsheetApp;
+  delete global.LockService;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
+// F3Go30-y0pw D3/AC5: the post-write re-read validates the row's own name column against the PAX
+// this write was for. A row whose name no longer matches (e.g. an unrelated structural edit moved
+// rows around after the write, without ever firing onEdit — D1's accepted residual risk) must
+// never be cached: delete-and-log instead, same convention as the wrong-row-bind fix (F3Go30-a2hq).
+(function testCheckinPostWriteRowNameMismatchDeletesCacheAndLogs() {
+  var PaxCache = require('../script/PaxCache.js');
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installFakeLockService_();
+  global.resolveContextDate_ = function() { return new Date(2026, 6, 2, 9, 0); };
+
+  var fx = makeUncheckedFixture_();
+  var handle = buildResolvedContextHandle_(fx.monthInfo, 0, 'Anchor');
+  // Simulate row 4 having been shifted to a different PAX between this request's identity
+  // resolution and its post-write re-read (a structural edit that never fired onEdit).
+  fx.trackerSheet._afterNextRowRead = function(paxRows) { paxRows[0][0] = 'SomeoneElse'; };
+
+  // Prime a stale cached row for Anchor first, so we can prove it gets DELETED, not left in place.
+  PaxCache.setPaxCacheRow_('tracker', 'sheet-jul', 'Anchor', ['Anchor', 'stale']);
+
+  var loggedEvents = [];
+  var realLog = global.GasLogger.log;
+  global.GasLogger.log = function(name, payload) { loggedEvents.push({ name: name, payload: payload }); };
+  var res;
+  try {
+    res = handleCheckinSubmit_({ getSheetByName: function() { throw new Error('full resolution must not run'); } },
+      { f3Name: 'Anchor', email: 'a@x.com', day: 'today', value: 1, resolvedContext: handle });
+  } finally {
+    global.GasLogger.log = realLog;
+  }
+  assert.equal(res.ok, true, 'the check-in write itself still succeeds — only the cache write is refused');
+
+  assert.equal(PaxCache.getPaxCacheRow_('tracker', 'sheet-jul', 'Anchor'), null,
+    'a name mismatch on the post-write re-read must delete the cache entry, never cache the wrong row');
+  var mismatchLog = loggedEvents.find(function(e) { return e.name === 'refreshPaxCacheRowFromSheet_.rowNameMismatch'; });
+  assert.ok(mismatchLog, 'the mismatch must be logged');
+  assert.equal(mismatchLog.payload.expected, 'Anchor');
+  assert.equal(mismatchLog.payload.actual, 'SomeoneElse');
+
+  delete global.SpreadsheetApp;
+  delete global.LockService;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
+
 // AC4: if the lock can't be acquired, the entry is DELETED rather than written from a derivation
 // that can't be guaranteed ordered — the next reader rebuilds live. Correctness over cache hit.
 (function testCheckinDropsCachedRowWhenLockUnavailable() {
@@ -2662,6 +2759,10 @@ function makeUncheckedFixture_() {
   assert.deepEqual(fx.trackerSheet._writes, [{ row: 4, col: 10, value: 1 }], 'the day cell is still written');
   assert.equal(PaxCache.getPaxCacheRow_('tracker', 'sheet-jul', 'Anchor'), null,
     'cached row must be dropped, not written from an unordered derivation');
+  // F3Go30-y0pw AC4: BOTH lock-failure fallbacks must survive the D4 merge into one lock
+  // acquisition — the row above, and the history-window advance skipped here.
+  assert.equal(PaxCache.getPaxHistoryEntry_('', 'Anchor'), null,
+    'the history-window advance must also be skipped on a lock failure, not just the row refresh');
 
   delete global.SpreadsheetApp;
   delete global.LockService;
@@ -2700,9 +2801,11 @@ function makeUncheckedFixture_() {
   assert.ok(checkinEvent, 'checkinWebapp.checkin must be logged');
   assert.equal(typeof checkinEvent.payload.paxLockFailed, 'number');
   assert.equal(typeof checkinEvent.payload.paxLockWaitMs, 'number');
-  // Both the PaxCache row refresh and the history-window advance acquire the lock on this write
-  // path (see file header above) — with the fake lock failing every waitLock(), both count.
-  assert.equal(checkinEvent.payload.paxLockFailed, 2);
+  // F3Go30-y0pw D4/AC3: the PaxCache row refresh and the history-window advance now share ONE
+  // lock acquisition on this write path (refreshPaxCacheRowAndAdvanceHistoryForCheckin_), down
+  // from the two independent acquisitions this test used to pin — with the fake lock failing
+  // every waitLock(), exactly one failure is now counted.
+  assert.equal(checkinEvent.payload.paxLockFailed, 1);
 
   delete global.SpreadsheetApp;
   delete global.LockService;
@@ -2968,6 +3071,53 @@ function makeFakeDataRangeSheet_(rows) {
   assert.equal(res.ok, true);
   assert.equal(res.registered, false, 'DELETED Responses row must not read as registered');
   assert.deepEqual(res.monthGrid, []);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+// F3Go30-ilqx: a Tracker row exists for this PAX, but the month has no Responses sheet at all
+// (or the layout cache is cold and the sheet is genuinely absent) — this success/notRegistered
+// return previously logged nothing at all. Every other "not registered" outcome above already
+// logs checkinWebapp.monthGrid.result; this closes the last silent success path.
+(function testHandleMonthGridNoResponsesSheetLogsResultEvent() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.formatRegistrationMonth_ = function() { return 'November 2026'; };
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: 'sheet-nov-noresp', trackerUrl: 'https://x/nov', startDate: new Date(2026, 10, 1) };
+  };
+  installFakeSpreadsheetById_({
+    'sheet-nov-noresp': {
+      getSheetByName: function(n) {
+        if (n !== 'Tracker') return null; // no Responses sheet at all
+        return makeFakeTrackerSheet_(
+          ['', '', '', '', '', '', '', '', ''],
+          ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 10, 1)],
+          [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1]]
+        );
+      },
+    },
+  });
+
+  var loggedEvents = [];
+  var realLog = global.GasLogger.log;
+  global.GasLogger.log = function(name, payload) { loggedEvents.push({ name: name, payload: payload }); };
+  var res;
+  try {
+    res = handleMonthGrid_({}, { monthKey: '2026-11', f3Name: 'Anchor', email: 'anchor@x.com' });
+  } finally {
+    global.GasLogger.log = realLog;
+  }
+
+  assert.equal(res.ok, true);
+  assert.equal(res.registered, false);
+
+  var resultEvent = loggedEvents.find(function(e) { return e.name === 'checkinWebapp.monthGrid.result'; });
+  assert.ok(resultEvent, 'checkinWebapp.monthGrid.result must be logged even with no Responses sheet');
+  assert.equal(resultEvent.payload.registered, false);
 
   delete global.SpreadsheetApp;
   delete global.resolveTrackerForContextDate;
@@ -3394,6 +3544,99 @@ function makeBonusMonthFixture_(opts) {
   delete global.formatRegistrationMonth_;
 })();
 
+// F3Go30-786l: checkinWebapp.bonusAdd previously logged a dedupe hit and a real append
+// identically. addBonusEntry_ (bonusWebapp.js) now returns `duplicate` derived from its own
+// branch; handleBonusAdd_ logs it and strips it from the client-facing response (AC3 — log-only,
+// no response shape change).
+(function testBonusAddLogsDuplicateFlagAndStripsItFromResponse() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installDefaultLockService_();
+  global.formatRegistrationMonth_ = function() { return 'July 2026'; };
+
+  var fx = makeBonusMonthFixture_({
+    sheetId: 'sheet-jul-dup', f3Name: 'Anchor', email: 'anchor@x.com',
+    year: 2026, month: 6, rawScoreBefore: 5, scoreBefore: 0.5, rawScoreAfter: 8, scoreAfter: 0.8,
+  });
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: fx.sheetId, trackerUrl: fx.monthInfo.trackerUrl, startDate: fx.monthInfo.startDate };
+  };
+  installFakeSpreadsheetById_({ 'sheet-jul-dup': fx.spreadsheet });
+
+  var loggedEvents = [];
+  var realLog = global.GasLogger.log;
+  global.GasLogger.log = function(name, payload) { loggedEvents.push({ name: name, payload: payload }); };
+  var first, retry;
+  var payload = { f3Name: 'Anchor', email: 'anchor@x.com', type: 'Fellowship', whenIso: '2026-07-02', message: 'coffeeteria' };
+  try {
+    first = handleBonusAdd_({}, payload);
+    retry = handleBonusAdd_({}, payload); // identical repeated payload -> dedupe hit
+  } finally {
+    global.GasLogger.log = realLog;
+  }
+
+  assert.equal(first.ok, true);
+  assert.equal(retry.ok, true);
+  // AC3: no response shape change — `duplicate` must never reach the client.
+  assert.equal(first.duplicate, undefined, 'duplicate must not leak into the client response');
+  assert.equal(retry.duplicate, undefined, 'duplicate must not leak into the client response');
+
+  var bonusAddEvents = loggedEvents.filter(function(e) { return e.name === 'checkinWebapp.bonusAdd'; });
+  assert.equal(bonusAddEvents.length, 2);
+  assert.equal(bonusAddEvents[0].payload.duplicate, false, 'the first, genuine append must log duplicate:false');
+  assert.equal(bonusAddEvents[1].payload.duplicate, true, 'the identical retry must log duplicate:true');
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
+// F3Go30-ilqx AC1: handleBonusList_ previously emitted no outcome event at all — a read-only
+// action, but with real entry-count/failure-mode value in Axiom. No prior test existed for
+// handleBonusList_ at all (coverage inventory: none found), so this is new coverage, not an
+// extension.
+(function testBonusListLogsOutcomeEventWithEntryCount() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installDefaultLockService_();
+  global.formatRegistrationMonth_ = function() { return 'July 2026'; };
+
+  var existing = ['Anchor', 1, 1, 1, true, 'Fellowship', new Date(2026, 6, 2), 'coffeeteria', ''];
+  var fx = makeBonusMonthFixture_({
+    sheetId: 'sheet-jul-list', f3Name: 'Anchor', email: 'anchor@x.com',
+    year: 2026, month: 6, rawScoreBefore: 5, scoreBefore: 0.5, rawScoreAfter: 5, scoreAfter: 0.5,
+    bonusRows: [existing],
+  });
+  global.resolveTrackerForContextDate = function() {
+    return { sheetId: fx.sheetId, trackerUrl: fx.monthInfo.trackerUrl, startDate: fx.monthInfo.startDate };
+  };
+  installFakeSpreadsheetById_({ 'sheet-jul-list': fx.spreadsheet });
+
+  var loggedEvents = [];
+  var realLog = global.GasLogger.log;
+  global.GasLogger.log = function(name, payload) { loggedEvents.push({ name: name, payload: payload }); };
+  var res;
+  try {
+    res = handleBonusList_({}, { f3Name: 'Anchor', email: 'anchor@x.com', dateISO: '2026-07-02' });
+  } finally {
+    global.GasLogger.log = realLog;
+  }
+
+  assert.equal(res.ok, true);
+  assert.equal(res.entries.length, 1);
+
+  var listEvent = loggedEvents.find(function(e) { return e.name === 'checkinWebapp.bonusList'; });
+  assert.ok(listEvent, 'checkinWebapp.bonusList must be logged on success');
+  assert.equal(listEvent.payload.f3Name, 'Anchor');
+  assert.equal(listEvent.payload.entries, 1);
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+})();
+
 // AC2 (bonusEdit, same month): editing an existing entry changes its points too (type/date
 // changes move it between capped weeks), so the same guarantee has to hold on the edit path.
 (function testBonusEditSameMonthRefreshesCachedTrackerRow() {
@@ -3483,6 +3726,78 @@ function makeBonusMonthFixture_(opts) {
   delete global.SpreadsheetApp;
   delete global.resolveTrackerForContextDate;
   delete global.formatRegistrationMonth_;
+})();
+
+// F3Go30-ilqx AC2: checkinWebapp.bonusEdit already fired on both branches (existed since
+// v2.3.11, well before this bead) but only set movedMonths:true on the cross-month branch,
+// leaving the same-month branch to signal "not moved" only by the field's ABSENCE. Now both
+// branches set it explicitly, so a query never has to infer the same-month case.
+(function testBonusEditLogsExplicitMovedMonthsOnBothBranches() {
+  var loggedEvents = [];
+  var realLog = global.GasLogger.log;
+  global.GasLogger.log = function(name, payload) { loggedEvents.push({ name: name, payload: payload }); };
+
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  installDefaultLockService_();
+  global.formatRegistrationMonth_ = function() { return 'Month'; };
+
+  try {
+    // Same-month branch.
+    var existing = ['Anchor', 1, 1, 1, true, 'Fellowship', new Date(2026, 6, 2), 'coffeeteria', ''];
+    var sameMonth = makeBonusMonthFixture_({
+      sheetId: 'sheet-jul-mm', f3Name: 'Anchor', email: 'anchor@x.com',
+      year: 2026, month: 6, rawScoreBefore: 8, scoreBefore: 0.8, rawScoreAfter: 9, scoreAfter: 0.9,
+      bonusRows: [existing],
+    });
+    global.resolveTrackerForContextDate = function() {
+      return { sheetId: sameMonth.sheetId, trackerUrl: sameMonth.monthInfo.trackerUrl, startDate: sameMonth.monthInfo.startDate };
+    };
+    installFakeSpreadsheetById_({ 'sheet-jul-mm': sameMonth.spreadsheet });
+    var sameRes = handleBonusEdit_({}, {
+      f3Name: 'Anchor', email: 'anchor@x.com',
+      type: 'Fellowship', whenIso: '2026-07-02', message: 'coffeeteria, v2', rowIndex: 2,
+      originalWhenIso: '2026-07-02',
+      original: { type: 'Fellowship', whenIso: '2026-07-02', message: 'coffeeteria', link: '' },
+    });
+    assert.equal(sameRes.ok, true);
+
+    // Cross-month branch.
+    var oldEntry = ['Anchor', 1, 1, 1, true, 'Fellowship', new Date(2026, 6, 2), 'coffeeteria', ''];
+    var july = makeBonusMonthFixture_({
+      sheetId: 'sheet-jul-mm2', f3Name: 'Anchor', email: 'anchor@x.com',
+      year: 2026, month: 6, rawScoreBefore: 8, scoreBefore: 0.8, rawScoreAfter: 6, scoreAfter: 0.6,
+      bonusRows: [oldEntry],
+    });
+    var august = makeBonusMonthFixture_({
+      sheetId: 'sheet-aug-mm2', f3Name: 'Anchor', email: 'anchor@x.com',
+      year: 2026, month: 7, rawScoreBefore: 2, scoreBefore: 0.2, rawScoreAfter: 4, scoreAfter: 0.4,
+    });
+    global.resolveTrackerForContextDate = function(date) {
+      return date.getMonth() === 7
+        ? { sheetId: 'sheet-aug-mm2', trackerUrl: 'https://x/aug', startDate: new Date(2026, 7, 1) }
+        : { sheetId: 'sheet-jul-mm2', trackerUrl: 'https://x/jul', startDate: new Date(2026, 6, 1) };
+    };
+    installFakeSpreadsheetById_({ 'sheet-jul-mm2': july.spreadsheet, 'sheet-aug-mm2': august.spreadsheet });
+    var crossRes = handleBonusEdit_({}, {
+      f3Name: 'Anchor', email: 'anchor@x.com',
+      type: 'Fellowship', whenIso: '2026-08-02', message: 'coffeeteria', rowIndex: 2,
+      originalWhenIso: '2026-07-02',
+      original: { type: 'Fellowship', whenIso: '2026-07-02', message: 'coffeeteria', link: '' },
+    });
+    assert.equal(crossRes.ok, true);
+  } finally {
+    global.GasLogger.log = realLog;
+    delete global.SpreadsheetApp;
+    delete global.resolveTrackerForContextDate;
+    delete global.formatRegistrationMonth_;
+  }
+
+  var bonusEditEvents = loggedEvents.filter(function(e) { return e.name === 'checkinWebapp.bonusEdit'; });
+  assert.equal(bonusEditEvents.length, 2);
+  assert.equal(bonusEditEvents[0].payload.movedMonths, false, 'same-month edit must set movedMonths:false explicitly');
+  assert.equal(bonusEditEvents[1].payload.movedMonths, true, 'cross-month edit must set movedMonths:true');
 })();
 
 // AC (shared with F3Go30-xg8f AC4): when the lock can't be taken the entry is DELETED rather than
@@ -4008,12 +4323,25 @@ function tearDownSiteFeedbackDedupeFixture_() {
   var sent = setUpSiteFeedbackDedupeFixture_();
   var report = { f3Name: 'Splinter', email: 'splinter@example.com', rating: 4, comment: 'Loving the streak view.', feedbackKey: 'key-1' };
 
-  var first = handleSiteFeedback_({}, report);
-  var second = handleSiteFeedback_({}, report); // hand-retried resubmission, unedited report
+  var loggedEvents = [];
+  var realLog = global.GasLogger.log;
+  global.GasLogger.log = function(name, payload) { loggedEvents.push({ name: name, payload: payload }); realLog(name, payload); };
+  var first, second;
+  try {
+    first = handleSiteFeedback_({}, report);
+    second = handleSiteFeedback_({}, report); // hand-retried resubmission, unedited report
+  } finally {
+    global.GasLogger.log = realLog;
+  }
 
   assert.equal(first.ok, true);
   assert.equal(second.ok, true, 'AC3: a repeat submission must still report ok to the client');
   assert.equal(sent.length, 1, 'AC2: the repeat key must not send a second email');
+
+  // F3Go30-ilqx: the dedupe-hit success return previously logged nothing at all.
+  var dedupeSkipped = loggedEvents.filter(function(e) { return e.name === 'dashboardWebapp.siteFeedback.dedupeSkipped'; });
+  assert.equal(dedupeSkipped.length, 1, 'the dedupe-hit path must emit exactly one outcome event');
+  assert.equal(dedupeSkipped[0].payload.f3Name, 'Splinter');
 
   tearDownSiteFeedbackDedupeFixture_();
 })();

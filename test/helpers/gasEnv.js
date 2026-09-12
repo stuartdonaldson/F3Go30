@@ -40,6 +40,7 @@ function makeFakeProperties_(seed) {
     },
     setProperty: function(key, value) { store[key] = String(value); return self; },
     setProperties: function(properties) {
+      if (self._failSetProperties) throw new Error('PropertiesService unavailable');
       Object.keys(properties || {}).forEach(function(key) {
         store[key] = String(properties[key]);
       });
@@ -59,6 +60,7 @@ function makeFakeProperties_(seed) {
     _store: store,
     _getPropertiesCalls: 0,
     _failGetProperties: false,
+    _failSetProperties: false,
   };
   return self;
 }

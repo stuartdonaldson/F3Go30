@@ -435,15 +435,18 @@ function addBonusEntry_(bonusSheet, f3Name, payload) {
   try {
     var sheetId = bonusSheet.getParent().getId();
 
+    // F3Go30-786l: `duplicate` is derived here, from the actual branch taken, so a caller never
+    // has to re-infer "was this a dedupe hit or a real append" by re-reading the sheet — the two
+    // outcomes are otherwise indistinguishable from the ok:true/rowIndex shape alone.
     var duplicateRow = findDuplicateBonusEntry_(bonusSheet, f3Name, sheetId, payload);
-    if (duplicateRow) return { ok: true, rowIndex: duplicateRow };
+    if (duplicateRow) return { ok: true, rowIndex: duplicateRow, duplicate: true };
 
     var nextRow = findNextBonusRow_(bonusSheet);
     if (!nextRow) return { ok: false, error: 'bonus_sheet_full' };
 
     writeBonusEnteredColumns_(bonusSheet, nextRow, f3Name, payload);
     patchBonusCaches_(sheetId, 'add', nextRow, f3Name, buildBonusCacheShapes_(f3Name, nextRow, payload), null);
-    return { ok: true, rowIndex: nextRow };
+    return { ok: true, rowIndex: nextRow, duplicate: false };
   } finally {
     lock.releaseLock();
   }

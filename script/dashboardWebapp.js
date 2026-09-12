@@ -19,12 +19,16 @@ var dashboardWebappSignupModule_ = gasRequire_('./signupWebapp.js', ['getCurrent
 var getCurrentAndNextMonths_dw_ = dashboardWebappSignupModule_.getCurrentAndNextMonths_;
 var findPaxDbMatch_dw_ = dashboardWebappSignupModule_.findPaxDbMatch_;
 
-var dashboardWebappPaxCacheModule_ = gasRequire_('./PaxCache.js', ['getPaxCacheRow_', 'getPaxCacheRowsBulk_', 'setPaxCacheRow_', 'setPaxCacheRowsBulk_', 'resolvePaxRowIndex_', 'getPaxRosterIndex_', 'deletePaxRosterIndex_', 'refreshPaxCacheRowFromSheet_', 'deletePaxCacheRow_', 'paxCacheNormalizeName_', 'getPaxCacheRequestStats_', 'getPaxHistoryEntry_', 'setPaxHistoryEntry_', 'paxHistoryDaysToValues_', 'anchorPaxHistoryValues_', 'getPaxHistoryEntriesBulk_', 'paxHistoryDayDiff_', 'paxHistoryEncodeValue_', 'setPaxHistoryEntriesBulk_', 'PAX_HISTORY_BACKFILL_DAYS_', 'advancePaxHistoryDay_', 'getPaxGoalsForMonth_']);
+var dashboardWebappPaxCacheModule_ = gasRequire_('./PaxCache.js', ['getPaxCacheRow_', 'getPaxCacheRowsBulk_', 'setPaxCacheRow_', 'setPaxCacheRowsBulk_', 'resolvePaxRowIndex_', 'getPaxRosterIndex_', 'deletePaxRosterIndex_', 'refreshPaxCacheRowFromSheet_', 'refreshPaxCacheRowAndAdvanceHistoryForCheckin_', 'deletePaxCacheRow_', 'paxCacheNormalizeName_', 'getPaxCacheRequestStats_', 'getPaxHistoryEntry_', 'setPaxHistoryEntry_', 'paxHistoryDaysToValues_', 'anchorPaxHistoryValues_', 'getPaxHistoryEntriesBulk_', 'paxHistoryDayDiff_', 'paxHistoryEncodeValue_', 'setPaxHistoryEntriesBulk_', 'PAX_HISTORY_BACKFILL_DAYS_', 'getPaxGoalsForMonth_']);
 var getPaxCacheRow_dw_ = dashboardWebappPaxCacheModule_.getPaxCacheRow_;
 var setPaxCacheRow_dw_ = dashboardWebappPaxCacheModule_.setPaxCacheRow_;
 var resolvePaxRowIndex_dw_ = dashboardWebappPaxCacheModule_.resolvePaxRowIndex_;
 var deletePaxRosterIndex_dw_ = dashboardWebappPaxCacheModule_.deletePaxRosterIndex_;
 var refreshPaxCacheRowFromSheet_dw_ = dashboardWebappPaxCacheModule_.refreshPaxCacheRowFromSheet_;
+// F3Go30-y0pw D4: the check-in write path's combined single-lock refresh+history-advance —
+// used ONLY by handleCheckinSubmit_ below, which used to call refreshPaxCacheRowFromSheet_dw_
+// and advancePaxHistoryDay_dw_ back to back under two separate lock acquisitions.
+var refreshPaxCacheRowAndAdvanceHistoryForCheckin_dw_ = dashboardWebappPaxCacheModule_.refreshPaxCacheRowAndAdvanceHistoryForCheckin_;
 var deletePaxCacheRow_dw_ = dashboardWebappPaxCacheModule_.deletePaxCacheRow_;
 var paxCacheNormalizeName_dw_ = dashboardWebappPaxCacheModule_.paxCacheNormalizeName_;
 var getPaxCacheRequestStats_dw_ = dashboardWebappPaxCacheModule_.getPaxCacheRequestStats_;
@@ -38,7 +42,6 @@ var getPaxHistoryEntriesBulk_dw_ = dashboardWebappPaxCacheModule_.getPaxHistoryE
 var paxHistoryDayDiff_dw_ = dashboardWebappPaxCacheModule_.paxHistoryDayDiff_;
 var paxHistoryEncodeValue_dw_ = dashboardWebappPaxCacheModule_.paxHistoryEncodeValue_;
 var PAX_HISTORY_BACKFILL_DAYS_dw_ = dashboardWebappPaxCacheModule_.PAX_HISTORY_BACKFILL_DAYS_;
-var advancePaxHistoryDay_dw_ = dashboardWebappPaxCacheModule_.advancePaxHistoryDay_;
 // f3Name-keyed versioned goals list (F3Go30-uz9e.4, PAX data model migration Slice 2) — see
 // PaxCache.js's PAX_GOALS_PREFIX_ header comment.
 var getPaxGoalsForMonth_dw_ = dashboardWebappPaxCacheModule_.getPaxGoalsForMonth_;
@@ -536,7 +539,12 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
   // to be the first time it got migrated into CheckinSessions.
   var legacyTokenMintedAtIso = null;
   if (payload.token) {
+    // F3Go30-276s: identify's own unattributed-time investigation — this is real work
+    // (CheckinSessions lookup, or the legacy signed-token verify fallback) that ran before
+    // resolveCheckinIdentity_'s own resolveMonths/resolveIdentity spans even start.
+    var tTokenResolve0 = Date.now();
     var resolved = resolveCheckinToken_dw_(templateSpreadsheet, payload.token);
+    GasLogger.log('checkinWebapp.tokenResolve.timing', { durationMs: Date.now() - tTokenResolve0 });
     if (resolved) {
       f3Name = resolved.f3Name;
       email = resolved.email;
@@ -616,6 +624,14 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
   var todayCol = findDateColumnIndex_(classified.dayCols, today);
   var todayStatus = todayCol === -1 ? 'unavailable' : dayValueStatus_(trackerRow[todayCol]);
 
+  // F3Go30-276s: identify's own unattributed-time investigation — this block is the largest
+  // unmeasured slice found: resolveCheckinDayTarget_'s cross-month fallback path can open a
+  // SECOND spreadsheet (a month other than the PAX's current one), and checkNextMonthRegistration_
+  // / resolveSignupReminder_dw_ can EACH independently open next month's spreadsheet via
+  // resolveNextMonthRegistrationStatus_dw_ (called twice, once per function, with no memo between
+  // them — flagged, not fixed here; this bead is instrumentation-only, no optimisation).
+  var tPostIdentityPrep0 = Date.now();
+
   // Yesterday may belong to a different month's tracker than today's (e.g. today is the 1st) —
   // resolveCheckinDayTarget_ falls back to that prior tracker rather than reporting unavailable.
   var yesterdayTarget = resolveCheckinDayTarget_(identity, f3Name, yesterday, templateSpreadsheet);
@@ -627,6 +643,11 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
   // exists, PAX has no record in it) but WITHOUT nextMonth's day-window gate, since the popup is
   // meant to persist across the whole month rather than only the final few days before it starts.
   var signupReminder = resolveSignupReminder_dw_(identity.months, f3Name);
+
+  GasLogger.log('checkinWebapp.postIdentityPrep.timing', {
+    hasNextMonth: !!(identity.months && identity.months.next), durationMs: Date.now() - tPostIdentityPrep0,
+  });
+
   var monthNav = buildMonthNavigationPayload_dw_(templateSpreadsheet, trackerRow[TRACKER_NAME_COL_]);
 
   // Binds sessionGuid to the canonical Tracker name (not whatever variant was typed, so a
@@ -644,7 +665,11 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
   // retiring IdentityToken.js's verify path except confirming every still-active old bookmark
   // has been used at least once since this rollout — the nightly cleanup then prunes it like
   // any other session once it goes unused for CHECKIN_SESSION_STALE_DAYS_.
-  if (sessionGuid) createOrTouchCheckinSession_dw_(templateSpreadsheet, sessionGuid, trackerRow[TRACKER_NAME_COL_], email, legacyTokenMintedAtIso);
+  if (sessionGuid) {
+    var tCheckinSession0 = Date.now();
+    createOrTouchCheckinSession_dw_(templateSpreadsheet, sessionGuid, trackerRow[TRACKER_NAME_COL_], email, legacyTokenMintedAtIso);
+    GasLogger.log('checkinWebapp.checkinSession.timing', { durationMs: Date.now() - tCheckinSession0 });
+  }
 
   GasLogger.log('checkinWebapp.identify.result', {
     matched: true, f3Name: trackerRow[TRACKER_NAME_COL_], emailMismatch: identity.emailMismatch,
@@ -783,7 +808,17 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
   var sheetRow = target.rowIndex + 4;
   var sheetCol = target.col + 1;
   var cell = target.trackerSheet.getRange(sheetRow, sheetCol);
-  if (cell.getFormula()) return { ok: false, error: 'cell_is_formula' };
+  // F3Go30-y0pw D1: the pre-write cell.getFormula() probe that used to guard here is gone — the
+  // write column can never BE a formula/Bonus column by construction (classifyTrackerColumns_
+  // admits a column to dayCols only when row3 holds a real Date, never 'Bonus', and
+  // findDateColumnIndex_ selects exclusively from dayCols; a structural Tracker edit that could
+  // move columns under this also invalidates go30dash:trackerLayout:, so it can't go stale behind
+  // the TTL). D3 (PaxCache.js's refreshPaxCacheRowCore_) is the post-write mitigation for the
+  // accepted residual risk (a structural edit that never fires onEdit): it validates the re-read
+  // row's name column before caching, and deletes-and-logs on a mismatch instead of caching a
+  // possibly wrong-PAX row. AC2: confirmed no client path depends on the removed 'cell_is_formula'
+  // error string — static-pages/src/index.html (and every other static page in this repo) has no
+  // reference to that string at all (searched with Python; grep is unreliable on that file).
 
   if (payload.value === null) cell.clearContent(); else cell.setValue(payload.value);
   // Write-through (F3Go30-5nfj.3) — still a single-row, single-PAX refresh, so every OTHER pax's
@@ -791,14 +826,20 @@ function handleCheckinSubmit_(templateSpreadsheet, payload) {
   // resolveCheckinIdentityFull_/resolveFullIdentityFromHandle_) stays untouched and correct. But
   // the row is re-read from the sheet rather than derived from target.row, this request's
   // PRE-write snapshot: that snapshot loses a concurrent check-in's day (F3Go30-xg8f) and carries
-  // stale formula-computed score columns (F3Go30-s1a5). See refreshPaxCacheRowFromSheet_.
-  refreshPaxCacheRowFromSheet_dw_('tracker', target.sheetId, payload.f3Name, target.trackerSheet, sheetRow);
-  // F3Go30-5uk2: write-through into the f3Name-keyed rolling history window, so team-tile
-  // streak/maxStreak30 (buildDashboardPaxRow_, via getPaxHistoryWindowValues_) reflect this
-  // check-in immediately, the same way the PaxCache tracker-row write-through above does.
+  // stale formula-computed score columns (F3Go30-s1a5). See refreshPaxCacheRowCore_.
+  //
+  // F3Go30-y0pw D4: this used to be two separate calls (refreshPaxCacheRowFromSheet_dw_ then
+  // advancePaxHistoryDay_dw_), each acquiring PaxCache.js's global script lock independently even
+  // though both operations always need it back to back on the same write. Collapsed into one
+  // call that shares a single lock acquisition — see refreshPaxCacheRowAndAdvanceHistoryForCheckin_
+  // for why this is equivalent, not just cheaper (both lock-failure fallbacks still fire; the
+  // future-day clamp still runs before the lock is taken).
   // The context date is passed explicitly (F3Go30-uz9e.2) so the future-day clamp inside judges
   // "future" against the same day this request resolved, not the script's raw clock.
-  if (advancePaxHistoryDay_dw_) advancePaxHistoryDay_dw_(paxHistoryScopeId_dw_(templateSpreadsheet), payload.f3Name, targetDate, payload.value, _dashboardIsoDate_(today));
+  refreshPaxCacheRowAndAdvanceHistoryForCheckin_dw_(
+    'tracker', target.sheetId, payload.f3Name, target.trackerSheet, sheetRow,
+    paxHistoryScopeId_dw_(templateSpreadsheet), targetDate, payload.value, _dashboardIsoDate_(today)
+  );
   // F3Go30-dyj9: paxCacheStatsForLog_dw_() now also carries paxLockFailed/paxLockWaitMs — the
   // check-in write-through above is exactly the path that acquires PaxCache.js's script locks
   // (refreshPaxCacheRowFromSheet_, advancePaxHistoryDay_), so this is where lock contention data
@@ -880,6 +921,9 @@ function handleBonusList_(templateSpreadsheet, payload) {
   // counts) — each is detection-only over the same entries and neither depends on the other.
   entries = annotateBonusEntryCountStatus_dw_(entries, resolved.monthStart);
   entries = annotateBonusEntryDuplicateLinkStatus_dw_(entries, resolved.monthStart);
+  // F3Go30-ilqx: bonusList previously emitted no outcome event at all on success — a read-only
+  // action, but one whose entry count/failure mode was otherwise invisible in Axiom.
+  GasLogger.log('checkinWebapp.bonusList', { f3Name: resolved.canonicalName, entries: entries.length });
   return {
     ok: true,
     entries: entries,
@@ -893,7 +937,12 @@ function handleBonusAdd_(templateSpreadsheet, payload) {
   var result = addBonusEntry_dw_(resolved.bonusSheet, resolved.canonicalName, payload);
   if (result.ok) {
     refreshTrackerRowAfterBonusWrite_(resolved);
-    GasLogger.log('checkinWebapp.bonusAdd', { f3Name: resolved.canonicalName, type: payload.type });
+    // F3Go30-786l: `duplicate` distinguishes a dedupe hit (nothing written) from a real append —
+    // derived from addBonusEntry_'s own branch, not re-inferred here. Log-only per AC3: the
+    // field is deleted from the client-facing response below rather than left in the ok:true
+    // shape, since surfacing it to the client hasn't been separately justified.
+    GasLogger.log('checkinWebapp.bonusAdd', { f3Name: resolved.canonicalName, type: payload.type, duplicate: !!result.duplicate });
+    delete result.duplicate;
   }
   return result;
 }
@@ -966,9 +1015,14 @@ function handleBonusEdit_(templateSpreadsheet, payload) {
         f3Name: resolved.canonicalName, oldRowIndex: located, newRowIndex: addResult.rowIndex, error: clearResult.error,
       });
     }
+    // F3Go30-ilqx AC2: movedMonths is explicit true/false on every outcome log (rather than
+    // present-only-when-true) so a query never has to infer the same-month case from absence.
     GasLogger.log('checkinWebapp.bonusEdit', {
       f3Name: resolved.canonicalName, rowIndex: addResult.rowIndex, movedMonths: true,
     });
+    // F3Go30-786l: addBonusEntry_ now always sets `duplicate` (log-only signal for bonusAdd) —
+    // strip it here too so bonusEdit's own response shape stays exactly what it was.
+    delete addResult.duplicate;
     return addResult;
   }
 
@@ -979,7 +1033,7 @@ function handleBonusEdit_(templateSpreadsheet, payload) {
   var result = editBonusEntry_dw_(resolvedSame.bonusSheet, resolvedSame.canonicalName, payload.rowIndex, payload, originalSnapshot);
   if (result.ok) {
     refreshTrackerRowAfterBonusWrite_(resolvedSame);
-    GasLogger.log('checkinWebapp.bonusEdit', { f3Name: resolvedSame.canonicalName, rowIndex: result.rowIndex });
+    GasLogger.log('checkinWebapp.bonusEdit', { f3Name: resolvedSame.canonicalName, rowIndex: result.rowIndex, movedMonths: false });
   }
   return result;
 }
@@ -1630,7 +1684,13 @@ function handleMonthGrid_(templateSpreadsheet, payload) {
   }
   if (!responsesLayoutForGrid) {
     var rsForGrid = responsesSheetForGrid_();
-    if (!rsForGrid) return notRegistered;
+    if (!rsForGrid) {
+      // F3Go30-ilqx: this success (ok:true, notRegistered) return previously logged nothing at
+      // all — no Responses sheet for the month is the same "not registered" outcome the two
+      // rowIndex===-1 branches above already log, just reached by a different path.
+      GasLogger.log('checkinWebapp.monthGrid.result', { registered: false, monthKey: monthKey, durationMs: Date.now() - t0 });
+      return notRegistered;
+    }
     responsesLayoutForGrid = getResponsesLayout_(rsForGrid, monthInfo.sheetId);
   }
   var responsesColumnsForGrid = responsesLayoutForGrid.columns;
@@ -1662,6 +1722,10 @@ function handleMonthGrid_(templateSpreadsheet, payload) {
   if (!trackerRowBelongsToPax_dw_(trackerRow, f3Name)) {
     purgeStaleTrackerBind_dw_(monthInfo.sheetId, f3Name);
     GasLogger.log('checkinWebapp.monthGrid.staleBind', { sheetId: monthInfo.sheetId, requested: f3Name });
+    // F3Go30-ilqx: staleBind is a diagnostic for the stale-index case specifically — also emit
+    // the generic outcome event every other success path gets, so a query for "how did monthGrid
+    // resolve" never has to special-case this branch.
+    GasLogger.log('checkinWebapp.monthGrid.result', { registered: false, monthKey: monthKey, durationMs: Date.now() - t0 });
     return notRegistered;
   }
   if (freshRead) {
@@ -1733,6 +1797,7 @@ if (typeof module !== 'undefined' && module.exports) {
     paxHistoryScopeId_dw_: paxHistoryScopeId_dw_,
     handleBonusAdd_: handleBonusAdd_,
     handleBonusEdit_: handleBonusEdit_,
+    handleBonusList_: handleBonusList_,
     handleSiteFeedback_: handleSiteFeedback_,
     buildMonthNavigationPayload_dw_: buildMonthNavigationPayload_dw_,
     buildResolvedContextHandle_: buildResolvedContextHandle_,

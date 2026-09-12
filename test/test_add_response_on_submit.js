@@ -44,6 +44,9 @@ global.PropertiesService = {
       setProperty: function(key, value) { fakePaxCacheProps_[key] = value; },
       deleteProperty: function(key) { delete fakePaxCacheProps_[key]; },
       getKeys: function() { return Object.keys(fakePaxCacheProps_); },
+      // F3Go30-45qt: getPaxRosterIndex_/getPaxCacheRow_ now read through ScriptProperties.js's
+      // per-execution whole-store memo instead of a discrete getProperty() call.
+      getProperties: function() { return Object.assign({}, fakePaxCacheProps_); },
     };
   },
 };

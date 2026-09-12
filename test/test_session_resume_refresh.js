@@ -13,7 +13,11 @@ function extractResumeRefreshBlock_(src) {
   var startMarker = 'var RESUME_REFRESH_THROTTLE_MS_';
   var endMarker = "document.addEventListener('visibilitychange'";
   var startIdx = src.indexOf(startMarker);
-  var midIdx = src.indexOf(endMarker);
+  // F3Go30-f1cr added an earlier, unrelated document.addEventListener('visibilitychange', ...)
+  // registration (the telemetry hide-flush, inside the transport block well above this one) —
+  // search for the end marker starting from startIdx so an earlier occurrence elsewhere in the
+  // file can never be mistaken for silentResumeRefresh_'s own registration.
+  var midIdx = startIdx === -1 ? -1 : src.indexOf(endMarker, startIdx);
   assert.ok(startIdx !== -1 && midIdx !== -1, 'resume-refresh block markers not found in index.html');
   var endIdx = src.indexOf('});', midIdx) + '});'.length;
   return src.slice(startIdx, endIdx);
