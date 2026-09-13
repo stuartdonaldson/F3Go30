@@ -39,7 +39,16 @@ function makeFakeProperties_(seed) {
       return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null;
     },
     setProperty: function(key, value) { store[key] = String(value); return self; },
-    setProperties: function(properties) {
+    // F3Go30-5xmk: arity is enforced because the real Apps Script bridge enforces it. GAS exposes
+    // setProperties(Object) and setProperties(Object, Boolean); passing an explicit non-boolean
+    // second argument matches neither overload and throws. A plain JS double that ignores extra
+    // arguments cannot reproduce that, which is exactly how the facade shipped to PROD forwarding
+    // an undefined `deleteAllOthers` with a green suite behind it.
+    setProperties: function(properties, deleteAllOthers) {
+      if (arguments.length > 1 && typeof deleteAllOthers !== 'boolean') {
+        throw new Error('The parameters (Object,' + deleteAllOthers +
+          ') don\'t match the method signature for PropertiesService.Properties.setProperties.');
+      }
       if (self._failSetProperties) throw new Error('PropertiesService unavailable');
       Object.keys(properties || {}).forEach(function(key) {
         store[key] = String(properties[key]);

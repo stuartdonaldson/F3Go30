@@ -102,9 +102,18 @@ function scriptPropertiesStore_() {
       invalidateScriptPropertiesSnapshot_();
       return store.setProperty(key, value);
     },
+    // F3Go30-5xmk: forward the optional second argument ONLY when the caller supplied it. Apps
+    // Script offers setProperties(Object) and setProperties(Object, Boolean); an explicitly-passed
+    // `undefined` marshals to null and matches neither, so unconditionally forwarding it threw
+    // "The parameters ((class),null) don't match the method signature" for every one-argument
+    // caller — which is all three of them (WebApp's setScriptProperties admin action, and
+    // PaxCache's two bulk writers, whose failures were swallowed into best-effort catches).
+    // setProperties is the only method in this facade wrapping an optional GAS parameter.
     setProperties: function(properties, deleteAllOthers) {
       invalidateScriptPropertiesSnapshot_();
-      return store.setProperties(properties, deleteAllOthers);
+      return arguments.length > 1
+        ? store.setProperties(properties, deleteAllOthers)
+        : store.setProperties(properties);
     },
     deleteProperty: function(key) {
       invalidateScriptPropertiesSnapshot_();

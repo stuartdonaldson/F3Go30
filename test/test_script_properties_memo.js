@@ -176,6 +176,25 @@ it('the generic facade invalidates on every mutating method', function() {
   });
 });
 
+// F3Go30-5xmk. The facade must not turn a one-argument setProperties call into a two-argument
+// one: Apps Script offers setProperties(Object) and setProperties(Object, Boolean), and an
+// explicitly-passed undefined marshals to null, matching neither. All three production callers
+// pass one argument, so unconditional forwarding broke every write — visibly for WebApp's
+// setScriptProperties admin action, silently for PaxCache's two bulk writers, which swallow the
+// throw into best-effort catches. gasEnv's double enforces the same arity the real bridge does.
+it('setProperties forwards deleteAllOthers only when the caller supplied it', function() {
+  freshExecution_();
+  var store = scriptPropertiesStore_();
+
+  assert.doesNotThrow(function() { store.setProperties({ ONE_ARG: 'written' }); },
+    'a one-argument call must not reach the bridge as (Object, null)');
+  assert.equal(fakeProps.getProperty('ONE_ARG'), 'written');
+
+  // The two-argument overload still has to work — the guard narrows, it does not drop support.
+  assert.doesNotThrow(function() { store.setProperties({ TWO_ARG: 'written' }, false); });
+  assert.equal(fakeProps.getProperty('TWO_ARG'), 'written');
+});
+
 it('reads through the facade do not invalidate the memo', function() {
   // Otherwise the memo would never survive a single request.
   freshExecution_();

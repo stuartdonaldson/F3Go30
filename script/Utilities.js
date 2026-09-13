@@ -380,25 +380,37 @@ function buildSignupSlackMessage_(year, month, signupUrl, trackerUrl, formUrl) {
  * neither drives this function. Kept for ad-hoc sanity checks; inspect the Drive folder or
  * Axiom directly (`python tools/query_axiom.py --name normal --since 5m`) to see the output.
  *
- * Sets F3GO30_TEST_RUN_ID='gaslogger-test' so entries are identifiable if you go looking.
+ * Tags entries with F3GO30_TEST_RUN_ID='gaslogger-test' so they are identifiable if you go
+ * looking, then clears it in a finally — the tag must not outlive this run (F3Go30-5xmk).
  */
 function testGasLogger() {
   scriptProps_util_().setProperty('F3GO30_TEST_RUN_ID', 'gaslogger-test');
-  GasLogger.init('testGasLogger');
+  try {
+    GasLogger.init('testGasLogger');
 
-  // AC2: Normal run — two entries flushed together into one Drive file.
-  GasLogger.log('normal.first', { scenario: 'normal' });
-  GasLogger.log('normal.second', { scenario: 'normal' });
-  GasLogger.flush();
+    // AC2: Normal run — two entries flushed together into one Drive file.
+    GasLogger.log('normal.first', { scenario: 'normal' });
+    GasLogger.log('normal.second', { scenario: 'normal' });
+    GasLogger.flush();
 
-  // AC3: Inline flush — entry written to Drive immediately.
-  GasLogger.log('inline.flush', { scenario: 'inline' }, true);
+    // AC3: Inline flush — entry written to Drive immediately.
+    GasLogger.log('inline.flush', { scenario: 'inline' }, true);
 
-  // AC4: newLog reset — newlog.before and newlog.after land in separate Drive files.
-  GasLogger.log('newlog.before', { scenario: 'newlog' }, true, true);
-  GasLogger.log('newlog.after', { scenario: 'newlog' }, true);
+    // AC4: newLog reset — newlog.before and newlog.after land in separate Drive files.
+    GasLogger.log('newlog.before', { scenario: 'newlog' }, true, true);
+    GasLogger.log('newlog.after', { scenario: 'newlog' }, true);
 
-  Logger.log('[testGasLogger_] complete — check Drive folder for runId=gaslogger-test');
+    Logger.log('[testGasLogger_] complete — check Drive folder for runId=gaslogger-test');
+  } finally {
+    // F3Go30-5xmk: clear the tag in a finally, so an exception mid-run cannot leave it set.
+    // Every entry above captured its runId at GasLogger.init()/log() time and the last log call
+    // flushes inline, so deleting here cannot strip the tag off this run's own output — it only
+    // stops the NEXT execution inheriting it. Leaving it set is what tagged ~2 weeks of real PROD
+    // traffic as runId=gaslogger-test, making production indistinguishable from test traffic in
+    // Axiom until it was cleared by hand on 2026-09-13.
+    scriptProps_util_().deleteProperty('F3GO30_TEST_RUN_ID');
+    Logger.log('[testGasLogger_] F3GO30_TEST_RUN_ID cleared');
+  }
 }
 
 /**
