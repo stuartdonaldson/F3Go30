@@ -100,6 +100,8 @@ const ENTRY_POINT_REGISTRY = {
     '[admin] one-time write of the admin secret script property — the only admin action not itself secret-gated',
   'admin.setScriptProperties':
     '[admin] writes arbitrary script properties on the target script project',
+  'admin.deleteScriptProperty':
+    '[admin] deletes a single named script property (never a wildcard/batch); refuses keys whose loss would break the deployment (F3Go30-bm2m)',
   'admin.runAutoGenerate':
     '[admin] runs autoGenerateNextMonthTracker on demand — creates real-today\'s-month+1\'s tracker, spreadsheet, form and triggers',
   'admin.createTrackerForMonth':
@@ -189,6 +191,7 @@ const ENTRY_POINT_CLASSES = {
 
   'admin.bootstrapSecret': CLASS_ADMIN,
   'admin.setScriptProperties': CLASS_ADMIN,
+  'admin.deleteScriptProperty': CLASS_ADMIN,
   'admin.runAutoGenerate': CLASS_ADMIN,
   'admin.createTrackerForMonth': CLASS_ADMIN,
   'admin.cleanupTracker': CLASS_ADMIN,
@@ -247,6 +250,8 @@ const ENTRY_POINT_DEFERRED = {
     '[permanent] one-time secret bootstrap; driving it mid-suite rewrites the admin secret every later call depends on — F3Go30-y8j7.2',
   'admin.setScriptProperties':
     '[permanent] writes arbitrary deployment-wide script properties; a run that drives it can leave the shared SIT deployment in a state no later spec expects — F3Go30-y8j7.2',
+  'admin.deleteScriptProperty':
+    '[permanent] deletes a script property on the shared deployment; a suite-driven call could remove a real key from the live SIT project outside a disposable namespace — same shared-state objection as setScriptProperties — F3Go30-bm2m',
   'admin.runAutoGenerate':
     '[backlog] creates a real tracker, spreadsheet, form and triggers; currently blocked outright on SIT by the Apps Script per-script trigger quota (bd memory F3Go30-sit-trigger-quota-exceeded) — F3Go30-y8j7.2',
   'admin.createTrackerForMonth':

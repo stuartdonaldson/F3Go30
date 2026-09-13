@@ -344,6 +344,40 @@ function adminSetScriptProperties_(payload, e) {
   return jsonOutput_({ ok: true, keysSet: keys });
 }
 
+/**
+ * F3Go30-bm2m: script properties could only ever be SET through the web app, never deleted —
+ * clearing a stuck key (F3GO30_TEST_RUN_ID tagging real PROD traffic as test traffic; a stray
+ * F3GO30_5XMK_PROBE left on SIT) required hand-editing in the Apps Script editor, which is
+ * impractical on PROD where the property list is long. This is the fix: a SINGLE-key delete,
+ * never a wildcard/batch — the store also holds the entire PaxCache, so a
+ * deleteAllProperties passthrough would be a serious footgun and is deliberately not offered.
+ *
+ * Keys whose loss would break the deployment are refused outright (protected_key), never a
+ * silent no-op. Deliberately carries NO PROD guard, unlike setContextDate/setConfigValue —
+ * clearing a stuck key on PROD is the entire reason this action exists.
+ */
+var PROTECTED_SCRIPT_PROPERTY_KEYS_ = [
+  'ADMIN_SHARED_SECRET',       // loses admin auth entirely; a fresh bootstrap would reopen it to anyone
+  'AXIOM_TOKEN',                // GasLogger.js:166 — breaks server-side log shipping to Axiom
+  'AXIOM_DATASET',              // GasLogger.js:167 — breaks server-side log shipping to Axiom
+  'GAS_LOGGER_PARENT_FOLDER_ID', // GasLogger.js:146 — breaks the GasLogger Drive-log fallback
+];
+
+function adminDeleteScriptProperty_(payload, e) {
+  if (!payload.key) {
+    return jsonOutput_({ ok: false, error: 'key is required' });
+  }
+  if (PROTECTED_SCRIPT_PROPERTY_KEYS_.indexOf(payload.key) !== -1) {
+    GasLogger.log('handleAdminPost_.deleteScriptProperty.refused', { key: payload.key });
+    return jsonOutput_({ ok: false, error: 'protected_key' });
+  }
+  var props = scriptProps_wa_();
+  var existed = props.getProperty(payload.key) !== null;
+  props.deleteProperty(payload.key);
+  GasLogger.log('handleAdminPost_.deleteScriptProperty', { key: payload.key, existed: existed });
+  return jsonOutput_({ ok: true, key: payload.key, existed: existed });
+}
+
 function adminRunAutoGenerate_(payload, e) {
   autoGenerateNextMonthTracker();
   return jsonOutput_({ ok: true });
@@ -836,6 +870,7 @@ function adminTeardownEnvironment_(payload, e) {
 var ADMIN_ACTIONS_ = {
   bootstrapSecret: { handler: adminBootstrapSecret_, readOnly: false, preAuth: true },
   setScriptProperties: { handler: adminSetScriptProperties_, readOnly: false },
+  deleteScriptProperty: { handler: adminDeleteScriptProperty_, readOnly: false },
   runAutoGenerate: { handler: adminRunAutoGenerate_, readOnly: false },
   createTrackerForMonth: { handler: adminCreateTrackerForMonth_, readOnly: false },
   cleanupTracker: { handler: adminCleanupTracker_, readOnly: false },
