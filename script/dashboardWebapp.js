@@ -483,6 +483,7 @@ var dashboardWebappIdentityModule_ = gasRequire_('./dashboardIdentity.js', [
   'reloadPaxCacheForCurrentAndPriorMonth_', 'resolveCheckinIdentityFull_',
   'buildResolvedContextHandle_', 'monthInfoFromHandle_', 'resolveLeanIdentityFromHandle_',
   'resolveFullIdentityFromHandle_', 'resolveNextMonthRegistrationStatus_dw_',
+  'resetNextMonthRegistrationStatusMemo_',
   'checkNextMonthRegistration_', 'resolveSignupReminder_dw_', 'resolveCheckinDayTarget_',
   'resolveCheckinToken_dw_', 'resolveActiveAnnouncement_dw_', 'checkinClientConfig_dw_',
 ]);
@@ -504,6 +505,7 @@ var monthInfoFromHandle_ = dashboardWebappIdentityModule_.monthInfoFromHandle_;
 var resolveLeanIdentityFromHandle_ = dashboardWebappIdentityModule_.resolveLeanIdentityFromHandle_;
 var resolveFullIdentityFromHandle_ = dashboardWebappIdentityModule_.resolveFullIdentityFromHandle_;
 var resolveNextMonthRegistrationStatus_dw_ = dashboardWebappIdentityModule_.resolveNextMonthRegistrationStatus_dw_;
+var resetNextMonthRegistrationStatusMemo_ = dashboardWebappIdentityModule_.resetNextMonthRegistrationStatusMemo_;
 var checkNextMonthRegistration_ = dashboardWebappIdentityModule_.checkNextMonthRegistration_;
 var resolveSignupReminder_dw_ = dashboardWebappIdentityModule_.resolveSignupReminder_dw_;
 var resolveCheckinDayTarget_ = dashboardWebappIdentityModule_.resolveCheckinDayTarget_;
@@ -626,10 +628,11 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
 
   // F3Go30-276s: identify's own unattributed-time investigation — this block is the largest
   // unmeasured slice found: resolveCheckinDayTarget_'s cross-month fallback path can open a
-  // SECOND spreadsheet (a month other than the PAX's current one), and checkNextMonthRegistration_
-  // / resolveSignupReminder_dw_ can EACH independently open next month's spreadsheet via
-  // resolveNextMonthRegistrationStatus_dw_ (called twice, once per function, with no memo between
-  // them — flagged, not fixed here; this bead is instrumentation-only, no optimisation).
+  // SECOND spreadsheet (a month other than the PAX's current one). checkNextMonthRegistration_
+  // and resolveSignupReminder_dw_ below used to EACH independently open next month's spreadsheet
+  // via resolveNextMonthRegistrationStatus_dw_ (called twice, once per function) — F3Go30-nclp
+  // memoized that resolver per (months.next.sheetId, f3Name) for one execution, so the second
+  // call is now a memo hit, not a second SpreadsheetApp.openById + Responses read.
   var tPostIdentityPrep0 = Date.now();
 
   // Yesterday may belong to a different month's tracker than today's (e.g. today is the 1st) —
@@ -1786,6 +1789,7 @@ if (typeof module !== 'undefined' && module.exports) {
     resolveActiveAnnouncement_dw_: resolveActiveAnnouncement_dw_,
     checkNextMonthRegistration_: checkNextMonthRegistration_,
     resolveNextMonthRegistrationStatus_dw_: resolveNextMonthRegistrationStatus_dw_,
+    resetNextMonthRegistrationStatusMemo_: resetNextMonthRegistrationStatusMemo_,
     resolveSignupReminder_dw_: resolveSignupReminder_dw_,
     buildMonthGridEntries_: buildMonthGridEntries_,
     isStrictlyPastCalendarDate_: isStrictlyPastCalendarDate_,

@@ -67,6 +67,8 @@ const {
   resolveActiveAnnouncement_dw_,
   checkNextMonthRegistration_,
   resolveSignupReminder_dw_,
+  resolveNextMonthRegistrationStatus_dw_,
+  resetNextMonthRegistrationStatusMemo_,
   buildMonthGridEntries_,
   isStrictlyPastCalendarDate_,
   validateCheckinSubmitDayValue_,
@@ -760,6 +762,10 @@ console.log('test_dashboard_webapp.js: PaxDB-fallback assertions passed');
 })();
 
 (function testCheckNextMonthRegistrationProceedsWithinWindow() {
+  // F3Go30-nclp: resolveNextMonthRegistrationStatus_dw_ is now memoized per (sheetId, f3Name) for
+  // one execution — several blocks below reuse 'sheet-next'/'Anchor' with different fake
+  // SpreadsheetApp fixtures and different expected results, so each must start from a clean memo.
+  resetNextMonthRegistrationStatusMemo_();
   var soon = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000); // 2 days out — inside the window
   var responsesHeaders = [
     'Timestamp', 'Email Address', 'Are you currently participating in Go30?', 'F3 Name',
@@ -806,6 +812,7 @@ function makeFakeResponsesSheetWithF3Names_(names) {
 }
 
 (function testResolveSignupReminderReturnsNullWithNoNextMonthTracker() {
+  resetNextMonthRegistrationStatusMemo_();
   // No SpreadsheetApp global at all — if the !months.next guard doesn't short-circuit, this
   // throws a ReferenceError and fails loudly rather than silently.
   assert.equal(resolveSignupReminder_dw_({ next: null }, 'Anchor'), null);
@@ -813,6 +820,7 @@ function makeFakeResponsesSheetWithF3Names_(names) {
 })();
 
 (function testResolveSignupReminderFiresFarInAdvanceUnlikeTheNudgeWindow() {
+  resetNextMonthRegistrationStatusMemo_();
   var farFuture = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000); // 20 days out — well outside
   // checkNextMonthRegistration_'s 3-day nudge window, but this popup has no such gate.
   global.SpreadsheetApp = {
@@ -824,6 +832,7 @@ function makeFakeResponsesSheetWithF3Names_(names) {
 })();
 
 (function testResolveSignupReminderReturnsNullWhenAlreadyRegistered() {
+  resetNextMonthRegistrationStatusMemo_();
   var farFuture = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000);
   global.SpreadsheetApp = {
     openById: function() { return { getSheetByName: function(name) { return name === 'Responses' ? makeFakeResponsesSheetWithF3Names_(['Anchor']) : null; } }; },
@@ -834,10 +843,42 @@ function makeFakeResponsesSheetWithF3Names_(names) {
 })();
 
 (function testResolveSignupReminderReturnsNullWithNoResponsesSheet() {
+  resetNextMonthRegistrationStatusMemo_();
   global.SpreadsheetApp = { openById: function() { return { getSheetByName: function() { return null; } }; } };
   var result = resolveSignupReminder_dw_({ next: { sheetId: 'sheet-next', label: 'August 2026', startDate: new Date() } }, 'Anchor');
   assert.equal(result, null);
   delete global.SpreadsheetApp;
+})();
+
+// F3Go30-nclp: resolveNextMonthRegistrationStatus_dw_ is memoized per (sheetId, f3Name) for one
+// execution — checkNextMonthRegistration_ and resolveSignupReminder_dw_ each call it
+// independently (same shape as handleCheckinIdentify_'s own back-to-back calls), and the second
+// call for the same (months, f3Name) must be served from the memo, not open the spreadsheet again.
+(function testResolveNextMonthRegistrationStatusIsMemoizedPerSheetIdAndF3Name() {
+  resetNextMonthRegistrationStatusMemo_();
+  var openByIdCalls = 0;
+  global.SpreadsheetApp = {
+    openById: function() {
+      openByIdCalls++;
+      return { getSheetByName: function(name) { return name === 'Responses' ? makeFakeEmptyResponsesSheet_() : null; } };
+    },
+  };
+  var months = { next: { sheetId: 'sheet-memo', label: 'September 2026', startDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000) } };
+
+  var fromNudge = checkNextMonthRegistration_(months, 'Anchor');
+  var fromReminder = resolveSignupReminder_dw_(months, 'Anchor');
+
+  assert.equal(openByIdCalls, 1, 'the second call for the same (sheetId, f3Name) must be a memo hit, not a second SpreadsheetApp.openById');
+  assert.deepEqual(fromNudge, { registered: false, monthLabel: 'September 2026' });
+  assert.deepEqual(fromReminder, { monthLabel: 'September 2026' });
+
+  // A different f3Name (same sheetId) must NOT be served from the other name's memo entry.
+  var thirdCall = resolveNextMonthRegistrationStatus_dw_(months, 'Someone Else');
+  assert.equal(openByIdCalls, 2, 'a different f3Name is a fresh lookup, not served from another PAX\'s memo entry');
+  assert.equal(thirdCall.registered, false);
+
+  delete global.SpreadsheetApp;
+  resetNextMonthRegistrationStatusMemo_();
 })();
 
 console.log('test_dashboard_webapp.js: signup reminder assertions passed');

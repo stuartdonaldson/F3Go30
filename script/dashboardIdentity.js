@@ -1052,15 +1052,45 @@ function resolveFullIdentityFromHandle_(handle) {
 var NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_ = 3;
 
 /**
+ * Per-execution memo for resolveNextMonthRegistrationStatus_dw_ (F3Go30-nclp), keyed by
+ * `${sheetId}::${normalizedF3Name}` — same one-execution-one-request rationale as
+ * priorMonthTailContextMemo_ above (GAS re-evaluates this file's top-level state fresh on every
+ * execution, so the memo can never leak across requests). checkNextMonthRegistration_ and
+ * resolveSignupReminder_dw_ each independently call the uncached resolver below on every matched
+ * identify that has a next-month tracker; without this, that's a SpreadsheetApp.openById + a
+ * Responses header read paid twice for the exact same (sheetId, f3Name) question.
+ */
+var nextMonthRegistrationStatusMemo_ = {};
+
+/** Drops the memo — test-only; production never needs it (see the memo's docstring). */
+function resetNextMonthRegistrationStatusMemo_() {
+  nextMonthRegistrationStatusMemo_ = {};
+}
+
+/**
  * Whether f3Name has a live (non-DELETED) Responses row for months.next — the shared lookup
  * behind both checkNextMonthRegistration_'s day-window-gated inline nudge and
  * resolveSignupReminder_dw_'s always-on popup (F3Go30-xyvs); each applies its own gating on top
  * of this, so the Sheets/PaxCache read itself lives in exactly one place. Returns null when
  * there's no next-month tracker yet at all (nothing to register for).
+ *
+ * Memoized per (months.next.sheetId, f3Name) for one execution (F3Go30-nclp) — see
+ * nextMonthRegistrationStatusMemo_'s docstring.
  * @returns {{registered: boolean, monthLabel: string, startDate: (string|Date), sheetId: string}|null}
  */
 function resolveNextMonthRegistrationStatus_dw_(months, f3Name) {
   if (!months || !months.next) return null;
+  var memoKey = months.next.sheetId + '::' + paxCacheNormalizeName_dw_(f3Name);
+  if (Object.prototype.hasOwnProperty.call(nextMonthRegistrationStatusMemo_, memoKey)) {
+    return nextMonthRegistrationStatusMemo_[memoKey];
+  }
+  var result = resolveNextMonthRegistrationStatusUncached_dw_(months, f3Name);
+  nextMonthRegistrationStatusMemo_[memoKey] = result;
+  return result;
+}
+
+/** The actual resolution logic, never memoized directly — see resolveNextMonthRegistrationStatus_dw_. */
+function resolveNextMonthRegistrationStatusUncached_dw_(months, f3Name) {
   var nextMonth = months.next;
   var targetSs = SpreadsheetApp.openById(nextMonth.sheetId);
   var responsesSheet = targetSs.getSheetByName('Responses');
@@ -1334,6 +1364,7 @@ if (typeof module !== 'undefined' && module.exports) {
     resolveLeanIdentityFromHandle_: resolveLeanIdentityFromHandle_,
     resolveFullIdentityFromHandle_: resolveFullIdentityFromHandle_,
     resolveNextMonthRegistrationStatus_dw_: resolveNextMonthRegistrationStatus_dw_,
+    resetNextMonthRegistrationStatusMemo_: resetNextMonthRegistrationStatusMemo_,
     checkNextMonthRegistration_: checkNextMonthRegistration_,
     resolveSignupReminder_dw_: resolveSignupReminder_dw_,
     resolveCheckinDayTarget_: resolveCheckinDayTarget_,
