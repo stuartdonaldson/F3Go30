@@ -24,6 +24,18 @@
 *   LastNagRunAt - timestamp of the latest nag email trigger run
 */
 
+// F3Go30-m732: every script-properties access below goes through ScriptProperties.js — reads via
+// the per-execution whole-store memo, writes via the invalidating facade — same convention as
+// PaxCache.js/CheckinSessions.js. Resolved lazily because in GAS these are plain globals whose
+// defining file may evaluate after this one.
+var scriptPropertiesModule_gt_ = (typeof require === 'function') ? require('./ScriptProperties.js') : null;
+function scriptProps_gt_() {
+	return scriptPropertiesModule_gt_ ? scriptPropertiesModule_gt_.scriptPropertiesStore_() : scriptPropertiesStore_();
+}
+function getScriptPropertiesSnapshot_gt_() {
+	return scriptPropertiesModule_gt_ ? scriptPropertiesModule_gt_.getScriptPropertiesSnapshot_() : getScriptPropertiesSnapshot_();
+}
+
 var TRACKER_DB_SHEET_NAME_ = 'TrackerDB';
 var NAMESPACE_DB_SHEET_NAME_ = 'NamespaceDB';
 // Canonical NamespaceDB header row (ADR-014 D6/D7). Single source of truth for the columns
@@ -667,12 +679,52 @@ function invalidateContextDateMemo_() {
 	_contextDateMemo_ = [];
 }
 
+// F3Go30-m732: cache of dashboardIdentity.js's buildMonthNavigationPayload_dw_'s DERIVED
+// availableMonths (one small entry per TrackerDB month, plus the sheetId->monthKey map that
+// derivation also produces) — NOT a cache of raw TrackerDB rows. Scoped to the TrackerDB half of
+// that read only; see the bead's 2026-08-20 design-review note on why the PaxDB half is out of
+// scope here (subsumed by F3Go30-uz9e.5's PaxProfile migration instead of being cached).
+// Keyed by the spreadsheet's own id so distinct namespace-provisioned Template copies (ADR-014)
+// never share one cache entry. Write-through invalidation lives at every TrackerDB mutation
+// point: _updateTrackerDB below (covers both the scan-merge writer and removeTrackerDbRow_,
+// which calls it) and CreateNewTracker.js's upsertLinksRow_ call site (tracker creation's own,
+// separate TrackerDB writer).
+var TRACKER_DB_AVAILABLE_MONTHS_CACHE_PREFIX_ = 'TRACKERDB_AVAILABLE_MONTHS::';
+
+function _trackerDbAvailableMonthsCacheKey_(spreadsheet) {
+	return TRACKER_DB_AVAILABLE_MONTHS_CACHE_PREFIX_ + ((spreadsheet && typeof spreadsheet.getId === 'function') ? spreadsheet.getId() : '');
+}
+
+/** Returns the cached {availableMonths, monthKeyBySheetId} for this spreadsheet, or null on a miss (never throws). */
+function getCachedTrackerDbAvailableMonths_(spreadsheet) {
+	try {
+		var raw = getScriptPropertiesSnapshot_gt_()[_trackerDbAvailableMonthsCacheKey_(spreadsheet)];
+		return raw ? JSON.parse(raw) : null;
+	} catch (e) {
+		return null;
+	}
+}
+
+function setCachedTrackerDbAvailableMonths_(spreadsheet, cached) {
+	try {
+		scriptProps_gt_().setProperty(_trackerDbAvailableMonthsCacheKey_(spreadsheet), JSON.stringify(cached || {}));
+	} catch (e) { /* best-effort — next read misses and rebuilds from a live TrackerDB read */ }
+}
+
+/** Drops the cached availableMonths for this spreadsheet — call at every TrackerDB mutation point. */
+function invalidateTrackerDbAvailableMonthsCache_(spreadsheet) {
+	try {
+		scriptProps_gt_().deleteProperty(_trackerDbAvailableMonthsCacheKey_(spreadsheet));
+	} catch (e) { /* best-effort — a stale hit self-heals on this same schedule's next actual read only if this fails, which is why this is logged nowhere: it's a rare double-fault */ }
+}
+
 /**
  * Writes TrackerDB rows, replacing existing body rows while preserving the sheet.
  * @param {Array<Object>} rows Tracker summary rows.
  */
 function _updateTrackerDB(rows, spreadsheet) {
 	if (!spreadsheet) spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+	invalidateTrackerDbAvailableMonthsCache_(spreadsheet);
 	var sheet = spreadsheet.getSheetByName(TRACKER_DB_SHEET_NAME_);
 	if (!sheet) {
 		sheet = spreadsheet.insertSheet(TRACKER_DB_SHEET_NAME_);
@@ -1894,6 +1946,9 @@ if (typeof module !== 'undefined' && module.exports) {
 		_buildTrackerMetadata_: _buildTrackerMetadata_,
 		_loadPaxData: _loadPaxData,
 		_updateTrackerDB: _updateTrackerDB,
+		getCachedTrackerDbAvailableMonths_: getCachedTrackerDbAvailableMonths_,
+		setCachedTrackerDbAvailableMonths_: setCachedTrackerDbAvailableMonths_,
+		invalidateTrackerDbAvailableMonthsCache_: invalidateTrackerDbAvailableMonthsCache_,
 		_updatePaxDB: _updatePaxDB,
 		_qualifySourceFiles_: _qualifySourceFiles_,
 		_logExcludedSourceArtifacts_: _logExcludedSourceArtifacts_,

@@ -332,6 +332,15 @@ function createTrackerSpreadsheet_(options) {
       shortHc: formShortUrl,
       hcUrl: formUrl
     });
+    // F3Go30-m732: this is TrackerDB's OTHER writer, separate from go30tools.js's _updateTrackerDB
+    // (which invalidates itself) — a new tracker month just landed in sourceSpreadsheet's
+    // TrackerDB, so the cached availableMonths derived from it must not keep serving the old set.
+    // Bare global reference (no require/gasRequire_), matching this file's existing convention of
+    // calling sibling-file globals (GasLogger, shortenUrl, initSheets, ...) directly — real GAS
+    // concatenates every script file into one global scope; the typeof guard is only for Node.
+    if (typeof invalidateTrackerDbAvailableMonthsCache_ === 'function') {
+      invalidateTrackerDbAvailableMonthsCache_(sourceSpreadsheet);
+    }
 
     // Form-submit dispatch (ADR-010): installed once here, from the Template, targeting
     // the new tracker directly — no per-copy "Initialize Triggers" step required.

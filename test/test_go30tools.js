@@ -8,6 +8,21 @@ global.GasLogger = {
 };
 global.LockService = { getScriptLock: function() { return { waitLock: function() {}, releaseLock: function() {} }; } };
 
+// F3Go30-m732: fake PropertiesService for _updateTrackerDB's TrackerDB-availableMonths cache
+// invalidation — same in-memory-store contract as test_pax_cache.js/test_checkin_sessions.js.
+var fakeScriptProperties_ = {};
+global.PropertiesService = {
+  getScriptProperties: function() {
+    return {
+      getProperty: function(key) { return Object.prototype.hasOwnProperty.call(fakeScriptProperties_, key) ? fakeScriptProperties_[key] : null; },
+      getProperties: function() { return Object.assign({}, fakeScriptProperties_); },
+      setProperty: function(key, value) { fakeScriptProperties_[key] = value; },
+      deleteProperty: function(key) { delete fakeScriptProperties_[key]; },
+      getKeys: function() { return Object.keys(fakeScriptProperties_); },
+    };
+  },
+};
+
 const {
   _mergeTrackerDbRowsForScan_,
   _carryForwardLifecycleFields_,
@@ -17,6 +32,10 @@ const {
   findMostRecentPaxRecordForEmail_,
   deletePaxDbRowsBySheetId_,
   _readPaxDbRowsBySheetId_,
+  _updateTrackerDB,
+  getCachedTrackerDbAvailableMonths_,
+  setCachedTrackerDbAvailableMonths_,
+  invalidateTrackerDbAvailableMonthsCache_,
   _qualifySourceFiles_,
   _logExcludedSourceArtifacts_
 } = require('../script/go30tools.js');
@@ -353,6 +372,56 @@ function makeFakePaxDbSpreadsheet(sheet) {
     gasLoggerCalls[0].data.artifacts.some(function(s) { return s.indexOf('2026-01 F3 Go30 (Expired)') !== -1; }),
     'excluded expired-by-name artifact is enumerated'
   );
+}
+
+// F3Go30-m732: _updateTrackerDB (the writer behind both the scan-merge path and
+// removeTrackerDbRow_, which calls it) must invalidate the cached derived availableMonths for
+// the spreadsheet it wrote to, so buildMonthNavigationPayload_dw_'s next call rebuilds it rather
+// than keep serving a set that predates this write.
+{
+  function makeFakeTrackerDbSheet_() {
+    var rows = [];
+    return {
+      getMaxRows: function() { return rows.length + 1; },
+      getRange: function(row, col, numRows, numCols) {
+        return {
+          clearContent: function() { return this; },
+          setValues: function(values) {
+            for (var i = 0; i < values.length; i++) rows[row - 2 + i] = values[i];
+            return this;
+          },
+          setFontWeight: function() { return this; },
+        };
+      },
+      _rows: rows,
+    };
+  }
+  function makeFakeTrackerDbSpreadsheet_(id, sheet) {
+    return {
+      getId: function() { return id; },
+      getSheetByName: function(name) { return name === 'TrackerDB' ? sheet : null; },
+      insertSheet: function() { return sheet; },
+    };
+  }
+
+  var spreadsheet = makeFakeTrackerDbSpreadsheet_('ss-updatetrackerdb', makeFakeTrackerDbSheet_());
+
+  // Warm the cache directly (as buildMonthNavigationPayload_dw_ would on a miss).
+  setCachedTrackerDbAvailableMonths_(spreadsheet, { availableMonths: [{ monthKey: '2026-01' }], monthKeyBySheetId: { 'sheet-a': '2026-01' } });
+  assert.ok(getCachedTrackerDbAvailableMonths_(spreadsheet), 'sanity: cache is warm before the write');
+
+  _updateTrackerDB([{ sheetId: 'sheet-a', startDate: '2026-01-01' }], spreadsheet);
+
+  assert.equal(getCachedTrackerDbAvailableMonths_(spreadsheet), null, '_updateTrackerDB must invalidate the cached availableMonths for the spreadsheet it wrote to');
+
+  // A different spreadsheet's cache entry must survive an unrelated write.
+  var otherSpreadsheet = makeFakeTrackerDbSpreadsheet_('ss-updatetrackerdb-other', makeFakeTrackerDbSheet_());
+  setCachedTrackerDbAvailableMonths_(otherSpreadsheet, { availableMonths: [{ monthKey: '2026-02' }], monthKeyBySheetId: {} });
+  _updateTrackerDB([{ sheetId: 'sheet-a', startDate: '2026-01-01' }], spreadsheet);
+  assert.ok(getCachedTrackerDbAvailableMonths_(otherSpreadsheet), 'an unrelated spreadsheet\'s cache entry must not be touched');
+
+  invalidateTrackerDbAvailableMonthsCache_(otherSpreadsheet);
+  assert.equal(getCachedTrackerDbAvailableMonths_(otherSpreadsheet), null);
 }
 
 console.log('test_go30tools.js: PASS');

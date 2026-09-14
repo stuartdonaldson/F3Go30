@@ -2943,6 +2943,11 @@ function makeFakeDataRangeSheet_(rows) {
     return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][d.getMonth()] + ' ' + d.getFullYear();
   };
   var fakeSpreadsheet = {
+    // F3Go30-m732: buildMonthNavigationPayload_dw_ now caches the derived availableMonths per
+    // spreadsheet id — a distinct id per test fixture keeps this test's own TrackerDB read from
+    // ever being served by another block's cached entry (all 4 blocks below share one
+    // PropertiesService-backed fake store for the rest of this file's run).
+    getId: function() { return 'ss-nav-chronological'; },
     getSheetByName: function(name) {
       if (name === 'TrackerDB') {
         return makeFakeDataRangeSheet_([
@@ -2979,6 +2984,7 @@ function makeFakeDataRangeSheet_(rows) {
   var paxDbReadCount = 0;
   global.formatRegistrationMonth_ = function() { return 'x'; };
   var fakeSpreadsheet = {
+    getId: function() { return 'ss-nav-paxdb-once'; },
     getSheetByName: function(name) {
       if (name === 'TrackerDB') {
         return makeFakeDataRangeSheet_([
@@ -3008,6 +3014,7 @@ function makeFakeDataRangeSheet_(rows) {
   var paxDbCalled = false;
   global.formatRegistrationMonth_ = function() { return 'x'; };
   var fakeSpreadsheet = {
+    getId: function() { return 'ss-nav-no-name'; },
     getSheetByName: function(name) {
       if (name === 'TrackerDB') return makeFakeDataRangeSheet_([TRACKER_DB_HEADERS_TEST_, trackerDbRow_('sheet-jul', new Date(2026, 6, 1))]);
       if (name === 'PaxDB') { paxDbCalled = true; return makeFakeDataRangeSheet_([PAX_DB_HEADERS_TEST_]); }
@@ -3017,6 +3024,58 @@ function makeFakeDataRangeSheet_(rows) {
   var nav = buildMonthNavigationPayload_dw_(fakeSpreadsheet, '');
   assert.deepEqual(nav.registeredMonthKeys, []);
   assert.equal(paxDbCalled, false, 'no PaxDB read when f3Name is unknown (anti-enumeration)');
+
+  delete global.formatRegistrationMonth_;
+})();
+
+// F3Go30-m732: the derived availableMonths (TrackerDB half only) is cached per spreadsheet id,
+// write-through invalidated at TrackerDB mutation points — a second call for the SAME spreadsheet
+// must not re-read TrackerDB at all, and invalidateTrackerDbAvailableMonthsCache_ (go30tools.js,
+// called by _updateTrackerDB and CreateNewTracker.js's tracker-creation writer) must force a
+// fresh read on the next call rather than keep serving the stale cached set.
+(function testBuildMonthNavigationPayloadCachesAvailableMonthsPerSpreadsheet() {
+  var invalidateTrackerDbAvailableMonthsCache_ = require('../script/go30tools.js').invalidateTrackerDbAvailableMonthsCache_;
+  var trackerDbReadCount = 0;
+  global.formatRegistrationMonth_ = function(d) { return 'Month ' + (d.getMonth() + 1); };
+  var months = [
+    TRACKER_DB_HEADERS_TEST_,
+    trackerDbRow_('sheet-1', new Date(2026, 0, 1)),
+  ];
+  var fakeSpreadsheet = {
+    getId: function() { return 'ss-nav-cache'; },
+    getSheetByName: function(name) {
+      if (name === 'TrackerDB') {
+        trackerDbReadCount++;
+        return makeFakeDataRangeSheet_(months);
+      }
+      return null;
+    },
+  };
+
+  var first = buildMonthNavigationPayload_dw_(fakeSpreadsheet, '');
+  var second = buildMonthNavigationPayload_dw_(fakeSpreadsheet, '');
+  assert.equal(trackerDbReadCount, 1, 'the second call for the same spreadsheet must be a cache hit, not a second TrackerDB read');
+  assert.deepEqual(second.availableMonths, first.availableMonths);
+
+  // Simulate a TrackerDB mutation (a new month landing) and invalidate, as _updateTrackerDB /
+  // CreateNewTracker.js's writer would.
+  months.push(trackerDbRow_('sheet-2', new Date(2026, 1, 1)));
+  invalidateTrackerDbAvailableMonthsCache_(fakeSpreadsheet);
+
+  var third = buildMonthNavigationPayload_dw_(fakeSpreadsheet, '');
+  assert.equal(trackerDbReadCount, 2, 'invalidation must force a fresh TrackerDB read on the next call');
+  assert.deepEqual(third.availableMonths.map(function(m) { return m.monthKey; }), ['2026-01', '2026-02']);
+
+  // A different spreadsheet must never be served from this one's cache entry.
+  var otherSpreadsheet = {
+    getId: function() { return 'ss-nav-cache-other'; },
+    getSheetByName: function(name) {
+      if (name === 'TrackerDB') return makeFakeDataRangeSheet_([TRACKER_DB_HEADERS_TEST_, trackerDbRow_('sheet-x', new Date(2026, 4, 1))]);
+      return null;
+    },
+  };
+  var other = buildMonthNavigationPayload_dw_(otherSpreadsheet, '');
+  assert.deepEqual(other.availableMonths.map(function(m) { return m.monthKey; }), ['2026-05']);
 
   delete global.formatRegistrationMonth_;
 })();

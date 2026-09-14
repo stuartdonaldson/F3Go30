@@ -57,9 +57,14 @@ var paxHistoryEncodeValue_dw_ = dashboardIdentityPaxCacheModule_.paxHistoryEncod
 var setPaxHistoryEntriesBulk_dw_ = dashboardIdentityPaxCacheModule_.setPaxHistoryEntriesBulk_;
 var PAX_HISTORY_BACKFILL_DAYS_dw_ = dashboardIdentityPaxCacheModule_.PAX_HISTORY_BACKFILL_DAYS_;
 
-var dashboardIdentityGo30ToolsModule_ = gasRequire_('./go30tools.js', ['_readTrackerDbRowsBySheetId_', '_readPaxDbRowsBySheetId_']);
+var dashboardIdentityGo30ToolsModule_ = gasRequire_('./go30tools.js', [
+  '_readTrackerDbRowsBySheetId_', '_readPaxDbRowsBySheetId_',
+  'getCachedTrackerDbAvailableMonths_', 'setCachedTrackerDbAvailableMonths_',
+]);
 var readTrackerDbRowsBySheetId_dw_ = dashboardIdentityGo30ToolsModule_._readTrackerDbRowsBySheetId_;
 var readPaxDbRowsBySheetId_dw_ = dashboardIdentityGo30ToolsModule_._readPaxDbRowsBySheetId_;
+var getCachedTrackerDbAvailableMonths_dw_ = dashboardIdentityGo30ToolsModule_.getCachedTrackerDbAvailableMonths_;
+var setCachedTrackerDbAvailableMonths_dw_ = dashboardIdentityGo30ToolsModule_.setCachedTrackerDbAvailableMonths_;
 
 var dashboardIdentityAddResponseModule_ = gasRequire_('./addResponseOnSubmit.js', ['formatRegistrationMonth_']);
 var formatRegistrationMonth_dw_ = dashboardIdentityAddResponseModule_.formatRegistrationMonth_;
@@ -369,17 +374,35 @@ function buildMonthNavigationPayload_dw_(spreadsheet, f3Name) {
   // F3Go30-bopt: timing split for finding #5 (bd memories F3Go30-perf-checkin-dashboard-eval) —
   // these are the two unthrottled getDataRange().getValues() reads with no row cap suspected of
   // explaining checkinWebapp.identify's unmeasured 2-4s.
+  // F3Go30-m732: the TrackerDB half is now served from a cached DERIVED availableMonths blob
+  // (write-through invalidated at every TrackerDB mutation point — go30tools.js's
+  // _updateTrackerDB and CreateNewTracker.js's upsertLinksRow_ call site) whenever one is
+  // present; a miss falls back to the live read below and repopulates it. The PaxDB half is
+  // deliberately NOT cached here — see go30tools.js's TRACKER_DB_AVAILABLE_MONTHS_CACHE_PREFIX_
+  // docstring on why that's out of scope (subsumed by F3Go30-uz9e.5 instead).
   var tTracker0 = Date.now();
-  var bySheetId = (readTrackerDbRowsBySheetId_dw_ ? readTrackerDbRowsBySheetId_dw_(spreadsheet) : { bySheetId: {} }).bySheetId || {};
+  var cachedNav = getCachedTrackerDbAvailableMonths_dw_ ? getCachedTrackerDbAvailableMonths_dw_(spreadsheet) : null;
+  var availableMonths, monthKeyBySheetId, trackerDbCacheHit;
+  if (cachedNav && cachedNav.availableMonths && cachedNav.monthKeyBySheetId) {
+    availableMonths = cachedNav.availableMonths;
+    monthKeyBySheetId = cachedNav.monthKeyBySheetId;
+    trackerDbCacheHit = true;
+  } else {
+    trackerDbCacheHit = false;
+    var bySheetId = (readTrackerDbRowsBySheetId_dw_ ? readTrackerDbRowsBySheetId_dw_(spreadsheet) : { bySheetId: {} }).bySheetId || {};
+    monthKeyBySheetId = {};
+    availableMonths = Object.keys(bySheetId).map(function(sheetId) {
+      var row = bySheetId[sheetId];
+      var startDate = row.startDate instanceof Date ? row.startDate : new Date(row.startDate);
+      var monthKey = _dashboardIsoDate_(startDate).slice(0, 7);
+      monthKeyBySheetId[sheetId] = monthKey;
+      return { monthKey: monthKey, label: formatRegistrationMonth_dw_(startDate), startDateIso: _dashboardIsoDate_(startDate) };
+    }).sort(function(a, b) { return a.startDateIso < b.startDateIso ? -1 : a.startDateIso > b.startDateIso ? 1 : 0; });
+    if (setCachedTrackerDbAvailableMonths_dw_) {
+      setCachedTrackerDbAvailableMonths_dw_(spreadsheet, { availableMonths: availableMonths, monthKeyBySheetId: monthKeyBySheetId });
+    }
+  }
   var trackerDbReadMs = Date.now() - tTracker0;
-  var monthKeyBySheetId = {};
-  var availableMonths = Object.keys(bySheetId).map(function(sheetId) {
-    var row = bySheetId[sheetId];
-    var startDate = row.startDate instanceof Date ? row.startDate : new Date(row.startDate);
-    var monthKey = _dashboardIsoDate_(startDate).slice(0, 7);
-    monthKeyBySheetId[sheetId] = monthKey;
-    return { monthKey: monthKey, label: formatRegistrationMonth_dw_(startDate), startDateIso: _dashboardIsoDate_(startDate) };
-  }).sort(function(a, b) { return a.startDateIso < b.startDateIso ? -1 : a.startDateIso > b.startDateIso ? 1 : 0; });
 
   var norm = f3Name ? paxCacheNormalizeName_dw_(f3Name) : '';
   var registeredMonthKeys = [];
@@ -399,7 +422,7 @@ function buildMonthNavigationPayload_dw_(spreadsheet, f3Name) {
   }
 
   GasLogger.log('checkinWebapp.buildMonthNavigationPayload.timing', {
-    withF3Name: !!norm, trackerRows: Object.keys(bySheetId).length,
+    withF3Name: !!norm, trackerRows: availableMonths.length, trackerDbCacheHit: trackerDbCacheHit,
     trackerDbReadMs: trackerDbReadMs, paxDbReadMs: paxDbReadMs,
     totalMs: trackerDbReadMs + paxDbReadMs,
   });
