@@ -65,7 +65,12 @@ function _openOrCreateCheckinSessionsSheet_(spreadsheet) {
 
 function _getCheckinSessionRosterIndex_() {
   try {
-    var raw = PropertiesService.getScriptProperties().getProperty(CHECKIN_SESSION_ROSTER_PROPERTY_);
+    // F3Go30-ptbf: read through the per-execution whole-store memo rather than calling
+    // PropertiesService directly — the write half below already goes through the invalidating
+    // facade (F3Go30-h4xt), so a read via the memo can never serve a value this same execution
+    // has already overwritten. This was the one script-properties access in this file that
+    // still bypassed the memo.
+    var raw = getScriptPropertiesSnapshot_cs_()[CHECKIN_SESSION_ROSTER_PROPERTY_];
     return raw ? JSON.parse(raw) : {};
   } catch (e) {
     return {};
@@ -80,6 +85,9 @@ var scriptPropertiesModule_cs_ = (typeof require === 'function') ? require('./Sc
 function scriptProps_cs_() {
   return scriptPropertiesModule_cs_ ? scriptPropertiesModule_cs_.scriptPropertiesStore_() : scriptPropertiesStore_();
 }
+function getScriptPropertiesSnapshot_cs_() {
+  return scriptPropertiesModule_cs_ ? scriptPropertiesModule_cs_.getScriptPropertiesSnapshot_() : getScriptPropertiesSnapshot_();
+}
 
 function _setCheckinSessionRosterIndex_(index) {
   try {
@@ -87,59 +95,126 @@ function _setCheckinSessionRosterIndex_(index) {
   } catch (e) { /* best-effort — next resolve/cleanup rebuilds it from the live sheet anyway */ }
 }
 
+// F3Go30-ptbf: per-execution memo for resolveCheckinSession_, keyed by the `spreadsheet` object
+// identity (a WeakMap, so it can never leak across executions/tests the way a plain module-level
+// object keyed by guid alone would — the same execution always reuses the same `spreadsheet`
+// handle, so keying on it is equivalent to "per execution" without needing an explicit reset).
+// Same one-execution-one-request rationale as ScriptProperties.js's whole-store memo and
+// dashboardIdentity.js's priorMonthTailContextMemo_ — GAS re-evaluates this file's top-level
+// state fresh on every execution, so the memo is discarded with it.
+//
+// The in-lock re-check inside createOrTouchCheckinSession_ (below) deliberately calls
+// resolveCheckinSessionUncached_ directly, NEVER this memoized wrapper — a concurrent create
+// racing between the unlocked resolve and the lock acquisition must be seen fresh, not served
+// from a memo taken before the lock existed (AC3).
+var checkinSessionResolveMemo_ = (typeof WeakMap === 'function') ? new WeakMap() : null;
+
+function checkinSessionResolveMemoBucket_(spreadsheet) {
+  if (!checkinSessionResolveMemo_ || !spreadsheet) return null;
+  var bucket = checkinSessionResolveMemo_.get(spreadsheet);
+  if (!bucket) {
+    bucket = {};
+    checkinSessionResolveMemo_.set(spreadsheet, bucket);
+  }
+  return bucket;
+}
+
 /**
  * Resolves {row, f3Name, email, createdAt, lastUsedAt} for a session guid, or null if it's
- * never existed or has been pruned. Roster-index fast path (no sheet open at all on a hit);
- * falls back to a live scan on a miss, self-healing the index the same way PaxCache.js's
- * resolvePaxRowIndex_ does — so a stale/missing index entry never produces a false "not found."
+ * never existed or has been pruned. Memoized per (spreadsheet, guid) for the lifetime of one
+ * execution (F3Go30-ptbf) — see resolveCheckinToken_dw_ + createOrTouchCheckinSession_'s two
+ * independent call sites in one identify, which used to each pay the full resolve cost.
  */
 function resolveCheckinSession_(spreadsheet, guid) {
   if (!guid) return null;
+  var bucket = checkinSessionResolveMemoBucket_(spreadsheet);
+  if (bucket && Object.prototype.hasOwnProperty.call(bucket, guid)) {
+    return bucket[guid];
+  }
+  var result = resolveCheckinSessionUncached_(spreadsheet, guid);
+  if (bucket) bucket[guid] = result;
+  return result;
+}
+
+/**
+ * The actual resolution logic, never memoized — called directly by resolveCheckinSession_ (which
+ * adds the per-execution memo) and by createOrTouchCheckinSession_'s in-lock re-check, which must
+ * always see live state.
+ *
+ * Roster-index fast path: a hit whose cached entry is already the full {row, f3Name, email,
+ * createdAt, lastUsedAt} shape (F3Go30-ptbf) is returned straight from the index — genuinely no
+ * Sheets API access at all (AC1), unlike the old design which cached only a row number and still
+ * had to open the sheet + getRange to learn the rest. Every write path that can add or move a
+ * guid's row (append on create, the live-scan self-heal below, cleanupStaleCheckinSessions_'s
+ * rebuild, deleteCheckinSessionsByIdentity_'s rebuild) writes this same full shape, and
+ * touchCheckinSession_ patches lastUsedAt into it in place — so a value ever found under a guid
+ * key was written for that exact guid; nothing here re-derives an entry by row-position, which is
+ * what a wrong hit would require.
+ *
+ * A miss, or an entry left over from before this widening (the old design's bare row number) —
+ * falls back to a live scan (ignoring whatever the stale entry pointed at, rather than trusting
+ * its row position), which self-heals the index into the new shape either way. This is the
+ * defense against a stale/legacy index entry ever resolving a token to the wrong PAX's identity
+ * (AC2): a hit is only ever trusted when it's the fully-shaped object a guid-verified write
+ * produced, never a bare row pointer re-read off the sheet.
+ */
+function resolveCheckinSessionUncached_(spreadsheet, guid) {
+  var index = _getCheckinSessionRosterIndex_();
+  var entry = index[guid];
+  if (entry && typeof entry === 'object' && entry.row) {
+    return {
+      row: entry.row,
+      f3Name: entry.f3Name,
+      email: entry.email,
+      createdAt: entry.createdAt,
+      lastUsedAt: entry.lastUsedAt,
+    };
+  }
+
   // Read-only lookup — must never provision the sheet as a side effect (every invalid/unknown
   // token otherwise passed through here would silently create it). Only
   // createOrTouchCheckinSession_'s write path is allowed to do that.
   var sheet = spreadsheet.getSheetByName(CHECKIN_SESSIONS_SHEET_NAME_);
   if (!sheet) return null;
-  var index = _getCheckinSessionRosterIndex_();
-  var row = index[guid];
-  if (row) {
-    var lastRowNum = sheet.getLastRow();
-    if (row <= lastRowNum) {
-      var cached = sheet.getRange(row, 1, 1, CHECKIN_SESSIONS_HEADERS_.length).getValues()[0];
-      if (cached[CHECKIN_SESSION_COL_ID_] === guid) {
-        return {
-          row: row,
-          f3Name: cached[CHECKIN_SESSION_COL_F3NAME_],
-          email: cached[CHECKIN_SESSION_COL_EMAIL_],
-          createdAt: cached[CHECKIN_SESSION_COL_CREATED_],
-          lastUsedAt: cached[CHECKIN_SESSION_COL_LAST_USED_],
-        };
-      }
-    }
-  }
-
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return null;
   var allValues = sheet.getRange(2, 1, lastRow - 1, CHECKIN_SESSIONS_HEADERS_.length).getValues();
   for (var i = 0; i < allValues.length; i++) {
     if (allValues[i][CHECKIN_SESSION_COL_ID_] === guid) {
-      var foundRow = i + 2;
-      index[guid] = foundRow;
-      _setCheckinSessionRosterIndex_(index);
-      return {
-        row: foundRow,
+      var found = {
+        row: i + 2,
         f3Name: allValues[i][CHECKIN_SESSION_COL_F3NAME_],
         email: allValues[i][CHECKIN_SESSION_COL_EMAIL_],
         createdAt: allValues[i][CHECKIN_SESSION_COL_CREATED_],
         lastUsedAt: allValues[i][CHECKIN_SESSION_COL_LAST_USED_],
       };
+      index[guid] = found;
+      _setCheckinSessionRosterIndex_(index);
+      return found;
     }
   }
   return null;
 }
 
+/** Test-only: drops the per-execution resolve memo. Production never needs this — GAS
+ *  re-evaluates this file's top-level state fresh on every execution (see the memo's docstring). */
+function resetCheckinSessionResolveMemo_() {
+  checkinSessionResolveMemo_ = (typeof WeakMap === 'function') ? new WeakMap() : null;
+}
+
 function normalizeCheckinIdentityField_(value) {
   return String(value == null ? '' : value).trim().toLowerCase();
+}
+
+/** Builds a roster-index full-shape entry (F3Go30-ptbf) from a raw CheckinSessions sheet row. */
+function _checkinSessionIndexEntryFromRow_(row, rowNumber) {
+  return {
+    row: rowNumber,
+    f3Name: row[CHECKIN_SESSION_COL_F3NAME_],
+    email: row[CHECKIN_SESSION_COL_EMAIL_],
+    createdAt: row[CHECKIN_SESSION_COL_CREATED_],
+    lastUsedAt: row[CHECKIN_SESSION_COL_LAST_USED_],
+  };
 }
 
 /**
@@ -198,24 +273,32 @@ function deleteCheckinSessionsByIdentity_(spreadsheet, f3Name, email) {
 
   var values = sheet.getRange(2, 1, lastRow - 1, CHECKIN_SESSIONS_HEADERS_.length).getValues();
   var keepRows = [];
-  var removed = 0;
+  var removedGuids = [];
   values.forEach(function(row) {
     var matches = normalizeCheckinIdentityField_(row[CHECKIN_SESSION_COL_F3NAME_]) === wantName &&
       normalizeCheckinIdentityField_(row[CHECKIN_SESSION_COL_EMAIL_]) === wantEmail;
     if (matches) {
-      removed++;
+      removedGuids.push(row[CHECKIN_SESSION_COL_ID_]);
     } else {
       keepRows.push(row);
     }
   });
+  var removed = removedGuids.length;
   if (!removed) return 0;
+
+  // F3Go30-ptbf: a removed guid must not keep resolving from this execution's per-execution memo
+  // (checkinSessionResolveMemo_) — nothing calls resolveCheckinSession_ again for a just-deleted
+  // guid on any current PAX-facing path, but this keeps the memo's own invariant ("never serves a
+  // value this same execution has already invalidated") true regardless of caller.
+  var memoBucket = checkinSessionResolveMemoBucket_(spreadsheet);
+  if (memoBucket) removedGuids.forEach(function(guid) { memoBucket[guid] = null; });
 
   sheet.getRange(2, 1, lastRow - 1, CHECKIN_SESSIONS_HEADERS_.length).clearContent();
   if (keepRows.length) {
     sheet.getRange(2, 1, keepRows.length, CHECKIN_SESSIONS_HEADERS_.length).setValues(keepRows);
   }
   var newIndex = {};
-  keepRows.forEach(function(row, i) { newIndex[row[CHECKIN_SESSION_COL_ID_]] = i + 2; });
+  keepRows.forEach(function(row, i) { newIndex[row[CHECKIN_SESSION_COL_ID_]] = _checkinSessionIndexEntryFromRow_(row, i + 2); });
   _setCheckinSessionRosterIndex_(newIndex);
 
   GasLogger.log('deleteCheckinSessionsByIdentity_', { f3Name: f3Name, removed: removed });
@@ -238,7 +321,7 @@ function resolveOrCreateCheckinSessionGuid_(spreadsheet, f3Name, email) {
   if (!normalizeCheckinIdentityField_(f3Name) || !normalizeCheckinIdentityField_(email)) return null;
   var existing = findCheckinSessionByIdentity_(spreadsheet, f3Name, email);
   if (existing) {
-    touchCheckinSession_(spreadsheet, existing.row);
+    touchCheckinSession_(spreadsheet, existing.row, existing.guid);
     return existing.guid;
   }
   GasLogger.log('checkinSession.resolveOrCreate.noExistingSession', { level: 'warn' });
@@ -248,10 +331,29 @@ function resolveOrCreateCheckinSessionGuid_(spreadsheet, f3Name, email) {
   return guid;
 }
 
-/** Single-cell write, no lock — see file header on why this must stay lock-free. */
-function touchCheckinSession_(spreadsheet, sessionRow) {
+/**
+ * Single-cell write, no lock — see file header on why this must stay lock-free. When `guid` is
+ * given (every real caller has it), also patches the roster index's cached lastUsedAt for that
+ * guid in place (F3Go30-ptbf) — an unlocked read-modify-write of the index blob, same as the
+ * live-scan self-heal below; a lost update here only means one revisit's lastUsedAt is a beat
+ * stale, never a wrong identity, so it doesn't need the create-path's lock. Without this the
+ * widened index (which now answers resolveCheckinSession_ hits without touching the sheet) would
+ * go stale on the very first bookmarked revisit and firstUse would wrongly read true forever
+ * after.
+ */
+function touchCheckinSession_(spreadsheet, sessionRow, guid) {
   var sheet = _openOrCreateCheckinSessionsSheet_(spreadsheet);
-  sheet.getRange(sessionRow, CHECKIN_SESSION_COL_LAST_USED_ + 1).setValue(new Date().toISOString());
+  var nowIso = new Date().toISOString();
+  sheet.getRange(sessionRow, CHECKIN_SESSION_COL_LAST_USED_ + 1).setValue(nowIso);
+  if (!guid) return;
+  try {
+    var index = _getCheckinSessionRosterIndex_();
+    var entry = index[guid];
+    if (entry && typeof entry === 'object' && entry.row) {
+      entry.lastUsedAt = nowIso;
+      _setCheckinSessionRosterIndex_(index);
+    }
+  } catch (e) { /* best-effort — a stale/missing index entry self-heals on next resolve */ }
 }
 
 /**
@@ -276,7 +378,7 @@ function touchCheckinSession_(spreadsheet, sessionRow) {
 function createOrTouchCheckinSession_(spreadsheet, guid, f3Name, email, createdAtIsoOverride) {
   var existing = resolveCheckinSession_(spreadsheet, guid);
   if (existing) {
-    touchCheckinSession_(spreadsheet, existing.row);
+    touchCheckinSession_(spreadsheet, existing.row, guid);
     return;
   }
   var sheet = _openOrCreateCheckinSessionsSheet_(spreadsheet);
@@ -289,10 +391,18 @@ function createOrTouchCheckinSession_(spreadsheet, guid, f3Name, email, createdA
   }
   try {
     // Re-check inside the lock — a concurrent request could have created this exact guid's row
-    // between the unlocked resolve above and acquiring the lock.
-    var raced = resolveCheckinSession_(spreadsheet, guid);
+    // between the unlocked resolve above and acquiring the lock. Deliberately the UNCACHED
+    // resolver (F3Go30-ptbf AC3): this must see live state, never a pre-lock memo entry that
+    // would defeat the whole point of the re-check.
+    var raced = resolveCheckinSessionUncached_(spreadsheet, guid);
     if (raced) {
-      touchCheckinSession_(spreadsheet, raced.row);
+      touchCheckinSession_(spreadsheet, raced.row, guid);
+      // The unlocked resolve at the top of this function ran before this guid existed and
+      // memoized that miss (F3Go30-ptbf) — correct it now so anything later in this same
+      // execution that asks resolveCheckinSession_ for this guid sees the real session a
+      // concurrent request just created, not the stale pre-lock "not found".
+      var racedBucket = checkinSessionResolveMemoBucket_(spreadsheet);
+      if (racedBucket) racedBucket[guid] = raced;
       return;
     }
     var now = new Date().toISOString();
@@ -300,8 +410,13 @@ function createOrTouchCheckinSession_(spreadsheet, guid, f3Name, email, createdA
     var newRow = sheet.getLastRow() + 1;
     sheet.getRange(newRow, 1, 1, CHECKIN_SESSIONS_HEADERS_.length).setValues([[guid, f3Name, email, createdAt, now]]);
     var index = _getCheckinSessionRosterIndex_();
-    index[guid] = newRow;
+    var created = { row: newRow, f3Name: f3Name, email: email, createdAt: createdAt, lastUsedAt: now };
+    index[guid] = created;
     _setCheckinSessionRosterIndex_(index);
+    // Same correction as the raced branch above: the top-of-function memoized miss must not
+    // outlive the row this call just created, for the rest of this execution.
+    var createdBucket = checkinSessionResolveMemoBucket_(spreadsheet);
+    if (createdBucket) createdBucket[guid] = created;
   } finally {
     lock.releaseLock();
   }
@@ -347,7 +462,7 @@ function cleanupStaleCheckinSessions_(now) {
   }
 
   var newIndex = {};
-  keepRows.forEach(function(row, i) { newIndex[row[CHECKIN_SESSION_COL_ID_]] = i + 2; });
+  keepRows.forEach(function(row, i) { newIndex[row[CHECKIN_SESSION_COL_ID_]] = _checkinSessionIndexEntryFromRow_(row, i + 2); });
   _setCheckinSessionRosterIndex_(newIndex);
 
   GasLogger.log('cleanupStaleCheckinSessions_', { checked: values.length, purged: purged, kept: keepRows.length });
@@ -420,5 +535,9 @@ if (typeof module !== 'undefined' && module.exports) {
     deleteCheckinSessionsByIdentity_: deleteCheckinSessionsByIdentity_,
     resolveOrCreateCheckinSessionGuid_: resolveOrCreateCheckinSessionGuid_,
     listActiveCheckinSessionF3Names_: listActiveCheckinSessionF3Names_,
+    resolveCheckinSessionUncached_: resolveCheckinSessionUncached_,
+    resetCheckinSessionResolveMemo_: resetCheckinSessionResolveMemo_,
+    _getCheckinSessionRosterIndex_: _getCheckinSessionRosterIndex_,
+    _setCheckinSessionRosterIndex_: _setCheckinSessionRosterIndex_,
   };
 }
