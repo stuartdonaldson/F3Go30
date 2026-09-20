@@ -10,9 +10,11 @@
  * Reuses the same local-static-server + real-session-guid pattern as static-checkin.spec.js /
  * checkin-concurrency-live-check.spec.js. Uses the Whiplash fixture (pax-history-reload-live-
  * check.spec.js's LIVE_PAX) rather than NoSadClown — this spec never writes a checkin, so there's
- * no state to restore, and Whiplash stays registered for the current month across month
- * boundaries more reliably than the NoSadClown fixture (observed flaky `matched:false` on it
- * around 2026-08-31).
+ * no state to restore. Whiplash was originally picked over NoSadClown for exactly this kind of
+ * month-boundary flakiness (`matched:false` observed around 2026-08-31), but the real fix is
+ * ensureFixturePaxIdentified_ (live-check-helpers.js, F3Go30-51hy), which self-heals ANY fixture
+ * PAX that goes knownPaxNotRegistered on a rollover, so this spec no longer depends on Whiplash
+ * being the lucky pick.
  *
  * Usage:
  *   npm run deploy:sit
@@ -23,7 +25,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { dismissAnnouncementIfPresent_ } = require('./live-check-helpers.js');
+const { dismissAnnouncementIfPresent_, ensureFixturePaxIdentified_ } = require('./live-check-helpers.js');
 
 const ROOT = path.resolve(__dirname, '../..');
 const STATIC_DIR = path.join(ROOT, 'static-pages', 'src');
@@ -68,13 +70,7 @@ test.describe('Scorecard screen (client, live SIT)', () => {
     checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
 
     sessionGuid = crypto.randomUUID();
-    const res = await request.post(checkinUrl + '?cmd=checkin', {
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      data: JSON.stringify({ action: 'identify', f3Name: DEMO_PAX.f3Name, email: DEMO_PAX.email, guid: sessionGuid }),
-      maxRedirects: 5,
-    });
-    const json = await res.json();
-    expect(json.matched).toBe(true);
+    await ensureFixturePaxIdentified_(request, checkinUrl, DEMO_PAX, sessionGuid);
 
     server = await startStaticServer();
     staticOrigin = `http://127.0.0.1:${server.address().port}`;

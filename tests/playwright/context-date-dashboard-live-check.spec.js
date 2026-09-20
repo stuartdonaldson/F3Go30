@@ -15,10 +15,11 @@
  * whether the override actually reaches the *server's resolved month* end-to-end is a live-wire
  * question only a real deployed round trip answers, which is what this spec is for.
  *
- * Uses the NoSadClown fixture (registered for the live current month on SIT as of 2026-09-10 —
- * Whiplash, scorecard-live-check.spec.js's usual pick, was found `knownPaxNotRegistered:true` for
- * September while writing this spec, a pre-existing SIT fixture-data staleness issue unrelated to
- * this bead). Read-only, so no state to restore, and no live Config write (unlike setContextDate/
+ * Uses the NoSadClown fixture, self-registered for the live current month via
+ * ensureFixturePaxIdentified_ (live-check-helpers.js, F3Go30-51hy) — a month rollover on SIT
+ * otherwise leaves a known-but-unregistered PAX (`knownPaxNotRegistered:true`) failing every live
+ * spec that shares this fixture, as it did here and elsewhere on 2026-09-19. Read-only beyond that
+ * one-time signup, so no state to restore, and no live Config write (unlike setContextDate/
  * setConfigValue): `contextDate` is a plain request field, sent straight through the URL query
  * string, so there's nothing to clean up on SIT after this spec runs.
  *
@@ -31,7 +32,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { dismissAnnouncementIfPresent_ } = require('./live-check-helpers.js');
+const { dismissAnnouncementIfPresent_, ensureFixturePaxIdentified_ } = require('./live-check-helpers.js');
 
 const ROOT = path.resolve(__dirname, '../..');
 const STATIC_DIR = path.join(ROOT, 'static-pages', 'src');
@@ -101,13 +102,7 @@ test.describe('Dashboard contextDate override (client, live SIT)', () => {
     checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
 
     sessionGuid = crypto.randomUUID();
-    const res = await request.post(checkinUrl + '?cmd=checkin', {
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      data: JSON.stringify({ action: 'identify', f3Name: DEMO_PAX.f3Name, email: DEMO_PAX.email, guid: sessionGuid }),
-      maxRedirects: 5,
-    });
-    const json = await res.json();
-    expect(json.matched).toBe(true);
+    await ensureFixturePaxIdentified_(request, checkinUrl, DEMO_PAX, sessionGuid);
 
     server = await startStaticServer();
     staticOrigin = `http://127.0.0.1:${server.address().port}`;

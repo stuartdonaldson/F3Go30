@@ -35,7 +35,9 @@ const { test, expect } = require('@playwright/test');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const crypto = require('crypto');
 const { loadSettings, buildPayload_, post, ENV_MAP } = require('../../tools/callWebapp.js');
+const { ensureFixturePaxIdentified_ } = require('./live-check-helpers.js');
 
 // playwright.config.js's global `use.headless` is false (the GAS-editor specs need a real
 // viewport) — every non-editor spec must override it back to headless, same as
@@ -93,6 +95,12 @@ test.describe('Announcement splash — live SIT rendering (F3Go30-g9bi)', () => 
       throw new Error('testDeploymentId not set in local.settings.json — run npm run deploy:sit first');
     }
     checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
+
+    // This spec identifies through the browser UI form below (typed name/email, not a raw API
+    // call), so a month-rollover knownPaxNotRegistered gap wouldn't surface as a clean assertion
+    // failure here — it'd fail downstream in the splash-visibility tests themselves, with no hint
+    // why. Self-heal via the same API-level helper other specs use, before the UI ever touches it.
+    await ensureFixturePaxIdentified_(request, checkinUrl, DEMO_PAX, crypto.randomUUID());
 
     // Capture whatever is already at this key BEFORE overwriting it — see the SAFETY note above.
     originalConfigValue = await getConfigValue(ANNOUNCE_KEY);

@@ -46,7 +46,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { dismissAnnouncementIfPresent_, clickThroughAnnouncement_ } = require('./live-check-helpers.js');
+const { dismissAnnouncementIfPresent_, clickThroughAnnouncement_, ensureFixturePaxIdentified_ } = require('./live-check-helpers.js');
 
 const ROOT = path.resolve(__dirname, '../..');
 const STATIC_DIR = path.join(ROOT, 'static-pages', 'src');
@@ -119,13 +119,7 @@ test.describe('Static check-in front end (client, live SIT)', () => {
     // Mint a real session guid for the fixture PAX (same call the page's own typed-identify
     // form makes) — this static page authenticates via ?id=<guid>, not typed f3Name/email.
     sessionGuid = crypto.randomUUID();
-    const res = await request.post(checkinUrl + '?cmd=checkin', {
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      data: JSON.stringify({ action: 'identify', f3Name: DEMO_PAX.f3Name, email: DEMO_PAX.email, guid: sessionGuid }),
-      maxRedirects: 5,
-    });
-    const json = await res.json();
-    expect(json.matched).toBe(true);
+    const json = await ensureFixturePaxIdentified_(request, checkinUrl, DEMO_PAX, sessionGuid);
     expect(json.identityToken).toBe(sessionGuid);
     expect(json.config).toBeTruthy(); // F3Go30-5nfj.2 follow-up: site config now rides the identify response
 
@@ -451,13 +445,7 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
     checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
 
     sessionGuid = crypto.randomUUID();
-    const res = await request.post(checkinUrl + '?cmd=checkin', {
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      data: JSON.stringify({ action: 'identify', f3Name: DEMO_PAX.f3Name, email: DEMO_PAX.email, guid: sessionGuid }),
-      maxRedirects: 5,
-    });
-    const json = await res.json();
-    expect(json.matched).toBe(true);
+    await ensureFixturePaxIdentified_(request, checkinUrl, DEMO_PAX, sessionGuid);
 
     server = await startStaticServer();
     staticOrigin = `http://127.0.0.1:${server.address().port}`;
@@ -676,12 +664,7 @@ test.describe('Stale installed client: update banner + version footer (F3Go30-83
     const deploymentId = settings.testDeploymentId;
     const checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
     sessionGuid = crypto.randomUUID();
-    const res = await request.post(checkinUrl + '?cmd=checkin', {
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      data: JSON.stringify({ action: 'identify', f3Name: DEMO_PAX.f3Name, email: DEMO_PAX.email, guid: sessionGuid }),
-      maxRedirects: 5,
-    });
-    expect((await res.json()).matched).toBe(true);
+    await ensureFixturePaxIdentified_(request, checkinUrl, DEMO_PAX, sessionGuid);
 
     server = await startStaticServer(BUILT_DIR);
     staticOrigin = `http://127.0.0.1:${server.address().port}`;
@@ -798,12 +781,7 @@ test.describe('Real CSP under the live SIT policy (F3Go30-ah3v)', () => {
     const deploymentId = settings.testDeploymentId;
     const checkinApiUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
     sessionGuid = crypto.randomUUID();
-    const res = await request.post(checkinApiUrl + '?cmd=checkin', {
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      data: JSON.stringify({ action: 'identify', f3Name: DEMO_PAX.f3Name, email: DEMO_PAX.email, guid: sessionGuid }),
-      maxRedirects: 5,
-    });
-    expect((await res.json()).matched).toBe(true);
+    await ensureFixturePaxIdentified_(request, checkinApiUrl, DEMO_PAX, sessionGuid);
 
     server = await startStaticServer(BUILT_DIR);
     staticOrigin = `http://127.0.0.1:${server.address().port}`;

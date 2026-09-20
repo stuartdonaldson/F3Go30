@@ -31,7 +31,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { dismissAnnouncementIfPresent_, clickThroughAnnouncement_ } = require('./live-check-helpers.js');
+const { dismissAnnouncementIfPresent_, clickThroughAnnouncement_, ensureFixturePaxIdentified_ } = require('./live-check-helpers.js');
 
 const ROOT = path.resolve(__dirname, '../..');
 const STATIC_DIR = path.join(ROOT, 'static-pages', 'src');
@@ -87,13 +87,7 @@ test.describe('Advanced calendar grid (client, live SIT)', () => {
     // Mint one real session guid for the fixture PAX up front — the static page authenticates
     // by ?id=<guid>, so per-test typed identify (and its form POST) is unnecessary here.
     sessionGuid = crypto.randomUUID();
-    const res = await request.post(execUrl + '?cmd=checkin', {
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      data: JSON.stringify({ action: 'identify', f3Name: DEMO_PAX.f3Name, email: DEMO_PAX.email, guid: sessionGuid }),
-      maxRedirects: 5,
-    });
-    const json = await res.json();
-    expect(json.matched).toBe(true);
+    await ensureFixturePaxIdentified_(request, execUrl, DEMO_PAX, sessionGuid);
 
     server = await startStaticServer();
     staticOrigin = `http://127.0.0.1:${server.address().port}`;
@@ -361,15 +355,21 @@ test.describe('handleCheckinSubmit_ write contract (direct API, no browser)', ()
   let ns;
   let contextDate;
 
-  test.beforeAll(() => {
+  test.beforeAll(async ({ request }) => {
     const settings = loadSettings();
     const deploymentId = settings.testDeploymentId;
     if (!deploymentId || deploymentId.startsWith('<')) {
       throw new Error('testDeploymentId not set in local.settings.json — run npm run deploy:sit first');
     }
-    checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec?cmd=checkin`;
+    const execUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
+    checkinUrl = execUrl + '?cmd=checkin';
     ns = '';
     contextDate = '';
+    // This describe block writes checkins directly (no identify call of its own) — self-heal the
+    // same knownPaxNotRegistered gap the other describe block's identify hits, or a month
+    // rollover on SIT fails every submit below with an unregistered-PAX error instead of the
+    // write-contract assertion each test is actually about.
+    await ensureFixturePaxIdentified_(request, execUrl, DEMO_PAX, crypto.randomUUID());
   });
 
   async function submit(request, body) {

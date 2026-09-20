@@ -23,7 +23,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { dismissAnnouncementIfPresent_ } = require('./live-check-helpers.js');
+const { dismissAnnouncementIfPresent_, ensureFixturePaxIdentified_ } = require('./live-check-helpers.js');
 
 const ROOT = path.resolve(__dirname, '../..');
 const STATIC_DIR = path.join(ROOT, 'static-pages', 'src');
@@ -76,13 +76,7 @@ test.describe('Cross-day checkin burst: global concurrency cap + no stuck "Savin
     checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
 
     sessionGuid = crypto.randomUUID();
-    const res = await request.post(checkinUrl + '?cmd=checkin', {
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      data: JSON.stringify({ action: 'identify', f3Name: DEMO_PAX.f3Name, email: DEMO_PAX.email, guid: sessionGuid }),
-      maxRedirects: 5,
-    });
-    const json = await res.json();
-    expect(json.matched).toBe(true);
+    const json = await ensureFixturePaxIdentified_(request, checkinUrl, DEMO_PAX, sessionGuid);
 
     const today = new Date();
     const yesterday = new Date(today.getTime() - 86400000);

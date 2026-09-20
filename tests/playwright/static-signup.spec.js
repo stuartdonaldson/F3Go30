@@ -40,11 +40,15 @@ const STATIC_SIGNUP_PAX = {
   how: 'Morning meditation; daily check-in with my Go30 team, and with my partner.',
 };
 
-// Reused, NOT re-created: identity-token-flow.spec.js's Stage 4 fixture, established as
-// "known to PaxDB (registered for next month, August 2026) but absent from the CURRENT month's
-// (July 2026) tracker" — exactly the knownPaxNotRegistered / month-boundary case this file's
-// third test needs. Per that file's own comment, don't re-run signup for it unless the fixture
-// needs re-establishing — so the test below only asserts the redirect target, it never saves.
+// Originally identity-token-flow.spec.js's Stage 4 fixture: "known to PaxDB but absent from the
+// CURRENT month's tracker" — exactly the knownPaxNotRegistered / month-boundary case this file's
+// third test needs. Found on 2026-09-19 to have decayed further than that test's beforeAll (below)
+// expected: rather than merely unregistered for the current month, it had NO record in any month
+// at all (matched:false with no knownPaxNotRegistered flag either) — a harder rollover-adjacent
+// staleness than the knownPaxNotRegistered case ensureFixturePaxIdentified_ (live-check-helpers.js,
+// F3Go30-51hy) handles. The describe block's beforeAll below now detects that specific "fully
+// unknown" state and re-establishes it via a past-month signup — never a current-month one, which
+// would defeat the test — while leaving it exactly alone if it already has any history.
 const LATE_SIGNUP_PAX = { f3Name: 'LateSignupTest', email: 'latesignup@example.com' };
 
 // F3Go30-9u68: a dedicated fixture, distinct from STATIC_SIGNUP_PAX above, so the validation
@@ -129,13 +133,52 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
   let staticOrigin;
   let server;
 
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ request }) => {
     const settings = loadSettings();
     const deploymentId = settings.testDeploymentId;
     if (!deploymentId || deploymentId.startsWith('<')) {
       throw new Error('testDeploymentId not set in local.settings.json — run npm run deploy:sit first');
     }
     checkinUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
+
+    // LATE_SIGNUP_PAX must stay "known but unregistered for the current month" forever, which
+    // needs the OPPOSITE self-heal from ensureFixturePaxIdentified_ (live-check-helpers.js,
+    // F3Go30-51hy) — registering it for the current month would break the very test it exists
+    // for. Self-heal only the narrower failure actually seen (2026-09-19): the fixture has NO
+    // record in ANY month at all (registeredMonthKeys empty AND no knownPaxNotRegistered flag),
+    // which happens if it was never (re-)established or aged out of every tracker window. In
+    // that case only, sign it up for a definitely-past month via a contextDate override —
+    // current-month registration is never touched here. If it already has any history, leave it
+    // exactly alone, per this file's existing "don't re-run signup for it" convention below.
+    const idRes = await request.post(checkinUrl + '?cmd=checkin', {
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      data: JSON.stringify({ action: 'identify', f3Name: LATE_SIGNUP_PAX.f3Name, email: LATE_SIGNUP_PAX.email, guid: 'late-signup-fixture-probe' }),
+      maxRedirects: 5,
+    });
+    const idJson = await idRes.json();
+    if (!idJson.matched && !idJson.knownPaxNotRegistered && (idJson.registeredMonthKeys || []).length === 0) {
+      const saveRes = await request.post(checkinUrl + '?cmd=signup', {
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        data: JSON.stringify({
+          action: 'save',
+          f3Name: LATE_SIGNUP_PAX.f3Name,
+          email: LATE_SIGNUP_PAX.email,
+          targetMonth: 'current',
+          contextDate: '2026-06-15', // any month guaranteed to be in the past
+          teamType: 'other',
+          team: 'Crucible',
+          who: 'An available, attentive and engaged partner',
+          what: 'No porn, alcohol or sobriety violations. Meditate 10 minutes daily.',
+          how: 'Morning meditation; daily check-in with my Go30 team, and with my partner.',
+          nag: false,
+        }),
+        maxRedirects: 5,
+      });
+      const saveJson = await saveRes.json();
+      if (!saveJson.ok) {
+        throw new Error(`LATE_SIGNUP_PAX auto-(re)establish failed: ${JSON.stringify(saveJson)}`);
+      }
+    }
 
     server = await startStaticServer();
     staticOrigin = `http://127.0.0.1:${server.address().port}`;
@@ -298,7 +341,8 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
   // ── Month-boundary knownPaxNotRegistered path (mirrors identity-token-flow.spec.js's ─────────
   //    "typed identify for a known-but-unregistered PAX redirects into prefilled signup", but the
   //    static page opens the in-page signup step instead of navigating to a different document.
-  //    Read-only: never saves, so LATE_SIGNUP_PAX's Stage 4 fixture state is left untouched.
+  //    This test itself never saves — the describe block's beforeAll above is the only place
+  //    LATE_SIGNUP_PAX's fixture state can be written, and only when it's decayed to fully unknown.
   test('month-boundary: known-but-unregistered PAX auto-opens a prefilled signup for the current month, no top-level navigation', async ({ page }) => {
     let loads = 0;
     page.on('load', () => loads++);
