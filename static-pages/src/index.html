@@ -3723,18 +3723,34 @@
   $('siteFeedbackCancelBtn').addEventListener('click', function() { $('siteFeedbackModal').classList.add('hidden'); });
   $('siteFeedbackDoneBtn').addEventListener('click', function() { $('siteFeedbackModal').classList.add('hidden'); });
 
-  // F3Go30-1pqo.10: client-only Logout — forgets the durable check-in token + snapshot (so this
-  // device stops silently resuming straight into check-in) but deliberately leaves
-  // go30SignupIdentity alone, unlike notYouLink's full clear, so the identify form still
-  // pre-fills name/email on the next visit. Reuses notYouLink's already-computed href
-  // (webapp/ns/contextDate, no id/token) rather than recomputing the same URL a second time —
-  // that navigation is what lands back on the identify form pre-filled (its fields are painted
-  // from `state`, itself loaded from the now-untouched go30SignupIdentity, on the next load).
-  // Full server-side token invalidation (PaxCache/spreadsheet) stays F3Go30-1pqo.2's scope.
+  // F3Go30-1pqo.10 + F3Go30-1pqo.2: Logout now invalidates BOTH the local cache and the
+  // server-side session token. Deliberately leaves go30SignupIdentity alone, unlike notYouLink's
+  // full clear, so the identify form still pre-fills name/email on the next visit. Reuses
+  // notYouLink's already-computed href (webapp/ns/contextDate, no id/token) rather than
+  // recomputing the same URL a second time — that navigation is what lands back on the identify
+  // form pre-filled (its fields are painted from `state`, itself loaded from the now-untouched
+  // go30SignupIdentity, on the next load).
+  //
+  // The server call authenticates by the token itself (handleCheckinLogout_, dashboardWebapp.js)
+  // so it is fetched straight from storage rather than passing any typed name/email. The local
+  // clear + navigation happen regardless of whether the server call succeeds — the PAX asked to
+  // log out and a flaky/offline network must not leave them looking signed in — but a failure is
+  // still reported to Axiom via captureClientTelemetry_ so a silently-failing invalidation is
+  // visible.
   $('settingsLogoutBtn').addEventListener('click', function() {
     if ($('settingsLogoutBtn').disabled) return;
-    clearCheckinSnapshot_();
-    location.href = $('notYouLink').href;
+    var token = loadTokenFromStorage_();
+    var finishLogout_ = function() {
+      clearCheckinSnapshot_();
+      location.href = $('notYouLink').href;
+    };
+    if (token) {
+      callApi('logout', { token: token })
+        .catch(function(err) { captureClientError_('logout', err); })
+        .finally(finishLogout_);
+    } else {
+      finishLogout_();
+    }
   });
   // F3Go30-5c2a.3: a client-minted idempotency key, stable across a hand-retried resubmission of
   // the exact same (unedited) report — the failure mode that produced three emails for one

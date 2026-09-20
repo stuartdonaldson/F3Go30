@@ -230,6 +230,91 @@ it('reads as an empty store and is not memoized', function() {
 });
 
 // ---------------------------------------------------------------------------------------------
+// 5. F3Go30-n0wr.1: a whole-store getProperties() failure must be visible in Axiom — the
+//    READ-side mirror of the parent bead's write-side fix (setPaxCacheRowsBulk_). Pins: exactly
+//    one event with errorName/error and no PAX names or key values; still returns {} and never
+//    throws; still NOT memoized; and a re-entrant call (GasLogger itself calling back into
+//    getScriptPropertiesSnapshot_, or GasLogger throwing) must not recurse or throw.
+// ---------------------------------------------------------------------------------------------
+describe('F3Go30-n0wr.1: whole-store outage visibility', function() {
+it('emits exactly one Axiom event carrying errorName + error message, with no key/value data', function() {
+  freshExecution_();
+  gas.logger._logs.length = 0;
+  fakeProps._failGetProperties = true;
+  var error = new Error('PropertiesService unavailable');
+
+  var result = getScriptPropertiesSnapshot_();
+
+  fakeProps._failGetProperties = false;
+  assert.deepEqual(result, {}, 'still returns {} on failure');
+  assert.equal(gas.logger._logs.length, 1, 'exactly one Axiom event must be emitted');
+  var call = gas.logger._logs[0];
+  assert.equal(call[0], 'getScriptPropertiesSnapshot_.failed');
+  assert.equal(call[1].errorName, error.name);
+  assert.equal(call[1].error, 'PropertiesService unavailable');
+  var loggedKeys = Object.keys(call[1]);
+  assert.deepEqual(loggedKeys.sort(), ['error', 'errorName'],
+    'must carry only errorName/error — no store contents or key values');
+});
+
+it('still returns {}, still does not throw, and still is NOT memoized on failure', function() {
+  freshExecution_();
+  fakeProps.setProperty('go30pax:tracker:sheet-9:still', JSON.stringify(['Still', 'Red', 1]));
+  invalidateScriptPropertiesSnapshot_();
+  fakeProps._failGetProperties = true;
+
+  assert.doesNotThrow(function() { getScriptPropertiesSnapshot_(); });
+  assert.deepEqual(getScriptPropertiesSnapshot_(), {});
+
+  fakeProps._failGetProperties = false;
+  assert.deepEqual(getScriptPropertiesSnapshot_()['go30pax:tracker:sheet-9:still'],
+    JSON.stringify(['Still', 'Red', 1]),
+    'a second call after the blip must retry the real RPC, not serve a memoized failure');
+});
+
+it('does not throw and does not recurse when the logger itself throws', function() {
+  freshExecution_();
+  var originalLog = gas.logger.log;
+  var calls = 0;
+  gas.logger.log = function() {
+    calls++;
+    throw new Error('Axiom is also down');
+  };
+  try {
+    fakeProps._failGetProperties = true;
+    assert.doesNotThrow(function() { getScriptPropertiesSnapshot_(); },
+      'a throwing logger must not turn this best-effort read into a throw');
+    assert.equal(calls, 1, 'a throwing logger must not be retried/recursed into');
+  } finally {
+    gas.logger.log = originalLog;
+    fakeProps._failGetProperties = false;
+  }
+});
+
+it('does not recurse when the logger calls back into getScriptPropertiesSnapshot_', function() {
+  freshExecution_();
+  var originalLog = gas.logger.log;
+  var calls = 0;
+  gas.logger.log = function() {
+    calls++;
+    // Mirrors GasLogger's own re-entrant PropertiesService use (constraint 2) — a nested call
+    // while still failing must be a silent no-op, not a second log or infinite recursion.
+    return getScriptPropertiesSnapshot_();
+  };
+  try {
+    fakeProps._failGetProperties = true;
+    var result;
+    assert.doesNotThrow(function() { result = getScriptPropertiesSnapshot_(); });
+    assert.deepEqual(result, {});
+    assert.equal(calls, 1, 're-entrant call during logging must be a no-op, not a second log');
+  } finally {
+    gas.logger.log = originalLog;
+    fakeProps._failGetProperties = false;
+  }
+});
+});
+
+// ---------------------------------------------------------------------------------------------
 // 4. Store sizing — the telemetry gauge added to the dashboard event.
 // ---------------------------------------------------------------------------------------------
 describe('store sizing telemetry', function() {

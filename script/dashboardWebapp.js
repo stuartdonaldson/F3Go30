@@ -115,8 +115,10 @@ var findBonusRowByIdentity_dw_ = dashboardWebappBonusModule_.findBonusRowByIdent
 var getAllBonusEntriesCached_dw_ = dashboardWebappBonusModule_.getAllBonusEntriesCached_;
 var getCachedBonusEntriesOnly_dw_ = dashboardWebappBonusModule_.getCachedBonusEntriesOnly_;
 
-var dashboardWebappCheckinSessionsModule_ = gasRequire_('./CheckinSessions.js', ['resolveCheckinSession_', 'createOrTouchCheckinSession_']);
+var dashboardWebappCheckinSessionsModule_ = gasRequire_('./CheckinSessions.js', ['resolveCheckinSession_', 'createOrTouchCheckinSession_', 'deleteCheckinSessionsByIdentity_']);
 var createOrTouchCheckinSession_dw_ = dashboardWebappCheckinSessionsModule_.createOrTouchCheckinSession_;
+var resolveCheckinSession_dw2_ = dashboardWebappCheckinSessionsModule_.resolveCheckinSession_;
+var deleteCheckinSessionsByIdentity_dw_ = dashboardWebappCheckinSessionsModule_.deleteCheckinSessionsByIdentity_;
 
 var dashboardWebappBonusTypesModule_ = gasRequire_('./BonusTypes.js', ['bonusTypeClientRules_', 'bonusTypeDisplayList_', 'emptyBonusPills_', 'weekOfMonth_', 'computeBonusPillsAsOf_', 'computeBonusSeriesForPax_', 'groupBonusEntriesByPax_', 'annotateBonusEntryCountStatus_', 'annotateBonusEntryDuplicateLinkStatus_']);
 var bonusTypeClientRules_dw_ = dashboardWebappBonusTypesModule_.bonusTypeClientRules_;
@@ -410,6 +412,8 @@ function handleCheckinPost_(e) {
     if (payload.action === 'clientTelemetry') return jsonOutput_(handleClientTelemetryPost_(payload));
     // F3Go30-1pqo.4: settings-menu "Send Feedback" — see handleSiteFeedback_ below.
     if (payload.action === 'siteFeedback') return jsonOutput_(handleSiteFeedback_(spreadsheet, payload));
+    // F3Go30-1pqo.2: settings-menu "Logout" server-side half — see handleCheckinLogout_ below.
+    if (payload.action === 'logout') return jsonOutput_(handleCheckinLogout_(spreadsheet, payload));
     return jsonOutput_({ ok: false, error: 'unknown_action' });
   } catch (err) {
     GasLogger.logError('handleCheckinPost_.error', err, { action: payload.action });
@@ -724,6 +728,32 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
     // link (static-pages/src/index.html); see CheckinSessions.js for why this replaced IdentityToken.js here.
     identityToken: sessionGuid,
   };
+}
+
+/**
+ * F3Go30-1pqo.2: server-side half of Logout — invalidates the check-in session TOKEN ONLY.
+ * Never touches Tracker/Responses/PaxDB/PaxCache/history/goals/Bonus/score data — see
+ * CheckinSessions.js's deleteCheckinSessionsByIdentity_ docstring, the one primitive this calls,
+ * which is scoped to the CheckinSessions sheet + its own roster-index script property.
+ *
+ * Authenticates the caller BY THE TOKEN they are logging out with — payload.f3Name/email are
+ * never trusted for this action (unlike identify's typed path), because trusting a client-
+ * supplied name would let anyone sign anyone else out. The session the token itself resolves to
+ * (resolveCheckinSession_, CheckinSessions.js) is the only identity ever acted on.
+ *
+ * A missing or already-invalid token is not an error — it means there is nothing left to log
+ * out of server-side (or the client called this before ever completing an identify) — reported
+ * as {ok:true, loggedOut:false} rather than a failure the client would need to handle specially.
+ */
+function handleCheckinLogout_(templateSpreadsheet, payload) {
+  var session = payload.token ? resolveCheckinSession_dw2_(templateSpreadsheet, payload.token) : null;
+  if (!session) {
+    GasLogger.log('checkinWebapp.logout.result', { matched: false });
+    return { ok: true, loggedOut: false };
+  }
+  var removed = deleteCheckinSessionsByIdentity_dw_(templateSpreadsheet, session.f3Name, session.email);
+  GasLogger.log('checkinWebapp.logout.result', { matched: true, f3Name: session.f3Name, removed: removed });
+  return { ok: true, loggedOut: true };
 }
 
 /**
@@ -1803,6 +1833,7 @@ if (typeof module !== 'undefined' && module.exports) {
     handleBonusEdit_: handleBonusEdit_,
     handleBonusList_: handleBonusList_,
     handleSiteFeedback_: handleSiteFeedback_,
+    handleCheckinLogout_: handleCheckinLogout_,
     buildMonthNavigationPayload_dw_: buildMonthNavigationPayload_dw_,
     buildResolvedContextHandle_: buildResolvedContextHandle_,
     monthInfoFromHandle_: monthInfoFromHandle_,

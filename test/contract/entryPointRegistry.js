@@ -86,6 +86,8 @@ const ENTRY_POINT_REGISTRY = {
     '[checkin] handleClientTelemetryPost_ — writes a client telemetry record to the log, deduped by the client-minted id',
   'checkin.siteFeedback':
     '[checkin] handleSiteFeedback_ — accepts a site-feedback report from the settings menu and dispatches the notification email',
+  'checkin.logout':
+    '[checkin] handleCheckinLogout_ — invalidates the caller\'s own CheckinSessions token server-side (F3Go30-1pqo.2); never touches Tracker/Responses/PaxDB/PaxCache data',
 
   // ── cmd=signup doPost actions (script/WebApp.js → script/signupWebapp.js) ─────────────────
   'signup.identify':
@@ -184,6 +186,7 @@ const ENTRY_POINT_CLASSES = {
   'checkin.bonusEdit': CLASS_CHECKIN,
   'checkin.clientTelemetry': CLASS_CHECKIN,
   'checkin.siteFeedback': CLASS_CHECKIN,
+  'checkin.logout': CLASS_CHECKIN,
 
   'signup.identify': CLASS_SIGNUP,
   'signup.save': CLASS_SIGNUP,
@@ -235,6 +238,9 @@ const ENTRY_POINT_CLASSES = {
  * tracking bead. `[backlog]` converts; `[permanent]` does not. Umbrella: F3Go30-y8j7.
  */
 const ENTRY_POINT_DEFERRED = {
+  'checkin.logout':
+    '[backlog] node-tested (test_checkin_logout.js: valid-token invalidation, unknown/missing-token no-op, the anti-spoofing AC that a client-supplied f3Name/email is ignored in favour of the token\'s own resolved identity, and no-raw-email-in-log); the settings-menu Logout button has no charter-journey call-site yet — the static-checkin.spec.js settings-menu test covers Feedback/bonus but not Logout — F3Go30-1pqo.2',
+
   // F3Go30-y8j7.1 closed all five product-route deferrals: checkin.bonusAdd/bonusEdit are now
   // driven live by static-checkin.spec.js's settings-menu test (add then edit, through the real
   // UI); checkin.clientTelemetry is driven by checkin-advanced-grid.spec.js's telemetry-flush

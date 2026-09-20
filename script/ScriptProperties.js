@@ -50,11 +50,51 @@ function measureScriptPropertiesSize_(store) {
 }
 
 /**
+ * F3Go30-n0wr.1: re-entrancy guard for the catch-path logging call below. GasLogger's own
+ * initialization reads PropertiesService directly (GasLogger.js:136,146,164) — logging a
+ * PropertiesService outage from inside getScriptPropertiesSnapshot_() can therefore re-enter
+ * this very function via GasLogger, and a plain try/catch around the log call does not stop a
+ * recursive call from happening, only from throwing. This flag makes a nested call while a
+ * failure is already being logged a silent, cheap no-op (constraint 2 of the bead).
+ */
+var scriptPropertiesLoggingOutage_ = false;
+
+/**
+ * F3Go30-n0wr.1: logs a whole-store getProperties() failure to Axiom, same event shape as
+ * PaxCache.js's paxCacheLogSwallowedError_ (errorName + error message, no PAX names or key
+ * values). Not implemented by requiring that helper: PaxCache.js already requires
+ * ScriptProperties.js (for the memo this file owns), so a require the other way would be a
+ * genuine circular dependency (constraint 1) — this is a small inlined copy of the same shape,
+ * not a shared call, for exactly that reason. Bare global GasLogger reference, per this file's
+ * existing convention (see the header) and constraint 1: no require()/gasRequire_() of
+ * GasLogger.js is added here.
+ * Never throws itself, and guarded against re-entering getScriptPropertiesSnapshot_() through
+ * GasLogger's own PropertiesService use (constraint 2).
+ * @param {*} error
+ */
+function logScriptPropertiesSnapshotFailure_(error) {
+  if (scriptPropertiesLoggingOutage_) return; // re-entrant call — no-op, see the flag's docstring
+  scriptPropertiesLoggingOutage_ = true;
+  try {
+    GasLogger.log('getScriptPropertiesSnapshot_.failed', {
+      errorName: error && error.name,
+      error: error && error.message,
+    });
+  } catch (e) {
+    // logging must never be the reason this best-effort read throws
+  } finally {
+    scriptPropertiesLoggingOutage_ = false;
+  }
+}
+
+/**
  * The whole script-properties store for this execution — fetched at most once (see the
  * one-execution-one-request guarantee in this file's header), then served from the memo.
  * Never throws: a PropertiesService failure reads as an empty store, exactly as the per-call
  * getProperties() sites it replaced already degraded, and is NOT memoized so a transient failure
- * can't blank the store for the rest of the execution.
+ * can't blank the store for the rest of the execution. The failure IS reported to Axiom
+ * (F3Go30-n0wr.1) so a whole-store outage is no longer indistinguishable from a genuinely empty
+ * store.
  * @returns {Object<string,string>} Read-only by convention — callers must not mutate it.
  */
 function getScriptPropertiesSnapshot_() {
@@ -66,6 +106,7 @@ function getScriptPropertiesSnapshot_() {
   try {
     store = PropertiesService.getScriptProperties().getProperties() || {};
   } catch (e) {
+    logScriptPropertiesSnapshotFailure_(e);
     return {};
   }
   scriptPropertiesSnapshot_ = store;
@@ -157,5 +198,6 @@ if (typeof module !== 'undefined' && module.exports) {
     getScriptPropertiesSnapshotStats_: getScriptPropertiesSnapshotStats_,
     resetScriptPropertiesSnapshot_: resetScriptPropertiesSnapshot_,
     measureScriptPropertiesSize_: measureScriptPropertiesSize_,
+    logScriptPropertiesSnapshotFailure_: logScriptPropertiesSnapshotFailure_,
   };
 }

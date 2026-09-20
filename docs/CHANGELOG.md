@@ -67,8 +67,9 @@ check-ins occasionally disagreeing with themselves across devices.
   your bonus list) that it won't add extra points, instead of it silently not counting.
 - **New menu — tap your name** in the app header for quick access to How It Works, FAQ, Log Bonus
   Points, Send Feedback (a rating + note that goes straight to your Site Q, with your name and
-  app version attached so they can track it down), and Logout (forgets you on this device but
-  keeps your name and email remembered, so next time it's already filled in).
+  app version attached so they can track it down), and Logout (forgets you on this device AND signs out your saved check-in link server-side, so a
+  lost or shared phone can't keep using it — your name and email stay remembered, so next time
+  it's already filled in).
 - **A "Sign up for next month?" popup** now appears once next month's tracker is ready if you
   haven't signed up for it yet — "Sign Up" drops you straight into the signup form, already filled
   in from this month's goals; "Remind me later" hides it until tomorrow.
