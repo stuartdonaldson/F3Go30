@@ -647,8 +647,8 @@ function handleCheckinIdentify_(templateSpreadsheet, payload) {
 
   var nextMonth = checkNextMonthRegistration_(identity.months, f3Name);
   // F3Go30-xyvs: SignupReminder popup — same trigger data as nextMonth above (next-month tracker
-  // exists, PAX has no record in it) but WITHOUT nextMonth's day-window gate, since the popup is
-  // meant to persist across the whole month rather than only the final few days before it starts.
+  // exists, PAX has no record in it), gated to its own wider window: SIGNUP_REMINDER_POPUP_WINDOW_DAYS_
+  // (5) vs the inline nudge's 3 — see resolveSignupReminder_dw_ (F3Go30-8eoh).
   var signupReminder = resolveSignupReminder_dw_(identity.months, f3Name);
 
   GasLogger.log('checkinWebapp.postIdentityPrep.timing', {

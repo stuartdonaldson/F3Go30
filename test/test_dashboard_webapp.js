@@ -793,8 +793,9 @@ console.log('test_dashboard_webapp.js: nudge-window assertions passed');
 
 // ── resolveSignupReminder_dw_ (F3Go30-xyvs: SignupReminder popup) ────────────────────────────
 // Shares checkNextMonthRegistration_'s underlying Responses lookup (resolveNextMonthRegistrationStatus_dw_)
-// but deliberately has NO day-window gate — the popup must persist for as long as next month's
-// tracker exists and the PAX hasn't signed up, not just the final few days before it starts.
+// and, since F3Go30-8eoh, its own day-window gate — SIGNUP_REMINDER_POPUP_WINDOW_DAYS_ (5), wider
+// than the inline nudge's 3 but no longer "the whole month". A popup that opens over the dashboard
+// three weeks early reads as noise; the two windows stay separate constants on purpose.
 function makeFakeResponsesSheetWithF3Names_(names) {
   var rows = names.map(function(name) {
     var row = new Array(EMPTY_RESPONSES_HEADERS_TEST_.length).fill('');
@@ -819,25 +820,38 @@ function makeFakeResponsesSheetWithF3Names_(names) {
   assert.equal(resolveSignupReminder_dw_(null, 'Anchor'), null);
 })();
 
-(function testResolveSignupReminderFiresFarInAdvanceUnlikeTheNudgeWindow() {
+(function testResolveSignupReminderSkipsWhenFarInAdvance() {
   resetNextMonthRegistrationStatusMemo_();
-  var farFuture = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000); // 20 days out — well outside
-  // checkNextMonthRegistration_'s 3-day nudge window, but this popup has no such gate.
+  var farFuture = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000); // 20 days out
+  // No SpreadsheetApp global at all — if the date gate doesn't short-circuit before ever opening
+  // a spreadsheet, this throws a ReferenceError and fails loudly rather than silently.
+  var result = resolveSignupReminder_dw_({ next: { sheetId: 'sheet-next', label: 'August 2026', startDate: farFuture } }, 'Anchor');
+  assert.equal(result, null, 'F3Go30-8eoh: the popup must not open more than 5 days before the month starts');
+})();
+
+(function testResolveSignupReminderFiresInsideItsOwnWiderWindow() {
+  resetNextMonthRegistrationStatusMemo_();
+  // 4 days out — outside checkNextMonthRegistration_'s 3-day inline-nudge window, inside the
+  // popup's own 5-day one. This is the gap the two separate constants exist to express.
+  var soon = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
   global.SpreadsheetApp = {
     openById: function() { return { getSheetByName: function(name) { return name === 'Responses' ? makeFakeEmptyResponsesSheet_() : null; } }; },
   };
-  var result = resolveSignupReminder_dw_({ next: { sheetId: 'sheet-next', label: 'August 2026', startDate: farFuture } }, 'Anchor');
+  var result = resolveSignupReminder_dw_({ next: { sheetId: 'sheet-next', label: 'August 2026', startDate: soon } }, 'Anchor');
   assert.deepEqual(result, { monthLabel: 'August 2026' });
+  assert.equal(checkNextMonthRegistration_({ next: { sheetId: 'sheet-next', label: 'August 2026', startDate: soon } }, 'Anchor'), null,
+    'the inline nudge keeps its narrower 3-day window — 4 days out is popup-only');
   delete global.SpreadsheetApp;
 })();
 
 (function testResolveSignupReminderReturnsNullWhenAlreadyRegistered() {
   resetNextMonthRegistrationStatusMemo_();
-  var farFuture = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000);
+  var soon = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000); // inside the window — so a null here
+  // can only mean "already registered", never "gated out by the date window".
   global.SpreadsheetApp = {
     openById: function() { return { getSheetByName: function(name) { return name === 'Responses' ? makeFakeResponsesSheetWithF3Names_(['Anchor']) : null; } }; },
   };
-  var result = resolveSignupReminder_dw_({ next: { sheetId: 'sheet-next', label: 'August 2026', startDate: farFuture } }, 'Anchor');
+  var result = resolveSignupReminder_dw_({ next: { sheetId: 'sheet-next', label: 'August 2026', startDate: soon } }, 'Anchor');
   assert.equal(result, null, 'already registered for next month — nothing to remind about');
   delete global.SpreadsheetApp;
 })();

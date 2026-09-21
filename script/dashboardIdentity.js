@@ -1074,6 +1074,24 @@ function resolveFullIdentityFromHandle_(handle) {
 // check-in page.
 var NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_ = 3;
 
+// The same question for the SignupReminder popup (F3Go30-xyvs), which used to have no window at
+// all and so opened over the dashboard for the whole month (F3Go30-8eoh). Wider than the inline
+// nudge's window because a modal is the louder surface of the two and is the one a PAX is most
+// likely to act on — but "within a few days of the month starting", not "all month".
+var SIGNUP_REMINDER_POPUP_WINDOW_DAYS_ = 5;
+
+/**
+ * Whether next month's tracker starts within windowDays of now — the one place the "is it close
+ * enough to nag about next month" question is answered, shared by checkNextMonthRegistration_'s
+ * inline nudge and resolveSignupReminder_dw_'s popup so the two windows stay two constants rather
+ * than two hand-copied date computations that drift apart.
+ */
+function nextMonthStartsWithinDays_dw_(months, windowDays) {
+  if (!months || !months.next) return false;
+  var daysUntilNextMonth = (new Date(months.next.startDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+  return daysUntilNextMonth <= windowDays;
+}
+
 /**
  * Per-execution memo for resolveNextMonthRegistrationStatus_dw_ (F3Go30-nclp), keyed by
  * `${sheetId}::${normalizedF3Name}` — same one-execution-one-request rationale as
@@ -1144,24 +1162,24 @@ function resolveNextMonthRegistrationStatusUncached_dw_(months, f3Name) {
  * one Responses lookup rather than a second TrackerDB read on every dashboard load.
  */
 function checkNextMonthRegistration_(months, f3Name) {
-  if (!months || !months.next) return null;
-  var daysUntilNextMonth = (new Date(months.next.startDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000);
-  if (daysUntilNextMonth > NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_) return null;
+  if (!nextMonthStartsWithinDays_dw_(months, NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_)) return null;
   var status = resolveNextMonthRegistrationStatus_dw_(months, f3Name);
   return status && { registered: status.registered, monthLabel: status.monthLabel };
 }
 
 /**
- * F3Go30-xyvs: SignupReminder popup trigger. Unlike checkNextMonthRegistration_'s inline nudge —
- * gated to only the final NEXT_MONTH_SIGNUP_NUDGE_WINDOW_DAYS_ before next month starts — this
- * popup is meant to persist for as long as next month's tracker exists and the PAX has no record
- * in it yet, so it reuses resolveNextMonthRegistrationStatus_dw_ with no day-window gate. Safe to
- * call unconditionally on every matched identify: resolvePaxRowIndex_dw_ (PaxCache) means the
- * underlying Responses row-column read only happens once per cache cycle, not on every request.
+ * F3Go30-xyvs: SignupReminder popup trigger. Like checkNextMonthRegistration_'s inline nudge it
+ * is day-window gated, but against its own wider SIGNUP_REMINDER_POPUP_WINDOW_DAYS_ (F3Go30-8eoh)
+ * — it used to have no gate at all and opened for the whole month, which reads as noise three
+ * weeks out rather than as a reminder. Otherwise it reuses resolveNextMonthRegistrationStatus_dw_,
+ * so the Responses lookup itself stays in one place. Safe to call unconditionally on every matched
+ * identify: resolvePaxRowIndex_dw_ (PaxCache) means the underlying Responses row-column read only
+ * happens once per cache cycle, not on every request.
  * @returns {{monthLabel: string}|null} null when there's nothing to remind about (no next-month
- *   tracker yet, or the PAX is already registered for it).
+ *   tracker yet, next month is still more than the window away, or the PAX is already registered).
  */
 function resolveSignupReminder_dw_(months, f3Name) {
+  if (!nextMonthStartsWithinDays_dw_(months, SIGNUP_REMINDER_POPUP_WINDOW_DAYS_)) return null;
   var status = resolveNextMonthRegistrationStatus_dw_(months, f3Name);
   if (!status || status.registered) return null;
   return { monthLabel: status.monthLabel };

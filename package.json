@@ -1,6 +1,6 @@
 {
   "name": "f3go30",
-  "version": "2.6.4",
+  "version": "2.6.5",
   "build": 0,
   "private": true,
   "packageManager": "pnpm@11.15.1",
