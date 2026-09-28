@@ -71,6 +71,32 @@ function buildAxiomRows_(entries, fallbackVersion) {
 }
 
 /**
+ * F3Go30-u7nk: the single row sent when Axiom rejects a batch. Deliberately limited to fields
+ * already in the dataset from the start (name/side/version/target/execId + count/error) — a
+ * rejection row that introduced a new field would be rejected by the very limit it reports.
+ * `count` is the number of rows lost, `error` is "<HTTP status>: <first 200 chars of body>", and
+ * `runId` is left off. Pure — unit testable in Node.
+ * @param {Array<Object>} rows - The rejected Axiom rows (as built by buildAxiomRows_).
+ * @param {number} status - HTTP status Axiom returned.
+ * @param {string} body - Response body.
+ * @returns {Object} One Axiom row named 'gasLogger.ingestRejected'.
+ */
+function buildIngestRejectedRow_(rows, status, body) {
+  var first = (rows && rows[0]) || {};
+  var row = {
+    _time: new Date().toISOString(),
+    name: 'gasLogger.ingestRejected',
+    side: 'gas',
+    version: first.version || 'unknown',
+    target: first.target || 'unknown',
+    count: (rows || []).length,
+    error: status + ': ' + String(body || '').slice(0, 200)
+  };
+  if (first.execId) row.execId = first.execId;
+  return row;
+}
+
+/**
  * Masks a name or email so it is safe to include in a GasLogger entry (data passed to
  * GasLogger.log() must never contain a raw PAX name or email address). Keeps the first and
  * last character — an email's domain stays fully visible — replacing everything between
@@ -173,24 +199,36 @@ var GasLogger = {
     var config = this._getAxiomConfig();
     var rows = buildAxiomRows_(entries);
     try {
-      var resp = UrlFetchApp.fetch(
-        'https://api.axiom.co/v1/datasets/' + config.dataset + '/ingest',
-        {
-          method: 'post',
-          contentType: 'application/json',
-          headers: { Authorization: 'Bearer ' + config.token },
-          payload: JSON.stringify(rows),
-          muteHttpExceptions: true
-        }
-      );
-      if (resp.getResponseCode() >= 300) {
+      var resp = this._ingest(config, rows);
+      var code = resp.getResponseCode();
+      if (code >= 300) {
         // Visible in clasp logs (Stackdriver) only — never recurse through GasLogger.log()
         // itself, and intentionally not written to Drive either (see file header).
-        Logger.log('[GasLogger] Axiom ingest non-2xx ' + resp.getResponseCode() + ': ' + resp.getContentText());
+        Logger.log('[GasLogger] Axiom ingest non-2xx ' + code + ': ' + resp.getContentText());
+        // F3Go30-u7nk: Axiom rejects a whole batch when any row adds a field past the dataset's
+        // 256-field limit, so the loss is invisible in Axiom itself. Retry once with a row that
+        // uses only long-established fields, so the loss shows up as a query-able event.
+        var retry = this._ingest(config, [buildIngestRejectedRow_(rows, code, resp.getContentText())]);
+        if (retry.getResponseCode() >= 300) {
+          Logger.log('[GasLogger] Axiom ingestRejected retry non-2xx ' + retry.getResponseCode());
+        }
       }
     } catch (e) {
       Logger.log('[GasLogger] Axiom POST threw: ' + e);
     }
+  },
+
+  _ingest: function(config, rows) {
+    return UrlFetchApp.fetch(
+      'https://api.axiom.co/v1/datasets/' + config.dataset + '/ingest',
+      {
+        method: 'post',
+        contentType: 'application/json',
+        headers: { Authorization: 'Bearer ' + config.token },
+        payload: JSON.stringify(rows),
+        muteHttpExceptions: true
+      }
+    );
   },
 
   /**
@@ -325,6 +363,7 @@ function getScriptProperty(key) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildAxiomRows_: buildAxiomRows_,
+    buildIngestRejectedRow_: buildIngestRejectedRow_,
     maskPiiForLog_: maskPiiForLog_,
     maskRecipientListForLog_: maskRecipientListForLog_
   };

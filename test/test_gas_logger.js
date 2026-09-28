@@ -67,3 +67,47 @@ assert.equal(maskRecipientListForLog_(''), '');
 assert.equal(maskRecipientListForLog_(null), '');
 
 console.log('test_gas_logger.js: PASS');
+
+// F3Go30-u7nk: an Axiom ingest rejection (256-field limit) must surface as a query-able event,
+// not vanish. The retry row uses only long-established fields.
+{
+  const { buildIngestRejectedRow_ } = require('../script/GasLogger.js');
+  const registry = require('./fixtures/axiomFieldRegistry.json');
+  const rejected = buildIngestRejectedRow_(
+    [{ name: 'doPost', version: '2.6.5.1', target: 'TEST', execId: 'e1' }, { name: 'x' }],
+    400, 'field limit exceeded ' + 'y'.repeat(500));
+  assert.equal(rejected.name, 'gasLogger.ingestRejected');
+  assert.equal(rejected.count, 2);
+  assert.equal(rejected.execId, 'e1');
+  assert.ok(rejected.error.startsWith('400: field limit'));
+  assert.ok(rejected.error.length <= 205);
+  const envelope = ['_time', 'name', 'side', 'version', 'target', 'execId'];
+  Object.keys(rejected).filter(k => !envelope.includes(k)).forEach(k =>
+    assert.ok(registry.fields.includes(k), k + ' must be a registered field or the rejection row can itself be rejected'));
+
+  // _postToAxiom: rejected batch -> exactly one retry carrying only the rejection row.
+  const vm = require('node:vm');
+  const fs = require('node:fs');
+  const calls = [];
+  const ctx = vm.createContext({
+    Logger: { log() {} }, console, Object, Array, JSON, Date, String,
+    UrlFetchApp: { fetch(url, opts) {
+      calls.push(JSON.parse(opts.payload));
+      const code = calls.length === 1 ? 400 : 200;
+      return { getResponseCode: () => code, getContentText: () => 'nope' };
+    } },
+  });
+  vm.runInContext(fs.readFileSync(require.resolve('../script/GasLogger.js'), 'utf8') + '\nthis.GL = GasLogger;', ctx);
+  ctx.GL._axiomConfig = { token: 't', dataset: 'd' };
+  ctx.GL._postToAxiom([{ ts: '2026-09-28T00:00:00.000Z', tag: 'doPost', data: { a: 1 }, execId: 'e9' }]);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].length, 1);
+  assert.equal(calls[1][0].name, 'gasLogger.ingestRejected');
+  assert.equal(calls[1][0].count, 1);
+
+  // Accepted batch -> no retry.
+  calls.length = 0;
+  ctx.UrlFetchApp.fetch = (u, o) => { calls.push(1); return { getResponseCode: () => 200, getContentText: () => '' }; };
+  ctx.GL._postToAxiom([{ ts: 't', tag: 'x', data: {} }]);
+  assert.equal(calls.length, 1);
+}

@@ -499,6 +499,30 @@ pnpm run test:gaslogger
 - Falls back to Drive polling and `GAS_LOGGER_LOCAL_PATH` isn't mounted → ensure Google Drive
   for Desktop is running and mounted (only relevant when Axiom isn't configured)
 
+### Axiom dataset field budget (F3Go30-u7nk)
+
+Axiom caps a dataset at 256 fields. A batch that introduces a field past the cap is rejected
+**whole** — every row in it is lost, and `GasLogger` only sees a non-2xx. Symptom: an execution's
+rows never appear in Axiom while a near-identical one does. Since F3Go30-u7nk `GasLogger._postToAxiom`
+retries once with a `gasLogger.ingestRejected` row (`count` = rows lost, `error` = status + body), so
+the loss is query-able: `python tools/query_axiom.py --name gasLogger.ingestRejected`.
+
+- **Budget is deliberate.** `test/fixtures/axiomFieldRegistry.json` lists every top-level log field;
+  `test/test_axiom_field_registry.js` fails when code logs a name not in it. Add a name only after
+  `python tools/axiom_admin.py schema` shows headroom.
+- **New tag-specific data goes under `ctx`.** `GasLogger.log('tag', { ctx: { a: 1, b: 2 } })` —
+  `ctx` is a map field, so its keys are free; query as `['ctx']['a']`. Only fields that are hot,
+  cross-tag, or already queried at top level (e.g. `durationMs`) justify a new top-level name.
+- **Open-ended objects are map fields.** `parameter`/`parameters` (request query params, arbitrary
+  keys), `postData`, `reloaded` and `ctx` are declared Axiom *map fields* so their keys share one field. Declare with
+  `python tools/axiom_admin.py apply-registry` (or `map <name>`). Only new data follows the map
+  shape; legacy flattened columns (`parameter.cmd`) keep counting until the dataset is trimmed.
+  Query with `['parameter']['cmd']`; `tools/activity_log.py` already reads the nested form.
+- **`tools/axiom_admin.py`** is the one place for dataset administration (`check`, `schema`,
+  `fields`, `mapfields`, `map`, `unmap`, `apply-registry`). It uses `axiomManageToken`, which needs
+  `datasets: read` + `update` (map fields); freeing legacy fields (trim/vacuum) is done in the Axiom
+  console or with a token that can also do that.
+
 ### Axiom monitor on `bootstrapAdminSecret_` (F3Go30-4xgj, REVIEW-260910 finding 15)
 
 `bootstrapAdminSecret_` (`script/WebApp.js`) is an unauthenticated race by design — the webapp is
