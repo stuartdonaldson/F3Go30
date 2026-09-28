@@ -1531,6 +1531,72 @@ function makeLeanIdentityResponsesSheet_(rows) {
   delete global.SpreadsheetApp;
 })();
 
+
+// F3Go30-om0t: the Responses-row read is rowIndex-derived too, and carries goals — a stale
+// Responses roster index must never serve (or cache) another PAX's goals under the requested name.
+// Poisoned exactly like the Tracker case above: Newbie's cached Responses offset points at
+// Bystander's row.
+(function testResolveCheckinIdentityLeanRejectsStaleResponsesBind() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+
+  var monthInfo = { sheetId: 'sheet-stale-resp', trackerUrl: 'https://x/stale', label: 'July 2026', startDate: new Date(2026, 6, 1) };
+  var responsesRows = [
+    ['', 'newbie@x.com', 'Yes', 'Newbie', '', 'Crucible', '', 'NewbieWho', 'NewbieWhat', 'NewbieHow', '', '', ''],
+    ['', 'bystander@x.com', 'Yes', 'Bystander', '', '', '', 'ByWho', 'ByWhat', 'ByHow', '', '', ''],
+  ];
+  var trackerRows = [
+    ['Newbie', 'Crucible', '', '', '', '', 5, 0.5, 1, ''],
+    ['Bystander', '', '', '', '', '', 9, 0.9, 1, 1],
+  ];
+  installCountingSpreadsheetApp_({
+    'sheet-stale-resp': {
+      getSheetByName: function(n) {
+        if (n === 'Responses') return makeLeanIdentityResponsesSheet_(responsesRows);
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 6, 1), new Date(2026, 6, 2)],
+            trackerRows
+          );
+        }
+        return null;
+      },
+    },
+  });
+  var PaxCache = require('../script/PaxCache.js');
+  PaxCache.setPaxRosterIndex_('responses', 'sheet-stale-resp', { newbie: 1, bystander: 0 });
+
+  var events = [];
+  var realLog = global.GasLogger.log;
+  global.GasLogger.log = function(name, payload) { events.push({ name: name, payload: payload }); };
+  var identity;
+  try {
+    identity = resolveCheckinIdentityLean_(monthInfo, 'Newbie', null, {}, true);
+  } finally {
+    global.GasLogger.log = realLog;
+  }
+  assert.equal(identity.matched, true);
+  assert.deepEqual(identity.goals, { who: 'NewbieWho', what: 'NewbieWhat', how: 'NewbieHow' }, 'must return Newbie\'s own goals, never Bystander\'s');
+  var cachedRow = PaxCache.getPaxCacheRow_('responses', 'sheet-stale-resp', 'Newbie');
+  assert.equal(cachedRow && cachedRow[3], 'Newbie', 'the cached Responses row under Newbie must be Newbie\'s');
+  assert.equal(PaxCache.getPaxRosterIndex_('responses', 'sheet-stale-resp').newbie, 0, 'roster index rebuilt');
+  assert.ok(events.some(function(e) { return e.name === 'checkinWebapp.resolveIdentity.staleBind' && e.payload.kind === 'responses'; }),
+    'a staleBind event with kind=responses is logged');
+
+  // AC2: a row that STILL doesn't match after the live retry is a miss, never a wrong-row match.
+  // Poison both the index and the cached row entry; the live sheet then has Newbie missing from
+  // the roster index rebuild entirely (name blanked as DELETED).
+  installFakePropertiesStore_();
+  responsesRows[0][2] = 'DELETED';
+  responsesRows[0][3] = 'Newbie';
+  PaxCache.setPaxRosterIndex_('responses', 'sheet-stale-resp', { newbie: 1 });
+  var gone = resolveCheckinIdentityLean_(monthInfo, 'Newbie', null, {}, true);
+  assert.equal(gone.matched, false, 'no live row for the PAX -> matched:false, not Bystander\'s row');
+
+  delete global.SpreadsheetApp;
+})();
 // Companion to the above: a PAX genuinely absent from the Tracker must still report a clean
 // miss. The retry loop must not turn "not on this roster" into a wrong-row match.
 (function testResolveCheckinIdentityLeanStillMissesForAbsentPax() {

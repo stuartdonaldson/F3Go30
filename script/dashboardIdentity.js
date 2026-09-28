@@ -196,19 +196,8 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months, needGoals
   }
   var columns = responsesLayout.columns;
 
-  var responsesRowIndex = resolvePaxRowIndex_dw_('responses', monthInfo.sheetId, f3Name, function() {
-    var rs = responsesSheet_();
-    if (!rs) return [];
-    var lastRow = rs.getLastRow();
-    if (lastRow < 2) return [];
-    var rows = rs.getRange(2, 1, lastRow - 1, rs.getLastColumn()).getValues();
-    // DELETED rows (ADR-008 email-change convention) must never win a name match — blank out
-    // their name here so PaxCache's roster-index builder skips them, same as
-    // findSignupMatchByF3NameOnly_'s live scan does.
-    return rows.map(function(row) {
-      return String(row[columns.PARTICIPATION] || '').trim().toLowerCase() === 'deleted' ? '' : row[columns.F3_NAME];
-    });
-  });
+  function readResponsesNames_() { return readResponsesRosterNames_(responsesSheet_(), columns); }
+  var responsesRowIndex = resolvePaxRowIndex_dw_('responses', monthInfo.sheetId, f3Name, readResponsesNames_);
   if (responsesRowIndex === -1) {
     GasLogger.log('checkinWebapp.resolveIdentity.timing', Object.assign({ matched: false, lean: true, openMs: lazySs.getOpenMs(), totalMs: Date.now() - t0 }, paxCacheStatsForLog_dw_()));
     return { matched: false, months: months };
@@ -217,13 +206,32 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months, needGoals
   // The per-PAX Responses row itself (as opposed to the match above, which only proves
   // existence) backs nothing but goals (WHO/WHAT/HOW) and the registered-email mismatch check —
   // skip fetching/caching it for a caller that surfaces neither (F3Go30-o39s.9 audit, F9).
+  // F3Go30-om0t: this row is rowIndex-derived and carries goals, so it clears the same ownership
+  // gate as the Tracker row below (F3Go30-a2hq): a stale index must never serve — or cache under
+  // this PAX's name — another PAX's row. Mismatch: purge, retry once live; still wrong -> miss.
   var responsesRow = null;
   if (needGoals) {
-    responsesRow = getPaxCacheRow_dw_('responses', monthInfo.sheetId, f3Name);
-    if (!responsesRow) {
-      var rs2 = responsesSheet_();
-      responsesRow = rs2.getRange(responsesRowIndex + 2, 1, 1, rs2.getLastColumn()).getValues()[0];
-      setPaxCacheRow_dw_('responses', monthInfo.sheetId, f3Name, responsesRow);
+    for (var respAttempt = 0; respAttempt < 2; respAttempt++) {
+      if (respAttempt === 1) {
+        responsesRowIndex = resolvePaxRowIndex_dw_('responses', monthInfo.sheetId, f3Name, readResponsesNames_);
+        if (responsesRowIndex === -1) return { matched: false, months: months };
+      }
+      responsesRow = getPaxCacheRow_dw_('responses', monthInfo.sheetId, f3Name);
+      if (!responsesRow) {
+        var rs2 = responsesSheet_();
+        responsesRow = rs2.getRange(responsesRowIndex + 2, 1, 1, rs2.getLastColumn()).getValues()[0];
+        if (responsesRowBelongsToPax_(responsesRow, columns, f3Name)) {
+          setPaxCacheRow_dw_('responses', monthInfo.sheetId, f3Name, responsesRow);
+        }
+      }
+      if (responsesRowBelongsToPax_(responsesRow, columns, f3Name)) break;
+
+      GasLogger.log('checkinWebapp.resolveIdentity.staleBind', {
+        kind: 'responses', lean: true, sheetId: monthInfo.sheetId, requested: f3Name,
+        foundAtRowIndex: responsesRowIndex, attempt: respAttempt,
+      });
+      if (respAttempt === 1) return { matched: false, months: months };
+      purgeStaleTrackerBind_dw_(monthInfo.sheetId, f3Name, 'responses');
     }
   }
   var responsesMs = Date.now() - t1;
@@ -323,6 +331,29 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months, needGoals
       },
     } : undefined,
   };
+}
+
+/**
+ * The Responses F3 Name column as PaxCache's roster-index builder wants it. DELETED rows (ADR-008
+ * email-change convention) must never win a name match, so their name is blanked — same as
+ * findSignupMatchByF3NameOnly_'s live scan.
+ */
+function readResponsesRosterNames_(responsesSheet, columns) {
+  if (!responsesSheet) return [];
+  var lastRow = responsesSheet.getLastRow();
+  if (lastRow < 2) return [];
+  var rows = responsesSheet.getRange(2, 1, lastRow - 1, responsesSheet.getLastColumn()).getValues();
+  return rows.map(function(row) { return responsesRowIsDeleted_(row, columns) ? '' : row[columns.F3_NAME]; });
+}
+
+function responsesRowIsDeleted_(row, columns) {
+  return String(row[columns.PARTICIPATION] || '').trim().toLowerCase() === 'deleted';
+}
+
+/** F3Go30-om0t: the Responses counterpart of trackerRowBelongsToPax_dw_. */
+function responsesRowBelongsToPax_(row, columns, f3Name) {
+  if (!row || responsesRowIsDeleted_(row, columns)) return false;
+  return paxCacheNormalizeName_dw_(row[columns.F3_NAME]) === paxCacheNormalizeName_dw_(f3Name);
 }
 
 function goalHeaderName_(headers, colIndex) {
@@ -1158,12 +1189,7 @@ function resolveNextMonthRegistrationStatusUncached_dw_(months, f3Name) {
   var headers = responsesSheet.getRange(1, 1, 1, responsesSheet.getLastColumn()).getValues()[0];
   var columns = resolveResponseColumns_dw_(headers);
   var rowIndex = resolvePaxRowIndex_dw_('responses', nextMonth.sheetId, f3Name, function() {
-    var lastRow = responsesSheet.getLastRow();
-    if (lastRow < 2) return [];
-    var rows = responsesSheet.getRange(2, 1, lastRow - 1, responsesSheet.getLastColumn()).getValues();
-    return rows.map(function(row) {
-      return String(row[columns.PARTICIPATION] || '').trim().toLowerCase() === 'deleted' ? '' : row[columns.F3_NAME];
-    });
+    return readResponsesRosterNames_(responsesSheet, columns);
   });
 
   return { registered: rowIndex !== -1, monthLabel: nextMonth.label, startDate: nextMonth.startDate, sheetId: nextMonth.sheetId };
@@ -1411,6 +1437,7 @@ if (typeof module !== 'undefined' && module.exports) {
     buildMonthNavigationPayload_dw_: buildMonthNavigationPayload_dw_,
     getPriorMonthTailValues_: getPriorMonthTailValues_,
     getPriorMonthTailContext_: getPriorMonthTailContext_,
+    readResponsesRosterNames_: readResponsesRosterNames_,
     resetPriorMonthTailContextMemo_: resetPriorMonthTailContextMemo_,
     priorMonthTailStatsForLog_: priorMonthTailStatsForLog_,
     buildRosterFromTrackerValues_: buildRosterFromTrackerValues_,

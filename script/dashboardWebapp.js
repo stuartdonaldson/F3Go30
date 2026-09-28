@@ -101,9 +101,10 @@ function trackerRowBelongsToPax_dw_(row, f3Name) {
  * prior wrong-row read will have populated with someone else's values under this PAX's key.
  * Best-effort — a resolver that cannot purge still falls through to a live re-read.
  */
-function purgeStaleTrackerBind_dw_(sheetId, f3Name) {
-  try { if (deletePaxRosterIndex_dw_) deletePaxRosterIndex_dw_('tracker', sheetId); } catch (e) { /* best-effort */ }
-  try { if (deletePaxCacheRow_dw_) deletePaxCacheRow_dw_('tracker', sheetId, f3Name); } catch (e) { /* best-effort */ }
+function purgeStaleTrackerBind_dw_(sheetId, f3Name, kind) {
+  kind = kind || 'tracker'; // F3Go30-om0t: 'responses' for the Responses-row bind
+  try { if (deletePaxRosterIndex_dw_) deletePaxRosterIndex_dw_(kind, sheetId); } catch (e) { /* best-effort */ }
+  try { if (deletePaxCacheRow_dw_) deletePaxCacheRow_dw_(kind, sheetId, f3Name); } catch (e) { /* best-effort */ }
 }
 
 var dashboardWebappBonusModule_ = gasRequire_('./bonusWebapp.js', ['listBonusEntriesForPax_', 'addBonusEntry_', 'editBonusEntry_', 'clearBonusEntry_', 'findBonusRowByIdentity_', 'getAllBonusEntriesCached_', 'getCachedBonusEntriesOnly_']);
@@ -482,7 +483,7 @@ if (typeof module !== 'undefined' && module.exports) {
 var dashboardWebappIdentityModule_ = gasRequire_('./dashboardIdentity.js', [
   'buildTrackerValuesFromPaxCache_', 'resolveCheckinIdentityLean_', 'resolveCheckinIdentity_',
   'resolveDashboardMonth_', 'buildMonthNavigationPayload_dw_', 'getPriorMonthTailValues_',
-  'getPriorMonthTailContext_', 'resetPriorMonthTailContextMemo_', 'priorMonthTailStatsForLog_',
+  'getPriorMonthTailContext_', 'resetPriorMonthTailContextMemo_', 'readResponsesRosterNames_', 'priorMonthTailStatsForLog_',
   'buildRosterFromTrackerValues_', 'warmTrackerMonthIntoPaxCache_',
   'reloadPaxCacheForCurrentAndPriorMonth_', 'resolveCheckinIdentityFull_',
   'buildResolvedContextHandle_', 'monthInfoFromHandle_', 'resolveLeanIdentityFromHandle_',
@@ -498,6 +499,7 @@ var resolveDashboardMonth_ = dashboardWebappIdentityModule_.resolveDashboardMont
 var buildMonthNavigationPayload_dw_ = dashboardWebappIdentityModule_.buildMonthNavigationPayload_dw_;
 var getPriorMonthTailValues_ = dashboardWebappIdentityModule_.getPriorMonthTailValues_;
 var getPriorMonthTailContext_ = dashboardWebappIdentityModule_.getPriorMonthTailContext_;
+var readResponsesRosterNames_ = dashboardWebappIdentityModule_.readResponsesRosterNames_;
 var resetPriorMonthTailContextMemo_ = dashboardWebappIdentityModule_.resetPriorMonthTailContextMemo_;
 var priorMonthTailStatsForLog_ = dashboardWebappIdentityModule_.priorMonthTailStatsForLog_;
 var buildRosterFromTrackerValues_ = dashboardWebappIdentityModule_.buildRosterFromTrackerValues_;
@@ -1786,14 +1788,7 @@ function handleMonthGrid_(templateSpreadsheet, payload) {
   }
   var responsesColumnsForGrid = responsesLayoutForGrid.columns;
   var responsesRowIndex = resolvePaxRowIndex_dw_('responses', monthInfo.sheetId, f3Name, function() {
-    var rs = responsesSheetForGrid_();
-    if (!rs) return [];
-    var lastRow = rs.getLastRow();
-    if (lastRow < 2) return [];
-    var rows = rs.getRange(2, 1, lastRow - 1, rs.getLastColumn()).getValues();
-    return rows.map(function(row) {
-      return String(row[responsesColumnsForGrid.PARTICIPATION] || '').trim().toLowerCase() === 'deleted' ? '' : row[responsesColumnsForGrid.F3_NAME];
-    });
+    return readResponsesRosterNames_(responsesSheetForGrid_(), responsesColumnsForGrid);
   });
   if (responsesRowIndex === -1) {
     GasLogger.log('checkinWebapp.monthGrid.result', { registered: false, monthKey: monthKey, durationMs: Date.now() - t0 });
