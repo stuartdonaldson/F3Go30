@@ -1234,8 +1234,12 @@ function getPaxHistoryWindowValues_(f3Name, currentMonthDayValues, monthInfo, te
   // actually reaches back before this month's first reported day (its "lead"). No lead means the
   // 14-day average and cross-month streak the caller wants have nothing behind them, so this is
   // the same as a miss and must fall through to the backfill below.
+  // F3Go30-btcq: a PAX with no prior-month row can never have a lead, so coverage alone would
+  // send them to the backfill on every read. The stored priorChecked marker says "the prior month
+  // (this sheetId) was consulted and this PAX isn't in it", which covers just as well.
   if (anchored && paxHistoryWindowMatchesTracker_(anchored, currentMonthDayValues)
-      && paxHistoryWindowHasCoverage_(anchored, currentMonthDayValues)) {
+      && (paxHistoryWindowHasCoverage_(anchored, currentMonthDayValues)
+        || paxHistoryPriorAbsenceHolds_(entry, f3Name, priorMonthContext || getPriorMonthTailContext_(monthInfo, templateSpreadsheet)))) {
     return anchored;
   }
 
@@ -1244,8 +1248,12 @@ function getPaxHistoryWindowValues_(f3Name, currentMonthDayValues, monthInfo, te
   // request — passed in here by a caller that already holds it, or taken from the per-execution
   // memo getPriorMonthTailContext_ keeps (same object either way; see its block comment in
   // dashboardIdentity.js). What stays per-PAX is only this PAX's row lookup.
-  var tail = getPriorMonthTailValues_(monthInfo, f3Name, PAX_HISTORY_BACKFILL_DAYS_dw_, templateSpreadsheet,
-    priorMonthContext || getPriorMonthTailContext_(monthInfo, templateSpreadsheet));
+  var priorContext = priorMonthContext || getPriorMonthTailContext_(monthInfo, templateSpreadsheet);
+  var tail = getPriorMonthTailValues_(monthInfo, f3Name, PAX_HISTORY_BACKFILL_DAYS_dw_, templateSpreadsheet, priorContext);
+  // Absent only when the roster read actually succeeded (rowsByNorm set) and has no row for this
+  // PAX — a failed read or a missing prior month must not be cached as "absent".
+  var priorAbsent = !tail.length && !!priorContext && !!priorContext.rowsByNorm
+    && !priorContext.rowsByNorm[paxCacheNormalizeName_dw_(f3Name)];
   if (backfillStats) {
     backfillStats.count++;
     backfillStats.ms += Date.now() - tBackfill0;
@@ -1259,16 +1267,27 @@ function getPaxHistoryWindowValues_(f3Name, currentMonthDayValues, monthInfo, te
   var wouldRegress = entry && entry.historyEndDate && paxHistoryDayDiff_dw_(entry.historyEndDate, anchorIso) < 0;
   if (windowed.length && !wouldRegress && setPaxHistoryEntry_dw_ && paxHistoryEncodeValue_dw_) {
     var days = windowed.map(paxHistoryEncodeValue_dw_).join('');
-    // A roster row with nothing reported yet encodes to all-'.' — storing that would put one
-    // Script Property per never-active PAX in a 500KB store to say "no data", which the miss path
-    // already says for free.
-    if (/[^.]/.test(days)) {
-      var rebuilt = { historyEndDate: anchorIso, days: days };
-      setPaxHistoryEntry_dw_(scopeId, f3Name, rebuilt);
-      if (entriesByNormName) entriesByNormName[paxCacheNormalizeName_dw_(f3Name)] = rebuilt;
-    }
+    // F3Go30-btcq: stored even when all-'.' (a never-active roster PAX). Skipping it saved one
+    // small Script Property per such PAX but made the miss path re-read the prior month's roster
+    // on every dashboard load; the cost is bounded by roster size.
+    var rebuilt = { historyEndDate: anchorIso, days: days };
+    if (priorAbsent) rebuilt.priorChecked = priorContext.sheetId;
+    setPaxHistoryEntry_dw_(scopeId, f3Name, rebuilt);
+    if (entriesByNormName) entriesByNormName[paxCacheNormalizeName_dw_(f3Name)] = rebuilt;
   }
   return windowed;
+}
+
+/**
+ * F3Go30-btcq: true when the entry's priorChecked marker still vouches for "this PAX has no row
+ * in the prior month" — stamped with the prior month's sheetId, so a prior tracker created or
+ * regenerated later (new sheetId) invalidates it. A PaxCache row for the PAX in that same prior
+ * sheet (copyProdTrackerToSit / a roster re-sync added them) also invalidates it. A manual sheet
+ * edit that adds the PAX without a PaxCache re-sync is not detected until the next regeneration.
+ */
+function paxHistoryPriorAbsenceHolds_(entry, f3Name, priorContext) {
+  if (!entry || !entry.priorChecked || !priorContext || entry.priorChecked !== priorContext.sheetId) return false;
+  return !getPaxCacheRow_dw_('tracker', priorContext.sheetId, f3Name);
 }
 
 /** Normalizes a day cell (Tracker) or decoded window character to one comparable value —

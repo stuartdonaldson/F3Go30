@@ -832,7 +832,8 @@ function purgeStalePaxCache(now) {
 // outcomes so buildDashboardPaxRow_ (dashboardWebapp.js) can compute streak/maxStreak30 correctly
 // for every PAX on the board, not just the logged-in viewer, without a month-boundary stitch.
 //
-// Shape: { historyEndDate: "YYYY-MM-DD", days: "<1-char/day string, oldest first>" }.
+// Shape: { historyEndDate: "YYYY-MM-DD", days: "<1-char/day string, oldest first>"[, priorChecked: "<prior-month sheetId>"] }.
+// priorChecked (F3Go30-btcq): the PAX has no row in that prior month — see getPaxHistoryWindowValues_.
 // historyEndDate is the calendar day the LAST character of days represents — required, since a
 // bare day-string alone can't say which day it ends on. Every write shifts days and advances
 // historyEndDate together (advancePaxHistoryEntry_), so the anchor can never drift out of sync
@@ -936,22 +937,28 @@ function advancePaxHistoryEntry_(entry, dateIso, value) {
   if (!entry || !entry.historyEndDate || typeof entry.days !== 'string') {
     return { historyEndDate: dateIso, days: ch };
   }
+  // F3Go30-btcq: the prior-month-absence marker (see getPaxHistoryWindowValues_) rides along, so a
+  // check-in doesn't cost the PAX another prior-month backfill on their next dashboard load.
+  function withMarker(next) {
+    if (entry.priorChecked) next.priorChecked = entry.priorChecked;
+    return next;
+  }
 
   var dayDiff = paxHistoryDayDiff_(entry.historyEndDate, dateIso);
   if (dayDiff === 0) {
-    return { historyEndDate: entry.historyEndDate, days: entry.days.slice(0, -1) + ch };
+    return withMarker({ historyEndDate: entry.historyEndDate, days: entry.days.slice(0, -1) + ch });
   }
   if (dayDiff > 0) {
     var pad = '';
     for (var i = 1; i < dayDiff; i++) pad += '.';
     var days = (entry.days + pad + ch).slice(-PAX_HISTORY_WINDOW_DAYS_);
-    return { historyEndDate: dateIso, days: days };
+    return withMarker({ historyEndDate: dateIso, days: days });
   }
 
   var idxFromEnd = -dayDiff;
   if (idxFromEnd >= entry.days.length) return entry; // older than the stored window — not representable
   var idx = entry.days.length - 1 - idxFromEnd;
-  return { historyEndDate: entry.historyEndDate, days: entry.days.slice(0, idx) + ch + entry.days.slice(idx + 1) };
+  return withMarker({ historyEndDate: entry.historyEndDate, days: entry.days.slice(0, idx) + ch + entry.days.slice(idx + 1) });
 }
 
 /**

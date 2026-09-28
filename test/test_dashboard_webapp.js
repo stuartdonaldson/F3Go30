@@ -1941,6 +1941,103 @@ function makeLeanIdentityResponsesSheet_(rows) {
   global.resolveContextDate_ = function() { return new Date(); };
 })();
 
+
+// handleCheckinDashboard_ integration — F3Go30-btcq: a PAX absent from the prior month's Tracker
+// (joined this month) or never active at all must pay the prior-month backfill at most ONCE per
+// (PAX, prior-month sheetId). Before the fix the rebuilt window was exactly as long as this
+// month's own day values (no lead to cover), or not stored at all (all '.'), so coverage failed
+// on every read and every dashboard load re-read the prior month's roster.
+(function testDashboardCachesAbsentPriorMonthOutcomePerPriorSheetId() {
+  installFakePropertiesStore_();
+  fakeScriptCache_ = makeFakeScriptCache_();
+  global.CacheService = { getScriptCache: function() { return fakeScriptCache_; } };
+  global.resolveContextDate_ = function() { return new Date(2026, 8, 2, 9, 0); }; // "today" = Sept 2
+
+  var augRow2 = ['', '', '', '', '', '', '', '', '', ''];
+  var augRow3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 7, 30), new Date(2026, 7, 31)];
+  var augTrackerRows = [['Veteran', 'Crucible', '', '', '', '', 5, 0.5, 1, 1]];
+  var sepRow2 = ['', '', '', '', '', '', '', '', ''];
+  var sepRow3 = ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1), new Date(2026, 8, 2)];
+  var sepTrackerRows = [
+    ['Veteran', 'Crucible', '', '', '', '', 2, 1.0, 1, 1],
+    ['Newjoin', 'Crucible', '', '', '', '', 1, 0.5, 0, 1], // absent from August, active in Sept
+    ['Ghost', 'Crucible', '', '', '', '', 0, 0, '', ''],    // absent from August, never active
+  ];
+  var emptyBonusSheet = { getLastRow: function() { return 1; }, getRange: function() { return { getValues: function() { return []; } }; } };
+  var augSheet = { getSheetByName: function(n) { return n === 'Tracker' ? makeFakeTrackerSheet_(augRow2, augRow3, augTrackerRows) : null; } };
+  var opens = installCountingSpreadsheetApp_({
+    'sheet-aug': augSheet,
+    'sheet-aug-regen': augSheet,
+    'sheet-sep': {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') return makeFakeTrackerSheet_(sepRow2, sepRow3, sepTrackerRows);
+        if (n === 'Bonus Tracker') return emptyBonusSheet;
+        return null;
+      },
+    },
+  });
+  var priorSheetId = 'sheet-aug';
+  global.resolveTrackerForContextDate = function(targetDate) {
+    if (targetDate.getFullYear() === 2026 && targetDate.getMonth() === 7) {
+      return { sheetId: priorSheetId, trackerUrl: 'https://x/aug', startDate: new Date(2026, 7, 1) };
+    }
+    throw new Error('no tracker for ' + targetDate);
+  };
+  global.formatRegistrationMonth_ = function() { return 'August 2026'; };
+
+  var monthInfo = { sheetId: 'sheet-sep', trackerUrl: 'https://x/sep', label: 'September 2026', startDate: new Date(2026, 8, 1) };
+  function load() {
+    var events = [];
+    var realLog = global.GasLogger.log;
+    global.GasLogger.log = function(name, payload) { events.push({ name: name, payload: payload }); };
+    var result;
+    try {
+      result = handleCheckinDashboard_({}, { f3Name: 'Newjoin', email: 'n@x.com', dateISO: '2026-09-02', resolvedContext: buildResolvedContextHandle_(monthInfo, 1, 'Newjoin') });
+    } finally {
+      global.GasLogger.log = realLog;
+    }
+    assert.equal(result.ok, true);
+    return { result: result, event: events.find(function(e) { return e.name === 'checkinWebapp.dashboard'; }).payload };
+  }
+  function rendered(result) {
+    var byName = {};
+    result.myTeam.forEach(function(r) { byName[r.name] = { streak: r.streak, maxStreak30: r.maxStreak30 }; });
+    return { byName: byName, rollingAverage: result.rollingAverage, priorMonthDayValues: result.priorMonthDayValues };
+  }
+
+  var first = load();
+  assert.equal(first.event.historyBackfillCount, 3, 'cold start: every PAX backfills once');
+  assert.equal(first.event.priorMonthOpens, 1);
+
+  // AC1 + AC2: the absent PAX (Newjoin) and the never-active PAX (Ghost) are served from the
+  // stored window on the next read — no backfill, no prior-month roster read.
+  opens.length = 0;
+  var second = load();
+  assert.equal(second.event.historyBackfillCount, 0, 'warm load must not re-run the backfill for PAX absent from the prior month');
+  assert.equal(second.event.priorMonthOpens, 0, 'warm load must not re-read the prior month roster');
+  assert.equal(opens.filter(function(id) { return id === 'sheet-aug'; }).length, 0);
+  // AC5: rendered output identical before and after.
+  assert.deepEqual(rendered(second.result), rendered(first.result));
+
+  // The marker survives a check-in write-through (advancePaxHistoryEntry_) for the same PAX.
+  var PaxCache = require('../script/PaxCache.js');
+  var advanced = PaxCache.advancePaxHistoryEntry_(PaxCache.getPaxHistoryEntry_('', 'Newjoin'), '2026-09-02', 1);
+  assert.equal(advanced.priorChecked, 'sheet-aug', 'a check-in write must keep the prior-month marker');
+
+  // AC3: the prior month is regenerated (new sheetId) — the marker no longer applies, so the
+  // absent/never-active PAX backfill exactly once more.
+  priorSheetId = 'sheet-aug-regen';
+  var third = load();
+  assert.equal(third.event.historyBackfillCount, 2, 'a changed prior-month sheetId invalidates the absent-PAX marker');
+  var fourth = load();
+  assert.equal(fourth.event.historyBackfillCount, 0);
+  assert.deepEqual(rendered(fourth.result), rendered(first.result));
+
+  delete global.SpreadsheetApp;
+  delete global.resolveTrackerForContextDate;
+  delete global.formatRegistrationMonth_;
+  global.resolveContextDate_ = function() { return new Date(); };
+})();
 // handleCheckinDashboard_ integration — the actual bug this issue fixes: EVERY board row's
 // streak/maxStreak30 must reflect the cross-month rolling window, not just the logged-in viewer's.
 // With the old computeStreak_(dayValues) (this month's own 2 tracker columns only), a teammate's
