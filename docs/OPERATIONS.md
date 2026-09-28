@@ -541,6 +541,74 @@ manual equivalent:
 python tools/query_axiom.py --name bootstrapAdminSecret_ --since 1h
 ```
 
+### Axiom monitor on prior-month dashboard backfill (F3Go30-o7nx)
+
+`F3Go30-btcq` (the dashboard re-running the prior-month history backfill on *every* load for a
+PAX absent from the prior month, instead of once) went unnoticed for weeks even though
+`historyBackfillCount` / `priorMonthOpens` were already logged on every
+`checkinWebapp.dashboard` event (`script/dashboardWebapp.js`, added for exactly this
+visibility). Nothing watched them. This monitor closes that gap: it watches the *ratio* of warm
+loads that still pay for a backfill, not any single event, so a regression like btcq shows up as
+a sustained pattern rather than requiring someone to eyeball counters row by row.
+
+**This repo cannot create the actual Axiom monitor object** (same constraint as
+`bootstrapAdminSecret_` above — `axiomQueryToken` is dataset-scoped read-only, not
+`monitors:write`). The monitor itself is an **operator step**, done once in the Axiom console (or
+via its API with a suitably-scoped token) against the `axiomDataset` from
+`local.settings.json`:
+
+```
+# Suggested Axiom Monitor definition (APL, Monitors -> New Monitor -> Threshold), PROD only:
+['<axiomDataset>']
+| where name == 'checkinWebapp.dashboard' and target == 'TEMPLATE'
+| extend localTime = datetime_add('hour', -7, _time)
+| where dayofmonth(localTime) > 2
+| summarize loads = count(), backfillLoads = countif(historyBackfillCount > 0 or priorMonthOpens > 0) by bin(_time, 1h)
+| extend backfillRatio = backfillLoads * 1.0 / loads
+| where loads >= 5 and backfillRatio > 0.5
+```
+Threshold: **any row** (i.e. count of result rows > 0) in an hourly evaluation window.
+
+**Thresholds and rationale:**
+- `loads >= 5` — a floor so a quiet hour (1-2 loads, all backfilling) can't trip the alert; needs
+  a real burst of warm traffic behaving badly.
+- `backfillRatio > 0.5` — majority of loads in the hour paying the backfill cost. A one-off
+  straggler (a PAX who genuinely just joined, or a client retry) doesn't cross this; a systemic
+  re-run (btcq's actual bug — the backfill re-running for every PAX with no prior-month row, on
+  every request) does.
+- `target == 'TEMPLATE'` restricts this to PROD; SIT's traffic is low-volume/synthetic and would
+  either never reach `loads >= 5` or trip on test-script noise unrelated to real usage.
+- **Rollover suppression (`dayofmonth(localTime) > 2`)**: the first loads after month rollover,
+  and the first load after a new PAX joins, legitimately pay the backfill once — that's expected,
+  not a regression. PAX operate in Pacific time, so the suppression window must be evaluated
+  against Pacific calendar days, not UTC: `_time` is shifted with `datetime_add('hour', -7,
+  _time)` (PDT, UTC-7) before `dayofmonth()`. This under-shifts by an hour for the few weeks a
+  year PST (UTC-8) is in effect, which only widens the suppressed window by up to an hour at the
+  PST/PDT boundary — never narrows it — so it never masks a real regression, only very rarely
+  extends the grace period slightly. Re-check the offset if this monitor is still in use across a
+  DST transition and the extra hour matters.
+- Optional second monitor: hourly `percentile(totalMs, 90) > 8000` on the same `where` clause
+  (same `target`/rollover suppression), for the render-time symptom independent of the backfill
+  counters, in case a future regression shows up as slowness without tripping the counter fields
+  directly.
+
+**Tested** (`tools/query_axiom.py`/ad-hoc APL against `go30-tracker`, 2026-09-21..2026-09-28,
+btcq present but not yet deployed): the primary query fired in **37 of 37** PROD hourly bins that
+cleared the `loads >= 5` floor over that week — every qualifying bin had `backfillRatio == 1`,
+i.e. it would have caught btcq from day one, continuously, not as an occasional blip. The same
+query against SIT (`target == 'TEST'`) over the same window never fired — SIT only logged 3
+`checkinWebapp.dashboard` events total in the period, never enough volume in any hour to clear
+`loads >= 5`; a quiet SIT window is expected and not itself evidence the fix works — re-run this
+same query on PROD after btcq deploys (AC3) to confirm it goes to zero hits outside the rollover
+window.
+
+Until the console monitor exists, the manual check is the raw rows (`tools/query_axiom.py` has no
+`summarize` support, so aggregate by eye or paste the APL above into the Axiom query console):
+```bash
+/mnt/c/dev/venvs/uv1/bin/python tools/query_axiom.py --name checkinWebapp.dashboard --since 1h
+```
+
+
 ### Testing the Web App (cmd=signup, cmd=checkin, and similar)
 
 Use the **SIT environment** (`testScriptId` / `testSpreadsheetId`) for all web app testing.
