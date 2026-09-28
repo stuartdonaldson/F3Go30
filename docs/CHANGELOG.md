@@ -27,6 +27,12 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+- **Faster dashboard for teams with new members** — a team with a PAX who joined this month (or
+  hasn't checked in yet) no longer re-reads last month's tracker on every dashboard load, which was
+  most of the wait (typically 2-4 seconds).
+- **Teammate goals always belong to the teammate** — tapping a teammate now always shows that
+  PAX's own WHO/WHAT/HOW. A stale lookup could previously show blank goals.
+
 - **Next-month sign-up popup only appears near the month boundary** — the pop-up prompting you to sign up for next month now waits until next month is within 5 days of starting, instead of appearing for the whole month beforehand. (The smaller inline nudge on the check-in page keeps its existing 3-day window.)
 - **New Scorecard screen** — tap your name and choose Scorecard to see The Grind Board (every PAX
   ranked, top-3 podium, switchable between total score / workout days / bonus points) and Top
