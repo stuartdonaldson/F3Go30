@@ -3604,6 +3604,131 @@ global.LockService = { getScriptLock: function() { return { waitLock: function()
   delete global.formatRegistrationMonth_;
 })();
 
+
+// F3Go30-ni6z: every exit path of handlePaxGoals_ emits exactly one checkinWebapp.paxDetail event
+// carrying an outcome, and the response shape is unchanged. Goal VALUES are never logged — only
+// counts and, for an empty set read from Responses, the header names the goals were read from.
+(function testHandlePaxGoalsLogsOneOutcomePerExitPath() {
+  function capture(fn) {
+    var events = [];
+    var realLog = global.GasLogger.log;
+    global.GasLogger.log = function(name, payload) { if (name === 'checkinWebapp.paxDetail') events.push(payload); };
+    var out = { result: undefined, thrown: null };
+    try { out.result = fn(); } catch (e) { out.thrown = e; } finally { global.GasLogger.log = realLog; }
+    out.events = events;
+    return out;
+  }
+  function installSep(sheetId, responsesRows, responsesThrows) {
+    global.resolveTrackerForContextDate = function() {
+      return { sheetId: sheetId, trackerUrl: 'https://x/sep', startDate: new Date(2026, 8, 1) };
+    };
+    global.formatRegistrationMonth_ = function() { return 'September 2026'; };
+    var byId = {};
+    byId[sheetId] = {
+      getSheetByName: function(n) {
+        if (n === 'Tracker') {
+          return makeFakeTrackerSheet_(
+            ['', '', '', '', '', '', '', '', '', ''],
+            ['F3 Name', 'Goal / Team', '', '', '', '', 'Raw Score', 'Score', new Date(2026, 8, 1), new Date(2026, 8, 2)],
+            [['Anchor', 'Crucible', '', '', '', '', 5, 0.5, 1, 0], ['Blank', 'Crucible', '', '', '', '', 0, 0, '', '']]
+          );
+        }
+        if (n === 'Responses') {
+          if (responsesThrows) throw new Error('Responses unavailable');
+          return makeLeanIdentityResponsesSheet_(responsesRows);
+        }
+        return null;
+      },
+    };
+    installFakeSpreadsheetById_(byId);
+  }
+  function cleanup() {
+    delete global.SpreadsheetApp;
+    delete global.resolveTrackerForContextDate;
+    delete global.formatRegistrationMonth_;
+  }
+  var rows = [
+    ['', 'anchor@x.com', 'Yes', 'Anchor', 'AO', 'Crucible', '', 'SecretWho', 'SecretWhat', '', '', '', ''],
+    ['', 'blank@x.com', 'Yes', 'Blank', 'AO', 'Crucible', '', '', '', '', '', '', ''],
+  ];
+
+  // missing_f3Name
+  var c = capture(function() { return handlePaxGoals_({}, {}); });
+  assert.deepEqual(c.result, { ok: false, error: 'missing_f3Name' });
+  assert.equal(c.events.length, 1);
+  assert.equal(c.events[0].outcome, 'missing_f3Name');
+
+  // ok (Responses, 2 of 3 goals answered)
+  installFakePropertiesStore_();
+  installSep('sheet-ni6z-ok', rows);
+  c = capture(function() { return handlePaxGoals_({ getId: function() { return 'scope-ni6z-ok'; } }, { f3Name: 'Anchor', monthKey: '2026-09' }); });
+  assert.deepEqual(c.result, { ok: true, f3Name: 'Anchor', goals: { who: 'SecretWho', what: 'SecretWhat', how: '' } });
+  assert.equal(c.events.length, 1);
+  assert.equal(c.events[0].outcome, 'ok');
+  assert.equal(c.events[0].goalCount, 2);
+  assert.equal(c.events[0].goalsEmpty, false);
+  assert.equal(c.events[0].source, 'responses');
+  assert.equal(c.events[0].monthKey, '2026-09');
+  assert.ok(!/Secret/.test(JSON.stringify(c.events[0])), 'goal text must never be logged');
+  cleanup();
+
+  // goals_empty (Responses row found, all three answers blank) — carries the resolved header names
+  installFakePropertiesStore_();
+  installSep('sheet-ni6z-empty', rows);
+  c = capture(function() { return handlePaxGoals_({ getId: function() { return 'scope-ni6z-empty'; } }, { f3Name: 'Blank', monthKey: '2026-09' }); });
+  assert.deepEqual(c.result, { ok: true, f3Name: 'Blank', goals: { who: '', what: '', how: '' } });
+  assert.equal(c.events.length, 1);
+  var ev = c.events[0];
+  assert.equal(ev.outcome, 'goals_empty');
+  assert.equal(ev.goalCount, 0);
+  assert.equal(ev.goalsEmpty, true);
+  assert.equal(ev.source, 'responses');
+  assert.equal(ev.responsesRowFound, true);
+  assert.deepEqual(Object.keys(ev.goalColumns).sort(), ['how', 'what', 'who']);
+  Object.keys(ev.goalColumns).forEach(function(k) { assert.equal(typeof ev.goalColumns[k], 'string'); });
+  cleanup();
+
+  // ok from the paxGoalsRecord fast path
+  installFakePropertiesStore_();
+  var tpl = { getId: function() { return 'scope-ni6z-rec'; } };
+  installSep('sheet-ni6z-rec', rows);
+  upsertPaxGoalsForMonth_dwTest_(paxHistoryScopeId_dw_(tpl), 'Anchor', '2026-09', 'W', 'X', 'Y');
+  c = capture(function() { return handlePaxGoals_(tpl, { f3Name: 'Anchor', monthKey: '2026-09' }); });
+  assert.equal(c.events.length, 1);
+  assert.equal(c.events[0].outcome, 'ok');
+  assert.equal(c.events[0].source, 'paxGoalsRecord');
+  assert.equal(c.events[0].goalCount, 3);
+  cleanup();
+
+  // not_found
+  installFakePropertiesStore_();
+  installSep('sheet-ni6z-nf', rows);
+  c = capture(function() { return handlePaxGoals_({ getId: function() { return 'scope-ni6z-nf'; } }, { f3Name: 'Nobody', monthKey: '2026-09' }); });
+  assert.deepEqual(c.result, { ok: false, error: 'not_found' });
+  assert.equal(c.events.length, 1);
+  assert.equal(c.events[0].outcome, 'not_found');
+  cleanup();
+
+  // no_tracker_for_date
+  installFakePropertiesStore_();
+  global.resolveTrackerForContextDate = function() { throw new Error('no tracker'); };
+  global.formatRegistrationMonth_ = function() { return 'September 2026'; };
+  c = capture(function() { return handlePaxGoals_({ getId: function() { return 'scope-ni6z-nt'; } }, { f3Name: 'Anchor', monthKey: '2026-09' }); });
+  assert.deepEqual(c.result, { ok: false, error: 'no_tracker_for_date' });
+  assert.equal(c.events.length, 1);
+  assert.equal(c.events[0].outcome, 'no_tracker_for_date');
+  cleanup();
+
+  // thrown error: logged with outcome=error + errorText, then re-thrown unchanged
+  installFakePropertiesStore_();
+  installSep('sheet-ni6z-err', rows, true);
+  c = capture(function() { return handlePaxGoals_({ getId: function() { return 'scope-ni6z-err'; } }, { f3Name: 'Anchor', monthKey: '2026-09' }); });
+  assert.ok(c.thrown && /Responses unavailable/.test(c.thrown.message), 'the original error still propagates');
+  assert.equal(c.events.length, 1);
+  assert.equal(c.events[0].outcome, 'error');
+  assert.match(c.events[0].errorText, /Responses unavailable/);
+  cleanup();
+})();
 console.log('test_dashboard_webapp.js: handlePaxGoals_ assertions passed');
 
 // ── Bonus writes refresh the PAX's cached Tracker row (F3Go30-s1a5 item 2) ───────────────────

@@ -235,7 +235,10 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months, needGoals
         ? getResponseEmailValue_dw_(responsesRow, columns, responsesLayout.headers)
         : responsesRow[columns.EMAIL]
     ).trim().toLowerCase();
-    emailMismatch = registeredEmail !== String(email || '').trim().toLowerCase();
+    // F3Go30-bqkn: only meaningful when the caller actually supplied an email — the paxGoals
+    // lookup passes null (not ''), which would otherwise report a mismatch for every row with an
+    // email. identify still passes the client's (possibly blank) email and keeps today's semantics.
+    if (email !== null) emailMismatch = registeredEmail !== String(email || '').trim().toLowerCase();
   }
 
   var t2 = Date.now();
@@ -309,7 +312,22 @@ function resolveCheckinIdentityLean_(monthInfo, f3Name, email, months, needGoals
       what: responsesRow[columns.WHAT] || '',
       how: responsesRow[columns.HOW] || '',
     } : undefined,
+    // F3Go30-ni6z: where the goals came from — header NAMES only (never values), so an empty goal
+    // set in the logs can be told apart as a header-mapping gap vs. genuinely blank answers.
+    goalsSource: needGoals ? {
+      responsesRowIndex: responsesRowIndex,
+      goalColumns: {
+        who: goalHeaderName_(responsesLayout.headers, columns.WHO),
+        what: goalHeaderName_(responsesLayout.headers, columns.WHAT),
+        how: goalHeaderName_(responsesLayout.headers, columns.HOW),
+      },
+    } : undefined,
   };
+}
+
+function goalHeaderName_(headers, colIndex) {
+  if (typeof colIndex !== 'number' || colIndex < 0) return null;
+  return headers && headers[colIndex] != null ? String(headers[colIndex]) : ('#' + colIndex);
 }
 
 /**

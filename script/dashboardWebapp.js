@@ -1626,6 +1626,44 @@ function handleCheckinDashboard_(templateSpreadsheet, payload) {
  * (invariant 8, §4: a missing cache entry is a miss, never rendered as an empty goals set).
  */
 function handlePaxGoals_(templateSpreadsheet, payload) {
+  // F3Go30-ni6z: every exit emits exactly one checkinWebapp.paxDetail event with an outcome, so an
+  // empty goal set, not_found and no_tracker_for_date are distinguishable in Axiom. Response shape
+  // is unchanged; a throw is logged and re-thrown to the dispatcher exactly as before.
+  var diag = {};
+  var result;
+  try {
+    result = resolvePaxGoals_(templateSpreadsheet, payload || {}, diag);
+  } catch (e) {
+    logPaxDetailOutcome_(payload, diag, { outcome: 'error', errorText: String((e && e.message) || e) });
+    throw e;
+  }
+  if (!result.ok) {
+    logPaxDetailOutcome_(payload, diag, { outcome: result.error });
+    return result;
+  }
+  var goalCount = ['who', 'what', 'how'].filter(function(k) {
+    return String((result.goals && result.goals[k]) || '').trim() !== '';
+  }).length;
+  var fields = { outcome: goalCount ? 'ok' : 'goals_empty', goalCount: goalCount, goalsEmpty: !goalCount };
+  if (!goalCount && diag.goalsSource) {
+    fields.responsesRowFound = diag.goalsSource.responsesRowIndex >= 0;
+    fields.goalColumns = diag.goalsSource.goalColumns;
+  }
+  logPaxDetailOutcome_(payload, diag, fields);
+  return result;
+}
+
+function logPaxDetailOutcome_(payload, diag, fields) {
+  var handle = payload && payload.resolvedContext;
+  GasLogger.log('checkinWebapp.paxDetail', Object.assign({
+    f3Name: payload && payload.f3Name,
+    viewerF3Name: handle && handle.f3Name,
+    monthKey: diag.monthKey,
+    source: diag.source,
+  }, fields));
+}
+
+function resolvePaxGoals_(templateSpreadsheet, payload, diag) {
   var targetName = payload.f3Name;
   if (!targetName) return { ok: false, error: 'missing_f3Name' };
 
@@ -1649,23 +1687,24 @@ function handlePaxGoals_(templateSpreadsheet, payload) {
   if (!monthInfo) return { ok: false, error: 'no_tracker_for_date' };
 
   var monthKey = payload.monthKey || _dashboardIsoDate_(monthInfo.startDate).slice(0, 7);
+  diag.monthKey = monthKey;
 
   if (getPaxGoalsForMonth_dw_) {
     var scopeId = paxHistoryScopeId_dw_(templateSpreadsheet);
     var cachedGoals = getPaxGoalsForMonth_dw_(scopeId, targetName, monthKey);
     if (cachedGoals) {
-      GasLogger.log('checkinWebapp.paxDetail', { f3Name: targetName, viewerF3Name: handle && handle.f3Name, monthKey: monthKey, source: 'paxGoalsRecord' });
+      diag.source = 'paxGoalsRecord';
       return { ok: true, f3Name: targetName, goals: cachedGoals };
     }
   }
 
+  // Viewer identity (logged by handlePaxGoals_) comes only from the echoed resolvedContext handle,
+  // never re-resolved here — this action fetches the *target* pax's goals, it doesn't
+  // re-authenticate the viewer.
+  diag.source = 'responses';
   var identity = resolveCheckinIdentityLean_(monthInfo, targetName, null, {}, true);
   if (!identity.matched) return { ok: false, error: 'not_found' };
-
-  // Viewer identity comes only from the echoed resolvedContext handle (never re-resolved here) —
-  // a stale/missing handle just means "viewer unknown" in the log, not a hard failure, since this
-  // action's whole job is fetching the *target* pax's goals, not re-authenticating the viewer.
-  GasLogger.log('checkinWebapp.paxDetail', { f3Name: targetName, viewerF3Name: handle && handle.f3Name, monthKey: monthKey, source: 'responses' });
+  diag.goalsSource = identity.goalsSource;
 
   return { ok: true, f3Name: targetName, goals: identity.goals };
 }
