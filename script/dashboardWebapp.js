@@ -396,29 +396,34 @@ function handleCheckinPost_(e) {
     return jsonOutput_({ ok: false, error: 'invalid_json' });
   }
 
+  // F3Go30-ga01: piggybacked client telemetry is logged before the action runs and acked on
+  // every JSON response below, ok:false included. Never throws (see ClientTelemetryLog.js).
+  var telemetryAck = logPiggybackedClientTelemetry_(payload);
+  function respond_(obj) { return jsonOutput_(attachTelemetryAck_(obj, telemetryAck)); }
+
   var spreadsheet = resolveTemplateSpreadsheet_(e, payload);
   try {
-    if (payload.action === 'identify') return jsonOutput_(handleCheckinIdentify_(spreadsheet, payload));
-    if (payload.action === 'checkin') return jsonOutput_(handleCheckinSubmit_(spreadsheet, payload));
-    if (payload.action === 'dashboard') return jsonOutput_(handleCheckinDashboard_(spreadsheet, payload));
-    if (payload.action === 'paxGoals') return jsonOutput_(handlePaxGoals_(spreadsheet, payload));
-    if (payload.action === 'monthGrid') return jsonOutput_(handleMonthGrid_(spreadsheet, payload));
-    if (payload.action === 'bonusList') return jsonOutput_(handleBonusList_(spreadsheet, payload));
-    if (payload.action === 'bonusAdd') return jsonOutput_(handleBonusAdd_(spreadsheet, payload));
-    if (payload.action === 'bonusEdit') return jsonOutput_(handleBonusEdit_(spreadsheet, payload));
+    if (payload.action === 'identify') return respond_(handleCheckinIdentify_(spreadsheet, payload));
+    if (payload.action === 'checkin') return respond_(handleCheckinSubmit_(spreadsheet, payload));
+    if (payload.action === 'dashboard') return respond_(handleCheckinDashboard_(spreadsheet, payload));
+    if (payload.action === 'paxGoals') return respond_(handlePaxGoals_(spreadsheet, payload));
+    if (payload.action === 'monthGrid') return respond_(handleMonthGrid_(spreadsheet, payload));
+    if (payload.action === 'bonusList') return respond_(handleBonusList_(spreadsheet, payload));
+    if (payload.action === 'bonusAdd') return respond_(handleBonusAdd_(spreadsheet, payload));
+    if (payload.action === 'bonusEdit') return respond_(handleBonusEdit_(spreadsheet, payload));
     // F3Go30-xyri/n40u: client telemetry (captured errors + reconnect-poll outcomes). Dispatched
     // ahead of any spreadsheet-dependent work above — see ClientTelemetryLog.js — but resolving
     // `spreadsheet` unconditionally above is harmless (resolveTemplateSpreadsheet_ fails safe to
     // the bound spreadsheet) and keeps this dispatcher's shape uniform with every other action.
-    if (payload.action === 'clientTelemetry') return jsonOutput_(handleClientTelemetryPost_(payload));
+    if (payload.action === 'clientTelemetry') return respond_(handleClientTelemetryPost_(payload));
     // F3Go30-1pqo.4: settings-menu "Send Feedback" — see handleSiteFeedback_ below.
-    if (payload.action === 'siteFeedback') return jsonOutput_(handleSiteFeedback_(spreadsheet, payload));
+    if (payload.action === 'siteFeedback') return respond_(handleSiteFeedback_(spreadsheet, payload));
     // F3Go30-1pqo.2: settings-menu "Logout" server-side half — see handleCheckinLogout_ below.
-    if (payload.action === 'logout') return jsonOutput_(handleCheckinLogout_(spreadsheet, payload));
-    return jsonOutput_({ ok: false, error: 'unknown_action' });
+    if (payload.action === 'logout') return respond_(handleCheckinLogout_(spreadsheet, payload));
+    return respond_({ ok: false, error: 'unknown_action' });
   } catch (err) {
     GasLogger.logError('handleCheckinPost_.error', err, { action: payload.action });
-    return jsonOutput_({ ok: false, error: 'server_error' });
+    return respond_({ ok: false, error: 'server_error' });
   }
 }
 

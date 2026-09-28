@@ -62,6 +62,16 @@ stamps the client's build as `clientVersion` (F3Go30-833s.15), which `WebApp.js`
 request log — query it in Axiom (`tools/query_axiom.py`) to find the oldest build still posting.
 Clients missing the field log as `legacy`.
 
+**Client telemetry piggyback (F3Go30-ga01), an example of the rule:** every `callApi` request
+except `clientTelemetry` carries an optional `clientRequestId` (logged on the `doPost` row, and
+stamped on any client error record for that request) and, when the client's queue is non-empty,
+an optional `telemetry: { records: [...] }` (≤ 5 records, ~2KB). `handleCheckinPost_` logs those
+records before running the action and returns `telemetryAck: [ids]` on every JSON response,
+`ok:false` included. The client dequeues only acked ids. An old client sends neither field and is
+unchanged. A new client on an old server gets no `telemetryAck` and falls back to the standalone
+`clientTelemetry` upload. Server dedupe is per-id CacheService keys (6h TTL). The retired
+`CLIENT_TELEMETRY_DEDUPE_SEEN_IDS` Script Property is no longer read or written and can be deleted.
+
 Clients also *self-heal* once they do reach the server: an identify response's `config.appVersion`
 is compared against the document's own `STATIC_BUILD_VERSION_`, and a mismatch raises a
 dismissible "newer version available — reload" banner (F3Go30-833s.18). That shortens the skew

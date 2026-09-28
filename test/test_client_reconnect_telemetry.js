@@ -177,6 +177,27 @@ function jsonResponse_(body, meta) {
   });
 }
 
+/** F3Go30-ga01: a current server — acks every telemetry record the request carried piggyback. */
+function ackingJsonResponse_(fetchOpts, body, meta) {
+  var sent = JSON.parse(fetchOpts.body);
+  var carried = (sent.telemetry && sent.telemetry.records) || [];
+  var ack = carried.length ? { telemetryAck: carried.map(function(r) { return r.id; }) } : {};
+  return jsonResponse_(Object.assign({}, body, ack), meta);
+}
+
+/** Every distinct echoKey sample the client ever captured: still queued, or already sent
+ * piggyback / standalone (F3Go30-ga01 drains the queue as it goes). */
+function echoKeySamplesEverCaptured_(h) {
+  var byId = {};
+  var queued = JSON.parse(h.fakeLocalStorage.getItem('go30ClientTelemetryQueue:v1') || '[]');
+  var sent = [];
+  h.fetchCalls.forEach(function(c) {
+    sent = sent.concat((c.body.telemetry && c.body.telemetry.records) || [], c.body.records || []);
+  });
+  queued.concat(sent).forEach(function(rec) { if (rec.kind === 'echoKey') byId[rec.id] = rec; });
+  return Object.keys(byId).map(function(id) { return byId[id]; });
+}
+
 function httpErrorResponse_(status, meta) {
   meta = meta || {};
   return Promise.resolve({
@@ -397,8 +418,8 @@ function testSuccessfulCallQueuesAnEchoKeySampleWithoutANewConnection() {
 // (and thus that the old unconditional flush always fired a real POST).
 function testRepeatedSameEchoKeyDoesNotQueueASecondSample() {
   var h = makeReconnectHarness_({
-    fetchImpl: function() {
-      return jsonResponse_({}, {
+    fetchImpl: function(url, fetchOpts) {
+      return ackingJsonResponse_(fetchOpts, {}, {
         url: 'https://script.googleusercontent.com/macros/echo?user_content_key=same-key',
         redirected: true,
       });
@@ -409,8 +430,7 @@ function testRepeatedSameEchoKeyDoesNotQueueASecondSample() {
   }).then(function() {
     return h.callApi('identify', {});
   }).then(function() {
-    var queue = JSON.parse(h.fakeLocalStorage.getItem('go30ClientTelemetryQueue:v1') || '[]');
-    var samples = queue.filter(function(rec) { return rec.kind === 'echoKey'; });
+    var samples = echoKeySamplesEverCaptured_(h);
     assert.equal(samples.length, 1, 'three successes with the SAME key must produce exactly one baseline sample');
   });
 }
@@ -421,8 +441,8 @@ function testChangedEchoKeyQueuesANewSample() {
   var keys = ['key-a', 'key-a', 'key-b'];
   var call = 0;
   var h = makeReconnectHarness_({
-    fetchImpl: function() {
-      return jsonResponse_({}, {
+    fetchImpl: function(url, fetchOpts) {
+      return ackingJsonResponse_(fetchOpts, {}, {
         url: 'https://script.googleusercontent.com/macros/echo?user_content_key=' + keys[call++],
         redirected: true,
       });
@@ -433,8 +453,7 @@ function testChangedEchoKeyQueuesANewSample() {
   }).then(function() {
     return h.callApi('identify', {});
   }).then(function() {
-    var queue = JSON.parse(h.fakeLocalStorage.getItem('go30ClientTelemetryQueue:v1') || '[]');
-    var samples = queue.filter(function(rec) { return rec.kind === 'echoKey'; });
+    var samples = echoKeySamplesEverCaptured_(h);
     assert.equal(samples.length, 2, 'the third call (a different key) must add a second sample, on top of the first baseline one');
     assert.notEqual(samples[0].echoKeyHash, samples[1].echoKeyHash);
   });
@@ -446,12 +465,12 @@ function testChangedEchoKeyQueuesANewSample() {
 function testManySuccessfulCallsProduceFewerTelemetryUploadsThanCalls() {
   var N = 8;
   var h = makeReconnectHarness_({
-    fetchImpl: function() {
+    fetchImpl: function(url, fetchOpts) {
       // Every call resolves to the SAME echo key — the common healthy-traffic case — so with
       // change-detection sampling only the first call ever queues a sample, and with no
       // automatic post-success flush, no clientTelemetry POST is issued at all during these N
       // calls (before this fix: N clientTelemetry POSTs, one per call).
-      return jsonResponse_({}, {
+      return ackingJsonResponse_(fetchOpts, {}, {
         url: 'https://script.googleusercontent.com/macros/echo?user_content_key=steady-key',
         redirected: true,
       });
@@ -920,6 +939,132 @@ function testRepaintDoesNothingOnIdentifyStep() {
   assert.equal(h.loadCalls.loadBonusList_, 0);
 }
 
+// ── F3Go30-ga01: piggyback + ack + clientRequestId ──────────────────────────────────────────
+
+// Excludes the echoKey baseline sample a successful round trip captures on its own (F3Go30-f1cr).
+function queue_(h) { return JSON.parse(h.fakeLocalStorage.getItem('go30ClientTelemetryQueue:v1') || '[]').filter(function(r) { return r.kind !== 'echoKey'; }); }
+function settle_() { return new Promise(function(resolve) { setImmediate(resolve); }); }
+
+// AC1: every request except the standalone upload carries clientRequestId; records ride only
+// when the queue is non-empty.
+function testEveryRequestCarriesClientRequestIdAndTelemetryOnlyWhenQueued() {
+  var h = makeReconnectHarness_({ fetchImpl: function(url, fetchOpts) { return ackingJsonResponse_(fetchOpts, {}); } });
+  return h.callApi('identify', {}).then(function() {
+    var first = h.fetchCalls[0].body;
+    assert.ok(first.clientRequestId, 'clientRequestId on every request');
+    assert.equal(first.telemetry, undefined, 'empty queue -> no telemetry field');
+    h.captureClientTelemetry_('scorecardView', 'open');
+    return h.callApi('dashboard', {});
+  }).then(function() {
+    var second = h.fetchCalls[1].body;
+    assert.ok(second.clientRequestId && second.clientRequestId !== h.fetchCalls[0].body.clientRequestId);
+    assert.ok(second.telemetry.records.some(function(r) { return r.action === 'open'; }), 'the queued record rides the next request');
+    h.captureClientTelemetry_('scorecardView', 'tab');
+    h.flushClientTelemetryQueue_();
+    return settle_();
+  }).then(function() {
+    var upload = h.fetchCalls[2].body;
+    assert.equal(upload.action, 'clientTelemetry');
+    assert.equal(upload.clientRequestId, undefined, 'the standalone upload carries neither field');
+    assert.equal(upload.telemetry, undefined);
+  });
+}
+
+// AC1/AC2: errors first, then the rest newest-first, at most 5.
+function testPiggybackSelectsErrorsFirstThenNewestFirstCappedAtFive() {
+  var h = makeReconnectHarness_({ fetchImpl: function(url, fetchOpts) { return ackingJsonResponse_(fetchOpts, {}); } });
+  ['a1', 'a2', 'a3', 'a4', 'a5'].forEach(function(a) { h.captureClientTelemetry_('scorecardView', a); });
+  h.captureClientTelemetry_('error', 'e1', { errorText: 'x' });
+  h.captureClientTelemetry_('scorecardView', 'a6');
+  return h.callApi('identify', {}).then(function() {
+    var actions = h.fetchCalls[0].body.telemetry.records.map(function(r) { return r.action; });
+    assert.deepEqual(actions, ['e1', 'a6', 'a5', 'a4', 'a3']);
+  });
+}
+
+// AC1: the ~2KB budget — an oversized record is skipped, smaller ones still ride.
+function testPiggybackRespectsByteBudget() {
+  var h = makeReconnectHarness_({ fetchImpl: function(url, fetchOpts) { return ackingJsonResponse_(fetchOpts, {}); } });
+  h.captureClientTelemetry_('scorecardView', 'small1');
+  h.captureClientTelemetry_('scorecardView', 'huge', { blob: new Array(3000).join('x') });
+  h.captureClientTelemetry_('scorecardView', 'small2');
+  return h.callApi('identify', {}).then(function() {
+    var body = h.fetchCalls[0].body;
+    assert.deepEqual(body.telemetry.records.map(function(r) { return r.action; }), ['small2', 'small1']);
+    assert.ok(JSON.stringify(body.telemetry.records).length <= 2048);
+    assert.deepEqual(queue_(h).map(function(r) { return r.action; }), ['huge'], 'only the acked records leave the queue');
+  });
+}
+
+// AC3: only acked ids are dequeued; an ok:false response still acks.
+function testOnlyAckedIdsAreDequeuedIncludingOnOkFalse() {
+  var h = makeReconnectHarness_({
+    fetchImpl: function(url, fetchOpts) {
+      var carried = JSON.parse(fetchOpts.body).telemetry.records;
+      return jsonResponse_({ ok: false, error: 'not_found', telemetryAck: [carried[0].id] });
+    },
+  });
+  h.captureClientTelemetry_('scorecardView', 'older');
+  h.captureClientTelemetry_('scorecardView', 'newer');
+  return h.callApi('identify', {}).then(function() { assert.fail('ok:false must reject'); }, function() {
+    assert.deepEqual(queue_(h).map(function(r) { return r.action; }), ['older'], 'newer (acked) removed, older (not acked) kept');
+  });
+}
+
+// AC3/AC6: a transport failure acks nothing, and the thrown error carries the request's id so the
+// error record can be joined to the server's doPost row.
+function testTransportFailureKeepsRecordsAndStampsClientRequestId() {
+  var h = makeReconnectHarness_({ fetchImpl: function() { return transportRejection_(); } });
+  h.captureClientTelemetry_('scorecardView', 'queued');
+  return h.callApi('checkin', { day: 1 }).then(function() { assert.fail('must reject'); }, function(err) {
+    assert.equal(queue_(h).length, 1, 'nothing acked on a transport failure');
+    assert.equal(err.clientRequestId, h.fetchCalls[0].body.clientRequestId);
+    h.captureClientError_('checkin', err);
+    var rec = queue_(h).filter(function(r) { return r.kind === 'error'; })[0];
+    assert.equal(rec.clientRequestId, h.fetchCalls[0].body.clientRequestId, 'AC6: error record carries the failed request id');
+  });
+}
+
+// AC8: an old server (no telemetryAck in the response) -> fall back to the standalone upload.
+function testOldServerWithoutAckFallsBackToStandaloneFlush() {
+  var h = makeReconnectHarness_({ fetchImpl: function() { return jsonResponse_({}); } });
+  h.captureClientTelemetry_('scorecardView', 'queued');
+  return h.callApi('identify', {}).then(settle_).then(function() {
+    var uploads = h.fetchCalls.filter(function(c) { return c.body.action === 'clientTelemetry'; });
+    assert.equal(uploads.length, 1, 'old server: the standalone upload drains the queue');
+    assert.equal(queue_(h).length, 0);
+  });
+}
+
+// Concurrent requests don't both carry the same record.
+function testConcurrentRequestsDoNotCarryTheSameRecords() {
+  var h = makeReconnectHarness_({ fetchImpl: function(url, fetchOpts) { return ackingJsonResponse_(fetchOpts, {}); } });
+  h.captureClientTelemetry_('scorecardView', 'only');
+  return Promise.all([h.callApi('identify', {}), h.callApi('dashboard', {})]).then(function() {
+    var carriers = h.fetchCalls.filter(function(c) { return c.body.telemetry; });
+    assert.equal(carriers.length, 1);
+  });
+}
+
+// AC9: the hide-time beacon sends newest-first.
+function testHideBeaconSendsNewestFirst() {
+  var h = makeReconnectHarness_();
+  h.captureClientTelemetry_('scorecardView', 'first');
+  h.captureClientTelemetry_('scorecardView', 'second');
+  h.fireVisibilityHidden();
+  return h.sendBeaconCalls[0].blob.text().then(function(text) {
+    assert.deepEqual(JSON.parse(text).records.map(function(r) { return r.action; }), ['second', 'first']);
+  });
+}
+
+// A caller-minted clientRequestId (pax-detail's F3Go30-ni6z capture) is used as-is.
+function testCallerSuppliedClientRequestIdIsKept() {
+  var h = makeReconnectHarness_({ fetchImpl: function(url, fetchOpts) { return ackingJsonResponse_(fetchOpts, {}); } });
+  return h.callApi('paxGoals', { f3Name: 'X', clientRequestId: 'caller-id-1' }).then(function() {
+    assert.equal(h.fetchCalls[0].body.clientRequestId, 'caller-id-1');
+  });
+}
+
 function run() {
   const tests = [
     testCaptureClientErrorQueuesARecord,
@@ -969,6 +1114,15 @@ function run() {
     testRepaintReloadsCalendarWhenAdvancedGridOpen,
     testRepaintDoesNothingOnPlainCheckinStep,
     testRepaintDoesNothingOnIdentifyStep,
+    testEveryRequestCarriesClientRequestIdAndTelemetryOnlyWhenQueued,
+    testPiggybackSelectsErrorsFirstThenNewestFirstCappedAtFive,
+    testPiggybackRespectsByteBudget,
+    testOnlyAckedIdsAreDequeuedIncludingOnOkFalse,
+    testTransportFailureKeepsRecordsAndStampsClientRequestId,
+    testOldServerWithoutAckFallsBackToStandaloneFlush,
+    testConcurrentRequestsDoNotCarryTheSameRecords,
+    testHideBeaconSendsNewestFirst,
+    testCallerSuppliedClientRequestIdIsKept,
   ];
   return tests.reduce(function(chain, test) {
     return chain.then(function() {

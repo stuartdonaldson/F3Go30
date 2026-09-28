@@ -49,3 +49,16 @@ describe('buildWebAppRequestLog_ client version', function() {
     assert.equal(log.clientVersion, 'legacy');
   });
 });
+
+describe('buildWebAppRequestLog_ clientRequestId (F3Go30-ga01)', function() {
+  it('carries clientRequestId from the post body', function() {
+    var e = { postData: { type: 'text/plain', length: 50, contents: JSON.stringify({ action: 'dashboard', clientRequestId: 'req-abc', f3Name: 'Hidden' }) } };
+    assert.equal(buildWebAppRequestLog_(e).clientRequestId, 'req-abc');
+  });
+
+  it('is null for an old client, a GET, or an unparseable body', function() {
+    assert.equal(buildWebAppRequestLog_({ postData: { type: 'text/plain', length: 5, contents: JSON.stringify({ action: 'identify' }) } }).clientRequestId, null);
+    assert.equal(buildWebAppRequestLog_({ parameter: {} }).clientRequestId, null);
+    assert.equal(buildWebAppRequestLog_({ postData: { type: 'x', length: 3, contents: 'a=b' } }).clientRequestId, null);
+  });
+});

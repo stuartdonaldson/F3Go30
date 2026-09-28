@@ -24,6 +24,17 @@ function extractClientVersion_(e) {
   }
 }
 
+/** F3Go30-ga01: the client-minted per-request id, or null. Same body-parse rules as above. */
+function extractClientRequestId_(e) {
+  if (!e || !e.postData || !e.postData.contents) return null;
+  try {
+    var payload = JSON.parse(e.postData.contents);
+    return (payload && typeof payload.clientRequestId === 'string') ? payload.clientRequestId.slice(0, 64) : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 /**
  * Never includes postData.contents — request bodies (cmd=signup, cmd=admin) carry PAX
  * names/emails or secrets, and GasLogger.log() data must never contain either. Only
@@ -41,7 +52,10 @@ function buildWebAppRequestLog_(e) {
       type: e.postData.type,
       length: e.postData.length
     } : null,
-    clientVersion: extractClientVersion_(e)
+    clientVersion: extractClientVersion_(e),
+    // F3Go30-ga01: joins a client-side error/timeout record (which carries the same id) to the
+    // execution that served — or kept running after — the request.
+    clientRequestId: extractClientRequestId_(e)
   };
 }
 

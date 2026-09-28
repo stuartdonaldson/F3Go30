@@ -6,19 +6,20 @@
  * stream — see static-pages/src/index.html's captureClientTelemetry_/flushClientTelemetryQueue_).
  *
  * Dedupes by the client-minted record id so a client that retries an upload before getting an
- * ack doesn't produce duplicate Axiom rows (each record is only logged once, ever, within the
- * dedupe window below), then logs each not-yet-seen record via GasLogger — same sink as every
- * other server-side event, tagged 'clientTelemetry' so it's queryable/aggregable separately from
- * normal request logs (F3Go30-xyri AC).
+ * ack doesn't produce duplicate Axiom rows, then logs each not-yet-seen record via GasLogger — same
+ * sink as every other server-side event, tagged 'clientTelemetry' so it's queryable/aggregable
+ * separately from normal request logs (F3Go30-xyri AC).
  *
- * Dedup store: PropertiesService, not CacheService — CacheService's TTL caps at 6 hours, shorter
- * than the ~2-day dedupe window this needs (same reasoning as PaxCache.js's header comment). One
- * JSON blob of {id: isoTimestamp}, pruned to CLIENT_TELEMETRY_DEDUPE_WINDOW_DAYS_ on every write
- * so it can't grow without bound the way an un-pruned id list would.
+ * F3Go30-ga01: records normally ride piggyback on ordinary requests (payload.telemetry.records)
+ * and every response carrying them returns telemetryAck: [ids], so the client dequeues on ack.
+ * With acks, re-sends are rare and short-lived, so the dedupe store is CacheService per-id keys
+ * (TTL 6h, the CacheService cap). The earlier whole-blob Script Property ({id: ts}, 2-day window)
+ * was read-modify-written per request, so concurrent requests raced it and duplicates got through.
+ * The generic loadDedupeSeenIds_/saveDedupeSeenIds_ store below stays for siteFeedback.js.
  */
 
-var CLIENT_TELEMETRY_DEDUPE_PROPERTY_ = 'CLIENT_TELEMETRY_DEDUPE_SEEN_IDS';
-var CLIENT_TELEMETRY_DEDUPE_WINDOW_DAYS_ = 2;
+var CLIENT_TELEMETRY_DEDUPE_TTL_SECONDS_ = 6 * 60 * 60;
+var CLIENT_TELEMETRY_DEDUPE_KEY_PREFIX_ = 'ctlSeen:';
 var CLIENT_TELEMETRY_BATCH_MAX_ = 25; // defensive cap independent of the client's own queue cap
 
 var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
@@ -69,52 +70,81 @@ function pruneDedupeSeenIds_(map, windowDays, nowMs) {
   return pruned;
 }
 
-function _loadClientTelemetrySeenIds_() {
-  return loadDedupeSeenIds_(CLIENT_TELEMETRY_DEDUPE_PROPERTY_);
-}
-
-function _saveClientTelemetrySeenIds_(map) {
-  saveDedupeSeenIds_(CLIENT_TELEMETRY_DEDUPE_PROPERTY_, map);
-}
-
-/** Drops entries older than the dedupe window. Pure (no PropertiesService access) so it's
- * unit-testable without a GAS stub. */
-function pruneClientTelemetrySeenIds_(map, nowMs) {
-  return pruneDedupeSeenIds_(map, CLIENT_TELEMETRY_DEDUPE_WINDOW_DAYS_, nowMs);
+function clientTelemetryDedupeKey_(id) {
+  return CLIENT_TELEMETRY_DEDUPE_KEY_PREFIX_ + String(id).slice(0, 200); // CacheService keys cap at 250 chars
 }
 
 /**
  * Logs each not-yet-seen record via GasLogger, skipping (not erroring on) records already seen
- * within the dedupe window or missing an id — a client-supplied batch is untrusted input, not a
- * contract the server can enforce shape on. Never throws.
+ * within the dedupe TTL or missing an id — a client-supplied batch is untrusted input, not a
+ * contract the server can enforce shape on. A CacheService failure degrades to "no dedupe", never
+ * to dropping records.
  * @param {Array<Object>} records - Client-captured telemetry records (F3Go30-xyri shape: id, ts,
  *   kind, action, ...).
  * @param {Object=} context - Extra fields stamped on every logged row (e.g. { ns: payload.ns }).
- * @returns {{logged: number, skipped: number}}
+ * @returns {{logged: number, skipped: number, ackIds: Array<string>}} ackIds: every id logged now
+ *   or already seen — what the client may dequeue.
  */
 function handleClientTelemetryBatch_(records, context) {
   var list = Array.isArray(records) ? records.slice(0, CLIENT_TELEMETRY_BATCH_MAX_) : [];
-  var seen = pruneClientTelemetrySeenIds_(_loadClientTelemetrySeenIds_());
+  var cache = null;
+  var seen = {};
+  try {
+    cache = CacheService.getScriptCache();
+    var keys = list.filter(function(rec) { return rec && rec.id; }).map(function(rec) { return clientTelemetryDedupeKey_(rec.id); });
+    seen = (keys.length && cache.getAll(keys)) || {};
+  } catch (e) { cache = null; seen = {}; }
   var logged = 0, skipped = 0;
+  var ackIds = [];
+  var toPut = {};
   list.forEach(function(rec) {
     if (!rec || !rec.id) { skipped++; return; }
-    if (seen[rec.id]) { skipped++; return; }
+    var key = clientTelemetryDedupeKey_(rec.id);
+    if (seen[key] || toPut[key]) { skipped++; ackIds.push(String(rec.id)); return; }
     var data = Object.assign({}, rec, context || {});
     // PAX identity: mask like every other GasLogger entry (file header PII rule) — f3Name is the
     // one PII-shaped field a captured record can carry (F3Go30-xyri addendum #2).
     if (data.f3Name && maskPiiForLog_ctl_) data.f3Name = maskPiiForLog_ctl_(data.f3Name);
     GasLogger.log('clientTelemetry', data);
-    seen[rec.id] = new Date().toISOString();
+    toPut[key] = '1';
+    ackIds.push(String(rec.id));
     logged++;
   });
-  _saveClientTelemetrySeenIds_(seen);
-  return { logged: logged, skipped: skipped };
+  if (cache && Object.keys(toPut).length) {
+    try { cache.putAll(toPut, CLIENT_TELEMETRY_DEDUPE_TTL_SECONDS_); } catch (e) { /* best-effort: costs one re-log at most */ }
+  }
+  return { logged: logged, skipped: skipped, ackIds: ackIds };
 }
 
 /** Handler for the `clientTelemetry` action (handleCheckinPost_'s dispatcher). */
 function handleClientTelemetryPost_(payload) {
   var result = handleClientTelemetryBatch_(payload && payload.records, { ns: (payload && payload.ns) || '' });
-  return { ok: true, logged: result.logged, skipped: result.skipped };
+  return { ok: true, logged: result.logged, skipped: result.skipped, telemetryAck: result.ackIds };
+}
+
+/**
+ * F3Go30-ga01: logs the telemetry records a normal request carried piggyback
+ * (payload.telemetry.records) and returns the ids to ack, or null when the request carried none
+ * (and for the clientTelemetry action itself, which carries its records at top level). Never
+ * throws: a telemetry failure must not affect the action — it acks nothing ([]) so the records
+ * ride the next request.
+ */
+function logPiggybackedClientTelemetry_(payload) {
+  var records = payload && payload.action !== 'clientTelemetry' && payload.telemetry && payload.telemetry.records;
+  if (!Array.isArray(records) || !records.length) return null;
+  try {
+    return handleClientTelemetryBatch_(records, {
+      ns: payload.ns || '', carrierAction: payload.action || '', carrierRequestId: payload.clientRequestId || '',
+    }).ackIds;
+  } catch (e) {
+    return [];
+  }
+}
+
+/** Merges telemetryAck into a JSON response object (ok:true or ok:false alike) when non-null. */
+function attachTelemetryAck_(response, ackIds) {
+  if (!ackIds || !response || typeof response !== 'object') return response;
+  return Object.assign({}, response, { telemetryAck: ackIds });
 }
 
 if (typeof module !== 'undefined' && module.exports) {
@@ -122,8 +152,9 @@ if (typeof module !== 'undefined' && module.exports) {
     loadDedupeSeenIds_: loadDedupeSeenIds_,
     saveDedupeSeenIds_: saveDedupeSeenIds_,
     pruneDedupeSeenIds_: pruneDedupeSeenIds_,
-    pruneClientTelemetrySeenIds_: pruneClientTelemetrySeenIds_,
     handleClientTelemetryBatch_: handleClientTelemetryBatch_,
-    handleClientTelemetryPost_: handleClientTelemetryPost_
+    handleClientTelemetryPost_: handleClientTelemetryPost_,
+    logPiggybackedClientTelemetry_: logPiggybackedClientTelemetry_,
+    attachTelemetryAck_: attachTelemetryAck_
   };
 }
