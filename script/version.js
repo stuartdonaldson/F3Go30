@@ -1,6 +1,6 @@
 // F3 Go30 Tracker — version info
-const APP_VERSION      = '2.6.5.1';
-const APP_VERSION_DATE = '2026-09-28T22:36:37.554Z';
+const APP_VERSION      = '2.6.5.2';
+const APP_VERSION_DATE = '2026-09-29T00:01:29.941Z';
 const APP_AUTHOR       = 'Stuart Donaldson (F3 Little John)';
 const APP_CONTACT      = 'stu@asyn.com';
 const APP_DEPLOY_TARGET  = 'TEST';
