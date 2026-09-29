@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { makeFakeLocalStorage_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-833s.17: the instant-paint snapshot (localStorage go30CheckinSnapshot:v1) used to replay
 // the date-free scalars todayStatus/yesterdayStatus exactly as saved, while the TODAY/YESTERDAY
@@ -42,12 +43,8 @@ function makeHarness_(opts) {
     extractBlock_(src, '  function isoDate_(d) {', '  function monthKeyOf_(d) {') +
     extractBlock_(src, '  var CHECKIN_SNAPSHOT_KEY_', '  // F3Go30-833s.1: the check-in token itself');
 
-  var store = {};
-  var fakeLocalStorage = {
-    getItem: function(k) { return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; },
-    setItem: function(k, v) { store[k] = String(v); },
-    removeItem: function(k) { delete store[k]; },
-  };
+  var fakeLocalStorage = makeFakeLocalStorage_();
+  var store = fakeLocalStorage._store;
 
   var factory = new Function(
     'localStorage', 'Date', 'clearTokenFromStorage_',

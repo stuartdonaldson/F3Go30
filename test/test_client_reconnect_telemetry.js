@@ -1,26 +1,10 @@
 const assert = require('node:assert/strict');
-const { readStaticPage_, extractTransportBlock_, extractFunction_ } = require('./helpers/staticPageExtract');
+const { readStaticPage_, extractTransportBlock_, extractFunction_, makeFakeLocalStorage_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-xyri (client-side error telemetry) + F3Go30-n40u (background reconnect poll) — both
 // live in the static page's transport block (static-pages/src/index.html), extracted and run
 // here as REAL code against injected stand-ins, same pattern as
 // test_client_transport_resilience.js.
-
-/** In-memory localStorage stand-in — real enough for JSON.stringify/parse round trips and a
- * quota-exceeded simulation. */
-function makeFakeLocalStorage_(opts) {
-  opts = opts || {};
-  var store = {};
-  return {
-    getItem: function(key) { return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null; },
-    setItem: function(key, value) {
-      if (opts.throwOnSet) throw new Error('QuotaExceededError');
-      store[key] = value;
-    },
-    removeItem: function(key) { delete store[key]; },
-    _store: store,
-  };
-}
 
 /**
  * Builds the transport block with injected stand-ins, exposing the F3Go30-xyri/n40u surface
@@ -1017,7 +1001,12 @@ function testTransportFailureKeepsRecordsAndStampsClientRequestId() {
   var h = makeReconnectHarness_({ fetchImpl: function() { return transportRejection_(); } });
   h.captureClientTelemetry_('scorecardView', 'queued');
   return h.callApi('checkin', { day: 1 }).then(function() { assert.fail('must reject'); }, function(err) {
-    assert.equal(queue_(h).length, 1, 'nothing acked on a transport failure');
+    var notLost = queue_(h).filter(function(r) { return r.kind !== 'lostResponse'; });
+    assert.deepEqual(notLost.map(function(r) { return r.action; }), ['queued'], 'nothing acked on a transport failure');
+    // F3Go30-5c2a.9 AC5: the failed attempt itself is recorded, joined by the request's id.
+    var lost = queue_(h).filter(function(r) { return r.kind === 'lostResponse'; });
+    assert.equal(lost.length, 1, 'one lostResponse record for the one failed write attempt');
+    assert.equal(lost[0].clientRequestId, h.fetchCalls[0].body.clientRequestId);
     assert.equal(err.clientRequestId, h.fetchCalls[0].body.clientRequestId);
     h.captureClientError_('checkin', err);
     var rec = queue_(h).filter(function(r) { return r.kind === 'error'; })[0];

@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { readStaticPage_, extractTransportBlock_, extractLoadDashboardBlock_ } = require('./helpers/staticPageExtract');
+const { readStaticPage_, extractTransportBlock_, extractLoadDashboardBlock_, makeFakeLocalStorage_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-5p3z: every dashboard render attempt (loadDashboard_) must emit one client telemetry
 // record carrying request-issued/response-received timestamps, whether the response was
@@ -14,11 +14,7 @@ const { readStaticPage_, extractTransportBlock_, extractLoadDashboardBlock_ } = 
  * stubbed so queued records can be inspected directly.
  */
 function makeTelemetryHarness_() {
-  var store = {};
-  var fakeLocalStorage = {
-    getItem: function(k) { return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; },
-    setItem: function(k, v) { store[k] = v; },
-  };
+  var fakeLocalStorage = makeFakeLocalStorage_();
   var fakeWindow = { addEventListener: function() {} };
   var fakeNavigator = { onLine: true };
 

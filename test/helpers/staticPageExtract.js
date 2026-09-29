@@ -55,6 +55,24 @@ function extractLoadDashboardBlock_(src) {
   return src.slice(startIdx, endIdx);
 }
 
+/** In-memory localStorage stand-in for the extracted-page harnesses — values coerced to strings
+ * as the real Storage does, `initial` seeds the store, `opts.throwOnSet` simulates a quota-exceeded
+ * write. Shared (F3Go30-5c2a.9) so the harnesses stop hand-rolling their own copy. */
+function makeFakeLocalStorage_(opts) {
+  opts = opts || {};
+  var store = Object.assign({}, opts.initial || {});
+  return {
+    getItem: function(key) { return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null; },
+    setItem: function(key, value) {
+      if (opts.throwOnSet) throw new Error('QuotaExceededError');
+      store[key] = String(value);
+    },
+    removeItem: function(key) { delete store[key]; },
+    _store: store,
+  };
+}
+
 module.exports = {
   readStaticPage_, extractTransportBlock_, extractShowApiError_, extractFunction_, extractLoadDashboardBlock_,
+  makeFakeLocalStorage_,
 };

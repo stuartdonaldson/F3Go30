@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { readStaticPage_, extractTransportBlock_, extractShowApiError_ } = require('./helpers/staticPageExtract');
+const { readStaticPage_, extractTransportBlock_, extractShowApiError_, makeFakeLocalStorage_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-313u: the static page's POST to the GAS /exec endpoint answers 302 ->
 // script.googleusercontent.com/macros/echo, and that second hop is observably unreliable — seen
@@ -49,21 +49,24 @@ function makeTransportHarness_(fetchImpl) {
 
   var factory = new Function(
     'WEBAPP_URL', 'CMD_', 'NS_', 'CONTEXT_DATE_', 'STATIC_BUILD_VERSION_',
-    'fetch', 'setTimeout', 'clearTimeout', 'AbortController', '$', 'window',
+    'fetch', 'setTimeout', 'clearTimeout', 'AbortController', '$', 'window', 'localStorage', 'navigator',
     body +
     '\nreturn { callApi: callApi, pending: function() { return pendingRequestCount_; },' +
-    '\n         isUnloading: function() { return pageIsUnloading_; } };'
+    '\n         isUnloading: function() { return pageIsUnloading_; },' +
+    '\n         captureClientError_: captureClientError_ };'
   );
 
   // The real updateSyncingIndicator_ comes with the block; this stands in for the element it
-  // toggles, so "Syncing…" visibility is observed rather than assumed.
+  // toggles, so "Syncing…" visibility (and its attempt-numbered label, F3Go30-5c2a.9) is
+  // observed rather than assumed.
   var syncingHidden = true;
-  var syncingNote = { classList: { toggle: function(c, on) { if (c === 'hidden') syncingHidden = !!on; } } };
+  var syncingNote = { textContent: '⟳ Syncing…', classList: { toggle: function(c, on) { if (c === 'hidden') syncingHidden = !!on; } } };
+  var fakeLocalStorage = makeFakeLocalStorage_();
   var fns = factory(
     'https://example.test/exec', 'checkin', '', '', '2.4.7.6',
     wrappedFetch, fakeSetTimeout, fakeClearTimeout, AbortController,
     function(id) { return id === 'checkinSyncingNote' ? syncingNote : null; },
-    fakeWindow
+    fakeWindow, fakeLocalStorage, { onLine: true }
   );
 
   return {
@@ -74,6 +77,10 @@ function makeTransportHarness_(fetchImpl) {
     timers: timers,
     clearedIds: clearedIds,
     syncingHidden: function() { return syncingHidden; },
+    syncingText: function() { return syncingNote.textContent; },
+    captureClientError_: fns.captureClientError_,
+    /** Every clientTelemetry record still queued (nothing in these tests acks them). */
+    telemetry: function() { return JSON.parse(fakeLocalStorage.getItem('go30ClientTelemetryQueue:v1') || '[]'); },
     /** Fires every timer scheduled so far (the request timeouts), as the event loop would. */
     fireTimers: function() {
       var due = timers.splice(0, timers.length);
@@ -198,7 +205,7 @@ function flush_() {
   });
 })();
 
-// ── AC2: read-only actions retry once ────────────────────────────────────────────────────────
+// ── AC2: read-only actions retry (up to 3 attempts since F3Go30-5c2a.9) ───────────────────────
 
 ['identify', 'dashboard', 'bonusList', 'monthGrid'].forEach(function(action) {
   (function testIdempotentActionRetriesOnce() {
@@ -213,12 +220,23 @@ function flush_() {
   })();
 });
 
-(function testRetryIsOnlyOnce() {
+(function testReadIsAttemptedAtMostThreeTimes() {
   var h = makeTransportHarness_(function() { return Promise.reject(transportError_()); });
   return h.callApi('identify', {}).then(function() {
-    assert.fail('identify must reject once the retry also fails');
+    assert.fail('identify must reject once every attempt fails');
   }, function() {
-    assert.equal(h.fetchCalls.length, 2, 'a failing read must be attempted exactly twice, never more (AC2)');
+    assert.equal(h.fetchCalls.length, 3,
+      'a failing read must be attempted exactly 3 times, never more (F3Go30-5c2a.9 AC3, superseding 313u AC2)');
+  });
+})();
+
+(function testReadRecoversOnTheThirdAttempt() {
+  var h = makeTransportHarness_(function(url, opts, attempt) {
+    return attempt < 3 ? Promise.reject(transportError_()) : okResponse_({ ok: true, matched: true });
+  });
+  return h.callApi('identify', {}).then(function(res) {
+    assert.equal(h.fetchCalls.length, 3);
+    assert.equal(res.matched, true, 'the third attempt\'s response must be what callApi resolves with (5c2a.9 AC3)');
   });
 })();
 
@@ -239,6 +257,115 @@ function flush_() {
   }).then(function(res) {
     assert.equal(h.fetchCalls.length, 2, 'a timed-out read must be retried, not just failed (AC2)');
     assert.equal(res.matched, true);
+  });
+})();
+
+// ── F3Go30-5c2a.9: a non-JSON response is a lost response, not a server answer ────────────────
+// Live PROD 2026-09-29: after doPost has already run, Google either 404s the echo leg with a
+// Drive "unable to open the file" page, or bounces the POST back to /exec as a GET, whose doGet
+// renders the Check-In HTML page with HTTP 200. Neither is the server's answer.
+
+var ECHO_URL_ = 'https://script.googleusercontent.com/macros/echo?user_content_key=abc&lib=x';
+var EXEC_URL_ = 'https://script.google.com/macros/s/AKfy/exec?cmd=checkin';
+
+function htmlResponse_(status, url) {
+  return Promise.resolve({
+    ok: status >= 200 && status < 300, status: status, url: url, redirected: true,
+    json: function() { return Promise.reject(new SyntaxError('Unexpected token \'<\', "<!DOCTYPE "... is not valid JSON')); },
+  });
+}
+
+[[200, EXEC_URL_, 'exec'], [404, ECHO_URL_, 'echo'], [502, 'https://example.test/other', 'other']].forEach(function(c) {
+  (function testHtmlBodyOnAWriteIsATransportClassLoss() {
+    var h = makeTransportHarness_(function() { return htmlResponse_(c[0], c[1]); });
+    return h.callApi('checkin', { day: 'today', value: 1 }).then(function() {
+      assert.fail('a lost response must reject');
+    }, function(err) {
+      assert.equal(err.isTransport, true, 'HTTP ' + c[0] + ' + HTML body must be transport-class (5c2a.9 AC1)');
+      assert.doesNotMatch(err.message, /Unexpected token|Server returned/, 'raw parse/HTTP text must not reach the PAX (AC1)');
+      assert.equal(err.ctx && err.ctx.lostResponse, c[2], 'mode must be classified from res.url (AC1)');
+      assert.equal(err.ctx.httpStatus, c[0], 'the HTTP status must be carried (AC1)');
+      assert.equal(h.fetchCalls.length, 1, 'a write is still never retried, even on a lost response (AC3)');
+    });
+  })();
+});
+
+(function testHtmlBodyOnAReadIsRetried() {
+  var h = makeTransportHarness_(function(url, opts, attempt) {
+    return attempt === 1 ? htmlResponse_(200, EXEC_URL_) : okResponse_({ ok: true, matched: true });
+  });
+  return h.callApi('paxGoals', {}).then(function(res) {
+    assert.equal(h.fetchCalls.length, 2, 'a read that got an HTML page must be re-asked (5c2a.9 AC3)');
+    assert.equal(res.matched, true);
+  });
+})();
+
+(function testSyncingLabelCarriesTheAttemptNumber() {
+  var releaseSecond;
+  var h = makeTransportHarness_(function(url, opts, attempt) {
+    if (attempt === 1) return htmlResponse_(404, ECHO_URL_);
+    return new Promise(function(resolve) { releaseSecond = function() { resolve({ ok: true, status: 200, json: function() { return Promise.resolve({ ok: true }); } }); }; });
+  });
+  var p = h.callApi('identify', {});
+  assert.equal(h.syncingText(), '⟳ Syncing…', 'first attempt keeps the plain label (5c2a.9 AC4)');
+  return flush_().then(function() {
+    assert.equal(h.syncingHidden(), false);
+    assert.equal(h.syncingText(), '⟳ Syncing-2…', 'a retry in flight must show its attempt number (AC4)');
+    releaseSecond();
+    return p;
+  }).then(function() {
+    assert.equal(h.syncingHidden(), true, 'nothing pending → hidden (AC4)');
+    assert.equal(h.syncingText(), '⟳ Syncing…', 'label resets once no retry is in flight (AC4)');
+  });
+})();
+
+(function testEveryLostAttemptIsRecordedEvenWhenRecovered() {
+  var h = makeTransportHarness_(function(url, opts, attempt) {
+    if (attempt === 1) return htmlResponse_(200, EXEC_URL_);
+    if (attempt === 2) return Promise.reject(transportError_());
+    return okResponse_({ ok: true });
+  });
+  return h.callApi('identify', {}).then(function() {
+    var lost = h.telemetry().filter(function(r) { return r.kind === 'lostResponse'; });
+    assert.equal(lost.length, 2, 'one lostResponse record per failed attempt, recovered or not (5c2a.9 AC5)');
+    assert.equal(lost[0].action, 'identify');
+    assert.deepEqual([lost[0].ctx.mode, lost[0].ctx.httpStatus, lost[0].ctx.attempt], ['exec', 200, 1]);
+    assert.deepEqual([lost[1].ctx.mode, lost[1].ctx.httpStatus, lost[1].ctx.attempt], ['network', null, 2]);
+    assert.equal(typeof lost[0].ctx.elapsedMs, 'number');
+    lost.forEach(function(r) {
+      ['lostResponse', 'mode', 'httpStatus', 'attempt'].forEach(function(k) {
+        assert.ok(!(k in r) || k === 'kind', k + ' must live under ctx, not top-level (u7nk field budget, AC5)');
+      });
+    });
+  });
+})();
+
+(function testTimeoutIsRecordedAsTimeoutMode() {
+  var h = makeTransportHarness_(function(url, opts, attempt) {
+    if (attempt === 1) {
+      return new Promise(function(_resolve, reject) {
+        opts.signal.addEventListener('abort', function() { reject(new Error('The operation was aborted.')); });
+      });
+    }
+    return okResponse_({ ok: true });
+  });
+  var p = h.callApi('identify', {});
+  return flush_().then(function() { h.fireTimers(); return p; }).then(function() {
+    var lost = h.telemetry().filter(function(r) { return r.kind === 'lostResponse'; });
+    assert.equal(lost.length, 1);
+    assert.equal(lost[0].ctx.mode, 'timeout', 'our own abort must be recorded as timeout (5c2a.9 AC5)');
+  });
+})();
+
+(function testFinalErrorRecordCarriesTheLostResponseCtx() {
+  var h = makeTransportHarness_(function() { return htmlResponse_(404, ECHO_URL_); });
+  return h.callApi('checkin', { day: 'today', value: 1 }).then(function() { assert.fail('must reject'); }, function(err) {
+    h.captureClientError_('checkin', err);
+    var rec = h.telemetry().filter(function(r) { return r.kind === 'error'; })[0];
+    assert.ok(rec, 'captureClientError_ must queue an error record');
+    assert.equal(rec.isTransport, true);
+    assert.equal(rec.ctx && rec.ctx.lostResponse, 'echo', 'the final error record must carry the lost-response ctx (AC5)');
+    assert.equal(rec.ctx.httpStatus, 404);
   });
 })();
 

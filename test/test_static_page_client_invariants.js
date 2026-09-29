@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { readStaticPage_, extractFunction_ } = require('./helpers/staticPageExtract');
+const { readStaticPage_, extractFunction_, makeFakeLocalStorage_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-giqm: static-pages/src/index.html was originally built as a "faithful port" of the
 // GAS-hosted CheckinApp.html + IdentityCore.html (per static-checkin.spec.js's header). DR-04
@@ -383,11 +383,8 @@ function makeBannerHarness_(fromGas, opts) {
     }
     return elements[id];
   }
-  var storage = Object.assign({}, opts.storage || {});
-  var fakeLocalStorage = {
-    getItem: function(k) { return Object.prototype.hasOwnProperty.call(storage, k) ? storage[k] : null; },
-    setItem: function(k, v) { storage[k] = v; },
-  };
+  var fakeLocalStorage = makeFakeLocalStorage_({ initial: opts.storage });
+  var storage = fakeLocalStorage._store;
   var sessionStore = Object.assign({}, opts.sessionStorage || {});
   var fakeSessionStorage = {
     getItem: function(k) { return Object.prototype.hasOwnProperty.call(sessionStore, k) ? sessionStore[k] : null; },

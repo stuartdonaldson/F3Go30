@@ -101,9 +101,15 @@ test.describe('Client transport resilience (F3Go30-313u)', () => {
 
   test('AC1: a request whose response never arrives settles, releases the UI, and does not hang', async ({ page }) => {
     await page.goto(idlePageUrl());
-    // Never fulfilled, never aborted — the exact shape observed on SIT: GAS ran the call and
-    // answered, and the response never reached the browser. Before F3Go30-313u this hung forever.
-    await page.route('**/exec*', () => { /* swallow */ });
+    // 3-attempt read contract (F3Go30-5c2a.9, superseding F3Go30-313u's "retry exactly once").
+    // Only the FIRST attempt is swallowed (never fulfilled, never aborted -- the exact shape
+    // observed on SIT: GAS answered and the response never reached the browser), which proves
+    // the real AbortController timeout fires. Attempts 2 and 3 are aborted immediately, so the
+    // test costs one 12s timeout rather than 3 x 12s and stays under the H4 30s ceiling.
+    const attempts = await interceptExec(page, async (route, action, nth) => {
+      if (nth === 1) return; // swallow
+      return route.abort('failed');
+    });
 
     const started = Date.now();
     const settled = await page.evaluate(() => window.callApi('identify', { f3Name: 'X' }, 'signup')
@@ -112,9 +118,8 @@ test.describe('Client transport resilience (F3Go30-313u)', () => {
 
     expect(settled).toContain('rejected');
     expect(settled).not.toContain('Failed to fetch');
-    // Two 8s read attempts plus overhead — the point is that it settles at all, well short of
-    // the forever it used to take.
-    expect(elapsed).toBeLessThan(45000);
+    expect(attempts.filter((a) => a === 'identify')).toHaveLength(3);
+    expect(elapsed).toBeLessThan(25000);
     await expect(page.locator('#checkinSyncingNote')).toBeHidden();
   });
 

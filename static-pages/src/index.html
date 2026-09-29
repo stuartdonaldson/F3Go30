@@ -1365,6 +1365,12 @@
   // retrying one risks a duplicate signup, check-in or bonus row.
   var RETRYABLE_ACTIONS_ = ['identify', 'dashboard', 'bonusList', 'monthGrid', 'paxGoals'];
 
+  // F3Go30-5c2a.9: total attempts for a RETRYABLE_ACTIONS_ read on a transport-class failure
+  // (first try + 2 retries). Live PROD 2026-09-29 lost ~15-20% of responses per attempt, so one
+  // retry still failed ~1 read in 25-50; three attempts bring that to ~1 in 125-200. Worst case
+  // the PAX waits 3 x REQUEST_TIMEOUT_MS_ before the banner; the Syncing note shows the attempt.
+  var MAX_READ_ATTEMPTS_ = 3;
+
   var NETWORK_ERROR_MESSAGE_ = 'Couldn’t reach the server. Check your internet connection and try again.';
 
   // A request aborted because the page is going away is not a failure worth alarming anyone
@@ -1415,6 +1421,55 @@
     });
   }
 
+  /** F3Go30-5c2a.9: which leg lost the response, from where the redirect chain ended. 'echo' —
+   * script.googleusercontent.com/macros/echo answered with Drive's "unable to open the file" page
+   * (HTTP 404); 'exec' — Google bounced the POST back to /exec as a GET, so doGet rendered the
+   * Check-In HTML page (HTTP 200); 'other' — anything else. Never throws. */
+  function lostResponseMode_(res) {
+    try {
+      var url = String((res && res.url) || '');
+      if (url.indexOf('googleusercontent.com') !== -1) return 'echo';
+      if (/\/exec(\?|$)/.test(url)) return 'exec';
+    } catch (e) { /* best effort */ }
+    return 'other';
+  }
+
+  /** One attempt, parsed. Our server always answers JSON, so a body that does not parse is not
+   * its answer — it is a Google page standing in for a response that was lost after doPost may
+   * already have run (F3Go30-5c2a.9). That is raised as transport-class, like a below-HTTP loss:
+   * same PAX-facing message, same retry eligibility. A body that parses is the server's answer
+   * and callApi handles it exactly as before (HTTP error text, json.error text, no retry). */
+  function fetchParsedAttempt_(url, bodyJson, timeoutMs) {
+    var startedAt = Date.now();
+    return fetchAttempt_(url, bodyJson, timeoutMs).then(function(res) {
+      return res.json().then(function(json) {
+        return { res: res, json: json };
+      }, function() {
+        throw makeTransportError_({
+          redirected: !!res.redirected,
+          elapsedMs: Date.now() - startedAt,
+          ctx: { lostResponse: lostResponseMode_(res), httpStatus: res.status }
+        });
+      });
+    });
+  }
+
+  /** F3Go30-5c2a.9 AC5: one 'lostResponse' record per transport-class failed attempt — including
+   * one a later retry recovers, which otherwise leaves no trace — so PROD telemetry can count
+   * each loss mode. New fields live under ctx only (F3Go30-u7nk Axiom field budget). */
+  function captureLostAttempt_(action, err, attempt) {
+    var ctx = err && err.ctx;
+    captureClientTelemetry_('lostResponse', action, {
+      clientRequestId: (err && err.clientRequestId) || '',
+      ctx: {
+        mode: ctx && ctx.lostResponse ? ctx.lostResponse : (err && err.abortedAtTimeout ? 'timeout' : 'network'),
+        httpStatus: ctx && typeof ctx.httpStatus === 'number' ? ctx.httpStatus : null,
+        attempt: attempt,
+        elapsedMs: (err && typeof err.elapsedMs === 'number') ? err.elapsedMs : null
+      }
+    });
+  }
+
   /** F3Go30-5c2a.1: extracts identity of the Apps Script redirect echo endpoint (script.
    * googleusercontent.com/macros/echo?user_content_key=...) a response actually resolved to, so
    * two requests' telemetry can be compared for "same key or different key" — the evidence the
@@ -1439,6 +1494,11 @@
   // indicator must stay visible until the LAST outstanding request settles, not just the first.
   var pendingRequestCount_ = 0;
 
+  // F3Go30-5c2a.9 AC4: the current attempt of each in-flight request, keyed by a per-call
+  // sequence number, so the Syncing note can show the highest retry in flight.
+  var inFlightAttempts_ = {};
+  var inFlightSeq_ = 0;
+
   // F3Go30-os03 D5/Addendum 3: a monotonic, never-reset counter ordering identify reads against
   // this PAX's own write acks — a plain integer, not Date.now(), because a wall clock is not
   // monotonic (NTP correction, DST, a manual clock change) and the scenario this exists for is an
@@ -1448,7 +1508,11 @@
 
   function updateSyncingIndicator_() {
     var el = $('checkinSyncingNote');
-    if (el) el.classList.toggle('hidden', pendingRequestCount_ <= 0);
+    if (!el) return;
+    el.classList.toggle('hidden', pendingRequestCount_ <= 0);
+    var top = 1;
+    Object.keys(inFlightAttempts_).forEach(function(k) { if (inFlightAttempts_[k] > top) top = inFlightAttempts_[k]; });
+    el.textContent = top > 1 ? '⟳ Syncing-' + top + '…' : '⟳ Syncing…';
   }
 
   // `cmd` (F3Go30-833s.9) selects the server dispatcher per call rather than per page: this one
@@ -1594,18 +1658,32 @@
         if (carried.length) body.telemetry = { records: carried };
       }
       var bodyJson = JSON.stringify(body);
+      var seq = ++inFlightSeq_;
+      var attempt = 0;
       pendingRequestCount_++;
-      updateSyncingIndicator_();
-      return fetchAttempt_(url, bodyJson, timeoutMs).catch(function(err) {
-        // Exactly one retry, and only for a read that died below HTTP. A server that ANSWERED —
-        // any status, any json.ok:false — is not re-asked: it has already made its decision, and
-        // repeating the call would only double the load while returning the same answer.
-        if (!mayRetry || !err || !err.isTransport) throw err;
-        return fetchAttempt_(url, bodyJson, timeoutMs);
-      }).then(function(res) {
+      // Up to MAX_READ_ATTEMPTS_ for a read whose response was lost (below HTTP, or a non-JSON
+      // Google page — F3Go30-5c2a.9); a write gets exactly one. A server that ANSWERED — any
+      // status, any json.ok:false — is not re-asked: it has already made its decision, and
+      // repeating the call would only multiply the load while returning the same answer.
+      function attemptOnce_() {
+        attempt++;
+        inFlightAttempts_[seq] = attempt;
+        updateSyncingIndicator_();
+        return fetchParsedAttempt_(url, bodyJson, timeoutMs).catch(function(err) {
+          if (err && err.isTransport) {
+            if (clientRequestId && !err.clientRequestId) err.clientRequestId = clientRequestId;
+            if (action !== 'clientTelemetry') captureLostAttempt_(action, err, attempt);
+            err.ctx = Object.assign({}, err.ctx, { attempts: attempt });
+          }
+          if (!mayRetry || !err || !err.isTransport || attempt >= MAX_READ_ATTEMPTS_) throw err;
+          return attemptOnce_();
+        });
+      }
+      return attemptOnce_().then(function(parsed) {
+        var res = parsed.res;
         echoKeyInfo_ = extractEchoKeyInfo_(res);
         if (!res.ok) throw Object.assign(new Error('Server returned HTTP ' + res.status), echoKeyInfo_);
-        return res.json();
+        return parsed.json;
       }).then(function(json) {
         settlePiggybackTelemetry_(carried, json); // ok:false still acks
         if (!json.ok) throw Object.assign(new Error(json.error || 'Server reported an error with no detail'), echoKeyInfo_);
@@ -1632,6 +1710,7 @@
       }).finally(function() {
         releasePiggybackTelemetry_(carried);
         pendingRequestCount_--;
+        delete inFlightAttempts_[seq];
         updateSyncingIndicator_();
       });
     }
@@ -1747,7 +1826,9 @@
       // null) for an err that predates AC1 (or never went through fetchAttempt_ at all, e.g. the
       // window.onerror/unhandledrejection handlers below), degrading safely rather than crashing.
       abortedAtTimeout: !!(err && err.abortedAtTimeout),
-      elapsedMs: (err && typeof err.elapsedMs === 'number') ? err.elapsedMs : null
+      elapsedMs: (err && typeof err.elapsedMs === 'number') ? err.elapsedMs : null,
+      // F3Go30-5c2a.9 AC5: lost-response mode/httpStatus/attempts, under ctx (u7nk field budget).
+      ctx: (err && err.ctx) || null
     }, extra || {}));
   }
 
