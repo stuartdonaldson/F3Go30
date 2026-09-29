@@ -381,15 +381,22 @@ test.describe('handleCheckinSubmit_ write contract (direct API, no browser)', ()
     return res.json();
   }
 
-  function isoDaysFromToday(delta) {
-    const d = new Date();
-    d.setDate(d.getDate() + delta);
-    return isoDate(d);
+  // Offset from today, clamped into the current month: a date past month-end lands on next
+  // month's tracker, which may not exist yet (day_column_not_found in the last days of a
+  // month). Returns null when no day in the requested direction exists this month (the 1st for
+  // a past offset, the last day for a future one) — the caller skips.
+  function isoDaysFromTodayInMonth(delta) {
+    const now = new Date();
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const day = Math.min(Math.max(now.getDate() + delta, 1), lastDay);
+    if (day === now.getDate()) return null;
+    return isoDate(new Date(now.getFullYear(), now.getMonth(), day));
   }
 
   // Test surface #10 — explicit ISO date write for a future date accepts 1/0/null.
   test('an explicit future ISO date accepts value 1/0/null and round-trips {ok:true}', async ({ request }) => {
-    const futureIso = isoDaysFromToday(12);
+    const futureIso = isoDaysFromTodayInMonth(12);
+    test.skip(!futureIso, 'today is the last day of the month — no future day on this Tracker');
     const setMiss = await submit(request, { day: futureIso, value: 0 });
     expect(setMiss).toMatchObject({ ok: true });
     const clear = await submit(request, { day: futureIso, value: null });
@@ -414,14 +421,16 @@ test.describe('handleCheckinSubmit_ write contract (direct API, no browser)', ()
     const resToday = await submit(request, { day: todayIso_, value: -1 });
     expect(resToday).toEqual({ ok: false, error: 'invalid_value' });
 
-    const futureIso = isoDaysFromToday(9);
+    const futureIso = isoDaysFromTodayInMonth(9);
+    test.skip(!futureIso, 'today is the last day of the month — no future day on this Tracker');
     const resFuture = await submit(request, { day: futureIso, value: -1 });
     expect(resFuture).toEqual({ ok: false, error: 'invalid_value' });
   });
 
   // Test surface #11 (round-trip) — -1 IS accepted for a genuinely past date, then cleared.
   test('value -1 is accepted for a strictly-past date and round-trips to absent, then clears', async ({ request }) => {
-    const pastIso = isoDaysFromToday(-2);
+    const pastIso = isoDaysFromTodayInMonth(-2);
+    test.skip(!pastIso, 'today is the 1st — no strictly-past day on this Tracker');
     const setAbsent = await submit(request, { day: pastIso, value: -1 });
     expect(setAbsent).toMatchObject({ ok: true });
     const revert = await submit(request, { day: pastIso, value: null });
