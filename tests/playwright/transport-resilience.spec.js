@@ -173,4 +173,83 @@ test.describe('Client transport resilience (F3Go30-313u)', () => {
     // A server that answered has already decided — asking it again would only double the load.
     expect(attempts.filter((a) => a === 'identify')).toHaveLength(1);
   });
+  // ── F3Go30-5c2a.7 AC9: a transport-failed check-in is confirmed by read-back ───────────────
+  // The node harness (test/test_client_write_confirm.js) covers the loop's every branch; this is
+  // the same behaviour through the real UI, real fetch and real routing. Fully intercepted. The
+  // dropped checkin POST aborts at once (route.abort) rather than hanging for the 25s write
+  // timeout, which keeps both scenarios well inside the H4 ceiling.
+  function isoToday_() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function identifyResponse_(todayIso) {
+    return {
+      ok: true, matched: true, f3Name: 'ConfirmTest', email: 'confirmtest@example.com',
+      monthLabel: 'This month', todayStatus: 'pending', yesterdayStatus: 'pending', yesterdayAvailable: false,
+      goals: {}, monthGrid: [{ dateIso: todayIso, status: 'pending' }],
+      availableMonths: [], registeredMonthKeys: [], nextMonthRegistered: true,
+    };
+  }
+
+  /** Opens the check-in step with identify answered, then a checkin POST that is dropped and a
+   * monthGrid read-back answered by `monthGridStatus` (held until `gate` resolves, if given). */
+  async function openCheckinWithDroppedWrite_(page, monthGridStatus, gate) {
+    const todayIso = isoToday_();
+    await page.goto(`${staticOrigin}/index.html?webapp=${encodeURIComponent(FAKE_WEBAPP_URL)}`);
+    const attempts = await interceptExec(page, async (route, action) => {
+      if (action === 'identify') return jsonBody(route, identifyResponse_(todayIso));
+      if (action === 'checkin') return route.abort('failed');
+      if (action === 'monthGrid') {
+        if (gate) await gate;
+        return jsonBody(route, { ok: true, registered: true, monthGrid: [{ dateIso: todayIso, status: monthGridStatus }] });
+      }
+      return jsonBody(route, { ok: true });
+    });
+    await page.locator('#idF3Name').fill('ConfirmTest');
+    await page.locator('#idEmail').fill('confirmtest@example.com');
+    await page.locator('#identifyBtn').click();
+    await expect(page.locator('#step-checkin')).toBeVisible({ timeout: 15000 });
+    // Records whether the error banner is EVER shown, not just whether it is shown at the end.
+    await page.evaluate(() => {
+      window.__bannerEverShown = false;
+      const b = document.getElementById('apiErrorBanner');
+      new MutationObserver(() => { if (!b.classList.contains('hidden')) window.__bannerEverShown = true; })
+        .observe(b, { attributes: true, attributeFilter: ['class'] });
+    });
+    return attempts;
+  }
+
+  test('5c2a.7 AC9: a check-in whose response was dropped but whose write landed shows no error banner', async ({ page }) => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const attempts = await openCheckinWithDroppedWrite_(page, 'done', gate);
+
+    await page.locator('#todayYesBtn').click();
+    // While the read-back is outstanding: the calm notice, never the red banner, and the button is free.
+    await expect(page.locator('#writeConfirmNotice')).toBeVisible();
+    await expect(page.locator('#apiErrorBanner')).toBeHidden();
+    await expect(page.locator('#todayYesBtn')).toBeEnabled();
+    release();
+
+    await expect(page.locator('#todayYesBtn')).toHaveClass(/current/);
+    await expect(page.locator('#writeConfirmNotice')).toBeHidden();
+    await expect(page.locator('#apiErrorBanner')).toBeHidden();
+    expect(await page.evaluate(() => window.__bannerEverShown)).toBe(false);
+    expect(attempts.filter((a) => a === 'checkin')).toHaveLength(1); // the write is never replayed
+    expect(attempts).toContain('monthGrid');
+  });
+
+  test('5c2a.7 AC9: a check-in whose response was dropped and whose write did NOT land shows the banner and reverts', async ({ page }) => {
+    const attempts = await openCheckinWithDroppedWrite_(page, 'pending');
+
+    await page.locator('#todayYesBtn').click();
+
+    await expect(page.locator('#apiErrorBanner')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#apiErrorHeadline')).toHaveText('Couldn’t reach the server.');
+    await expect(page.locator('#apiErrorNetworkGuidance')).toBeVisible();
+    await expect(page.locator('#todayYesBtn')).not.toHaveClass(/current/);
+    await expect(page.locator('#writeConfirmNotice')).toBeHidden();
+    expect(attempts.filter((a) => a === 'checkin')).toHaveLength(1);
+  });
 });

@@ -27,6 +27,10 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+- **No more false "Couldn't reach the server" after a check-in** — when the network drops the
+  confirmation of a check-in that actually saved, the app now checks with the server and keeps your
+  check-in instead of showing an error. You'll briefly see "Still saving… confirming with the
+  server"; the error only appears if the check-in genuinely didn't save.
 - **Faster dashboard for teams with new members** — a team with a PAX who joined this month (or
   hasn't checked in yet) no longer re-reads last month's tracker on every dashboard load, which was
   most of the wait (typically 2-4 seconds).

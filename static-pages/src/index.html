@@ -320,6 +320,7 @@
   .section-label { font-size: 14px; font-weight: bold; letter-spacing: .16em; color: var(--brand); margin: 22px 0 4px; }
   .api-error-banner { background: var(--error-bg); border-bottom: 3px solid var(--error-border); color: var(--error-fg); padding: 12px 18px; font-size: 17px; line-height: 1.5; }
   .api-error-banner strong { display: block; margin-bottom: 2px; }
+  .write-confirm-notice { background: var(--card-bg); border-bottom: 2px solid var(--border); color: var(--brand); padding: 8px 18px; font-size: 15px; line-height: 1.4; }
   .api-error-detail { margin-top: 6px; font-family: monospace; font-size: 15px; background: var(--input-bg); border: 1px solid var(--error-detail-border); border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
   /* Page-level advisory banner (F3Go30-ubwl.3, generalized in F3Go30-833s.18 for the second one).
      Reuses the shared warn-* theme vars (F3Go30-dtr2) — no banner-specific colors.
@@ -495,6 +496,10 @@
          automatic. -->
     <button id="apiErrorReloadBtn" class="secondary hidden" type="button" style="margin-top:8px;">Reload page</button>
   </div>
+  <!-- F3Go30-5c2a.7: a transport-failed check-in is confirmed with the server before it is called a
+       failure. Deliberately NOT apiErrorBanner: calm, no Site-Q link, no reload button, and neither
+       element's show/hide logic touches the other. -->
+  <div id="writeConfirmNotice" class="write-confirm-notice hidden" role="status">Still saving… confirming with the server.</div>
 
   <!-- F3Go30-ubwl.3: shown on arrival from a GAS redirect (?from=gas — F3Go30-ubwl §Marker
        param, script/Utilities.js buildStaticRedirectUrl_). Page-level, above .wrap, so it never
@@ -2053,6 +2058,49 @@
     });
   }
 
+  // F3Go30-5c2a.7: a transport failure on a WRITE is not evidence the write failed (ADR-022: doPost
+  // runs to completion, sheet write included, before the redirect hop the response is lost on).
+  // confirmWrite_ asks the server what it holds via a read-back probe, itself a bounded poll — a
+  // lost probe is never read as "not landed" (the 2026-09-14 Little John case: every response lost
+  // while the server was healthy).
+  var WRITE_CONFIRM_INTERVAL_MS_ = 4000;
+  var WRITE_CONFIRM_MAX_ATTEMPTS_ = 3;
+  var WRITE_CONFIRM_DEADLINE_MS_ = 60000;
+  var writeConfirmActive_ = 0; // confirmations in flight — drives the notice (setWriteConfirmNotice_)
+
+  /** desc = { action, probe: () => Promise<json>, landed: json => boolean }.
+   * Resolves { outcome: 'landed' | 'missing' | 'unknown', attempts, elapsedMs }. Never rejects,
+   * never captures telemetry (the call site owns that). Only an ANSWER is terminal: a probe that
+   * resolves is 'landed'/'missing'; one lost below HTTP (isTransport) is retried after the
+   * interval, up to the attempt cap or the deadline, then 'unknown'; any other rejection is
+   * 'unknown' at once. */
+  function confirmWrite_(desc) {
+    var startedAt = Date.now();
+    var attempts = 0;
+    function result_(outcome) { return { outcome: outcome, attempts: attempts, elapsedMs: Date.now() - startedAt }; }
+    // The deadline is judged only BEFORE starting a probe (and before waiting the interval): callApi
+    // gives a read up to MAX_READ_ATTEMPTS_ x REQUEST_TIMEOUT_MS_, so one probe can itself outlast
+    // the deadline. A probe already in flight when it passes is allowed to finish and its answer is
+    // honoured — there is deliberately no timeout race around the probe.
+    function mayProbeAgain_() {
+      return attempts < WRITE_CONFIRM_MAX_ATTEMPTS_ && Date.now() - startedAt < WRITE_CONFIRM_DEADLINE_MS_;
+    }
+    function probeOnce_() {
+      attempts++;
+      return Promise.resolve(desc.probe()).then(function(json) {
+        return result_(desc.landed(json) ? 'landed' : 'missing');
+      }, function(err) {
+        if (!(err && err.isTransport)) return result_('unknown');
+        if (!mayProbeAgain_()) return result_('unknown');
+        return new Promise(function(resolve) { setTimeout(resolve, WRITE_CONFIRM_INTERVAL_MS_); }).then(function() {
+          return mayProbeAgain_() ? probeOnce_() : result_('unknown');
+        });
+      });
+    }
+    // A synchronous throw from probe()/landed() must not escape either.
+    return new Promise(function(resolve) { resolve(probeOnce_()); }).catch(function() { return result_('unknown'); });
+  }
+
   function hideApiError_() {
     $('apiErrorBanner').classList.add('hidden');
     stopReconnectPoll_();
@@ -2470,7 +2518,7 @@
     $('nmcDoneText').textContent = 'Okay — check back for ' + state.nmcNextMonthLabel + '. See you then!';
   });
 
-  function showApiError_(action, err) {
+  function showApiError_(action, err, extra) {
     // F3Go30-313u AC5: a request the browser killed because this document is being torn down is
     // not a failure to report — the banner would flash for an instant on the way out and mean
     // nothing. Bail before touching the DOM.
@@ -2478,7 +2526,7 @@
 
     // F3Go30-xyri: every banner-worthy failure is a client-observed error worth capturing for
     // frequency/root-cause analysis, uploaded opportunistically once connectivity returns.
-    captureClientError_(action, err);
+    captureClientError_(action, err, extra);
 
     var detail =
       'Time: ' + new Date().toISOString() + '\n' +
@@ -3159,6 +3207,13 @@
     callApi('checkin', { f3Name: state.f3Name, email: state.email, day: opts.dayArg, value: value, resolvedContext: state.resolvedContext })
       .then(function() {
         ackCheckinWrite_(dateIso, status, opts.onLanded);
+      }, function(err) {
+        // F3Go30-5c2a.7: a response lost below HTTP does not mean the write did not land. Keep the
+        // optimistic value and confirm by read-back — deliberately NOT returned, so the button's
+        // finally below still runs when the POST settles. Anything the server answered falls through
+        // to the failure path unchanged.
+        if (err && err.isTransport) { confirmCheckinWrite_(dateIso, status, err, opts.onLanded); return; }
+        throw err;
       })
       .catch(function(err) { revertOwnDayWrite_(dateIso);
         delete state.locallyWrittenIso[dateIso];
@@ -3167,6 +3222,52 @@
       .finally(function() {
         setButtonLoading_(btn, false);
       });
+  }
+
+  /** The read-back probe for a check-in: is the server's month grid holding `expectedStatus` on
+   * `dateIso`? Live callApi, never loadCalMonth_ (which short-circuits on the state.board cache). */
+  function checkinProbe_(dateIso, expectedStatus) {
+    return {
+      action: 'checkin',
+      probe: function() {
+        return callApi('monthGrid', { f3Name: state.f3Name, email: state.email,
+          monthKey: monthKeyOf_(parseIsoDate_(dateIso)), resolvedContext: state.resolvedContext });
+      },
+      landed: function(res) {
+        return !!(res && res.registered) && (res.monthGrid || []).some(function(e) {
+          return e.dateIso === dateIso && e.status === expectedStatus;
+        });
+      }
+    };
+  }
+
+  /** Confirms a transport-failed check-in (5c2a.7). Exactly one kind:'error' record per failure:
+   * 'landed' captures it here (showApiError_ never runs); 'missing'/'unknown' hand the extras to
+   * showApiError_, which captures it. `err` is the ORIGINAL error so banner copy is unchanged. */
+  function confirmCheckinWrite_(dateIso, status, err, onLanded) {
+    // Superseded: a newer tap on this day owns it and runs its own confirmation.
+    if (state.locallyWrittenIso[dateIso] !== status) return;
+    setWriteConfirmNotice_(true);
+    confirmWrite_(checkinProbe_(dateIso, status)).then(function(r) {
+      setWriteConfirmNotice_(false);
+      if (state.locallyWrittenIso[dateIso] !== status) return;
+      var extra = { confirmOutcome: r.outcome, confirmAttempts: r.attempts, confirmElapsedMs: r.elapsedMs };
+      if (r.outcome === 'landed') {
+        captureClientError_('checkin', err, extra);
+        ackCheckinWrite_(dateIso, status, onLanded);
+      } else {
+        revertOwnDayWrite_(dateIso);
+        delete state.locallyWrittenIso[dateIso];
+        showApiError_('checkin', err, extra);
+      }
+    }).catch(function() { setWriteConfirmNotice_(false); });
+  }
+
+  // Calm inline "confirming" notice — a separate element from apiErrorBanner, counted so one
+  // confirmation finishing never hides the notice for another still running.
+  function setWriteConfirmNotice_(on) {
+    writeConfirmActive_ = Math.max(0, writeConfirmActive_ + (on ? 1 : -1));
+    $('writeConfirmNotice').classList.toggle('hidden', writeConfirmActive_ === 0);
   }
 
   // The shared success bookkeeping for a landed check-in write, then the call site's own render.

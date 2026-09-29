@@ -72,7 +72,45 @@ function makeFakeLocalStorage_(opts) {
   };
 }
 
+/** Manual clock + timers for the extracted-page harnesses (F3Go30-5c2a.7). `setTimeout`/
+ * `clearTimeout`/`Date` are injected into the extracted code; nothing fires until the test says
+ * so, and firing a timer advances the clock to its due time — so a bounded poll's deadline can be
+ * exercised deterministically instead of by waiting real seconds. `advance(ms)` moves the clock
+ * with no timer (a slow in-flight request). `drain(promise)` fires due timers, earliest first,
+ * until `promise` settles, then returns its value (or rethrows). */
+function makeFakeClock_(startMs) {
+  var now = startMs || 1700000000000;
+  var timers = [];
+  var seq = 0;
+  class FakeDate extends Date { static now() { return now; } }
+  function flush() { return new Promise(function(r) { setImmediate(r); }); }
+  var clock = {
+    Date: FakeDate,
+    setTimeout: function(fn, ms) { var id = ++seq; timers.push({ id: id, fn: fn, ms: ms, due: now + ms }); return id; },
+    clearTimeout: function(id) { timers = timers.filter(function(t) { return t.id !== id; }); },
+    advance: function(ms) { now += ms; },
+    nowMs: function() { return now; },
+    pending: function() { return timers.slice(); },
+    drain: function(promise) {
+      var settled = false, value, error;
+      promise.then(function(v) { settled = true; value = v; }, function(e) { settled = true; error = e; });
+      function step(n) {
+        return flush().then(function() {
+          if (settled) { if (error) throw error; return value; }
+          if (n > 200) throw new Error('makeFakeClock_.drain: promise never settled');
+          timers.sort(function(a, b) { return a.due - b.due; });
+          var t = timers.shift();
+          if (t) { now = Math.max(now, t.due); t.fn(); }
+          return step(n + 1);
+        });
+      }
+      return step(0);
+    },
+  };
+  return clock;
+}
+
 module.exports = {
   readStaticPage_, extractTransportBlock_, extractShowApiError_, extractFunction_, extractLoadDashboardBlock_,
-  makeFakeLocalStorage_,
+  makeFakeLocalStorage_, makeFakeClock_,
 };
