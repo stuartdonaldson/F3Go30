@@ -1,7 +1,7 @@
 {
   "name": "f3go30",
   "version": "2.6.5",
-  "build": 2,
+  "build": 4,
   "private": true,
   "packageManager": "pnpm@11.15.1",
   "scripts": {
