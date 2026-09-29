@@ -135,7 +135,7 @@ const { readStaticPage_, extractFunction_, makeFakeLocalStorage_ } = require('./
 
 (function testStaticPageSubmitCheckinAppliesWriteThroughBeforeCallApiAndRevertsOnFailure() {
   var src = readStaticPage_();
-  var fnMatch = src.match(/function submitCheckin_\([\s\S]*?\n  \}/);
+  var fnMatch = src.match(/function submitCheckinWrite_\([\s\S]*?\n  \}/);
   assert.ok(fnMatch, 'submitCheckin_ not found in index.html');
   var body = fnMatch[0];
   var applyIdx = body.indexOf('applyOwnDayWrite_(dateIso, value)');
@@ -149,7 +149,7 @@ const { readStaticPage_, extractFunction_, makeFakeLocalStorage_ } = require('./
 
 (function testStaticPageSubmitSelectionCheckinAppliesWriteThroughBeforeCallApiAndRevertsOnFailure() {
   var src = readStaticPage_();
-  var fnMatch = src.match(/function submitSelectionCheckin_\([\s\S]*?\n  \}/);
+  var fnMatch = src.match(/function submitCheckinWrite_\([\s\S]*?\n  \}/);
   assert.ok(fnMatch, 'submitSelectionCheckin_ not found in index.html');
   var body = fnMatch[0];
   var applyIdx = body.indexOf('applyOwnDayWrite_(dateIso, value)');

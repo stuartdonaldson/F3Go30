@@ -36,7 +36,7 @@ function readHtml_(name) {
 
 (function testSubmitCheckinAppliesWriteThroughBeforeCallApiAndRevertsOnFailure() {
   var src = readHtml_('index.html');
-  var fnMatch = src.match(/function submitCheckin_\([\s\S]*?\n  \}/);
+  var fnMatch = src.match(/function submitCheckinWrite_\([\s\S]*?\n  \}/);
   assert.ok(fnMatch, 'submitCheckin_ not found in static-pages/src/index.html');
   var body = fnMatch[0];
   var applyIdx = body.indexOf('applyOwnDayWrite_(dateIso, value)');
@@ -51,7 +51,7 @@ function readHtml_(name) {
 
 (function testSubmitSelectionCheckinAppliesWriteThroughBeforeCallApiAndRevertsOnFailure() {
   var src = readHtml_('index.html');
-  var fnMatch = src.match(/function submitSelectionCheckin_\([\s\S]*?\n  \}/);
+  var fnMatch = src.match(/function submitCheckinWrite_\([\s\S]*?\n  \}/);
   assert.ok(fnMatch, 'submitSelectionCheckin_ not found in static-pages/src/index.html');
   var body = fnMatch[0];
   var applyIdx = body.indexOf('applyOwnDayWrite_(dateIso, value)');

@@ -3140,39 +3140,58 @@
     });
   }
 
-  function submitCheckin_(btn, day, value) {
+  /**
+   * F3Go30-5c2a.6: the ONE check-in write sequence, shared by the Today/Yesterday buttons
+   * (submitCheckin_) and the calendar's selection panel (submitSelectionCheckin_). Owns:
+   * hideApiError_ -> loading state -> optimistic write-through -> callApi('checkin') ->
+   * ackCheckinWrite_ + onLanded on success / revert + showApiError_ on failure -> loading state off.
+   * opts = { btn, dayArg, dateIso, value, onLanded }. dayArg is the payload's `day` field
+   * ('today' / 'yesterday' for the buttons, the ISO date for the calendar); dateIso is the resolved
+   * date used for every local-state key. Only the render work (onLanded) differs per call site.
+   */
+  function submitCheckinWrite_(opts) {
+    var btn = opts.btn, dateIso = opts.dateIso, value = opts.value;
     hideApiError_();
     setButtonLoading_(btn, true, 'Saving…');
-    var dateIso = day === 'today' ? state.todayIso : state.yesterdayIso;
     var status = valueToStatus_(value);
     applyOwnDayWrite_(dateIso, value);
     state.locallyWrittenIso[dateIso] = status;
-    callApi('checkin', { f3Name: state.f3Name, email: state.email, day: day, value: value, resolvedContext: state.resolvedContext })
+    callApi('checkin', { f3Name: state.f3Name, email: state.email, day: opts.dayArg, value: value, resolvedContext: state.resolvedContext })
       .then(function() {
-        state.writeGenByIso_[dateIso] = requestGen_; // F3Go30-os03 D5 — this write's ack position
-        renderCheckinStatus_(day, status);
-        state.lastEditedDayIso = dateIso;
-        if (day === 'today') state.todayStatus = status; else state.yesterdayStatus = status;
-        // F3Go30-os03 D3/D4: state.board was already patched (applyOwnDayWrite_, above, before the
-        // round trip) regardless of which month the calendar is parked on — this just refreshes
-        // the CURRENTLY PAINTED grid from it (a fresh derive, never a mutated alias; see
-        // boardMonthGrid_). Replaces the former updateMonthGridEntry_, which mutated state.monthGrid
-        // directly and silently no-opped whenever the calendar was parked on a different month
-        // than dateIso's (the P1 cross-month split-brain this issue fixes).
-        state.monthGrid = boardMonthGrid_(state.calMonthKey);
-        if (state.advancedOpen) {
-          updateCalCellStatus_(dateIso, status);
-          if (state.selectedDateIso === dateIso) renderSelectionPanel_(dateIso);
-        }
+        ackCheckinWrite_(dateIso, status, opts.onLanded);
       })
-      .catch(function(err) {
-        revertOwnDayWrite_(dateIso);
+      .catch(function(err) { revertOwnDayWrite_(dateIso);
         delete state.locallyWrittenIso[dateIso];
         showApiError_('checkin', err);
       })
       .finally(function() {
         setButtonLoading_(btn, false);
       });
+  }
+
+  // The shared success bookkeeping for a landed check-in write, then the call site's own render.
+  function ackCheckinWrite_(dateIso, status, onLanded) {
+    state.writeGenByIso_[dateIso] = requestGen_; // F3Go30-os03 D5 — this write's ack position
+    // F3Go30-os03 D3/D4: state.board was already patched (applyOwnDayWrite_, before the round trip)
+    // regardless of which month the calendar is parked on — this just refreshes the CURRENTLY PAINTED
+    // grid from it (a fresh derive, never a mutated alias; see boardMonthGrid_). Replaces the former
+    // updateMonthGridEntry_, which mutated state.monthGrid directly and silently no-opped whenever the
+    // calendar was parked on a different month than dateIso's (the P1 cross-month split-brain).
+    state.monthGrid = boardMonthGrid_(state.calMonthKey);
+    state.lastEditedDayIso = dateIso;
+    onLanded(status);
+  }
+
+  function submitCheckin_(btn, day, value) {
+    var dateIso = day === 'today' ? state.todayIso : state.yesterdayIso;
+    submitCheckinWrite_({ btn: btn, dayArg: day, dateIso: dateIso, value: value, onLanded: function(status) {
+      renderCheckinStatus_(day, status);
+      if (day === 'today') state.todayStatus = status; else state.yesterdayStatus = status;
+      if (state.advancedOpen) {
+        updateCalCellStatus_(dateIso, status);
+        if (state.selectedDateIso === dateIso) renderSelectionPanel_(dateIso);
+      }
+    } });
   }
 
   $('todayYesBtn').addEventListener('click', function() { submitCheckin_(this, 'today', 1); });
@@ -3519,32 +3538,18 @@
   }
 
   function submitSelectionCheckin_(btn, value) {
-    hideApiError_();
-    setButtonLoading_(btn, true, 'Saving…');
     var dateIso = state.selectedDateIso;
-    var status = valueToStatus_(value);
-    applyOwnDayWrite_(dateIso, value);
-    state.locallyWrittenIso[dateIso] = status;
-    callApi('checkin', { f3Name: state.f3Name, email: state.email, day: dateIso, value: value, resolvedContext: state.resolvedContext })
-      .then(function() {
-        state.writeGenByIso_[dateIso] = requestGen_; // F3Go30-os03 D5 — this write's ack position
-        // F3Go30-os03 D3/D4: refresh the currently-painted grid from state.board (see submitCheckin_'s
-        // matching comment).
-        state.monthGrid = boardMonthGrid_(state.calMonthKey);
-        updateCalCellStatus_(dateIso, status);
-        // F3Go30-jsrf: dateIso is NOT guaranteed to still be state.selectedDateIso here — the PAX
-        // may have already clicked a different day while this write's round trip was in flight
-        // (renderSelectionPanel_ unconditionally reassigns state.selectedDateIso to whatever it's
-        // given). Applying a superseded click's panel/selection here would clobber the PAX's actual
-        // current selection out from under them — the exact desync symptom reported live. Same
-        // guard submitCheckin_ already uses for its matching call, just missing here.
-        if (state.selectedDateIso === dateIso) renderSelectionPanel_(dateIso);
-        state.lastEditedDayIso = dateIso;
-        if (dateIso === state.todayIso) { state.todayStatus = status; renderCheckinStatus_('today', status); }
-        else if (dateIso === state.yesterdayIso) { state.yesterdayStatus = status; renderCheckinStatus_('yesterday', status); }
-      })
-      .catch(function(err) { revertOwnDayWrite_(dateIso); delete state.locallyWrittenIso[dateIso]; showApiError_('checkin', err); })
-      .finally(function() { setButtonLoading_(btn, false); });
+    submitCheckinWrite_({ btn: btn, dayArg: dateIso, dateIso: dateIso, value: value, onLanded: function(status) {
+      updateCalCellStatus_(dateIso, status);
+      // F3Go30-jsrf: dateIso is NOT guaranteed to still be state.selectedDateIso here — the PAX
+      // may have already clicked a different day while this write's round trip was in flight
+      // (renderSelectionPanel_ unconditionally reassigns state.selectedDateIso to whatever it's
+      // given). Applying a superseded click's panel/selection here would clobber the PAX's actual
+      // current selection out from under them — the exact desync symptom reported live.
+      if (state.selectedDateIso === dateIso) renderSelectionPanel_(dateIso);
+      if (dateIso === state.todayIso) { state.todayStatus = status; renderCheckinStatus_('today', status); }
+      else if (dateIso === state.yesterdayIso) { state.yesterdayStatus = status; renderCheckinStatus_('yesterday', status); }
+    } });
   }
 
   $('selYesBtn').addEventListener('click', function() { submitSelectionCheckin_(this, 1); });
