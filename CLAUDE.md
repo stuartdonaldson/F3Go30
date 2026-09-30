@@ -151,7 +151,10 @@ Any action that is environment-scoped — deploy, admin webapp POST, log/ query,
 
 Either environment can run a **namespace-provisioned smoke test** — a disposable copy of the Template + a few recent trackers, tested end-to-end and torn down automatically (see §Smoke mode workflow below). This superseded the legacy `SMOKE_MODE` Script Property mechanism (ADR-014; F3Go30-4wv9/i5md.7).
 
-Runtime GAS logs are sent to the Axiom service, use the tools/query_axiom.py 
+Runtime GAS logs are sent to the Axiom service. Query them with `tools/query_axiom.py`
+(`--env sit|prod`, `--since` or `--start/--end`, `--apl "| summarize ..."` for server-side
+aggregation, `--format tsv|json|jsonl` for scripts; field names are bare, never `data.`-prefixed).
+`tools/activity_log.py` is the human-readable PAX activity narrative built on top of it.
 ## clasp - command line tool for google apps script credentials.
 The local.settings.json file claspAuth setting contains the clasp auth credentials file which must be passed in to clasp with the "--auth" arguent or via the "clasp_config_auth" environment variable.
 

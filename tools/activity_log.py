@@ -88,9 +88,7 @@ import sys
 from datetime import datetime
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from query_axiom import query, _load_settings, _parse_duration
-
-_ENV_TARGET = {"sit": "TEST", "prod": "TEMPLATE"}
+from query_axiom import ENV_TARGET, query, require_axiom_credentials, _filters, _parse_duration
 
 # Activities within this many seconds of each other, for the same PAX, are treated as one
 # authentication session and collapsed onto a single report line.
@@ -517,19 +515,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--limit", "-n", type=int, default=200, help="Max summaries to output (default: 200)")
     parser.add_argument("--since", default="24h", help="How far back to look, e.g. 30m, 2h, 1d (default: 24h)")
-    parser.add_argument("--env", choices=["sit", "prod"], help="Filter to SIT (TEST) or PROD (TEMPLATE) deploy target")
+    parser.add_argument("--env", choices=sorted(ENV_TARGET), help="Filter to SIT (TEST) or PROD (TEMPLATE) deploy target")
     args = parser.parse_args()
 
-    settings = _load_settings()
-    dataset = settings.get("axiomDataset")
-    token = settings.get("axiomQueryToken")
-    if not dataset or not token:
-        print("ERROR: axiomDataset / axiomQueryToken not set in local.settings.json", file=sys.stderr)
-        return 1
+    dataset, token = require_axiom_credentials()
 
-    where_clause = None
-    if args.env:
-        where_clause = f"target == '{_ENV_TARGET[args.env]}'"
+    where_clause = " and ".join(_filters(env=args.env)) or None
 
     result = query(
         dataset, token,

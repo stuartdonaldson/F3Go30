@@ -32,14 +32,10 @@ from pathlib import Path
 
 TOOLS_DIR = Path(__file__).parent.parent / 'tools'
 sys.path.insert(0, str(TOOLS_DIR))
-from query_axiom import query, _load_settings, _parse_duration  # noqa: E402
+from query_axiom import ENV_TARGET, axiom_credentials, query, _load_settings, _parse_duration  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
 from log_channel import collect_local_log_entries  # noqa: E402
-
-# Matches script/version.js's APP_DEPLOY_TARGET values (tools/manage-deployments.js
-# writes one or the other on push).
-_TARGET_BY_ENV = {'sit': 'TEST', 'prod': 'TEMPLATE'}
 
 
 def check_axiom(dataset: str, token: str, since: str, target: str, min_count: int) -> bool:
@@ -91,11 +87,11 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = _load_settings()
-    dataset = settings.get('axiomDataset')
-    token = settings.get('axiomQueryToken')
-    target = _TARGET_BY_ENV[args.env]
+    creds = axiom_credentials(settings)
+    target = ENV_TARGET[args.env]
 
-    if dataset and token:
+    if creds:
+        dataset, token = creds
         print(f"Sink: Axiom (dataset={dataset})")
         ok = check_axiom(dataset, token, args.since, target, args.min_count)
     else:
