@@ -778,4 +778,15 @@ function makeBannerHarness_(fromGas, opts) {
     'itself calls isoDate_(contextToday_()), never the literal bare pattern)');
 })();
 
+// F3Go30-8naq.4: the star rating is optional in code (comment-only is accepted) — both star
+// prompts must say so, like the comment box already does.
+(function testFeedbackStarPromptsLabelledOptional() {
+  var src = readStaticPage_();
+  ['siteFeedbackStars', 'suFeedbackStars'].forEach(function(id) {
+    var m = src.match(new RegExp('<label class="field-label">([^<]*)</label>\\s*<div class="stars" id="' + id + '">'));
+    assert.ok(m, 'label directly above #' + id + ' not found');
+    assert.match(m[1], /\(optional\)/i, '#' + id + ' prompt must be labelled optional');
+  });
+})();
+
 console.log('test_static_page_client_invariants.js: all assertions passed');
