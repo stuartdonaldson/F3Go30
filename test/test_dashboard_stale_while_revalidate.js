@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { readStaticPage_, extractLoadDashboardBlock_ } = require('./helpers/staticPageExtract');
+const { readStaticPage_, extractLoadDashboardBlock_, extractBoardAccessor_, extractFunction_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-833s.13: dashboardBtn used to be cache-or-wait, not cache-then-update — a cached month
 // payload for today rendered instantly ONLY when no prefetch was in flight, then returned with no
@@ -50,7 +50,8 @@ function makeDashboardHarness_(state, callApiImpl) {
   var setButtonLoading_ = function(btn, isLoading, text) { setButtonLoadingCalls.push({ isLoading: isLoading, text: text }); };
 
   var src = readStaticPage_();
-  var body = extractDashboardBtnHandlerBody_(src) + '\n' + extractLoadDashboardBlock_(src);
+  var body = extractBoardAccessor_(src) + '\n' + extractFunction_(src, 'navigateDashboard_') + '\n' +
+    extractDashboardBtnHandlerBody_(src) + '\n' + extractLoadDashboardBlock_(src);
   var factory = new Function(
     'state', '$', 'callApi', 'renderDashboard_', 'setButtonLoading_', 'hideApiError_', 'showApiError_',
     'isoDate_', 'monthKeyOf_', 'patchOwnDayIntoPayload_', 'renderDateNav_', 'captureDashboardRenderTelemetry_',
@@ -59,7 +60,7 @@ function makeDashboardHarness_(state, callApiImpl) {
     // The dashboardBtn block is a bare $('dashboardBtn').addEventListener(...) statement, not a
     // named function — running it registers the real click handler onto the fake $ element below,
     // which the test then triggers directly rather than trying to name-bind an anonymous function.
-    body + '\nreturn { loadDashboard_: loadDashboard_, prefetchDashboard_: prefetchDashboard_, revalidateDashboard_: revalidateDashboard_ };'
+    body + '\nreturn { boardRecord_: boardRecord_, navigateDashboard_: navigateDashboard_, loadDashboard_: loadDashboard_, prefetchDashboard_: prefetchDashboard_, revalidateDashboard_: revalidateDashboard_ };'
   );
   var fns = factory(
     state, fakeEl_,
@@ -103,8 +104,16 @@ function baseState_(cachedForToday) {
     dashboardLoading: false, dashboardPrefetchPromise: null, currentStep: 'dashboard',
   };
   if (cachedForToday) {
-    state.board[monthKey_()] = { monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0 };
+    // a full dashboard-facet record: carries paxBoard, which only a dashboard payload does
+    state.board[monthKey_()] = { monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0, paxBoard: [] };
   }
+  return state;
+}
+
+// F3Go30-8naq.1: a record planted by identify's patchBoardDayFacts_ — day facts only, no paxBoard.
+function dayFactsOnlyState_() {
+  var state = baseState_(false);
+  state.board[monthKey_()] = { monthKey: monthKey_(), dayDates: [todayIso_()], dayValues: [null] };
   return state;
 }
 
@@ -130,7 +139,7 @@ function baseState_(cachedForToday) {
   assert.equal(h.setButtonLoadingCalls.length, 0, 'the blocking Loading… button state must not fire when a cached copy exists');
   assert.equal(callApiCallCount, 1, 'revalidation must chain onto the existing in-flight prefetch, not fire a second fetch');
 
-  resolvePrefetch({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0 });
+  resolvePrefetch({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0, paxBoard: [] });
   return prefetchPromise.then(function() {
     return new Promise(function(r) { setImmediate(r); });
   }).then(function() {
@@ -143,7 +152,7 @@ function baseState_(cachedForToday) {
 (function testCachedTodayWithNoPrefetchInFlightStillRevalidates() {
   var state = baseState_(true);
   var callApiCallCount = 0;
-  var callApi = function() { callApiCallCount++; return Promise.resolve({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0 }); };
+  var callApi = function() { callApiCallCount++; return Promise.resolve({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0, paxBoard: [] }); };
   var h = makeDashboardHarness_(state, callApi);
 
   h.elements.dashboardBtn.trigger('click');
@@ -158,7 +167,7 @@ function baseState_(cachedForToday) {
 // cached case, not this one.
 (function testNoCacheAtAllStillBlocksOnLoading() {
   var state = baseState_(false);
-  var callApi = function() { return Promise.resolve({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0 }); };
+  var callApi = function() { return Promise.resolve({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0, paxBoard: [] }); };
   var h = makeDashboardHarness_(state, callApi);
 
   h.elements.dashboardBtn.trigger('click');
@@ -187,7 +196,7 @@ function baseState_(cachedForToday) {
 
   // The PAX navigates to Scorecard before the background revalidation resolves.
   state.currentStep = 'scorecard';
-  resolveFetch({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0 });
+  resolveFetch({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0, paxBoard: [] });
 
   return new Promise(function(r) { setImmediate(r); }).then(function() {
     assert.equal(h.renderCalls.length, 1,
@@ -206,7 +215,7 @@ function baseState_(cachedForToday) {
   h.elements.dashboardBtn.trigger('click');
   assert.equal(h.renderCalls.length, 1);
 
-  resolveFetch({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0 });
+  resolveFetch({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0, paxBoard: [] });
 
   return new Promise(function(r) { setImmediate(r); }).then(function() {
     assert.equal(h.renderCalls.length, 2, 'AC3: still repaints in place when the PAX is still on dashboard');
@@ -256,6 +265,84 @@ function baseState_(cachedForToday) {
   step.trigger('touchmove', { touches: [{ clientY: 100 }] });
   step.trigger('touchend');
   assert.equal(revalidateCalls, 0, 'a pull that does not start at scrollTop 0 must not trigger revalidation');
+})();
+
+// ── F3Go30-8naq.1: facet-aware board accessor + no render from a day-facts-only record ──
+
+(function testBoardRecordFacets() {
+  var mk = monthKey_();
+  var h = makeDashboardHarness_(dayFactsOnlyState_());
+  assert.ok(h.fns.boardRecord_(mk, 'dayFacts'), 'day-facts record satisfies the dayFacts facet');
+  assert.equal(h.fns.boardRecord_(mk, 'dashboard'), null, 'day-facts record is a MISS for the dashboard facet');
+  assert.equal(h.fns.boardRecord_('1999-01', 'dayFacts'), null, 'absent record is a miss');
+  var full = baseState_(true);
+  h = makeDashboardHarness_(full);
+  assert.ok(h.fns.boardRecord_(mk, 'dashboard'), 'a record carrying paxBoard satisfies the dashboard facet');
+  assert.throws(function() { h.fns.boardRecord_(mk, 'nope'); }, /facet/, 'an undeclared facet is a programming error, not a silent miss');
+})();
+
+// AC1: dashboardBtn must not render a day-facts-only record; it shows Loading… and renders only
+// once a dashboard payload lands.
+(function testDashboardBtnDoesNotRenderDayFactsOnlyRecord() {
+  var state = dayFactsOnlyState_();
+  var resolveFetch;
+  var callApi = function() { return new Promise(function(resolve) { resolveFetch = resolve; }); };
+  var h = makeDashboardHarness_(state, callApi);
+  h.elements.dashboardBtn.trigger('click');
+  assert.equal(h.renderCalls.length, 0, 'AC1: must not paint from a day-facts-only record');
+  assert.ok(h.setButtonLoadingCalls.length >= 1 && h.setButtonLoadingCalls[0].isLoading === true, 'AC1: shows the loading state');
+  resolveFetch({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0, paxBoard: [] });
+  return new Promise(function(r) { setImmediate(r); }).then(function() {
+    return new Promise(function(r) { setImmediate(r); });
+  }).then(function() {
+    assert.equal(h.renderCalls.length, 1, 'AC1: renders once the dashboard payload lands');
+    assert.ok(Array.isArray(h.renderCalls[0].d.paxBoard));
+  });
+})();
+
+// AC1 (chained): with a prefetch in flight that resolves, the click chains onto it and renders the
+// landed dashboard payload, not the day-facts record.
+(function testDashboardBtnChainsOntoInFlightPrefetch() {
+  var state = dayFactsOnlyState_();
+  var callApiCount = 0, resolveFetch;
+  var callApi = function() { callApiCount++; return new Promise(function(resolve) { resolveFetch = resolve; }); };
+  var h = makeDashboardHarness_(state, callApi);
+  state.dashboardPrefetchPromise = h.fns.loadDashboard_(undefined, { silent: true });
+  h.elements.dashboardBtn.trigger('click');
+  assert.equal(h.renderCalls.length, 0);
+  resolveFetch({ monthKey: monthKey_(), dayDates: [todayIso_()], viewDayIndex: 0, paxBoard: [] });
+  return state.dashboardPrefetchPromise.then(function() {
+    return new Promise(function(r) { setImmediate(r); });
+  }).then(function() {
+    assert.equal(callApiCount, 1, 'chained onto the prefetch, no duplicate fetch');
+    assert.equal(h.renderCalls.length, 1);
+    assert.ok(Array.isArray(h.renderCalls[0].d.paxBoard));
+  });
+})();
+
+// AC2: revalidateDashboard_ never renders a record lacking the dashboard facet.
+(function testRevalidateDoesNotRenderDayFactsOnlyRecord() {
+  var state = dayFactsOnlyState_();
+  // a fetch that "lands" without replacing the record (e.g. error path resolved silently)
+  var callApi = function() { return Promise.resolve(null).then(function() { throw new Error('boom'); }); };
+  var h = makeDashboardHarness_(state, callApi);
+  h.fns.revalidateDashboard_();
+  return new Promise(function(r) { setImmediate(r); }).then(function() {
+    assert.equal(h.renderCalls.length, 0, 'AC2: revalidate must not paint a day-facts-only record');
+  });
+})();
+
+// AC2: navigateDashboard_ fetches instead of rendering a day-facts-only record.
+(function testNavigateDashboardFetchesWhenOnlyDayFacts() {
+  var state = dayFactsOnlyState_();
+  state.viewDate = new Date();
+  var calls = [];
+  var callApi = function(action, p) { calls.push(p.dateISO); return new Promise(function() {}); };
+  var h = makeDashboardHarness_(state, callApi);
+  // the record for the target day's month exists (day facts only) but lacks the dashboard facet
+  h.fns.navigateDashboard_(-1);
+  assert.equal(h.renderCalls.length, 0, 'AC2: navigate must not render from a day-facts-only record');
+  assert.equal(calls.length, 1, 'AC2: navigate fetches instead');
 })();
 
 console.log('test_dashboard_stale_while_revalidate.js: all assertions passed');

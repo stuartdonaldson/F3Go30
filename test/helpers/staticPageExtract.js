@@ -55,6 +55,14 @@ function extractLoadDashboardBlock_(src) {
   return src.slice(startIdx, endIdx);
 }
 
+/** F3Go30-8naq.1: the BOARD_FACETS_ table plus the one facet-aware accessor boardRecord_ — real
+ * source, evaluated in a scope that supplies `state`. */
+function extractBoardAccessor_(src) {
+  var startIdx = src.indexOf('var BOARD_FACETS_');
+  assert.notEqual(startIdx, -1, 'BOARD_FACETS_ not found in index.html');
+  return src.slice(startIdx, src.indexOf('function boardRecord_(')) + extractFunction_(src, 'boardRecord_');
+}
+
 /** In-memory localStorage stand-in for the extracted-page harnesses — values coerced to strings
  * as the real Storage does, `initial` seeds the store, `opts.throwOnSet` simulates a quota-exceeded
  * write. Shared (F3Go30-5c2a.9) so the harnesses stop hand-rolling their own copy. */
@@ -111,6 +119,6 @@ function makeFakeClock_(startMs) {
 }
 
 module.exports = {
-  readStaticPage_, extractTransportBlock_, extractShowApiError_, extractFunction_, extractLoadDashboardBlock_,
+  readStaticPage_, extractTransportBlock_, extractShowApiError_, extractFunction_, extractLoadDashboardBlock_, extractBoardAccessor_,
   makeFakeLocalStorage_, makeFakeClock_,
 };

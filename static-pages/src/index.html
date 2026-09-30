@@ -2227,6 +2227,23 @@
     checkinReady: false,
   };
 
+  /** F3Go30-8naq.1: the ONE answer to "is this state.board record usable for X". A record is
+   * intentionally partial (see state.board above), so every consumer declares the facet it needs
+   * instead of hand-rolling its own truthiness / dayDates check. 'dayFacts' = identify's
+   * monthGrid day facts (calendar reads); 'dashboard' = a full dashboard payload, evidenced by the
+   * field only that payload carries (paxBoard). Add a facet here, never a per-call-site check. */
+  var BOARD_FACETS_ = {
+    dayFacts: function(rec) { return Array.isArray(rec.dayDates) && Array.isArray(rec.dayValues); },
+    dashboard: function(rec) { return Array.isArray(rec.paxBoard) && Array.isArray(rec.dayDates); }
+  };
+  /** Returns state.board[monthKey] iff it carries `facet`, else null (a miss, never a cached empty). */
+  function boardRecord_(monthKey, facet) {
+    var test = BOARD_FACETS_[facet];
+    if (!test) throw new Error('boardRecord_: unknown facet ' + facet);
+    var rec = state.board[monthKey];
+    return (rec && test(rec)) ? rec : null;
+  }
+
   function $(id) { return document.getElementById(id); }
 
   // ── Page banners and client-build freshness ───────────────────────────
@@ -3361,8 +3378,8 @@
    * [] on a miss (no day facts known yet for this monthKey), matching the pre-consolidation
    * empty-grid signal renderCalSignupPrompt_/renderCalendar_ already handle. */
   function boardMonthGrid_(monthKey) {
-    var rec = state.board[monthKey];
-    if (!rec || !rec.dayDates || !rec.dayValues) return [];
+    var rec = boardRecord_(monthKey, 'dayFacts');
+    if (!rec) return [];
     return rec.dayDates.map(function(dateIso, i) {
       return { dateIso: dateIso, status: valueToStatus_(rec.dayValues[i]) };
     });
@@ -3395,7 +3412,7 @@
    * dashboard reflects it even if the PAX navigates there before the write finishes. */
   function applyOwnDayWrite_(dateIso, value) {
     var monthKey = monthKeyOf_(parseIsoDate_(dateIso));
-    var cached = state.board[monthKey];
+    var cached = boardRecord_(monthKey, 'dayFacts');
     if (cached) {
       patchOwnDayIntoPayload_(cached, dateIso, value);
     } else {
@@ -3533,8 +3550,7 @@
       renderCalMonthNav_();
       return Promise.resolve();
     }
-    var cached = state.board[monthKey];
-    if (cached && cached.dayDates && cached.dayValues) {
+    if (boardRecord_(monthKey, 'dayFacts')) {
       applyCalGridPayload_(monthKey);
       renderCalMonthNav_();
       return Promise.resolve();
@@ -3695,7 +3711,7 @@
   $('dashboardBtn').addEventListener('click', function() {
     var btn = this;
     var todayIso = contextTodayIso_();
-    var cached = state.board[monthKeyOf_(contextToday_())];
+    var cached = boardRecord_(monthKeyOf_(contextToday_()), 'dashboard');
     if (cached && cached.dayDates.indexOf(todayIso) !== -1) {
       renderDashboard_(cached, cached.dayDates.indexOf(todayIso));
       revalidateDashboard_();
@@ -3704,7 +3720,7 @@
     setButtonLoading_(btn, true, 'Loading…');
     var pending = state.dashboardPrefetchPromise
       ? state.dashboardPrefetchPromise.then(function() {
-          var c = state.board[monthKeyOf_(contextToday_())];
+          var c = boardRecord_(monthKeyOf_(contextToday_()), 'dashboard');
           if (c && c.dayDates.indexOf(todayIso) !== -1) {
             renderDashboard_(c, c.dayDates.indexOf(todayIso));
             return;
@@ -5180,18 +5196,6 @@
     $('scNextMonthBtn').disabled = scorecardState_.loading || idx === -1 || idx >= bounds.maxIdx;
   }
 
-  /** A state.board[monthKey] entry only counts as usable here once it carries paxBoard —
-   * patchBoardDayFacts_ (the check-in calendar's own month nav, monthGrid action) can plant a
-   * state.board record with only day-facts fields and no paxBoard at all, which a plain
-   * `state.board[monthKey]` truthiness check used to mistake for "already loaded" and render as
-   * a permanently empty board (caught live: Scorecard opened before prefetchDashboard_'s
-   * background dashboard fetch — the one that actually carries paxBoard — had landed, and
-   * nothing was ever wired to re-render Scorecard once it did land in the background). */
-  function scorecardBoardCached_(monthKey) {
-    var b = state.board[monthKey];
-    return (b && Array.isArray(b.paxBoard)) ? b : null;
-  }
-
   /** F3Go30-iwms: turning loading OFF must not blindly force-unhide #scMetrics/#scPodium — that
    * would override whatever renderScorecard_'s own rosterOnly decision (F3Go30-csfe.2) already
    * made moments earlier in the same .then()-then-.finally() chain, exposing a roster-only
@@ -5217,12 +5221,12 @@
    * immediately opened Scorecard" case) rather than firing a redundant second request for the
    * same day; every other month just fetches fresh, same as before. */
   function loadScorecardMonthData_(monthKey) {
-    var cached = scorecardBoardCached_(monthKey);
+    var cached = boardRecord_(monthKey, 'dashboard');
     if (cached) return Promise.resolve(cached);
     var isRealCurrentMonth = monthKey === monthKeyOf_(new Date());
     if (isRealCurrentMonth && state.dashboardPrefetchPromise) {
       return state.dashboardPrefetchPromise.then(function() {
-        return scorecardBoardCached_(monthKey) || state.board[monthKey];
+        return boardRecord_(monthKey, 'dashboard');
       });
     }
     var months = state.availableMonths || [];
@@ -5232,7 +5236,7 @@
 
   function loadScorecardMonth_(monthKey) {
     scorecardState_.monthKey = monthKey;
-    var cached = scorecardBoardCached_(monthKey);
+    var cached = boardRecord_(monthKey, 'dashboard');
     if (cached) {
       renderScorecard_(cached);
       return Promise.resolve();
@@ -5277,7 +5281,7 @@
     // loadScorecardMonthData_ below usually triggers itself when monthKey isn't cached yet), so
     // this never opens a network connection of its own.
     captureClientTelemetry_('scorecardView', 'open', { view: 'ladder', monthKey: monthKey });
-    var cached = scorecardBoardCached_(monthKey);
+    var cached = boardRecord_(monthKey, 'dashboard');
     if (cached) {
       renderScorecard_(cached);
       return;
@@ -5357,7 +5361,7 @@
       // transport banner is stale and can be cleared. If revalidate fails, catch below
       // keeps the banner up so cached rendering never masks an ongoing outage.
       hideApiError_();
-      var fresh = state.board[monthKeyOf_(contextToday_())];
+      var fresh = boardRecord_(monthKeyOf_(contextToday_()), 'dashboard');
       // F3Go30-e4r0: by the time this background fetch resolves the PAX may have navigated to
       // another step entirely (Scorecard, Bonus, ...) — repainting here would call
       // renderDashboard_'s unconditional showStep('dashboard') and silently yank them back.
@@ -5378,7 +5382,7 @@
     var todayClient = new Date();
     if (newDate > todayClient && isoDate_(newDate) !== isoDate_(todayClient)) return;
 
-    var cached = state.board[monthKeyOf_(newDate)];
+    var cached = boardRecord_(monthKeyOf_(newDate), 'dashboard');
     if (cached) {
       var idx = cached.dayDates.indexOf(isoDate_(newDate));
       if (idx === -1) { loadDashboard_(isoDate_(newDate)); return; }

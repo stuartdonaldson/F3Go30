@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { readStaticPage_, extractFunction_ } = require('./helpers/staticPageExtract');
+const { readStaticPage_, extractFunction_, extractBoardAccessor_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-os03: consolidates the client's split board state (state.monthCache, state.calGridCache,
 // the state.monthGrid alias, state.locallyWrittenIso's permanent overlay) into one state.board
@@ -11,6 +11,7 @@ const { readStaticPage_, extractFunction_ } = require('./helpers/staticPageExtra
 
 function boardHelpersSrc_(src) {
   return [
+    extractBoardAccessor_(src),
     extractFunction_(src, 'valueToStatus_'),
     extractFunction_(src, 'statusToValue_'),
     extractFunction_(src, 'patchBoardDayFacts_'),

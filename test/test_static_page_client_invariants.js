@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { readStaticPage_, extractFunction_, makeFakeLocalStorage_ } = require('./helpers/staticPageExtract');
+const { readStaticPage_, extractFunction_, extractBoardAccessor_, makeFakeLocalStorage_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-giqm: static-pages/src/index.html was originally built as a "faithful port" of the
 // GAS-hosted CheckinApp.html + IdentityCore.html (per static-checkin.spec.js's header). DR-04
@@ -211,7 +211,7 @@ function makeCalNavHarness_(state, callApiImpl) {
   // block so they share its closure over `state` (a fake would just re-implement D2/D3 and prove
   // nothing about them).
   var src = readStaticPage_();
-  var boardHelpers = [extractFunction_(src, 'valueToStatus_'), extractFunction_(src, 'statusToValue_'),
+  var boardHelpers = [extractBoardAccessor_(src), extractFunction_(src, 'valueToStatus_'), extractFunction_(src, 'statusToValue_'),
     extractFunction_(src, 'patchBoardDayFacts_'), extractFunction_(src, 'boardMonthGrid_')].join('\n');
   var factory = new Function('state', '$', 'callApi', 'hideApiError_', 'renderCalendar_', 'renderSelectionPanel_', 'showApiError_',
     boardHelpers + '\n' + extractCalNavBlock_() +
