@@ -110,14 +110,15 @@ function makeBoardWriteAndCalNavHarness_(state, callApiImpl) {
       assert.ok(startIdx !== -1 && endIdx !== -1, 'cal-nav block markers not found in index.html');
       return src.slice(startIdx, endIdx);
     })();
-  var factory = new Function('state', '$', 'callApi', 'hideApiError_', 'renderCalendar_', 'renderSelectionPanel_', 'showApiError_',
+  var factory = new Function('state', '$', 'callApi', 'hideApiError_', 'renderCalendar_', 'renderSelectionPanel_', 'showApiError_', 'persistBoardCache_',
     body + '\nreturn { applyOwnDayWrite_: applyOwnDayWrite_, loadCalMonth_: loadCalMonth_ };'
   );
   var fns = factory(
     state, fakeEl_,
     callApiImpl || function() { throw new Error('callApi should not have been called — the written month must already be cache-hit'); },
     function() {}, function() {}, function() {},
-    function(action, err) { throw err; }
+    function(action, err) { throw err; },
+    function() { /* persistBoardCache_ is exercised for real in test_dashboard_stale_while_revalidate.js */ }
   );
   return { fns: fns, elements: elements };
 }

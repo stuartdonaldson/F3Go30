@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { readStaticPage_, extractLoadDashboardBlock_, extractBoardAccessor_, extractFunction_ } = require('./helpers/staticPageExtract');
+const { readStaticPage_, extractLoadDashboardBlock_, extractBoardAccessor_, extractLocalStorageBlock_, extractFunction_, makeFakeLocalStorage_ } = require('./helpers/staticPageExtract');
 
 // F3Go30-833s.13: dashboardBtn used to be cache-or-wait, not cache-then-update — a cached month
 // payload for today rendered instantly ONLY when no prefetch was in flight, then returned with no
@@ -31,7 +31,8 @@ function extractPullToRefreshBlock_(src) {
 // Builds a same-realm harness (via `Function`, matching the cal-nav precedent) wiring the real
 // loadDashboard_/revalidateDashboard_/dashboardBtn-handler source against fakes for the DOM/network
 // seams (renderDashboard_, callApi, $ elements) — none of those are under test here.
-function makeDashboardHarness_(state, callApiImpl) {
+function makeDashboardHarness_(state, callApiImpl, opts) {
+  opts = opts || {};
   var elements = {};
   function fakeEl_(id) {
     if (!elements[id]) {
@@ -50,17 +51,21 @@ function makeDashboardHarness_(state, callApiImpl) {
   var setButtonLoading_ = function(btn, isLoading, text) { setButtonLoadingCalls.push({ isLoading: isLoading, text: text }); };
 
   var src = readStaticPage_();
-  var body = extractBoardAccessor_(src) + '\n' + extractFunction_(src, 'navigateDashboard_') + '\n' +
+  var body = extractBoardAccessor_(src) + '\n' + extractLocalStorageBlock_(src) + '\n' +
+    // F3Go30-8naq.3: the persisted dashboard-board cache (real source) and the write path that feeds it
+    ['boardCacheOwner_', 'persistBoardCache_', 'hydrateBoardFromCache_', 'patchOwnDayIntoPayload_', 'applyOwnDayWrite_', 'parseIsoDate_']
+      .map(function(n) { return extractFunction_(src, n); }).join('\n') + '\n' +
+    extractFunction_(src, 'navigateDashboard_') + '\n' +
     extractDashboardBtnHandlerBody_(src) + '\n' + extractLoadDashboardBlock_(src);
   var factory = new Function(
     'state', '$', 'callApi', 'renderDashboard_', 'setButtonLoading_', 'hideApiError_', 'showApiError_',
-    'isoDate_', 'monthKeyOf_', 'patchOwnDayIntoPayload_', 'renderDateNav_', 'captureDashboardRenderTelemetry_',
+    'isoDate_', 'monthKeyOf_', 'renderDateNav_', 'captureDashboardRenderTelemetry_',
     'requestGen_', 'reconcileDashboardWithLocalWrites_', 'restoreWiderBoardDayFacts_',
-    'contextToday_', 'contextTodayIso_',
+    'contextToday_', 'contextTodayIso_', 'localStorage', 'SAVED_IDENTITY_TOKEN', 'clearTokenFromStorage_',
     // The dashboardBtn block is a bare $('dashboardBtn').addEventListener(...) statement, not a
     // named function — running it registers the real click handler onto the fake $ element below,
     // which the test then triggers directly rather than trying to name-bind an anonymous function.
-    body + '\nreturn { boardRecord_: boardRecord_, navigateDashboard_: navigateDashboard_, loadDashboard_: loadDashboard_, prefetchDashboard_: prefetchDashboard_, revalidateDashboard_: revalidateDashboard_ };'
+    body + '\nreturn { hydrateBoardFromCache_: hydrateBoardFromCache_, persistBoardCache_: persistBoardCache_, applyOwnDayWrite_: applyOwnDayWrite_, clearCheckinSnapshot_: clearCheckinSnapshot_, boardRecord_: boardRecord_, navigateDashboard_: navigateDashboard_, loadDashboard_: loadDashboard_, prefetchDashboard_: prefetchDashboard_, revalidateDashboard_: revalidateDashboard_ };'
   );
   var fns = factory(
     state, fakeEl_,
@@ -69,7 +74,6 @@ function makeDashboardHarness_(state, callApiImpl) {
     function() {}, function() {},
     function(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); },
     function(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); },
-    function(payload, dateIso, value) { /* no pending writes exercised in these tests */ },
     function() {},
     // F3Go30-5p3z: telemetry capture is exercised by its own dedicated test — a no-op stand-in
     // here keeps this harness scoped to stale-while-revalidate behavior.
@@ -82,7 +86,10 @@ function makeDashboardHarness_(state, callApiImpl) {
     // the isoDate_/monthKeyOf_ stand-ins above, so behavior here is unchanged by the context-clock
     // fix (that override path is covered by test_static_page_client_invariants.js's source guard
     // and the context-date-dashboard live-check spec, not this harness).
-    function() { return new Date(); }, todayIso_
+    function() { return new Date(); }, todayIso_,
+    opts.localStorage || makeFakeLocalStorage_(),
+    Object.prototype.hasOwnProperty.call(opts, 'token') ? opts.token : 'tokA',
+    function() {}
   );
   return { fns: fns, elements: elements, renderCalls: renderCalls, setButtonLoadingCalls: setButtonLoadingCalls };
 }
@@ -343,6 +350,128 @@ function dayFactsOnlyState_() {
   h.fns.navigateDashboard_(-1);
   assert.equal(h.renderCalls.length, 0, 'AC2: navigate must not render from a day-facts-only record');
   assert.equal(calls.length, 1, 'AC2: navigate fetches instead');
+})();
+
+// ── F3Go30-8naq.3: the current month's dashboard board persists to localStorage ──────────────
+
+var BOARD_KEY_ = 'go30DashboardBoard:v1';
+function dashboardPayload_(extra) {
+  return Object.assign({ monthKey: monthKey_(), dayDates: [todayIso_()], dayValues: [null], viewDayIndex: 0, paxBoard: [{ team: 'Red', members: [] }] }, extra || {});
+}
+function tick_() { return new Promise(function(r) { setImmediate(r); }); }
+
+// AC1 (+ AC3/AC4 gate): after a dashboard loaded once, a fresh page (empty state.board, network
+// stalled) hydrates the persisted record and Dashboard renders at once - no Loading... button.
+(function testReloadRendersDashboardFromPersistedRecordWithNetworkStalled() {
+  var ls = makeFakeLocalStorage_();
+  // page 1: a dashboard load persists the record
+  var h1 = makeDashboardHarness_(baseState_(false), function() { return Promise.resolve(dashboardPayload_()); }, { localStorage: ls });
+  return h1.fns.loadDashboard_(undefined, { silent: true }).then(function() {
+    assert.ok(ls.getItem(BOARD_KEY_), 'loadDashboard_ success persists the current-month board');
+    // page 2: cold launch, network never answers
+    var state2 = baseState_(false);
+    var h2 = makeDashboardHarness_(state2, function() { return new Promise(function() {}); }, { localStorage: ls });
+    h2.fns.hydrateBoardFromCache_();
+    assert.ok(h2.fns.boardRecord_(monthKey_(), 'dashboard'), 'hydrated as a dashboard-facet record');
+    h2.elements.dashboardBtn.trigger('click');
+    assert.equal(h2.renderCalls.length, 1, 'AC1: renders immediately from the persisted record');
+    assert.equal(h2.setButtonLoadingCalls.length, 0, 'AC1: no Loading... button');
+  });
+})();
+
+// AC2: a check-in made after the dashboard loaded is reflected in the persisted record.
+(function testCheckinAfterLoadIsPersisted() {
+  var ls = makeFakeLocalStorage_();
+  var state = baseState_(false);
+  var h = makeDashboardHarness_(state, function() { return Promise.resolve(dashboardPayload_()); }, { localStorage: ls });
+  return h.fns.loadDashboard_(undefined, { silent: true }).then(function() {
+    h.fns.applyOwnDayWrite_(todayIso_(), 1);
+    var env = JSON.parse(ls.getItem(BOARD_KEY_));
+    assert.deepEqual(env.value.dayValues, [1], 'applyOwnDayWrite_ re-persists the patched record');
+    var state2 = baseState_(false);
+    var h2 = makeDashboardHarness_(state2, null, { localStorage: ls });
+    h2.fns.hydrateBoardFromCache_();
+    assert.deepEqual(state2.board[monthKey_()].dayValues, [1], 'a reload shows the check-in');
+  });
+})();
+
+// AC3: never hydrate one PAX's cache for another; logout / not-you clears it.
+(function testPersistedRecordIsIdentityBound() {
+  var ls = makeFakeLocalStorage_();
+  var hX = makeDashboardHarness_(baseState_(false), function() { return Promise.resolve(dashboardPayload_()); }, { localStorage: ls, token: 'tokX' });
+  return hX.fns.loadDashboard_(undefined, { silent: true }).then(function() {
+    var stateY = baseState_(false);
+    var hY = makeDashboardHarness_(stateY, null, { localStorage: ls, token: 'tokY' });
+    hY.fns.hydrateBoardFromCache_();
+    assert.equal(stateY.board[monthKey_()], undefined, 'PAX Y must not see PAX X\'s cache');
+    var stateNone = baseState_(false);
+    makeDashboardHarness_(stateNone, null, { localStorage: ls, token: null }).fns.hydrateBoardFromCache_();
+    assert.equal(stateNone.board[monthKey_()], undefined, 'no identity, no hydrate');
+    hX.fns.clearCheckinSnapshot_();
+    assert.equal(ls.getItem(BOARD_KEY_), null, 'logout / not-you clears the persisted board');
+  });
+})();
+
+(function testNameEmailBindingWhenNoToken() {
+  var ls = makeFakeLocalStorage_();
+  var a = baseState_(false); a.f3Name = 'Alice'; a.email = 'a@x.org';
+  var hA = makeDashboardHarness_(a, function() { return Promise.resolve(dashboardPayload_()); }, { localStorage: ls, token: null });
+  return hA.fns.loadDashboard_(undefined, { silent: true }).then(function() {
+    assert.ok(ls.getItem(BOARD_KEY_), 'persisted under the f3Name+email binding');
+    var same = baseState_(false); same.f3Name = 'alice'; same.email = 'A@X.org';
+    makeDashboardHarness_(same, null, { localStorage: ls, token: null }).fns.hydrateBoardFromCache_();
+    assert.ok(same.board[monthKey_()], 'same PAX (case-insensitive) hydrates');
+    var other = baseState_(false); other.f3Name = 'Bob'; other.email = 'a@x.org';
+    makeDashboardHarness_(other, null, { localStorage: ls, token: null }).fns.hydrateBoardFromCache_();
+    assert.equal(other.board[monthKey_()], undefined, 'a different f3Name must not hydrate');
+  });
+})();
+
+// AC4: a record from a prior month, or past the TTL, is ignored; only the current month persists.
+(function testPriorMonthAndTtlAreIgnored() {
+  var ls = makeFakeLocalStorage_();
+  var h = makeDashboardHarness_(baseState_(false), function() { return Promise.resolve(dashboardPayload_()); }, { localStorage: ls });
+  return h.fns.loadDashboard_(undefined, { silent: true }).then(function() {
+    var env = JSON.parse(ls.getItem(BOARD_KEY_));
+    env.value.monthKey = '1999-01';
+    ls.setItem(BOARD_KEY_, JSON.stringify(env));
+    var s1 = baseState_(false);
+    makeDashboardHarness_(s1, null, { localStorage: ls }).fns.hydrateBoardFromCache_();
+    assert.equal(s1.board[monthKey_()], undefined, 'a prior-month record is ignored');
+    env.value.monthKey = monthKey_();
+    env.savedAt -= 15 * 24 * 60 * 60 * 1000;
+    ls.setItem(BOARD_KEY_, JSON.stringify(env));
+    var s2 = baseState_(false);
+    makeDashboardHarness_(s2, null, { localStorage: ls }).fns.hydrateBoardFromCache_();
+    assert.equal(s2.board[monthKey_()], undefined, 'a record past CHECKIN_SNAPSHOT_TTL_MS_ is ignored');
+  });
+})();
+
+(function testOnlyCurrentMonthIsPersistedAndNeverOverwritesLiveBoard() {
+  var ls = makeFakeLocalStorage_();
+  var other = dashboardPayload_({ monthKey: '1999-01' });
+  var h = makeDashboardHarness_(baseState_(false), function() { return Promise.resolve(other); }, { localStorage: ls });
+  return h.fns.loadDashboard_('1999-01-05', { silent: true }).then(function() {
+    assert.equal(ls.getItem(BOARD_KEY_), null, 'a non-current-month dashboard is not persisted');
+    var live = baseState_(true);
+    var liveRec = live.board[monthKey_()];
+    var ls2 = makeFakeLocalStorage_();
+    ls2.setItem(BOARD_KEY_, JSON.stringify({ savedAt: Date.now(), owner: 'token:tokA', value: dashboardPayload_() }));
+    makeDashboardHarness_(live, null, { localStorage: ls2 }).fns.hydrateBoardFromCache_();
+    assert.equal(live.board[monthKey_()], liveRec, 'hydrate never replaces a live dashboard record');
+  });
+})();
+
+// AC6: storage throwing / quota exceeded never breaks load or render.
+(function testStorageFailuresNeverBreakLoadOrHydrate() {
+  var bad = makeFakeLocalStorage_({ throwOnSet: true });
+  var state = baseState_(false);
+  var h = makeDashboardHarness_(state, function() { return Promise.resolve(dashboardPayload_()); }, { localStorage: bad });
+  return h.fns.loadDashboard_(undefined, { silent: true }).then(function() {
+    assert.ok(state.board[monthKey_()], 'quota-exceeded write is swallowed; the load still lands');
+    bad.getItem = function() { throw new Error('SecurityError'); };
+    h.fns.hydrateBoardFromCache_();
+  });
 })();
 
 console.log('test_dashboard_stale_while_revalidate.js: all assertions passed');

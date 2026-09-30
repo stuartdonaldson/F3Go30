@@ -1229,20 +1229,51 @@
   // response, never replayed from a stale local copy.
   var CHECKIN_SNAPSHOT_KEY_ = 'go30CheckinSnapshot:v1';
   var CHECKIN_SNAPSHOT_TTL_MS_ = 14 * 24 * 60 * 60 * 1000;
+  // F3Go30-8naq.3: the current month's dashboard-facet board record (state.board), so a cold
+  // launch can paint Dashboard stale-while-revalidate without waiting on the network. Cleared
+  // together with the snapshot (clearCheckinSnapshot_), bound to the same identity.
+  var BOARD_CACHE_KEY_ = 'go30DashboardBoard:v1';
+
+  /** F3Go30-8naq.3: the ONE localStorage read/write pair for an identity-bound, optionally
+   * expiring cache: a {savedAt, owner, value} envelope, every storage exception swallowed (private
+   * mode, quota, disabled storage) so a caller can never be broken by storage. readLocal_ returns
+   * {value, savedAt} or null (absent, corrupt, wrong owner, past ttlMs); opts.owner, when passed
+   * at all, must equal the stored owner — pass null/'' only to demand an ownerless entry.
+   * writeLocal_ returns whether the write landed. Remaining localStorage keys migrate onto this in
+   * the follow-up bead (F3Go30-vjnw) — do not hand-roll another try/catch + JSON.parse. */
+  function readLocal_(key, opts) {
+    opts = opts || {};
+    try {
+      var raw = localStorage.getItem(key);
+      if (!raw) return null;
+      var env = JSON.parse(raw);
+      if (!env || typeof env !== 'object' || !env.savedAt || env.value === undefined) return null;
+      if (Object.prototype.hasOwnProperty.call(opts, 'owner') && env.owner !== opts.owner) return null;
+      if (opts.ttlMs && (Date.now() - env.savedAt) > opts.ttlMs) return null;
+      return { value: env.value, savedAt: env.savedAt };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeLocal_(key, value, owner) {
+    try {
+      localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), owner: owner === undefined ? null : owner, value: value }));
+      return true;
+    } catch (e) {
+      return false; // localStorage unavailable / quota — not fatal, just no persisted copy
+    }
+  }
 
   function saveCheckinSnapshot_(token, res) {
     if (!token) return;
-    try {
-      localStorage.setItem(CHECKIN_SNAPSHOT_KEY_, JSON.stringify({
-        token: token,
-        savedAt: Date.now(),
-        f3Name: res.f3Name, email: res.email, team: res.team, monthLabel: res.monthLabel,
-        goals: res.goals, resolvedContext: res.resolvedContext,
-        nextMonthRegistered: res.nextMonthRegistered, nextMonthLabel: res.nextMonthLabel,
-        monthGrid: res.monthGrid, todayStatus: res.todayStatus, yesterdayStatus: res.yesterdayStatus,
-        yesterdayAvailable: res.yesterdayAvailable, config: res.config,
-      }));
-    } catch (e) { /* localStorage unavailable — not fatal, just no instant paint next visit */ }
+    writeLocal_(CHECKIN_SNAPSHOT_KEY_, {
+      f3Name: res.f3Name, email: res.email, team: res.team, monthLabel: res.monthLabel,
+      goals: res.goals, resolvedContext: res.resolvedContext,
+      nextMonthRegistered: res.nextMonthRegistered, nextMonthLabel: res.nextMonthLabel,
+      monthGrid: res.monthGrid, todayStatus: res.todayStatus, yesterdayStatus: res.yesterdayStatus,
+      yesterdayAvailable: res.yesterdayAvailable, config: res.config,
+    }, token);
   }
 
   // isoDate_ is defined further down (dashboard section) but this is a plain function
@@ -1262,11 +1293,10 @@
   //   - Day rolled: re-derive both from the date-keyed monthGrid against the live date.
   function loadCheckinSnapshot_(token) {
     try {
-      var raw = localStorage.getItem(CHECKIN_SNAPSHOT_KEY_);
-      if (!raw) return null;
-      var snap = JSON.parse(raw);
-      if (!snap || snap.token !== token) return null;
-      if (!snap.savedAt || (Date.now() - snap.savedAt) > CHECKIN_SNAPSHOT_TTL_MS_) return null;
+      var hit = readLocal_(CHECKIN_SNAPSHOT_KEY_, { owner: token, ttlMs: CHECKIN_SNAPSHOT_TTL_MS_ });
+      if (!hit || !hit.value) return null;
+      var snap = hit.value;
+      snap.savedAt = hit.savedAt;
       var todayD = new Date();
       var todayIso = isoDate_(todayD);
       var todayEntry = snapshotGridEntry_(snap, todayIso);
@@ -1298,7 +1328,9 @@
   }
 
   function clearCheckinSnapshot_() {
-    try { localStorage.removeItem(CHECKIN_SNAPSHOT_KEY_); } catch (e) { /* not fatal */ }
+    [CHECKIN_SNAPSHOT_KEY_, BOARD_CACHE_KEY_].forEach(function(key) {
+      try { localStorage.removeItem(key); } catch (e) { /* not fatal */ }
+    });
     clearTokenFromStorage_();
   }
 
@@ -2316,6 +2348,41 @@
     return (rec && test(rec)) ? rec : null;
   }
 
+  /** F3Go30-8naq.3: who the persisted dashboard board belongs to — the saved token when there is
+   * one (same binding as the check-in snapshot), else f3Name+email. '' means no identity, so
+   * nothing is persisted and nothing is hydrated: one PAX's cache is never painted for another. */
+  function boardCacheOwner_() {
+    if (SAVED_IDENTITY_TOKEN) return 'token:' + SAVED_IDENTITY_TOKEN;
+    if (state.f3Name && state.email) return 'pax:' + String(state.f3Name).toLowerCase() + '|' + String(state.email).toLowerCase();
+    return '';
+  }
+
+  /** F3Go30-8naq.3: persists the CURRENT month's dashboard-facet board record. The one function
+   * both writers call (loadDashboard_ success, applyOwnDayWrite_'s own-day patch); a no-op for any
+   * other month, a record without the dashboard facet, or no identity. */
+  function persistBoardCache_(monthKey) {
+    if (monthKey !== monthKeyOf_(contextToday_())) return;
+    var rec = boardRecord_(monthKey, 'dashboard');
+    var owner = boardCacheOwner_();
+    if (rec && owner) writeLocal_(BOARD_CACHE_KEY_, rec, owner);
+  }
+
+  /** F3Go30-8naq.3: at page init, before identify, seeds state.board with the persisted current-
+   * month dashboard record so Dashboard paints stale-while-revalidate at once. It is an OLD read —
+   * generation 0, older than any request issued this pageview (requestGen_ starts above it), and
+   * it registers nothing in writeGenByIso_ — so pendingSelfWrites / locallyWrittenIso still
+   * outrank it exactly as they outrank any stale fetch. Ignored when not the current month, past
+   * the TTL, for another identity, or when a live dashboard record already exists. */
+  function hydrateBoardFromCache_() {
+    var owner = boardCacheOwner_();
+    if (!owner) return;
+    var monthKey = monthKeyOf_(contextToday_());
+    if (boardRecord_(monthKey, 'dashboard')) return;
+    var hit = readLocal_(BOARD_CACHE_KEY_, { owner: owner, ttlMs: CHECKIN_SNAPSHOT_TTL_MS_ });
+    if (!hit || !hit.value || hit.value.monthKey !== monthKey || !BOARD_FACETS_.dashboard(hit.value)) return;
+    state.board[monthKey] = hit.value;
+  }
+
   function $(id) { return document.getElementById(id); }
 
   // ── Page banners and client-build freshness ───────────────────────────
@@ -2980,6 +3047,7 @@
   // applyIdentifySuccess_ synchronously during initial script execution instead of later from an
   // async .then() (by which point the whole script had already finished running once).
   function runIdentityBootstrap_() {
+  hydrateBoardFromCache_(); // F3Go30-8naq.3: persisted dashboard board, before any identify
   // F3Go30-833s.9: ?cmd=signup routes this page straight to the signup step instead of the
   // check-in bootstrap — the static half of the URL contract the GAS webapp already honours,
   // which is what lets a signup link move between the two origins as a base-URL swap.
@@ -3487,6 +3555,7 @@
     var cached = boardRecord_(monthKey, 'dayFacts');
     if (cached) {
       patchOwnDayIntoPayload_(cached, dateIso, value);
+      persistBoardCache_(monthKey); // F3Go30-8naq.3: a check-in must survive the next cold launch
     } else {
       state.pendingSelfWrites[dateIso] = value;
     }
@@ -5397,6 +5466,7 @@
         var priorDayValues_ = priorRec_ && priorRec_.dayValues;
         state.board[payload.monthKey] = payload;
         restoreWiderBoardDayFacts_(payload.monthKey, priorDayDates_, priorDayValues_);
+        persistBoardCache_(payload.monthKey); // F3Go30-8naq.3
         if (!silent) renderDashboard_(payload, payload.viewDayIndex);
         return payload;
       })

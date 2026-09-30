@@ -501,9 +501,9 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
     await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
     await dismissAnnouncementIfPresent_(page);
 
-    const snapshot = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), 'go30CheckinSnapshot:v1');
+    const snapshot = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), 'go30CheckinSnapshot:v1'); // F3Go30-8naq.3: {savedAt, owner, value} envelope
     expect(snapshot).toBeTruthy();
-    const todayEntry = (snapshot.monthGrid || []).find((e) => e.dateIso === todayIso);
+    const todayEntry = (snapshot.value.monthGrid || []).find((e) => e.dateIso === todayIso);
     expect(todayEntry).toBeTruthy();
     const originalStatus = todayEntry.status;
     const originalValue = originalStatus === 'done' ? 1 : originalStatus === 'missed' ? 0 : originalStatus === 'absent' ? -1 : null;
@@ -539,7 +539,7 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
       // No further navigation/reload — assert the snapshot the syncing identify just persisted
       // already reflects the write, proving locallyWrittenIso protected it during reconciliation.
       const finalSnapshot = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), 'go30CheckinSnapshot:v1');
-      const finalEntry = (finalSnapshot.monthGrid || []).find((e) => e.dateIso === todayIso);
+      const finalEntry = (finalSnapshot.value.monthGrid || []).find((e) => e.dateIso === todayIso);
       expect(finalEntry.status).toBe(probeStatus);
     } finally {
       await page.unroute('**/exec*');
@@ -560,12 +560,12 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
     await page.goto(checkinPageUrl());
     await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
-    const snapshot = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), 'go30CheckinSnapshot:v1');
+    const snapshot = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), 'go30CheckinSnapshot:v1'); // F3Go30-8naq.3: {savedAt, owner, value} envelope
     expect(snapshot).toBeTruthy();
 
     // A future day (not today) so we don't disturb today's fixture state — same pattern as the
     // existing calendar test's future-day probe.
-    const futureEntry = (snapshot.monthGrid || []).slice().reverse().find((e) => e.dateIso > todayIso);
+    const futureEntry = (snapshot.value.monthGrid || []).slice().reverse().find((e) => e.dateIso > todayIso);
     test.skip(!futureEntry, 'no future day available in the viewed month');
     const futureIso = futureEntry.dateIso;
     const originalStatus = futureEntry.status;
@@ -612,12 +612,12 @@ test.describe('Static check-in front end: localStorage snapshot instant paint (F
     await expect(page.locator('#step-checkin')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
     await expect(page.locator('#checkinSyncingNote')).toBeHidden({ timeout: LIVE_ROUND_TRIP_MS });
     await dismissAnnouncementIfPresent_(page);
-    const snapshot = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), 'go30CheckinSnapshot:v1');
+    const snapshot = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), 'go30CheckinSnapshot:v1'); // F3Go30-8naq.3: {savedAt, owner, value} envelope
     expect(snapshot).toBeTruthy();
 
     const bogusToken = crypto.randomUUID();
     await page.evaluate(([k, snap, token]) => {
-      snap.token = token;
+      snap.owner = token; // F3Go30-8naq.3: the envelope's owner is the token it is bound to
       snap.savedAt = Date.now();
       localStorage.setItem(k, JSON.stringify(snap));
     }, ['go30CheckinSnapshot:v1', snapshot, bogusToken]);

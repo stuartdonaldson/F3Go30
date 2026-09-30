@@ -48,7 +48,7 @@ function makeHarness_(opts) {
 
   var factory = new Function(
     'localStorage', 'Date', 'clearTokenFromStorage_',
-    body + '\nreturn { saveCheckinSnapshot_: saveCheckinSnapshot_, loadCheckinSnapshot_: loadCheckinSnapshot_, clearCheckinSnapshot_: clearCheckinSnapshot_ };'
+    body + '\nreturn { saveCheckinSnapshot_: saveCheckinSnapshot_, loadCheckinSnapshot_: loadCheckinSnapshot_, clearCheckinSnapshot_: clearCheckinSnapshot_, readLocal_: readLocal_, writeLocal_: writeLocal_ };'
   );
   return {
     fns: factory(fakeLocalStorage, makeFakeDate_(opts.nowIso || '2026-07-15'), function() {}),
@@ -182,3 +182,65 @@ function identifyResponse_(overrides) {
 })();
 
 console.log('All checkin snapshot day-boundary tests passed');
+
+// ── F3Go30-8naq.3: the ONE readLocal_/writeLocal_ helper pair, {savedAt, owner, value} envelope ──
+
+(function testSnapshotRidesTheSharedEnvelopeHelper() {
+  var h = makeHarness_({ nowIso: '2026-07-15' });
+  h.fns.saveCheckinSnapshot_('tok123', identifyResponse_());
+  var env = JSON.parse(h.store['go30CheckinSnapshot:v1']);
+  assert.deepEqual(Object.keys(env).sort(), ['owner', 'savedAt', 'value'], 'the snapshot is stored in the shared envelope');
+  assert.equal(env.owner, 'tok123', 'the snapshot is bound to its token as owner');
+  assert.equal(env.value.f3Name, 'Splinter');
+  // the helper pair reads what the snapshot wrote - one implementation, not two
+  assert.equal(h.fns.readLocal_('go30CheckinSnapshot:v1', { owner: 'tok123' }).value.f3Name, 'Splinter');
+  assert.equal(h.fns.readLocal_('go30CheckinSnapshot:v1', { owner: 'someoneElse' }), null);
+  console.log('✓ snapshot uses the shared readLocal_/writeLocal_ envelope');
+})();
+
+(function testReadLocalOwnerTtlAndCorruption() {
+  var h = makeHarness_({ nowIso: '2026-07-15' });
+  assert.equal(h.fns.writeLocal_('k', { a: 1 }, 'me'), true);
+  assert.deepEqual(h.fns.readLocal_('k', { owner: 'me' }).value, { a: 1 });
+  assert.equal(h.fns.readLocal_('k', { owner: 'you' }), null, 'owner mismatch is a miss');
+  assert.deepEqual(h.fns.readLocal_('k').value, { a: 1 }, 'no owner option means no owner check');
+  var env = JSON.parse(h.store.k); env.savedAt -= 1000 * 60;
+  h.store.k = JSON.stringify(env);
+  assert.equal(h.fns.readLocal_('k', { ttlMs: 1000 * 30 }), null, 'past ttlMs is a miss');
+  assert.ok(h.fns.readLocal_('k', { ttlMs: 1000 * 120 }), 'inside ttlMs is a hit');
+  h.store.k = '{not json';
+  assert.equal(h.fns.readLocal_('k'), null, 'corrupt JSON is a miss, never a throw');
+  h.store.k = JSON.stringify({ savedAt: Date.now(), owner: 'me' });
+  assert.equal(h.fns.readLocal_('k'), null, 'an envelope with no value is a miss');
+  assert.equal(h.fns.readLocal_('absent'), null);
+  console.log('✓ readLocal_ honours owner/ttl and swallows corruption');
+})();
+
+(function testStorageExceptionsAreSwallowed() {
+  var src = readStaticPage_();
+  var body =
+    extractBlock_(src, '  function isoDate_(d) {', '  function monthKeyOf_(d) {') +
+    extractBlock_(src, '  var CHECKIN_SNAPSHOT_KEY_', '  // F3Go30-833s.1: the check-in token itself');
+  var throwing = {
+    getItem: function() { throw new Error('SecurityError'); },
+    setItem: function() { throw new Error('QuotaExceededError'); },
+    removeItem: function() { throw new Error('SecurityError'); },
+  };
+  var fns = new Function('localStorage', 'Date', 'clearTokenFromStorage_',
+    body + '\nreturn { readLocal_: readLocal_, writeLocal_: writeLocal_, saveCheckinSnapshot_: saveCheckinSnapshot_, loadCheckinSnapshot_: loadCheckinSnapshot_, clearCheckinSnapshot_: clearCheckinSnapshot_ };'
+  )(throwing, makeFakeDate_('2026-07-15'), function() {});
+  assert.equal(fns.writeLocal_('k', 1, 'o'), false, 'a failed write reports false, never throws');
+  assert.equal(fns.readLocal_('k'), null);
+  fns.saveCheckinSnapshot_('tok', identifyResponse_());
+  assert.equal(fns.loadCheckinSnapshot_('tok'), null);
+  fns.clearCheckinSnapshot_();
+  console.log('✓ localStorage throwing never breaks the snapshot path');
+})();
+
+(function testClearAlsoRemovesTheBoardCache() {
+  var h = makeHarness_({ nowIso: '2026-07-15' });
+  h.fns.writeLocal_('go30DashboardBoard:v1', { monthKey: '2026-07' }, 'tok123');
+  h.fns.clearCheckinSnapshot_();
+  assert.equal(h.store['go30DashboardBoard:v1'], undefined, 'logout / not-you must clear the persisted dashboard board too');
+  console.log('✓ clearCheckinSnapshot_ also clears the persisted dashboard board');
+})();

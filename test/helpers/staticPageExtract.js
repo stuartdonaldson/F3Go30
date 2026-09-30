@@ -63,6 +63,16 @@ function extractBoardAccessor_(src) {
   return src.slice(startIdx, src.indexOf('function boardRecord_(')) + extractFunction_(src, 'boardRecord_');
 }
 
+/** F3Go30-8naq.3: the localStorage block — the snapshot/board-cache keys, the ONE readLocal_/
+ * writeLocal_ helper pair, and the check-in snapshot functions built on it. Needs `localStorage`,
+ * `Date`, `isoDate_` and `clearTokenFromStorage_` supplied by the caller's scope. */
+function extractLocalStorageBlock_(src) {
+  var startIdx = src.indexOf('  var CHECKIN_SNAPSHOT_KEY_');
+  var endIdx = src.indexOf('  // F3Go30-833s.1: the check-in token itself');
+  assert.ok(startIdx !== -1 && endIdx > startIdx, 'localStorage block markers not found in index.html');
+  return src.slice(startIdx, endIdx);
+}
+
 /** In-memory localStorage stand-in for the extracted-page harnesses — values coerced to strings
  * as the real Storage does, `initial` seeds the store, `opts.throwOnSet` simulates a quota-exceeded
  * write. Shared (F3Go30-5c2a.9) so the harnesses stop hand-rolling their own copy. */
@@ -119,6 +129,6 @@ function makeFakeClock_(startMs) {
 }
 
 module.exports = {
-  readStaticPage_, extractTransportBlock_, extractShowApiError_, extractFunction_, extractLoadDashboardBlock_, extractBoardAccessor_,
+  readStaticPage_, extractTransportBlock_, extractShowApiError_, extractFunction_, extractLoadDashboardBlock_, extractBoardAccessor_, extractLocalStorageBlock_,
   makeFakeLocalStorage_, makeFakeClock_,
 };

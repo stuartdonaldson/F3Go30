@@ -137,6 +137,8 @@ function makeTelemetryHarness_() {
       // F3Go30-jsrf: exercised by their own dedicated tests (test_checkin_board_consolidation.js) —
       // no-op stand-ins here keep this harness scoped to telemetry-capture behavior.
       'requestGen_', 'reconcileDashboardWithLocalWrites_', 'restoreWiderBoardDayFacts_',
+      // F3Go30-8naq.3: persistence is exercised for real in test_dashboard_stale_while_revalidate.js
+      'persistBoardCache_',
       body + '\nreturn { loadDashboard_: loadDashboard_ };'
     );
     return factory(
@@ -144,7 +146,7 @@ function makeTelemetryHarness_() {
       fakeEl_, callApiImpl, function() {}, function() {}, function() {}, function() {},
       function(d) { return d.getFullYear() + '-01-01'; }, function(d) { return d.getFullYear() + '-01'; },
       function() {}, function() {}, captureDashboardRenderTelemetry_,
-      0, function() {}, function() {}
+      0, function() {}, function() {}, function() {}
     );
   }
 
