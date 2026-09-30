@@ -100,26 +100,33 @@ test.describe('Client transport resilience (F3Go30-313u)', () => {
   });
 
   test('AC1: a request whose response never arrives settles, releases the UI, and does not hang', async ({ page }) => {
+    // Fake clock installed BEFORE the page loads, so the real 12s hedge interval and 36s deadline
+    // are stepped rather than waited for (a hung read now stays open until the 36s deadline,
+    // F3Go30-8naq.2, which would blow the H4 30s ceiling in real time).
+    await page.clock.install();
     await page.goto(idlePageUrl());
-    // 3-attempt read contract (F3Go30-5c2a.9, superseding F3Go30-313u's "retry exactly once").
+    // Hedged 3-attempt read contract (F3Go30-8naq.2, superseding 5c2a.9's abort-and-reissue).
     // Only the FIRST attempt is swallowed (never fulfilled, never aborted -- the exact shape
-    // observed on SIT: GAS answered and the response never reached the browser), which proves
-    // the real AbortController timeout fires. Attempts 2 and 3 are aborted immediately, so the
-    // test costs one 12s timeout rather than 3 x 12s and stays under the H4 30s ceiling.
+    // observed on SIT: GAS answered and the response never reached the browser). Attempt 1 is left
+    // open at the 12s hedge interval; attempts 2 and 3 fail at once; the real AbortController
+    // fires at the 36s deadline.
     const attempts = await interceptExec(page, async (route, action, nth) => {
       if (nth === 1) return; // swallow
       return route.abort('failed');
     });
 
-    const started = Date.now();
-    const settled = await page.evaluate(() => window.callApi('identify', { f3Name: 'X' }, 'signup')
-      .then(() => 'resolved', (err) => 'rejected: ' + err.message), { timeout: 60000 });
-    const elapsed = Date.now() - started;
+    const settledP = page.evaluate(() => window.callApi('identify', { f3Name: 'X' }, 'signup')
+      .then(() => 'resolved', (err) => 'rejected: ' + err.message));
+    await expect.poll(() => attempts.filter((a) => a === 'identify').length).toBe(1);
+    await page.clock.runFor(12000); // hedge interval: attempt 2 starts (and fails), attempt 3 follows
+    await expect.poll(() => attempts.filter((a) => a === 'identify').length).toBe(3);
+    await expect(page.locator('#checkinSyncingNote')).toBeVisible(); // attempt 1 is still open
+    await page.clock.runFor(24000); // overall deadline: the swallowed attempt is aborted
+    const settled = await settledP;
 
     expect(settled).toContain('rejected');
     expect(settled).not.toContain('Failed to fetch');
     expect(attempts.filter((a) => a === 'identify')).toHaveLength(3);
-    expect(elapsed).toBeLessThan(25000);
     await expect(page.locator('#checkinSyncingNote')).toBeHidden();
   });
 

@@ -86,6 +86,14 @@ function makeTransportHarness_(fetchImpl) {
       var due = timers.splice(0, timers.length);
       due.forEach(function(t) { if (clearedIds.indexOf(t.id) === -1) t.fn(); });
     },
+    /** F3Go30-8naq.2: fires ONLY the first live timer scheduled with `ms` (a read's hedge timer is
+     * REQUEST_TIMEOUT_MS_, its overall deadline MAX_READ_ATTEMPTS_ x that) — fireTimers() above
+     * fires everything, deadline included. */
+    fireTimer: function(ms) {
+      var i = timers.findIndex(function(t) { return t.ms === ms && clearedIds.indexOf(t.id) === -1; });
+      assert.notEqual(i, -1, 'no live timer scheduled with ms=' + ms + ' (have ' + timers.map(function(t) { return t.ms; }) + ')');
+      timers.splice(i, 1)[0].fn();
+    },
     firePageEvent: function(evt) { (pageHandlers[evt] || []).forEach(function(fn) { fn(); }); },
     handlerNames: function() { return Object.keys(pageHandlers); },
   };
@@ -179,11 +187,24 @@ function flush_() {
 (function testTimeoutIsBoundedAndCancelledOnSuccess() {
   var h = makeTransportHarness_(function() { return okResponse_({ ok: true, matched: true }); });
   return h.callApi('identify', { f3Name: 'X' }).then(function() {
-    assert.equal(h.timers.length, 1, 'each attempt must schedule exactly one timeout');
-    assert.ok(h.timers[0].ms > 0 && h.timers[0].ms <= 60000,
-      'the request timeout must be bounded and human-scale, got ' + h.timers[0].ms + 'ms (AC1)');
-    assert.equal(h.clearedIds.length, 1, 'a settled request must clear its pending timeout');
+    // F3Go30-8naq.2: a read holds two timers - its hedge timer (REQUEST_TIMEOUT_MS_) and the
+    // overall deadline (MAX_READ_ATTEMPTS_ x that) - and both must be cancelled once it settles.
+    assert.deepEqual(h.timers.map(function(t) { return t.ms; }).sort(function(a, b) { return a - b; }), [12000, 36000],
+      'a read must schedule exactly its hedge timer and its overall deadline');
+    h.timers.forEach(function(t) {
+      assert.ok(t.ms > 0 && t.ms <= 60000, 'timers must be bounded and human-scale, got ' + t.ms + 'ms (AC1)');
+    });
+    assert.equal(h.clearedIds.length, 2, 'a settled request must clear every pending timer');
     assert.equal(h.pending(), 0, 'pendingRequestCount_ must return to 0 after a successful call');
+  });
+})();
+
+// A single-attempt write schedules exactly one timer (its own abort), cancelled on success.
+(function testWriteSchedulesOneTimeoutCancelledOnSuccess() {
+  var h = makeTransportHarness_(function() { return okResponse_({ ok: true }); });
+  return h.callApi('checkin', { day: 'today' }).then(function() {
+    assert.equal(h.timers.length, 1, 'a write schedules exactly one timeout (8naq.2 AC5: never hedged)');
+    assert.equal(h.clearedIds.length, 1);
   });
 })();
 
@@ -195,7 +216,7 @@ function flush_() {
   var hr = makeTransportHarness_(function() { return okResponse_({ ok: true }); });
   var hw = makeTransportHarness_(function() { return okResponse_({ ok: true }); });
   return hr.callApi('identify', {}).then(function() {
-    readTimeout = hr.timers[0].ms;
+    readTimeout = Math.min.apply(null, hr.timers.map(function(t) { return t.ms; }));
     return hw.callApi('checkin', {});
   }).then(function() {
     writeTimeout = hw.timers[0].ms;
@@ -240,7 +261,9 @@ function flush_() {
   });
 })();
 
-(function testTimeoutAlsoTriggersTheRetry() {
+// F3Go30-8naq.2: REQUEST_TIMEOUT_MS_ no longer aborts a read; it starts the next attempt in
+// parallel (see the hedged-read block below).
+(function testTimeoutStartsTheNextAttemptInsteadOfAborting() {
   var h = makeTransportHarness_(function(url, opts, attempt) {
     if (attempt === 1) {
       return new Promise(function(_resolve, reject) {
@@ -252,11 +275,148 @@ function flush_() {
 
   var p = h.callApi('identify', {});
   return flush_().then(function() {
-    h.fireTimers();
+    h.fireTimer(12000);
     return p;
   }).then(function(res) {
-    assert.equal(h.fetchCalls.length, 2, 'a timed-out read must be retried, not just failed (AC2)');
+    assert.equal(h.fetchCalls.length, 2, 'a slow read must get a second attempt in parallel (AC2)');
     assert.equal(res.matched, true);
+  });
+})();
+
+// ── F3Go30-8naq.2: hedged reads ───────────────────────────────────────────────────────────────
+// A read attempt that passes REQUEST_TIMEOUT_MS_ is left OPEN and the next attempt starts in
+// parallel; the first parsed response wins and every other open attempt is aborted. A fast
+// transport failure still starts the next attempt immediately. The overall deadline is
+// MAX_READ_ATTEMPTS_ x REQUEST_TIMEOUT_MS_ from the first send.
+
+/** A fetch stub whose every attempt stays open until the test resolves it (or it is aborted). */
+function makeControlledFetch_() {
+  var attempts = [];
+  function impl(url, opts, n) {
+    return new Promise(function(resolve, reject) {
+      var a = { n: n, signal: opts.signal, resolve: function(json) { resolve({ ok: true, status: 200, json: function() { return Promise.resolve(json); } }); },
+                fail: function() { reject(transportError_()); } };
+      opts.signal.addEventListener('abort', function() { reject(new Error('The operation was aborted.')); });
+      attempts.push(a);
+    });
+  }
+  return { impl: impl, attempts: attempts };
+}
+
+function lostRecords_(h) { return h.telemetry().filter(function(r) { return r.kind === 'lostResponse'; }); }
+
+// AC1: a first attempt answering after REQUEST_TIMEOUT_MS_ still wins; attempt 2 (started at the
+// hedge timer) is aborted.
+(function testSlowFirstAttemptStillWinsAndTheHedgeIsAborted() {
+  var c = makeControlledFetch_();
+  var h = makeTransportHarness_(c.impl);
+  var p = h.callApi('identify', {});
+  return flush_().then(function() {
+    assert.equal(c.attempts.length, 1);
+    h.fireTimer(12000);
+    return flush_();
+  }).then(function() {
+    assert.equal(c.attempts.length, 2, 'attempt 2 starts at the hedge timer, attempt 1 stays open');
+    assert.equal(c.attempts[0].signal.aborted, false, 'the slow attempt must NOT be aborted at REQUEST_TIMEOUT_MS_');
+    assert.equal(h.syncingText(), '⟳ Syncing-2…', 'Syncing-N shows the highest attempt launched');
+    c.attempts[0].resolve({ ok: true, who: 'first' });
+    return p;
+  }).then(function(res) {
+    assert.equal(res.who, 'first', 'the 13s answer is the result');
+    assert.equal(c.attempts[1].signal.aborted, true, 'the losing hedge is aborted');
+    assert.equal(h.pending(), 0);
+    assert.equal(h.syncingText(), '⟳ Syncing…');
+    return flush_();
+  }).then(function() {
+    assert.equal(lostRecords_(h).length, 0, 'AC6: an attempt aborted because another won is NOT a lost response');
+    var win = h.telemetry().filter(function(r) { return r.kind === 'hedgedRead'; });
+    assert.equal(win.length, 1, 'AC6: win telemetry recorded');
+    assert.deepEqual([win[0].ctx.winningAttempt, win[0].ctx.hedged], [1, true]);
+    assert.equal(h.timers.filter(function(t) { return h.clearedIds.indexOf(t.id) === -1; }).length, 0, 'every timer cancelled after the win');
+  });
+})();
+
+// AC2: attempt 2 answering first wins; attempt 1 is aborted.
+(function testSecondAttemptCanWinAndTheFirstIsAborted() {
+  var c = makeControlledFetch_();
+  var h = makeTransportHarness_(c.impl);
+  var p = h.callApi('dashboard', {});
+  return flush_().then(function() {
+    h.fireTimer(12000);
+    return flush_();
+  }).then(function() {
+    c.attempts[1].resolve({ ok: true, who: 'second' });
+    return p;
+  }).then(function(res) {
+    assert.equal(res.who, 'second');
+    assert.equal(c.attempts[0].signal.aborted, true, 'the superseded first attempt is aborted');
+    return flush_();
+  }).then(function() {
+    assert.equal(lostRecords_(h).length, 0, 'AC6: superseded attempt is not reported lost');
+    var win = h.telemetry().filter(function(r) { return r.kind === 'hedgedRead'; })[0];
+    assert.deepEqual([win.ctx.winningAttempt, win.ctx.hedged], [2, true]);
+  });
+})();
+
+// AC3: a fast transport failure starts the next attempt immediately - no timer fired.
+(function testFastTransportFailureStartsNextAttemptImmediately() {
+  var c = makeControlledFetch_();
+  var h = makeTransportHarness_(c.impl);
+  var p = h.callApi('identify', {});
+  return flush_().then(function() {
+    c.attempts[0].fail();
+    return flush_();
+  }).then(function() {
+    assert.equal(c.attempts.length, 2, 'attempt 2 starts immediately on a fast failure (AC3)');
+    c.attempts[1].resolve({ ok: true, who: 'second' });
+    return p;
+  }).then(function(res) {
+    assert.equal(res.who, 'second');
+    assert.equal(lostRecords_(h).length, 1, 'the attempt that really failed is still recorded');
+  });
+})();
+
+// AC4: no response by MAX_READ_ATTEMPTS_ x REQUEST_TIMEOUT_MS_ -> everything aborted, rejects with
+// the same transport-error shape (isTransport + attempts count).
+(function testDeadlineAbortsEverythingAndRejectsAsTransport() {
+  var c = makeControlledFetch_();
+  var h = makeTransportHarness_(c.impl);
+  var p = h.callApi('identify', {});
+  return flush_().then(function() {
+    h.fireTimer(12000); return flush_();
+  }).then(function() {
+    h.fireTimer(12000); return flush_();
+  }).then(function() {
+    assert.equal(c.attempts.length, 3, 'three attempts launched, each hedge 12s after the last');
+    h.fireTimer(12000 * 3);
+    return p.then(function() { assert.fail('must reject at the deadline'); }, function(err) {
+      assert.equal(err.isTransport, true);
+      assert.equal(err.ctx.attempts, 3, 'the rejection carries the attempts count');
+      assert.ok(c.attempts.every(function(a) { return a.signal.aborted; }), 'every open attempt aborted at the deadline');
+      assert.equal(h.pending(), 0);
+      return flush_();
+    });
+  }).then(function() {
+    var lost = lostRecords_(h);
+    assert.equal(lost.length, 3, 'attempts that really timed out are each recorded');
+    lost.forEach(function(r) { assert.equal(r.ctx.mode, 'timeout'); });
+    assert.equal(c.attempts.length, 3, 'never more than MAX_READ_ATTEMPTS_ attempts');
+  });
+})();
+
+// AC5 (writes unchanged): never hedged - the write timeout aborts it and it is sent once.
+(function testWriteIsNeverHedged() {
+  var c = makeControlledFetch_();
+  var h = makeTransportHarness_(c.impl);
+  var p = h.callApi('checkin', { day: 'today' });
+  return flush_().then(function() {
+    assert.deepEqual(h.timers.map(function(t) { return t.ms; }), [25000], 'a write schedules only WRITE_TIMEOUT_MS_');
+    h.fireTimer(25000);
+    return p.then(function() { assert.fail('must reject'); }, function(err) {
+      assert.equal(err.isTransport, true);
+      assert.equal(c.attempts.length, 1, 'never hedged');
+      assert.equal(c.attempts[0].signal.aborted, true, 'a write is still aborted at its own timeout');
+    });
   });
 })();
 
@@ -341,16 +501,15 @@ function htmlResponse_(status, url) {
 })();
 
 (function testTimeoutIsRecordedAsTimeoutMode() {
-  var h = makeTransportHarness_(function(url, opts, attempt) {
-    if (attempt === 1) {
-      return new Promise(function(_resolve, reject) {
-        opts.signal.addEventListener('abort', function() { reject(new Error('The operation was aborted.')); });
-      });
-    }
-    return okResponse_({ ok: true });
+  // An attempt the overall deadline aborts did fail: recorded as a timeout loss (a write, whose
+  // own timer is its deadline, is the single-attempt case).
+  var h = makeTransportHarness_(function(url, opts) {
+    return new Promise(function(_resolve, reject) {
+      opts.signal.addEventListener('abort', function() { reject(new Error('The operation was aborted.')); });
+    });
   });
-  var p = h.callApi('identify', {});
-  return flush_().then(function() { h.fireTimers(); return p; }).then(function() {
+  var p = h.callApi('checkin', {});
+  return flush_().then(function() { h.fireTimers(); return p; }).then(function() { assert.fail('must reject'); }, function() {
     var lost = h.telemetry().filter(function(r) { return r.kind === 'lostResponse'; });
     assert.equal(lost.length, 1);
     assert.equal(lost[0].ctx.mode, 'timeout', 'our own abort must be recorded as timeout (5c2a.9 AC5)');

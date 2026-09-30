@@ -1353,8 +1353,10 @@
   // 29s with `Failed to fetch` (~8% loss — the failure this whole block exists for).
   //
   // Reads: 12s, comfortably above the 9.1s slowest healthy call, so the timeout fires on losses
-  // rather than on slowness. A read can be re-asked for free, so an unnecessary abort is cheap —
-  // but not free, since it doubles load on an endpoint already having a bad day.
+  // rather than on slowness. A read can be re-asked for free, but F3Go30-8naq.2: REQUEST_TIMEOUT_MS_
+  // no longer ABORTS a read — it is the hedge interval. A read past it is left open and the next
+  // attempt starts in parallel (first parsed response wins, the rest are aborted), so a slow but
+  // healthy answer is never thrown away; MAX_READ_ATTEMPTS_ x REQUEST_TIMEOUT_MS_ is the deadline.
   //
   // Writes: never retried (see RETRYABLE_ACTIONS_), so aborting one early means telling a PAX
   // their check-in or signup failed when it may well have landed server-side — the worst outcome
@@ -1373,7 +1375,8 @@
   // F3Go30-5c2a.9: total attempts for a RETRYABLE_ACTIONS_ read on a transport-class failure
   // (first try + 2 retries). Live PROD 2026-09-29 lost ~15-20% of responses per attempt, so one
   // retry still failed ~1 read in 25-50; three attempts bring that to ~1 in 125-200. Worst case
-  // the PAX waits 3 x REQUEST_TIMEOUT_MS_ before the banner; the Syncing note shows the attempt.
+  // the PAX waits 3 x REQUEST_TIMEOUT_MS_ before the banner; the Syncing note shows the highest
+  // attempt launched. Hedged (F3Go30-8naq.2): attempts may run concurrently, never more than this.
   var MAX_READ_ATTEMPTS_ = 3;
 
   var NETWORK_ERROR_MESSAGE_ = 'Couldn’t reach the server. Check your internet connection and try again.';
@@ -1406,22 +1409,29 @@
    * carry the distinction now, for telemetry only: abortedAtTimeout tells whether OUR OWN
    * AbortController fired at timeoutMs, vs. fetch rejecting on its own (a redirect/connection
    * dying below HTTP), and elapsedMs is recorded on both branches so the two are separable purely
-   * off elapsed time even on an old client that predates abortedAtTimeout (AC3). */
-  function fetchAttempt_(url, bodyJson, timeoutMs) {
+   * off elapsed time even on an old client that predates abortedAtTimeout (AC3).
+   * F3Go30-8naq.2: `hedge` (optional) is the caller-owned mode for a hedged read — this attempt
+   * does NOT self-abort at timeoutMs; instead hedge.abort(asTimeout) is filled in so the caller,
+   * which owns the clock, can abort it (asTimeout marks the abort as the deadline's, for
+   * abortedAtTimeout). The one fetch primitive either way. */
+  function fetchAttempt_(url, bodyJson, timeoutMs, hedge) {
     var controller = new AbortController();
     var startedAt = Date.now();
     var abortedByTimeout = false;
-    var timeoutId = setTimeout(function() { abortedByTimeout = true; controller.abort(); }, timeoutMs);
+    function abort_(asTimeout) { if (asTimeout) abortedByTimeout = true; controller.abort(); }
+    var timeoutId = null;
+    if (hedge) hedge.abort = abort_;
+    else timeoutId = setTimeout(function() { abort_(true); }, timeoutMs);
     return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: bodyJson,
       signal: controller.signal,
     }).then(function(res) {
-      clearTimeout(timeoutId);
+      if (timeoutId !== null) clearTimeout(timeoutId);
       return res;
     }, function() {
-      clearTimeout(timeoutId);
+      if (timeoutId !== null) clearTimeout(timeoutId);
       throw makeTransportError_({ abortedAtTimeout: abortedByTimeout, elapsedMs: Date.now() - startedAt });
     });
   }
@@ -1444,9 +1454,9 @@
    * already have run (F3Go30-5c2a.9). That is raised as transport-class, like a below-HTTP loss:
    * same PAX-facing message, same retry eligibility. A body that parses is the server's answer
    * and callApi handles it exactly as before (HTTP error text, json.error text, no retry). */
-  function fetchParsedAttempt_(url, bodyJson, timeoutMs) {
+  function fetchParsedAttempt_(url, bodyJson, timeoutMs, hedge) {
     var startedAt = Date.now();
-    return fetchAttempt_(url, bodyJson, timeoutMs).then(function(res) {
+    return fetchAttempt_(url, bodyJson, timeoutMs, hedge).then(function(res) {
       return res.json().then(function(json) {
         return { res: res, json: json };
       }, function() {
@@ -1664,27 +1674,89 @@
       }
       var bodyJson = JSON.stringify(body);
       var seq = ++inFlightSeq_;
-      var attempt = 0;
       pendingRequestCount_++;
-      // Up to MAX_READ_ATTEMPTS_ for a read whose response was lost (below HTTP, or a non-JSON
-      // Google page — F3Go30-5c2a.9); a write gets exactly one. A server that ANSWERED — any
-      // status, any json.ok:false — is not re-asked: it has already made its decision, and
-      // repeating the call would only multiply the load while returning the same answer.
-      function attemptOnce_() {
-        attempt++;
-        inFlightAttempts_[seq] = attempt;
+      // A read is HEDGED (F3Go30-8naq.2): up to MAX_READ_ATTEMPTS_ attempts, a slow one left open
+      // past REQUEST_TIMEOUT_MS_ while the next starts in parallel, first parsed response wins and
+      // the rest are aborted; a write gets exactly one, aborted at WRITE_TIMEOUT_MS_. A server that
+      // ANSWERED — any status, any json.ok:false — is not re-asked: it has already made its
+      // decision, and repeating the call would only multiply the load for the same answer.
+      function noteLostAttempt_(err, n) {
+        if (err && err.isTransport) {
+          if (clientRequestId && !err.clientRequestId) err.clientRequestId = clientRequestId;
+          if (action !== 'clientTelemetry') captureLostAttempt_(action, err, n);
+          err.ctx = Object.assign({}, err.ctx, { attempts: n });
+        }
+      }
+      function singleAttempt_() {
+        inFlightAttempts_[seq] = 1;
         updateSyncingIndicator_();
         return fetchParsedAttempt_(url, bodyJson, timeoutMs).catch(function(err) {
-          if (err && err.isTransport) {
-            if (clientRequestId && !err.clientRequestId) err.clientRequestId = clientRequestId;
-            if (action !== 'clientTelemetry') captureLostAttempt_(action, err, attempt);
-            err.ctx = Object.assign({}, err.ctx, { attempts: attempt });
-          }
-          if (!mayRetry || !err || !err.isTransport || attempt >= MAX_READ_ATTEMPTS_) throw err;
-          return attemptOnce_();
+          noteLostAttempt_(err, 1);
+          throw err;
         });
       }
-      return attemptOnce_().then(function(parsed) {
+      function hedgedAttempts_() {
+        return new Promise(function(resolve, reject) {
+          var open = [];          // attempts still in flight: { n, hedge, timer }
+          var launched = 0;
+          var finished = false;
+          var pastDeadline = false;
+          var lastErr = null;
+          var deadlineTimer = setTimeout(function() {
+            if (finished) return;
+            pastDeadline = true;
+            open.slice().forEach(function(a) { a.hedge.abort(true); });
+          }, MAX_READ_ATTEMPTS_ * REQUEST_TIMEOUT_MS_);
+
+          function finish_(settle, value, winner) {
+            finished = true;
+            clearTimeout(deadlineTimer);
+            var others = open.filter(function(a) { return a !== winner; });
+            open.forEach(function(a) { if (a.timer !== null) clearTimeout(a.timer); });
+            open = [];
+            // Aborting a loser is not a lost response: its rejection lands after `finished` and
+            // is ignored in onFail_.
+            others.forEach(function(a) { a.hedge.abort(false); });
+            settle(value);
+          }
+          function launch_() {
+            var a = { n: ++launched, hedge: {}, timer: null };
+            open.push(a);
+            inFlightAttempts_[seq] = launched;
+            updateSyncingIndicator_();
+            // The last attempt needs no hedge timer — the overall deadline covers it.
+            if (a.n < MAX_READ_ATTEMPTS_) {
+              a.timer = setTimeout(function() {
+                a.timer = null;
+                if (!finished && !pastDeadline && launched < MAX_READ_ATTEMPTS_) launch_();
+              }, REQUEST_TIMEOUT_MS_);
+            }
+            fetchParsedAttempt_(url, bodyJson, REQUEST_TIMEOUT_MS_, a.hedge).then(function(parsed) {
+              if (finished) return;
+              var hedged = open.length > 1;
+              if (launched > 1 && action !== 'clientTelemetry') {
+                captureClientTelemetry_('hedgedRead', action, { ctx: { winningAttempt: a.n, hedged: hedged, attempts: launched } });
+              }
+              finish_(resolve, parsed, a);
+            }, function(err) {
+              if (finished) return; // aborted because another attempt won (or already settled)
+              open = open.filter(function(o) { return o !== a; });
+              if (a.timer !== null) { clearTimeout(a.timer); a.timer = null; }
+              if (!err || !err.isTransport) { finish_(reject, err); return; }
+              noteLostAttempt_(err, a.n);
+              lastErr = err;
+              if (!pastDeadline && launched < MAX_READ_ATTEMPTS_) { launch_(); return; }
+              if (open.length === 0) {
+                lastErr.ctx = Object.assign({}, lastErr.ctx, { attempts: launched });
+                finish_(reject, lastErr);
+              }
+            });
+          }
+          launch_();
+        });
+      }
+      var attemptsPromise_ = mayRetry ? hedgedAttempts_() : singleAttempt_();
+      return attemptsPromise_.then(function(parsed) {
         var res = parsed.res;
         echoKeyInfo_ = extractEchoKeyInfo_(res);
         if (!res.ok) throw Object.assign(new Error('Server returned HTTP ' + res.status), echoKeyInfo_);
