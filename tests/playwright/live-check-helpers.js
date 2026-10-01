@@ -134,4 +134,29 @@ async function clickThroughAnnouncement_(locator, opts) {
   }
 }
 
-module.exports = { dismissAnnouncementIfPresent_, clickThroughAnnouncement_, ensureFixturePaxIdentified_ };
+/**
+ * Serves static-pages/src over loopback so a spec drives the CURRENT source (not whatever
+ * GitHub Pages has propagated) against the live backend. The one shared implementation
+ * (F3Go30-8naq.6): nine older specs still carry their own hand-copied startStaticServer — flagged
+ * for consolidation onto this, not migrated here.
+ * @returns {Promise<import('http').Server>} listening on an ephemeral 127.0.0.1 port.
+ */
+function startStaticServer_() {
+  const http = require('http');
+  const fs = require('fs');
+  const path = require('path');
+  const staticDir = path.resolve(__dirname, '../..', 'static-pages', 'src');
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const rel = req.url.split('?')[0];
+      fs.readFile(path.join(staticDir, rel === '/' ? '/index.html' : rel), (err, data) => {
+        if (err) { res.writeHead(404); res.end(); return; }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(data);
+      });
+    });
+    server.listen(0, '127.0.0.1', () => resolve(server));
+  });
+}
+
+module.exports = { dismissAnnouncementIfPresent_, clickThroughAnnouncement_, ensureFixturePaxIdentified_, startStaticServer_ };

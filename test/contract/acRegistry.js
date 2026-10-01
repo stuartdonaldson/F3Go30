@@ -218,6 +218,12 @@ const AC_REGISTRY = {
     'a request whose response is lost on the googleusercontent echo hop is retried or surfaced as a transport failure — never silently rendered as an empty result (F3Go30-313u)',
   'transport abort-on-timeout':
     'an in-flight request is aborted at its timeout and the failure is reported as transport, not as an assertion about data',
+  'transport hedged-slow-attempt-wins':
+    'a read whose first attempt answers after the hedge interval renders from that attempt, aborts the hedge that was started meanwhile, and shows no error (F3Go30-8naq.2)',
+  'transport hedged-second-attempt-wins':
+    'a read whose first attempt never answers renders from the hedge attempt started at the hedge interval, and the hung first attempt is aborted (F3Go30-8naq.2)',
+  'transport hedged-deadline-surfaces-error':
+    'a read for which no attempt ever answers aborts every attempt at the overall deadline and shows the transport error banner (F3Go30-8naq.2)',
   'transport cors-boundary-holds':
     'the static page\'s cross-origin POST to the live /exec succeeds from a genuinely different origin',
 

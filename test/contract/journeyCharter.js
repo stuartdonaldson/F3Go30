@@ -216,6 +216,22 @@ const JOURNEY_CHARTER = {
     status: 'built',
   },
 
+  'dashboard-hedged-read-live-check': {
+    theme:
+      'Hedged dashboard reads (first-wins, second-wins, deadline) with a real Apps Script response held or never delivered, real `fetch`/`AbortController`, real Chromium',
+    entryPoints: [],
+    acIds: [
+      'transport hedged-slow-attempt-wins',
+      'transport hedged-second-attempt-wins',
+      'transport hedged-deadline-surfaces-error',
+    ],
+    invariants: null,
+    whySeparate:
+      'The only journey that lets a REAL SIT response arrive late or never. `transport-resilience` is network-free by definition (synthetic bodies, fake clock) and must not depend on SIT; `static-checkin` is a cross-origin check-in journey with no read-latency fault. Reads only (`checkin.dashboard` is read-only exempt), so it drives no state-modifying entry point',
+    tier: TIER_LIVE_WEBAPP,
+    status: 'built',
+  },
+
   'demo-screenshots': {
     theme: 'Demo screenshot capture for `docs/Go30-Demo-Script.md`',
     entryPoints: [],

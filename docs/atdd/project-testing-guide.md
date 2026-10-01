@@ -137,7 +137,7 @@ Realizes `T24`.
     --ac-list-cmd "node test/contract/acRegistry.js"
   ```
 - **Authoritative coverage registry:** `test/contract/acRegistry.js` (`F3Go30-emwk.7`,
-  2026-09-06) — **79** acceptance criteria as `AC_REGISTRY` (`{id: description}`, ids behavioural,
+  2026-09-06) — **82** acceptance criteria as `AC_REGISTRY` (`{id: description}`, ids behavioural,
   never a bead id), plus a sibling `AC_SELFTEST_FIXTURES` (7 entries) holding the harness's own
   self-test tags. Nothing that computes coverage reads `AC_SELFTEST_FIXTURES`, and `listAcIds()`
   deliberately excludes it: in the reference implementation those tags once lived inside
@@ -238,8 +238,8 @@ placeholder remains, and both columns are checked to exist in their registry rat
 prose.
 
 **What an AC id in this table means.** That this journey is the *responsible* call-site for that
-obligation — not that a per-test tag proves it (emission is `F3Go30-emwk.12`, deferred). The 28 ACs
-named below are a minority of the registry's 79 on purpose: most obligations are held by the
+obligation — not that a per-test tag proves it (emission is `F3Go30-emwk.12`, deferred). The 31 ACs
+named below are a minority of the registry's 82 on purpose: most obligations are held by the
 network-free `test/test_*.js` files, which are not journeys. Charter membership is not suite
 coverage.
 
@@ -252,8 +252,8 @@ retiring a journey without deferring what it drove, now fails in the network-fre
 grades of live are recorded, and deliberately **not** split into separate tiers yet: the charter
 records the distinction so a later `test:prep`/auth-setup stage has something to act on.
 
-There are **11** journeys, of which **10** are tier members and one is a purpose exclusion;
-together they drain **28** of the registry's acceptance criteria and drive **14** state-modifying
+There are **12** journeys, of which **11** are tier members and one is a purpose exclusion;
+together they drain **31** of the registry's acceptance criteria and drive **14** state-modifying
 entry points.
 
 | Journey (spec) | Theme / failure domain | Entry points it is call-site for (`T17`) | AC ids drained | Why separate from each adjacent journey | Tier | Status |
@@ -268,6 +268,7 @@ entry points.
 | `tracker-edit-trigger-live-check` | `onEdit` handler against a genuine human Sheets-UI edit | `handleTrackerEdit_` | `tracker edit-trigger-fires-on-human-edit` | `onEdit` never fires for API writes (ADR-013), so no other path can prove it | **live (authenticated Google browser session)** | built |
 | `copy-and-init` | `copyAndInit()` driven through the Apps Script editor: new month tracker, short URL, notification | `copyAndInit` | `tracker create-for-explicit-month` | Tracker creation is a destructive/lifecycle domain (`T22` risk order) and is driven from the GAS editor UI — the only journey that runs a menu entry point | **live (authenticated Google browser session)** | built |
 | `transport-resilience` | Transport failure handling with real `fetch`, real `AbortController`, real timers; failures injected by routing | — | `transport retries-lost-response` · `transport abort-on-timeout` | The **only** network-free spec. Deliberately cannot fail because SIT is having a bad minute — that is the failure mode it defends against | network-free | built |
+| `dashboard-hedged-read-live-check` | Hedged dashboard reads (first-wins, second-wins, deadline) with a real Apps Script response held or never delivered, real `fetch`/`AbortController`, real Chromium | — | `transport hedged-slow-attempt-wins` · `transport hedged-second-attempt-wins` · `transport hedged-deadline-surfaces-error` | The only journey that lets a REAL SIT response arrive late or never. `transport-resilience` is network-free by definition (synthetic bodies, fake clock) and must not depend on SIT; `static-checkin` is a cross-origin check-in journey with no read-latency fault. Reads only (`checkin.dashboard` is read-only exempt), so it drives no state-modifying entry point | live (webapp) | built |
 | `demo-screenshots` | Demo screenshot capture for `docs/Go30-Demo-Script.md` | — | — | **Not a tier member — a purpose exclusion.** It produces screenshots headed and asserts nothing a regression run needs (plan E3, following GActionSheet's `doc_export_wip` precedent). Stays runnable via `pnpm run demo:screenshots` | excluded | built |
 
 The `test/test_*.js` files are **not** journeys and are not charter rows: they are focused,
@@ -298,7 +299,7 @@ drove, not about the store as a whole.
 - `static-signup` · `static-checkin` · `checkin-advanced-grid` ·
   `checkin-concurrency-live-check` · `scorecard-live-check` ·
   `announcement-splash-live-check` · `tracker-edit-trigger-live-check` · `copy-and-init` ·
-  `transport-resilience` · `demo-screenshots` — **assert none**, explicitly. Each asserts only
+  `transport-resilience` · `dashboard-hedged-read-live-check` · `demo-screenshots` — **assert none**, explicitly. Each asserts only
   about the PAX, day, row or request it drove. The nearest thing the project has to a whole-store
   sweep is `smokeTestNamespace.js` over a provisioned namespace, which is a tool, not a journey.
 
