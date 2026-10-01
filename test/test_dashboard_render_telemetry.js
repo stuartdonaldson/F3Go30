@@ -69,6 +69,18 @@ function makeTelemetryHarness_() {
   assert.equal(rec.boardRowCount, 3, 'board row count must sum members across every team, not just the first');
 })();
 
+// F3Go30-8naq.5 AC1: a network render's record carries ctx.paintSource='network' (no cacheAgeMs);
+// the fetch-only records (no paint argument) and failures carry none.
+(function testNetworkRenderRecordCarriesPaintSource() {
+  var h = makeTelemetryHarness_();
+  h.captureDashboardRenderTelemetry_(Date.now(), { paxBoard: [] }, null, 'network');
+  h.captureDashboardRenderTelemetry_(Date.now(), { paxBoard: [] }, null);
+  var q = h.queue();
+  assert.equal(q[0].ctx.paintSource, 'network');
+  assert.equal('cacheAgeMs' in q[0].ctx, false);
+  assert.equal(q[1].ctx, undefined, 'a silent (unpainted) load carries no paintSource');
+})();
+
 // A received-but-empty response (board-only view, viewer unregistered — dayValues/rollingAverage/
 // priorMonthDayValues absent, paxBoard present but thin) is NOT "rejected" — a response WAS
 // received, it just carries little/nothing. This is the case the rollover defect (F3Go30-b6jy)
@@ -122,7 +134,7 @@ function makeTelemetryHarness_() {
 // resolved payload/rejected error passed straight through.
 (function testLoadDashboardInvokesTelemetryCaptureOnSuccessAndFailure() {
   var calls = [];
-  var captureDashboardRenderTelemetry_ = function(issuedTs, payload, err) { calls.push({ issuedTs: issuedTs, payload: payload, err: err }); };
+  var captureDashboardRenderTelemetry_ = function(issuedTs, payload, err, paintSource) { calls.push({ issuedTs: issuedTs, payload: payload, err: err, paintSource: paintSource }); };
 
   function makeLoadDashboardHarness_(callApiImpl) {
     var elements = {};
@@ -139,6 +151,8 @@ function makeTelemetryHarness_() {
       'requestGen_', 'reconcileDashboardWithLocalWrites_', 'restoreWiderBoardDayFacts_',
       // F3Go30-8naq.3: persistence is exercised for real in test_dashboard_stale_while_revalidate.js
       'persistBoardCache_',
+      // F3Go30-8naq.5: provenance bookkeeping is exercised in test_dashboard_stale_while_revalidate.js
+      'noteBoardOrigin_',
       body + '\nreturn { loadDashboard_: loadDashboard_ };'
     );
     return factory(
@@ -146,7 +160,8 @@ function makeTelemetryHarness_() {
       fakeEl_, callApiImpl, function() {}, function() {}, function() {}, function() {},
       function(d) { return d.getFullYear() + '-01-01'; }, function(d) { return d.getFullYear() + '-01'; },
       function() {}, function() {}, captureDashboardRenderTelemetry_,
-      0, function() {}, function() {}, function() {}
+      0, function() {}, function() {}, function() {},
+      function() {}
     );
   }
 
@@ -157,13 +172,20 @@ function makeTelemetryHarness_() {
     assert.equal(calls[0].payload, okPayload);
     assert.equal(calls[0].err, null);
     assert.equal(typeof calls[0].issuedTs, 'number');
+    assert.equal(calls[0].paintSource, null, 'F3Go30-8naq.5: a silent load paints nothing');
 
+    var hLoud = makeLoadDashboardHarness_(function() { return Promise.resolve(okPayload); });
+    return hLoud.loadDashboard_('2026-09-01').then(function() {
+      assert.equal(calls[1].paintSource, 'network', 'F3Go30-8naq.5 AC1: a non-silent load paints from the network');
+      calls.length = 1;
+    }).then(function() {
     var failErr = Object.assign(new Error('Failed to fetch'), { isTransport: true });
     var hFail = makeLoadDashboardHarness_(function() { return Promise.reject(failErr); });
     return hFail.loadDashboard_('2026-09-01', { silent: true }).catch(function() {
       assert.equal(calls.length, 2);
       assert.equal(calls[1].payload, null);
       assert.equal(calls[1].err, failErr);
+    });
     });
   });
 })();

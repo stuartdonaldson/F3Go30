@@ -46,6 +46,7 @@ function makeDashboardHarness_(state, callApiImpl, opts) {
     return elements[id];
   }
   var renderCalls = [];
+  var telemetry = [];
   var renderDashboard_ = function(d, dayIndex) { renderCalls.push({ d: d, dayIndex: dayIndex }); };
   var setButtonLoadingCalls = [];
   var setButtonLoading_ = function(btn, isLoading, text) { setButtonLoadingCalls.push({ isLoading: isLoading, text: text }); };
@@ -53,7 +54,7 @@ function makeDashboardHarness_(state, callApiImpl, opts) {
   var src = readStaticPage_();
   var body = extractBoardAccessor_(src) + '\n' + extractLocalStorageBlock_(src) + '\n' +
     // F3Go30-8naq.3: the persisted dashboard-board cache (real source) and the write path that feeds it
-    ['boardCacheOwner_', 'persistBoardCache_', 'hydrateBoardFromCache_', 'patchOwnDayIntoPayload_', 'applyOwnDayWrite_', 'parseIsoDate_']
+    ['boardCacheOwner_', 'persistBoardCache_', 'hydrateBoardFromCache_', 'noteBoardOrigin_', 'captureDashboardPaint_', 'dashboardBoardForPaint_', 'patchOwnDayIntoPayload_', 'applyOwnDayWrite_', 'parseIsoDate_']
       .map(function(n) { return extractFunction_(src, n); }).join('\n') + '\n' +
     extractFunction_(src, 'navigateDashboard_') + '\n' +
     extractDashboardBtnHandlerBody_(src) + '\n' + extractLoadDashboardBlock_(src);
@@ -62,6 +63,7 @@ function makeDashboardHarness_(state, callApiImpl, opts) {
     'isoDate_', 'monthKeyOf_', 'renderDateNav_', 'captureDashboardRenderTelemetry_',
     'requestGen_', 'reconcileDashboardWithLocalWrites_', 'restoreWiderBoardDayFacts_',
     'contextToday_', 'contextTodayIso_', 'localStorage', 'SAVED_IDENTITY_TOKEN', 'clearTokenFromStorage_',
+    'captureClientTelemetry_', // F3Go30-8naq.5: paint-source / facet-miss records land in h.telemetry
     // The dashboardBtn block is a bare $('dashboardBtn').addEventListener(...) statement, not a
     // named function — running it registers the real click handler onto the fake $ element below,
     // which the test then triggers directly rather than trying to name-bind an anonymous function.
@@ -89,9 +91,10 @@ function makeDashboardHarness_(state, callApiImpl, opts) {
     function() { return new Date(); }, todayIso_,
     opts.localStorage || makeFakeLocalStorage_(),
     Object.prototype.hasOwnProperty.call(opts, 'token') ? opts.token : 'tokA',
-    function() {}
+    function() {},
+    function(kind, action, extra) { telemetry.push({ kind: kind, action: action, ctx: (extra && extra.ctx) || null }); }
   );
-  return { fns: fns, elements: elements, renderCalls: renderCalls, setButtonLoadingCalls: setButtonLoadingCalls };
+  return { telemetry: telemetry, fns: fns, elements: elements, renderCalls: renderCalls, setButtonLoadingCalls: setButtonLoadingCalls };
 }
 
 function todayIso_() {
@@ -472,6 +475,108 @@ function tick_() { return new Promise(function(r) { setImmediate(r); }); }
     bad.getItem = function() { throw new Error('SecurityError'); };
     h.fns.hydrateBoardFromCache_();
   });
+})();
+
+// ── F3Go30-8naq.5: paint-source telemetry — where each Dashboard paint came from ─────────────
+
+function paints_(h) { return h.telemetry.filter(function(t) { return t.kind === 'dashboardRender' && t.action === 'paint'; }); }
+
+// AC1/AC2: a hydrated record painted from the dashboard button reports 'persisted' with its age;
+// the same record painted again this pageview reports 'memory'. Each paint emits exactly one record.
+(function testHydratedPaintIsPersistedThenMemory() {
+  var ls = makeFakeLocalStorage_();
+  ls.setItem(BOARD_KEY_, JSON.stringify({ savedAt: Date.now() - 5000, owner: 'token:tokA', value: dashboardPayload_() }));
+  var h = makeDashboardHarness_(baseState_(false), function() { return new Promise(function() {}); }, { localStorage: ls });
+  h.fns.hydrateBoardFromCache_();
+  h.elements.dashboardBtn.trigger('click');
+  var first = paints_(h);
+  assert.equal(first.length, 1, 'AC1: one record for the cache-hit paint');
+  assert.equal(first[0].ctx.paintSource, 'persisted', 'AC2: hydrated-then-painted is persisted');
+  assert.ok(first[0].ctx.cacheAgeMs >= 5000 && first[0].ctx.cacheAgeMs < 60000, 'AC1: cacheAgeMs is the persisted record age, got ' + first[0].ctx.cacheAgeMs);
+  h.elements.dashboardBtn.trigger('click');
+  var second = paints_(h);
+  assert.equal(second.length, 2, 'AC1: one more record for the second paint');
+  assert.equal(second[1].ctx.paintSource, 'memory', 'AC2: same-pageview hit is memory');
+  assert.equal(typeof second[1].ctx.cacheAgeMs, 'number');
+})();
+
+// AC1: a record loaded off the network this pageview and painted from cache is 'memory'.
+(function testNetworkLoadedThenClickIsMemory() {
+  var h = makeDashboardHarness_(baseState_(false), function() { return Promise.resolve(dashboardPayload_()); });
+  return h.fns.loadDashboard_(undefined, { silent: true }).then(function() {
+    h.elements.dashboardBtn.trigger('click');
+    var p = paints_(h);
+    assert.equal(p.length, 1);
+    assert.equal(p[0].ctx.paintSource, 'memory');
+    assert.equal(typeof p[0].ctx.cacheAgeMs, 'number');
+  });
+})();
+
+// AC1: the revalidate repaint is a 'network' paint with no cacheAgeMs; a repaint skipped (viewer
+// navigated away) emits nothing.
+(function testRevalidateRepaintIsNetworkPaint() {
+  var state = baseState_(false);
+  var h = makeDashboardHarness_(state, function() { return Promise.resolve(dashboardPayload_()); });
+  h.fns.revalidateDashboard_();
+  return tick_().then(tick_).then(function() {
+    var p = paints_(h);
+    assert.equal(h.renderCalls.length, 1);
+    assert.equal(p.length, 1, 'AC1: exactly one paint record for the repaint');
+    assert.equal(p[0].ctx.paintSource, 'network');
+    assert.equal('cacheAgeMs' in p[0].ctx, false, 'a network paint carries no cacheAgeMs');
+    var s2 = baseState_(false); s2.currentStep = 'bonus';
+    var h2 = makeDashboardHarness_(s2, function() { return Promise.resolve(dashboardPayload_()); });
+    h2.fns.revalidateDashboard_();
+    return tick_().then(tick_).then(function() { assert.equal(paints_(h2).length, 0, 'no paint, no record'); });
+  });
+})();
+
+// AC1: dashboardBtn after an in-flight prefetch lands paints the just-fetched payload: 'network'.
+(function testDashboardBtnAfterPrefetchIsNetworkPaint() {
+  var state = dayFactsOnlyState_();
+  var resolveFetch;
+  var h = makeDashboardHarness_(state, function() { return new Promise(function(r) { resolveFetch = r; }); });
+  state.dashboardPrefetchPromise = h.fns.loadDashboard_(undefined, { silent: true });
+  h.elements.dashboardBtn.trigger('click');
+  resolveFetch(dashboardPayload_());
+  return state.dashboardPrefetchPromise.then(tick_).then(function() {
+    var p = paints_(h);
+    assert.equal(p.length, 1);
+    assert.equal(p[0].ctx.paintSource, 'network');
+  });
+})();
+
+// AC1: navigateDashboard_ cache hit is one 'memory' paint record; a navigate that fetches emits none.
+(function testNavigateCacheHitIsMemoryPaint() {
+  var state = baseState_(true);
+  var yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  var yIso = yesterday.getFullYear() + '-' + String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + String(yesterday.getDate()).padStart(2, '0');
+  if (yIso.slice(0, 7) !== monthKey_()) return; // 1st of the month: yesterday is another month's record
+  state.board[monthKey_()].dayDates = [yIso, todayIso_()];
+  state.viewDate = new Date();
+  var h = makeDashboardHarness_(state, function() { return new Promise(function() {}); });
+  h.fns.navigateDashboard_(-1);
+  var p = paints_(h);
+  assert.equal(h.renderCalls.length, 1);
+  assert.equal(p.length, 1, 'AC1: one record for the navigate paint');
+  assert.equal(p[0].ctx.paintSource, 'memory');
+})();
+
+// AC3: a day-facts-only record rejected for the dashboard facet emits one boardFacetMiss per
+// occurrence (dashboardBtn and navigate); an absent record emits none.
+(function testBoardFacetMissOnlyForRecordLackingFacet() {
+  var h = makeDashboardHarness_(dayFactsOnlyState_(), function() { return new Promise(function() {}); });
+  h.elements.dashboardBtn.trigger('click');
+  var misses = h.telemetry.filter(function(t) { return t.kind === 'boardFacetMiss'; });
+  assert.equal(misses.length, 1, 'AC3: one miss for the rejected day-facts-only record');
+  assert.equal(misses[0].ctx.monthKey, monthKey_());
+  h.elements.dashboardBtn.trigger('click');
+  assert.equal(h.telemetry.filter(function(t) { return t.kind === 'boardFacetMiss'; }).length, 2, 'AC3: one per occurrence');
+  assert.equal(paints_(h).length, 0, 'a miss is not a paint');
+
+  var hAbsent = makeDashboardHarness_(baseState_(false), function() { return new Promise(function() {}); });
+  hAbsent.elements.dashboardBtn.trigger('click');
+  assert.equal(hAbsent.telemetry.filter(function(t) { return t.kind === 'boardFacetMiss'; }).length, 0, 'AC3: no miss for an absent record');
 })();
 
 console.log('test_dashboard_stale_while_revalidate.js: all assertions passed');

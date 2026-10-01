@@ -1951,12 +1951,12 @@
    * that case is already captured by callApi's own captureClientError_ path via showApiError_.
    * See F3Go30-5c2a: without this split, a lost response and a genuinely empty one look identical
    * from the PAX's chair. */
-  function captureDashboardRenderTelemetry_(requestIssuedTs, payload, err) {
+  function captureDashboardRenderTelemetry_(requestIssuedTs, payload, err, paintSource) {
     var boardRowCount = (payload && Array.isArray(payload.paxBoard))
       ? payload.paxBoard.reduce(function(sum, team) { return sum + ((team && team.members) ? team.members.length : 0); }, 0)
       : 0;
     var transportLoss = !payload && !!(err && err.isTransport);
-    captureClientTelemetry_('dashboardRender', 'dashboard', {
+    captureClientTelemetry_('dashboardRender', 'dashboard', Object.assign({
       requestIssuedTs: requestIssuedTs,
       responseReceivedTs: transportLoss ? null : Date.now(),
       rejected: transportLoss,
@@ -1964,7 +1964,7 @@
       rollingAverageLength: (payload && payload.rollingAverage) ? payload.rollingAverage.length : 0,
       priorMonthDayValuesLength: (payload && payload.priorMonthDayValues) ? payload.priorMonthDayValues.length : 0,
       boardRowCount: boardRowCount
-    });
+    }, paintSource ? { ctx: { paintSource: paintSource } } : {}));
   }
 
   /** F3Go30-ga01: picks the records the next request carries — kind=error first, then the rest,
@@ -2381,6 +2381,40 @@
     var hit = readLocal_(BOARD_CACHE_KEY_, { owner: owner, ttlMs: CHECKIN_SNAPSHOT_TTL_MS_ });
     if (!hit || !hit.value || hit.value.monthKey !== monthKey || !BOARD_FACETS_.dashboard(hit.value)) return;
     state.board[monthKey] = hit.value;
+    noteBoardOrigin_(monthKey, 'persisted', hit.savedAt);
+  }
+
+  /** F3Go30-8naq.5: records where a month's dashboard board came from — 'persisted' (hydrated
+   * from BOARD_CACHE_KEY_, `at` = its savedAt) or 'network' (a loadDashboard_ payload, `at` = now)
+   * — so each Dashboard paint can say whether it was served from disk, memory or the wire.
+   * Kept beside state.board, never on the record, so it is never persisted with it. */
+  function noteBoardOrigin_(monthKey, origin, at) {
+    state.boardOrigin = state.boardOrigin || {};
+    state.boardOrigin[monthKey] = { origin: origin, at: at || Date.now(), persistedPainted: false };
+  }
+
+  /** F3Go30-8naq.5: the ONE per-paint telemetry record for a Dashboard paint that has no fetch of
+   * its own (cache hits and revalidate repaints; a non-silent loadDashboard_'s own record carries
+   * paintSource itself). forcedSource 'network' = painting the payload a fetch just landed;
+   * otherwise 'persisted' for the first paint of a hydrated record, else 'memory'. Cache paints
+   * carry cacheAgeMs (age of the data, from its origin timestamp). ctx keeps new fields off the
+   * Axiom top-level budget (F3Go30-u7nk). */
+  function captureDashboardPaint_(monthKey, forcedSource) {
+    var o = (state.boardOrigin || {})[monthKey];
+    var source = forcedSource || ((o && o.origin === 'persisted' && !o.persistedPainted) ? 'persisted' : 'memory');
+    if (o && source === 'persisted') o.persistedPainted = true;
+    var ctx = { paintSource: source, monthKey: monthKey };
+    if (source !== 'network' && o) ctx.cacheAgeMs = Math.max(0, Date.now() - o.at);
+    captureClientTelemetry_('dashboardRender', 'paint', { ctx: ctx });
+  }
+
+  /** F3Go30-8naq.5: boardRecord_(monthKey, 'dashboard') for a call site about to PAINT. A record
+   * that exists but lacks the dashboard facet is the blank paint the pre-8naq.1 code would have
+   * shown — emit one 'boardFacetMiss' per occurrence; an absent record is a plain miss, not one. */
+  function dashboardBoardForPaint_(monthKey) {
+    var rec = boardRecord_(monthKey, 'dashboard');
+    if (!rec && state.board[monthKey]) captureClientTelemetry_('boardFacetMiss', 'dashboard', { ctx: { monthKey: monthKey } });
+    return rec;
   }
 
   function $(id) { return document.getElementById(id); }
@@ -3852,8 +3886,9 @@
   $('dashboardBtn').addEventListener('click', function() {
     var btn = this;
     var todayIso = contextTodayIso_();
-    var cached = boardRecord_(monthKeyOf_(contextToday_()), 'dashboard');
+    var cached = dashboardBoardForPaint_(monthKeyOf_(contextToday_()));
     if (cached && cached.dayDates.indexOf(todayIso) !== -1) {
+      captureDashboardPaint_(monthKeyOf_(contextToday_()));
       renderDashboard_(cached, cached.dayDates.indexOf(todayIso));
       revalidateDashboard_();
       return;
@@ -3863,6 +3898,7 @@
       ? state.dashboardPrefetchPromise.then(function() {
           var c = boardRecord_(monthKeyOf_(contextToday_()), 'dashboard');
           if (c && c.dayDates.indexOf(todayIso) !== -1) {
+            captureDashboardPaint_(monthKeyOf_(contextToday_()), 'network');
             renderDashboard_(c, c.dayDates.indexOf(todayIso));
             return;
           }
@@ -5448,7 +5484,7 @@
     var issuedGen_ = ++requestGen_; // F3Go30-jsrf D5 — this read's position, for reconcileDashboardWithLocalWrites_
     return callApi('dashboard', { f3Name: state.f3Name, email: state.email, dateISO: dateISO, resolvedContext: state.resolvedContext })
       .then(function(payload) {
-        captureDashboardRenderTelemetry_(requestIssuedTs_, payload, null);
+        captureDashboardRenderTelemetry_(requestIssuedTs_, payload, null, silent ? null : 'network');
         (payload.dayDates || []).forEach(function(dateIso) {
           if (Object.prototype.hasOwnProperty.call(state.pendingSelfWrites, dateIso)) {
             patchOwnDayIntoPayload_(payload, dateIso, state.pendingSelfWrites[dateIso]);
@@ -5465,6 +5501,7 @@
         var priorDayDates_ = priorRec_ && priorRec_.dayDates;
         var priorDayValues_ = priorRec_ && priorRec_.dayValues;
         state.board[payload.monthKey] = payload;
+        noteBoardOrigin_(payload.monthKey, 'network');
         restoreWiderBoardDayFacts_(payload.monthKey, priorDayDates_, priorDayValues_);
         persistBoardCache_(payload.monthKey); // F3Go30-8naq.3
         if (!silent) renderDashboard_(payload, payload.viewDayIndex);
@@ -5511,6 +5548,7 @@
       if (fresh && fresh.dayDates.indexOf(todayIso) !== -1 &&
           state.viewDate && isoDate_(state.viewDate) === todayIso &&
           state.currentStep === 'dashboard') {
+        captureDashboardPaint_(monthKeyOf_(contextToday_()), 'network');
         renderDashboard_(fresh, fresh.dayDates.indexOf(todayIso));
       }
     }).catch(function() { /* swallowed — the already-rendered cached copy stays on screen */ });
@@ -5524,10 +5562,11 @@
     var todayClient = new Date();
     if (newDate > todayClient && isoDate_(newDate) !== isoDate_(todayClient)) return;
 
-    var cached = boardRecord_(monthKeyOf_(newDate), 'dashboard');
+    var cached = dashboardBoardForPaint_(monthKeyOf_(newDate));
     if (cached) {
       var idx = cached.dayDates.indexOf(isoDate_(newDate));
       if (idx === -1) { loadDashboard_(isoDate_(newDate)); return; }
+      captureDashboardPaint_(monthKeyOf_(newDate));
       renderDashboard_(cached, idx);
     } else {
       loadDashboard_(isoDate_(newDate));
