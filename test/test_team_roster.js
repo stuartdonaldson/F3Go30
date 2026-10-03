@@ -15,7 +15,9 @@ const {
   buildTeamSuggestions_,
   planTeamSeed_,
   recordTeamUse_,
-  readTeamSuggestions_,
+  readTeamRosterView_,
+  canonicalTeamName_,
+  parseTeamListsFromListDbRows_,
   seedTeamDb_,
 } = require('../script/teamRoster.js');
 
@@ -93,15 +95,33 @@ test('suggestions with an empty roster are just the pinned Solo entry', () => {
   assert.deepEqual(buildTeamSuggestions_([], NOW, 90), [SOLO_TEAM_LABEL_]);
 });
 
-test('readTeamSuggestions_ uses Config TeamSuggestWindowDays, defaulting when absent/invalid', () => {
+test('readTeamRosterView_ uses Config TeamSuggestWindowDays, defaulting when absent/invalid', () => {
   const rows = [['Recent', '', 'active', daysAgo(20), 1], ['Older', '', 'active', daysAgo(60), 1]];
   const ss = fakeSpreadsheet({ [TEAM_DB_SHEET_NAME_]: makeFakeSheet_(TEAM_DB_HEADERS_, rows) });
+  const suggestions = (lookup) => readTeamRosterView_(ss, NOW, lookup).suggestions;
   assert.equal(TEAM_SUGGEST_WINDOW_DAYS_DEFAULT_, 90);
-  assert.deepEqual(readTeamSuggestions_(ss, NOW, () => null), [SOLO_TEAM_LABEL_, 'Older', 'Recent']);
-  assert.deepEqual(readTeamSuggestions_(ss, NOW, () => ({ primary: 'abc' })),
-    [SOLO_TEAM_LABEL_, 'Older', 'Recent']);
-  assert.deepEqual(readTeamSuggestions_(ss, NOW, () => ({ primary: 30 })), [SOLO_TEAM_LABEL_, 'Recent']);
-  assert.deepEqual(readTeamSuggestions_(fakeSpreadsheet({}), NOW, () => null), [SOLO_TEAM_LABEL_]);
+  assert.deepEqual(suggestions(() => null), [SOLO_TEAM_LABEL_, 'Older', 'Recent']);
+  assert.deepEqual(suggestions(() => ({ primary: 'abc' })), [SOLO_TEAM_LABEL_, 'Older', 'Recent']);
+  assert.deepEqual(suggestions(() => ({ primary: 30 })), [SOLO_TEAM_LABEL_, 'Recent']);
+  assert.deepEqual(readTeamRosterView_(fakeSpreadsheet({}), NOW, () => null),
+    { suggestions: [SOLO_TEAM_LABEL_], entries: [] });
+  assert.equal(readTeamRosterView_(ss, NOW, () => null).entries.length, 2);
+});
+
+test('canonicalTeamName_: roster spelling for a name/alias match, else the trimmed input', () => {
+  const entries = parseTeamDbRows_(teamDbValues([['Shieldlock', 'Shield-Lock', 'hidden', '', 1]]));
+  assert.equal(canonicalTeamName_(entries, ' shield lock '), 'Shieldlock');
+  assert.equal(canonicalTeamName_(entries, 'shield-lock'), 'Shieldlock');
+  assert.equal(canonicalTeamName_(entries, '  New Team '), 'New Team');
+  assert.equal(canonicalTeamName_(entries, null), '');
+});
+
+test('parseTeamListsFromListDbRows_ reads ListDB AO/Goal columns literally, skipping blanks', () => {
+  assert.deepEqual(parseTeamListsFromListDbRows_([
+    ['AO Teams', 'Goal Team'], ['Ballard', 'No Complaining'], ['Crucible', 'No Sugar'],
+    ['Defiance', ''], ['Goal Based*', null],
+  ]), { aoList: ['Ballard', 'Crucible', 'Defiance', 'Goal Based*'], goalList: ['No Complaining', 'No Sugar'] });
+  assert.deepEqual(parseTeamListsFromListDbRows_([['AO Teams', 'Goal Team']]), { aoList: [], goalList: [] });
 });
 
 // --- recordTeamUse_ (AC1) ----------------------------------------------------------------------

@@ -252,14 +252,24 @@ function resolveTeamSuggestWindowDays_(spreadsheet, configLookup) {
   return days > 0 ? days : TEAM_SUGGEST_WINDOW_DAYS_DEFAULT_;
 }
 
+/** The roster's canonical spelling for name (name/alias match), else the trimmed input. */
+function canonicalTeamName_(entries, name) {
+  var match = findTeamEntry_(entries, name);
+  return match ? match.team : String(name == null ? '' : name).trim();
+}
+
 /**
- * Sign-up team suggestions for the given Template. Read-only: never creates TeamDB.
+ * Read-only roster view for sign-up identify: the suggestion list plus the parsed entries (for
+ * canonicalTeamName_ on a stored team) from one TeamDB read. Never creates TeamDB.
  * @param {function(string): ?{primary: *}=} configLookup Test seam; defaults to getConfigValue_.
- * @returns {Array<string>}
+ * @returns {{suggestions: Array<string>, entries: Array<Object>}}
  */
-function readTeamSuggestions_(spreadsheet, now, configLookup) {
+function readTeamRosterView_(spreadsheet, now, configLookup) {
   var entries = readTeamDbEntries_(spreadsheet.getSheetByName(TEAM_DB_SHEET_NAME_));
-  return buildTeamSuggestions_(entries, now, resolveTeamSuggestWindowDays_(spreadsheet, configLookup));
+  return {
+    suggestions: buildTeamSuggestions_(entries, now, resolveTeamSuggestWindowDays_(spreadsheet, configLookup)),
+    entries: entries
+  };
 }
 
 /**
@@ -316,7 +326,8 @@ if (typeof module !== 'undefined' && module.exports) {
     openOrCreateTeamDbSheet_: openOrCreateTeamDbSheet_,
     recordTeamUse_: recordTeamUse_,
     resolveTeamSuggestWindowDays_: resolveTeamSuggestWindowDays_,
-    readTeamSuggestions_: readTeamSuggestions_,
+    canonicalTeamName_: canonicalTeamName_,
+    readTeamRosterView_: readTeamRosterView_,
     seedTeamDb_: seedTeamDb_,
     collectPaxTeamRecords_: collectPaxTeamRecords_,
   };

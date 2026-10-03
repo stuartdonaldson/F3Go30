@@ -1,10 +1,8 @@
 const assert = require('node:assert/strict');
 
 const {
-  classifyTeam_,
   findSignupMatch_,
   findSignupMatchByF3NameOnly_,
-  parseTeamListsFromListDbRows_,
   trackerHasF3Name_,
   findEmptyTrackerSlotIndex_,
   buildResponseRowFromForm_,
@@ -15,39 +13,6 @@ const {
 } = require('../script/signupWebapp.js');
 
 const { resolveResponseColumns } = require('../script/response_utils.js');
-
-const AO_LIST = ['Ballard', 'Crucible', 'SOLO (no team)'];
-const GOAL_LIST = ['No Complaining', 'No Sugar'];
-
-// Branch 1 — AO match
-assert.deepEqual(
-  classifyTeam_('Ballard', AO_LIST, GOAL_LIST),
-  { teamType: 'ao', team: 'Ballard' }
-);
-
-// Branch 1 — AO match is case-insensitive/trimmed, canonical casing from the list wins
-assert.deepEqual(
-  classifyTeam_('  crucible  ', AO_LIST, GOAL_LIST),
-  { teamType: 'ao', team: 'Crucible' }
-);
-
-// Branch 2 — Goal match (only reached when not an AO match)
-assert.deepEqual(
-  classifyTeam_('No Sugar', AO_LIST, GOAL_LIST),
-  { teamType: 'goal', team: 'No Sugar' }
-);
-
-// Branch 3 — Other fallback, stored value preserved verbatim (not trimmed/altered)
-assert.deepEqual(
-  classifyTeam_('My Custom Team', AO_LIST, GOAL_LIST),
-  { teamType: 'other', team: 'My Custom Team' }
-);
-
-// Empty/blank input — no team selected at all
-assert.deepEqual(
-  classifyTeam_('', AO_LIST, GOAL_LIST),
-  { teamType: '', team: '' }
-);
 
 // --- findSignupMatch_ — §6.1: F3 Name AND Email must both match (anti-enumeration) ---
 
@@ -77,30 +42,6 @@ assert.equal(findSignupMatch_(ROWS, 'NotSplinter', 'splinter@example.com', RESPO
 
 // Neither matches -> no match
 assert.equal(findSignupMatch_(ROWS, 'Nobody', 'nobody@example.com', RESPONSE_COLUMNS), null);
-
-// --- parseTeamListsFromListDbRows_ — reads ListDB's 'AO Teams' / 'Goal Team' columns ---
-
-const LISTDB_ROWS = [
-  ['AO Teams', 'Goal Team'],
-  ['Ballard', 'No Complaining'],
-  ['Crucible', 'No Sugar'],
-  ['Defiance', ''],
-  ['Goal Based*', null],
-];
-
-assert.deepEqual(
-  parseTeamListsFromListDbRows_(LISTDB_ROWS),
-  {
-    aoList: ['Ballard', 'Crucible', 'Defiance', 'Goal Based*'],
-    goalList: ['No Complaining', 'No Sugar'],
-  }
-);
-
-// Header-only / empty sheet -> empty lists, not a crash
-assert.deepEqual(
-  parseTeamListsFromListDbRows_([['AO Teams', 'Goal Team']]),
-  { aoList: [], goalList: [] }
-);
 
 // --- trackerHasF3Name_ — case-insensitive, trim-normalised dedup (signupWebapp.js §8, §11) ---
 
@@ -154,16 +95,17 @@ assert.equal(findSignupMatchByF3NameOnly_(EMAIL_CHANGE_ROWS, 'Nobody', FULL_COLU
 const AO_FORM_DATA = {
   participation: 'Yes',
   f3Name: 'Splinter', email: 'splinter@example.com',
-  teamType: 'ao', team: 'Crucible',
+  team: 'Crucible',
   who: 'A leader', what: 'A challenge', how: 'Daily effort', phone: '555-1234', nag: true,
 };
 
-// New row (no existing row) — AO-based: TEAM holds the AO name, OTHER_TEAM blank
+// New row (no existing row) — ADR-023: TEAM holds the (already canonical) team; Team type and
+// OTHER_TEAM are written blank — the AO/goal/other distinction no longer exists
 const newRow = buildResponseRowFromForm_(null, FULL_COLUMNS, AO_FORM_DATA).row;
 assert.equal(newRow[FULL_COLUMNS.PARTICIPATION], 'Yes');
 assert.equal(newRow[FULL_COLUMNS.F3_NAME], 'Splinter');
 assert.equal(newRow[FULL_COLUMNS.EMAIL], 'splinter@example.com');
-assert.equal(newRow[FULL_COLUMNS.TEAM_TYPE], 'AO-based');
+assert.equal(newRow[FULL_COLUMNS.TEAM_TYPE], '');
 assert.equal(newRow[FULL_COLUMNS.TEAM], 'Crucible');
 assert.equal(newRow[FULL_COLUMNS.OTHER_TEAM], '');
 assert.equal(newRow[FULL_COLUMNS.WHO], 'A leader');
@@ -172,13 +114,20 @@ assert.equal(newRow[FULL_COLUMNS.HOW], 'Daily effort');
 assert.equal(newRow[FULL_COLUMNS.PHONE], '555-1234');
 assert.equal(newRow[FULL_COLUMNS.NAG_EMAIL], 'Yes');
 
-// Other-based: team value goes into both TEAM and OTHER_TEAM (Phase 3 promotion)
-const otherRow = buildResponseRowFromForm_(null, FULL_COLUMNS, {
+// A legacy client still sending teamType ('ao'/'other') gets the same row — teamType is ignored
+const legacyRow = buildResponseRowFromForm_(null, FULL_COLUMNS, {
   ...AO_FORM_DATA, teamType: 'other', team: 'My Custom Team',
 }).row;
-assert.equal(otherRow[FULL_COLUMNS.TEAM_TYPE], 'Other');
-assert.equal(otherRow[FULL_COLUMNS.TEAM], 'My Custom Team');
-assert.equal(otherRow[FULL_COLUMNS.OTHER_TEAM], 'My Custom Team');
+assert.equal(legacyRow[FULL_COLUMNS.TEAM_TYPE], '');
+assert.equal(legacyRow[FULL_COLUMNS.TEAM], 'My Custom Team');
+assert.equal(legacyRow[FULL_COLUMNS.OTHER_TEAM], '');
+
+// Updating an old row clears its stale Team type / Other team values
+const staleTypeRow = buildResponseRowFromForm_(
+  ['2026-01-01', 'old@example.com', 'Yes', 'Splinter', 'Other', 'Old Team', 'Old Team'],
+  FULL_COLUMNS, AO_FORM_DATA).row;
+assert.equal(staleTypeRow[FULL_COLUMNS.TEAM_TYPE], '');
+assert.equal(staleTypeRow[FULL_COLUMNS.OTHER_TEAM], '');
 
 // Update in place — existing row's untouched columns (e.g. Timestamp at index 0) are preserved
 const existingRow = ['2026-01-01 00:00:00', 'old@example.com', 'Yes', 'Splinter', 'Other', '', 'Old Team', 'old who', 'old what', 'old how', '111', 'No', 'old comment'];
@@ -279,3 +228,26 @@ assert.deepEqual(handleSignupFeedback_(null, { feedbackRating: 0, feedbackCommen
 assert.deepEqual(handleSignupFeedback_(null, {}), { ok: true, skipped: true }, 'fields entirely absent counts as blank');
 
 console.log('test_signup_webapp.js: PASS');
+
+// --- buildSignupIdentifyTeamFields_ — ADR-023 identify team contract (F3Go30-qeuu.2) ---
+{
+  const { buildSignupIdentifyTeamFields_ } = require('../script/signupWebapp.js');
+  const { parseTeamDbRows_, TEAM_DB_HEADERS_ } = require('../script/teamRoster.js');
+  const roster = {
+    suggestions: ['SOLO (no team)', 'Crucible', 'Shieldlock'],
+    entries: parseTeamDbRows_([TEAM_DB_HEADERS_, ['Shieldlock', 'Shield-Lock', 'active', '', 1]]),
+  };
+  // Stored team snaps to the roster spelling; installed (pre-ADR-023) clients read aoList/goalList,
+  // so both carry the roster and teamType 'other' routes an old client to its free-text field.
+  assert.deepEqual(buildSignupIdentifyTeamFields_(roster, 'shield lock'), {
+    teamList: roster.suggestions, aoList: roster.suggestions, goalList: roster.suggestions,
+    teamType: 'other', team: 'Shieldlock',
+  });
+  assert.deepEqual(buildSignupIdentifyTeamFields_(roster, '  Brand New '), {
+    teamList: roster.suggestions, aoList: roster.suggestions, goalList: roster.suggestions,
+    teamType: 'other', team: 'Brand New',
+  });
+  const blank = buildSignupIdentifyTeamFields_(roster, '');
+  assert.equal(blank.teamType, '');
+  assert.equal(blank.team, '');
+}

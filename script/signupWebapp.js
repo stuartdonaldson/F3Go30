@@ -26,15 +26,13 @@ var signupWebappCheckinSessionsModule_ = gasRequire_('./CheckinSessions.js', ['c
 var createOrTouchCheckinSession_sw_ = signupWebappCheckinSessionsModule_.createOrTouchCheckinSession_;
 var resolveOrCreateCheckinSessionGuid_sw_ = signupWebappCheckinSessionsModule_.resolveOrCreateCheckinSessionGuid_;
 
-var signupWebappTeamRosterModule_ = gasRequire_('./teamRoster.js', ['parseTeamListsFromListDbRows_']);
-var parseTeamListsFromListDbRows_sw_ = signupWebappTeamRosterModule_.parseTeamListsFromListDbRows_;
+var signupWebappTeamRosterModule_ = gasRequire_('./teamRoster.js', ['canonicalTeamName_', 'readTeamRosterView_', 'recordTeamUse_']);
+var canonicalTeamName_sw_ = signupWebappTeamRosterModule_.canonicalTeamName_;
+var readTeamRosterView_sw_ = signupWebappTeamRosterModule_.readTeamRosterView_;
+var recordTeamUse_sw_ = signupWebappTeamRosterModule_.recordTeamUse_;
 
 var signupWebappEmailModule_ = gasRequire_('./signupEmail.js', ['resolveCheckinLinks_']);
 var resolveCheckinLinks_sw_ = signupWebappEmailModule_.resolveCheckinLinks_;
-
-function normalizeTeamValue_(value) {
-  return String(value || '').trim();
-}
 
 function normalizeIdentityValue_(value) {
   return String(value || '').trim().toLowerCase();
@@ -108,36 +106,20 @@ function findSignupMatchByF3NameOnly_(rows, f3Name, responseColumns) {
 }
 
 /**
- * Reclassifies a stored Team value against the current AO list and goal list (requirements doc
- * §6.4): AO match -> ao, else goal match -> goal, else other (stored value preserved verbatim).
- * Matching is case-insensitive/trimmed; the canonical casing from the matched list entry is
- * returned for ao/goal, but the Other branch returns the original stored value unmodified.
+ * Identify's team fields (ADR-023): the stored team snapped to its TeamDB spelling, plus the
+ * suggestion list. aoList/goalList are kept for installed pre-ADR-023 clients — both carry the
+ * roster so an old build's AO dropdown and custom-team datalist each show it; teamType 'other'
+ * routes an old build to its free-text field (a non-blank team) and is ignored on save.
  */
-function classifyTeam_(storedTeamValue, aoList, goalList) {
-  var normalized = normalizeTeamValue_(storedTeamValue);
-  if (!normalized) return { teamType: '', team: '' };
-
-  var normLower = normalized.toLowerCase();
-
-  var aoMatch = (aoList || []).find(function(entry) {
-    return normalizeTeamValue_(entry).toLowerCase() === normLower;
-  });
-  if (aoMatch) return { teamType: 'ao', team: normalizeTeamValue_(aoMatch) };
-
-  var goalMatch = (goalList || []).find(function(entry) {
-    return normalizeTeamValue_(entry).toLowerCase() === normLower;
-  });
-  if (goalMatch) return { teamType: 'goal', team: normalizeTeamValue_(goalMatch) };
-
-  return { teamType: 'other', team: storedTeamValue };
-}
-
-/** Thin GAS wrapper — reads ListDB live from the given spreadsheet. Not unit-tested. */
-function readTeamLists_(spreadsheet) {
-  var sheet = spreadsheet.getSheetByName('ListDB');
-  if (!sheet) return { aoList: [], goalList: [] };
-  var rows = sheet.getDataRange().getValues();
-  return parseTeamListsFromListDbRows_sw_(rows);
+function buildSignupIdentifyTeamFields_(roster, storedTeam) {
+  var team = canonicalTeamName_sw_(roster.entries, storedTeam);
+  return {
+    teamList: roster.suggestions,
+    aoList: roster.suggestions,
+    goalList: roster.suggestions,
+    teamType: team ? 'other' : '',
+    team: team
+  };
 }
 
 /**
@@ -168,8 +150,6 @@ function findEmptyTrackerSlotIndex_(trackerNameColumnRows) {
   });
 }
 
-var TEAM_TYPE_LABELS_ = { ao: 'AO-based', goal: 'Goal-based', other: 'Other' };
-
 function maxColumnIndex_(responseColumns) {
   var max = -1;
   Object.keys(responseColumns || {}).forEach(function(key) {
@@ -188,7 +168,7 @@ function maxColumnIndex_(responseColumns) {
  * responseColumns: column-index map from resolveResponseColumns — FEEDBACK_RATING/FEEDBACK_COMMENT
  *   may be absent (undefined index) on sheets that don't have those columns yet; both are skipped
  *   gracefully rather than erroring or resizing the row.
- * formData: { f3Name, email, teamType ('ao'|'goal'|'other'), team, who, what, how, phone, nag,
+ * formData: { f3Name, email, team, who, what, how, phone, nag,
  *   participation ('Yes'|'No'), feedbackRating, feedbackComment }
  *
  * Returns { row, skippedFields }: skippedFields lists RESPONSE_COLUMN_MAP keys that formData
@@ -216,10 +196,12 @@ function buildResponseRowFromForm_(existingRow, responseColumns, formData) {
   setIfMapped('PARTICIPATION', formData.participation);
   setIfMapped('F3_NAME', formData.f3Name);
   setIfMapped('EMAIL', formData.email);
-  if (formData.teamType !== undefined) {
-    setIfMapped('TEAM_TYPE', TEAM_TYPE_LABELS_[formData.teamType] || '');
+  // ADR-023: one team field. Team type and Other team are cleared (stale values from an older
+  // row must not survive an update); any legacy formData.teamType is ignored.
+  if (formData.team !== undefined) {
+    setIfMapped('TEAM_TYPE', '');
     setIfMapped('TEAM', formData.team || '');
-    setIfMapped('OTHER_TEAM', formData.teamType === 'other' ? (formData.team || '') : '');
+    setIfMapped('OTHER_TEAM', '');
   }
   setIfMapped('WHO', formData.who);
   setIfMapped('WHAT', formData.what);
@@ -506,29 +488,30 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
 
   GasLogger.log('signupWebapp.identify', { f3Name: payload.f3Name, email: payload.email });
   
-  var lists = readTeamLists_(templateSpreadsheet);
+  var roster = readTeamRosterView_sw_(templateSpreadsheet, new Date());
   var match = findPaxDbMatch_(templateSpreadsheet, payload.f3Name, payload.email);
 
   if (!match) {
     GasLogger.log('signupWebapp.identify', { matched: false });
-    return { ok: true, matched: false, months: months, aoList: lists.aoList, goalList: lists.goalList };
+    var blankTeam = buildSignupIdentifyTeamFields_(roster, '');
+    return { ok: true, matched: false, months: months, teamList: blankTeam.teamList, aoList: blankTeam.aoList, goalList: blankTeam.goalList };
   }
 
-  var storedTeam = match.team || match.otherTeam || '';
-  var classified = classifyTeam_(storedTeam, lists.aoList, lists.goalList);
+  var teamFields = buildSignupIdentifyTeamFields_(roster, match.team || match.otherTeam || '');
 
-  GasLogger.log('signupWebapp.identify', { matched: true, f3Name: match.f3Name, sheetId: match.sheetId, teamType: classified.teamType, team: classified.team });
+  GasLogger.log('signupWebapp.identify', { matched: true, f3Name: match.f3Name, sheetId: match.sheetId, team: teamFields.team });
   return {
     ok: true,
     matched: true,
     months: months,
-    aoList: lists.aoList,
-    goalList: lists.goalList,
+    teamList: teamFields.teamList,
+    aoList: teamFields.aoList,
+    goalList: teamFields.goalList,
     data: {
       f3Name: match.f3Name || '',
       email: match.email || '',
-      teamType: classified.teamType,
-      team: classified.team,
+      teamType: teamFields.teamType,
+      team: teamFields.team,
       who: match.who || '',
       what: match.what || '',
       how: match.how || '',
@@ -550,6 +533,14 @@ function handleSignupSave_(templateSpreadsheet, payload) {
   var targetMonth = selectTargetMonth_(months, payload.targetMonth);
   if (!targetMonth) return { ok: false, error: 'invalid_target_month' };
 
+  // ADR-023 Decision 4: snap the typed team to its TeamDB spelling and record the use, once,
+  // before anything is written — every downstream write (Responses, PaxDB, email) uses this
+  // canonical value. Any legacy teamType from an installed pre-ADR-023 client is dropped.
+  payload = Object.assign({}, payload, {
+    team: recordTeamUse_sw_(templateSpreadsheet, payload.team, new Date()).team,
+    teamType: undefined
+  });
+
   var targetSs = SpreadsheetApp.openById(targetMonth.sheetId);
   var state = readResponsesSheetState_(targetSs);
   var match = findSignupMatch_(state.dataRows, payload.f3Name, payload.email, state.columns, state.headers);
@@ -564,7 +555,6 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     participation: priorPaxRecord ? 'Yes' : 'No',
     f3Name: payload.f3Name,
     email: payload.email,
-    teamType: payload.teamType,
     team: payload.team,
     who: payload.who,
     what: payload.what,
@@ -623,7 +613,7 @@ function handleSignupSave_(templateSpreadsheet, payload) {
     f3Name: payload.f3Name,
     email: payload.email,
     team: payload.team,
-    teamType: payload.teamType,
+    teamType: '',
     who: payload.who,
     what: payload.what,
     how: payload.how,
@@ -755,7 +745,6 @@ function sendSignupWebappConfirmationEmail_(templateSpreadsheet, payload, target
   var summaryLines = buildGoalSummaryLines_({
     EMAIL: payload.email,
     NAG_EMAIL: payload.nag ? 'Yes' : 'No',
-    TEAM_TYPE: payload.teamType,
     TEAM: payload.team,
     WHO: payload.who,
     WHAT: payload.what,
@@ -819,13 +808,11 @@ function handleSignupFeedback_(templateSpreadsheet, payload) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    classifyTeam_,
+    buildSignupIdentifyTeamFields_,
     findSignupMatch_,
     findSignupMatchByF3NameOnly_,
     findPaxDbMatch_,
     isDeletedSignupRow_,
-    parseTeamListsFromListDbRows_: parseTeamListsFromListDbRows_sw_,
-    readTeamLists_,
     trackerHasF3Name_,
     findEmptyTrackerSlotIndex_,
     buildResponseRowFromForm_,

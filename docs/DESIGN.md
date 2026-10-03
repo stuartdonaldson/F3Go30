@@ -390,6 +390,12 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
   fast/slow pair has different inputs available and different Axiom timing needs (see
   `resolveFullIdentityFromHandle_`'s header comment). See ADR-015 for the full rationale.
 
+- **One team field backed by TeamDB (ADR-023, F3Go30-qeuu) — DECIDED:** sign-up no longer has a
+  team type. `handleSignupIdentify_` returns `teamList` (TeamDB suggestions; `aoList`/`goalList`
+  kept equal to it for installed older clients) and the stored team snapped to its TeamDB spelling
+  (`buildSignupIdentifyTeamFields_`). `handleSignupSave_` passes the typed team through
+  `recordTeamUse_` (teamRoster.js) once, before any write, and uses the canonical result for
+  Responses, PaxDB and the confirmation email; `TEAM_TYPE`/`OTHER_TEAM` are written blank.
 - **Signup as a step of the static front end (F3Go30-833s.9) — DECIDED:** `static-pages/src/index.html`
   now carries the whole signup flow itself, over the same `cmd=signup` JSON API (`handleSignupPost_`,
   `WebApp.js`) `SignupApp.html` posts to. No server change: `handleSignupIdentify_` already returns

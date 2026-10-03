@@ -10,6 +10,11 @@
 > the static page (`static-pages/src/index.html`), and the GAS route redirects to it. The
 > `doPost` `cmd=signup` JSON contract described here is unchanged — only the front end serving
 > it moved. See `docs/DESIGN.md` and `docs/OPERATIONS.md` §Producing a sign-up or check-in link.
+>
+> **Team type superseded (ADR-023).** The AO-based / Goal-based / Other team type (§5 Step 3
+> table, §6.4 reclassification, §7 ListDB source) is retired: sign-up has one team field backed by
+> the Template's `TeamDB` roster, a stored team is snapped to its TeamDB spelling, and `TEAM_TYPE`
+> / `OTHER_TEAM` are written blank. See `adr/023-curated-team-roster-replaces-ao-goal-team-types.md`.
 
 ---
 

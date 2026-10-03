@@ -72,6 +72,12 @@ unchanged. A new client on an old server gets no `telemetryAck` and falls back t
 `clientTelemetry` upload. Server dedupe is per-id CacheService keys (6h TTL). The retired
 `CLIENT_TELEMETRY_DEDUPE_SEEN_IDS` Script Property is no longer read or written and can be deleted.
 
+**Team roster (ADR-023), an example of the rule:** identify adds `teamList` (the TeamDB
+suggestions) and keeps returning `aoList`/`goalList` — both set to that same list — so a pre-ADR-023
+installed client's AO dropdown and custom-team datalist each still show the roster. Prefilled
+`data.teamType` is `'other'` for any non-blank team, routing an old client to its free-text field.
+Save ignores any `teamType` it receives; the team is snapped to its TeamDB spelling server-side.
+
 Clients also *self-heal* once they do reach the server: an identify response's `config.appVersion`
 is compared against the document's own `STATIC_BUILD_VERSION_`, and a mismatch raises a
 dismissible "newer version available — reload" banner (F3Go30-833s.18). That shortens the skew
