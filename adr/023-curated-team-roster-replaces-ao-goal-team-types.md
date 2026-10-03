@@ -21,7 +21,7 @@ near-duplicates ("Shieldlock" / "Shield Lock") that ADR-012 recorded as an accep
 
 ## Decision
 
-1. **One team field.** Team type is removed from sign-up and the HC Form. A PAX either picks a
+1. **One team field.** Team type is removed from sign-up. A PAX either picks a
    suggested team or types a new one; a new name is accepted and added.
 2. **Roster lives in a Template-resident `TeamDB` sheet** (`Team | Aliases | Status | LastUsed |
    UseCount`), replacing `ListDB`. It is not copied into trackers. Admins edit it directly to fix
@@ -52,9 +52,9 @@ ADR changes what values reach that column.
   those clients until they update.
 - Responses `Team type` stops carrying meaning; it is written blank for new rows and left
   in place on existing trackers. `RESPONSE_COLUMN_MAP` keeps its old aliases for older trackers.
-- The HC Form's team question becomes a multiple-choice list with "Other", regenerated from
-  `TeamDB` when a tracker is created — Forms cannot autocomplete, so the near-match prompt is
-  sign-up-webapp-only.
+- The HC Google Form is not restructured: it is being retired outright (user decision
+  2026-10-02 — zero PROD Form submissions in 90 days; tracked separately). Until it is, a Form
+  submission's team is snapped and recorded through the same `recordTeamUse_` path.
 - Sign-up save gains one `TeamDB` write; sign-up is low-frequency, so the cost is acceptable.
 
 ## Open questions
