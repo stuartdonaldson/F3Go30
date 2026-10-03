@@ -48,12 +48,21 @@ function planHcFormClosures_(rowsBySheetId) {
 
 /**
  * Closes one Form (stop accepting responses + closed message). Already closed with the same
- * message -> 'alreadyClosed'. dryRun reports without writing.
+ * message -> 'alreadyClosed'. dryRun reports without writing. Closing is done first and on its
+ * own: Forms can reject the closed-message text ("Invalid data updating form", seen live on SIT
+ * 2026-10-02) — that must not leave the Form open or abort the sweep, so a message failure is
+ * reported via onMessageFailed and the Form still counts as closed.
  * @returns {'closed'|'alreadyClosed'}
  */
-function closeOneHcForm_(form, message, dryRun) {
+function closeOneHcForm_(form, message, dryRun, onMessageFailed) {
   if (!form.isAcceptingResponses() && form.getCustomClosedFormMessage() === message) return 'alreadyClosed';
-  if (!dryRun) form.setAcceptingResponses(false).setCustomClosedFormMessage(message);
+  if (dryRun) return 'closed';
+  if (form.isAcceptingResponses()) form.setAcceptingResponses(false);
+  try {
+    form.setCustomClosedFormMessage(message);
+  } catch (e) {
+    onMessageFailed(form.getId(), e.message);
+  }
   return 'closed';
 }
 
@@ -63,14 +72,19 @@ function closeOneHcForm_(form, message, dryRun) {
  * reported, not thrown.
  * @param {Spreadsheet} templateSpreadsheet
  * @param {Object} rowsBySheetId _readTrackerDbRowsBySheetId_(template).bySheetId
- * @param {{dryRun: (boolean|undefined), signupUrl: string}} options
+ * @param {{dryRun: (boolean|undefined), signupUrl: string, message: (string|undefined)}} options
+ *   message overrides the default closed message (operator/diagnostic use).
  */
 function closeHcForms_(templateSpreadsheet, rowsBySheetId, options) {
   var signupUrl = String((options && options.signupUrl) || '').trim();
   if (!signupUrl) return { ok: false, error: 'signup_url_unavailable' };
   var dryRun = !!(options && options.dryRun);
-  var message = HC_FORM_CLOSED_MESSAGE_PREFIX_ + signupUrl;
-  var result = { ok: true, dryRun: dryRun, closed: [], alreadyClosed: [], missing: [], templateFormId: null, templateUnlinked: false };
+  var message = (options && options.message) || (HC_FORM_CLOSED_MESSAGE_PREFIX_ + signupUrl);
+  var result = { ok: true, dryRun: dryRun, closed: [], alreadyClosed: [], missing: [], messageFailed: [], templateFormId: null, templateUnlinked: false };
+  function onMessageFailed(formId, error) {
+    result.messageFailed.push({ formId: formId, error: error });
+    GasLogger.log('closeHcForms_.messageFailed', { formId: formId, error: error });
+  }
 
   planHcFormClosures_(rowsBySheetId).forEach(function(formId) {
     var form;
@@ -80,7 +94,7 @@ function closeHcForms_(templateSpreadsheet, rowsBySheetId, options) {
       result.missing.push(formId);
       return;
     }
-    result[closeOneHcForm_(form, message, dryRun)].push(formId);
+    result[closeOneHcForm_(form, message, dryRun, onMessageFailed)].push(formId);
   });
 
   var templateFormUrl = templateSpreadsheet.getFormUrl();
@@ -88,7 +102,7 @@ function closeHcForms_(templateSpreadsheet, rowsBySheetId, options) {
     var templateForm = FormApp.openByUrl(templateFormUrl);
     result.templateFormId = templateForm.getId();
     if (result.closed.indexOf(result.templateFormId) === -1 && result.alreadyClosed.indexOf(result.templateFormId) === -1) {
-      result[closeOneHcForm_(templateForm, message, dryRun)].push(result.templateFormId);
+      result[closeOneHcForm_(templateForm, message, dryRun, onMessageFailed)].push(result.templateFormId);
     }
     if (!dryRun) {
       templateForm.removeDestination();

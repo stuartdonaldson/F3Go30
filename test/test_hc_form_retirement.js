@@ -79,7 +79,7 @@ test('AC1 closeHcForms_ dryRun changes nothing and lists what it would do', () =
   const { template, rowsBySheetId } = setup_();
   const result = closeHcForms_(template, rowsBySheetId, { dryRun: true, signupUrl: SIGNUP_URL });
   assert.deepEqual(result, {
-    ok: true, dryRun: true, closed: ['f1', 'tpl'], alreadyClosed: ['f2'], missing: ['missing'],
+    ok: true, dryRun: true, closed: ['f1', 'tpl'], alreadyClosed: ['f2'], missing: ['missing'], messageFailed: [],
     templateFormId: 'tpl', templateUnlinked: false,
   });
   assert.equal(forms.f1._accepting, true);
@@ -90,7 +90,7 @@ test('AC2/AC3/AC4 closeHcForms_ closes each Form with the sign-up link, unlinks 
   const { template, rowsBySheetId } = setup_();
   const result = closeHcForms_(template, rowsBySheetId, { signupUrl: SIGNUP_URL });
   assert.deepEqual(result, {
-    ok: true, dryRun: false, closed: ['f1', 'tpl'], alreadyClosed: ['f2'], missing: ['missing'],
+    ok: true, dryRun: false, closed: ['f1', 'tpl'], alreadyClosed: ['f2'], missing: ['missing'], messageFailed: [],
     templateFormId: 'tpl', templateUnlinked: true,
   });
   ['f1', 'tpl'].forEach((id) => {
@@ -104,6 +104,23 @@ test('AC2/AC3/AC4 closeHcForms_ closes each Form with the sign-up link, unlinks 
   assert.deepEqual(rerun.alreadyClosed, ['f1', 'f2']);
   assert.equal(rerun.templateFormId, null);
   assert.equal(rerun.templateUnlinked, false);
+});
+
+test('closeHcForms_: a Form that rejects the closed message is still closed, the failure reported, the sweep continues', () => {
+  const { template, rowsBySheetId } = setup_();
+  forms.f1.setCustomClosedFormMessage = () => { throw new Error('Invalid data updating form.'); };
+  const result = closeHcForms_(template, rowsBySheetId, { signupUrl: SIGNUP_URL });
+  assert.equal(forms.f1._accepting, false, 'closed even though the message was rejected');
+  assert.deepEqual(result.messageFailed, [{ formId: 'f1', error: 'Invalid data updating form.' }]);
+  assert.deepEqual(result.closed, ['f1', 'tpl']);
+  assert.equal(forms.tpl._message, HC_FORM_CLOSED_MESSAGE_PREFIX_ + SIGNUP_URL, 'later Forms still processed');
+  assert.equal(result.templateUnlinked, true);
+});
+
+test('closeHcForms_ message override replaces the default closed message', () => {
+  const { template, rowsBySheetId } = setup_();
+  closeHcForms_(template, rowsBySheetId, { signupUrl: SIGNUP_URL, message: 'Closed.' });
+  assert.equal(forms.f1._message, 'Closed.');
 });
 
 test('closeHcForms_ requires a sign-up URL for the closed message', () => {

@@ -425,7 +425,6 @@ function adminCreateTrackerForMonth_(payload, e) {
       sheetId: createTrackerResult.newSpreadsheetId,
       spreadsheetName: createTrackerResult.newSpreadsheetName,
       trackerUrl: createTrackerResult.trackerSheetShortUrl,
-      formUrl: createTrackerResult.formShortUrl,
       log: createTrackerLog,
     });
   } catch (err) {
@@ -725,7 +724,7 @@ function adminCloseHcForms_(payload, e) {
   var closeFormsResult = closeHcForms_(
     closeFormsSpreadsheet,
     _readTrackerDbRowsBySheetId_(closeFormsSpreadsheet).bySheetId,
-    { dryRun: !!payload.dryRun, signupUrl: signupUrl }
+    { dryRun: !!payload.dryRun, signupUrl: signupUrl, message: payload.message || undefined }
   );
   return jsonOutput_(closeFormsResult);
 }
