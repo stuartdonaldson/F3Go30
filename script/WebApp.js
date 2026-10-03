@@ -675,6 +675,14 @@ function adminRunScanTrackers_(payload, e) {
   return jsonOutput_({ ok: true, result: scanResult });
 }
 
+function adminSeedTeamDb_(payload, e) {
+  // ADR-023 / F3Go30-qeuu.1: seeds/refreshes the Template's TeamDB roster from ListDB + PaxDB.
+  // Idempotent — safe to re-run; only raises LastUsed/UseCount, never renames or re-statuses.
+  var seedSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+  var seedResult = seedTeamDb_(seedSpreadsheet, collectPaxTeamRecords_(seedSpreadsheet));
+  return jsonOutput_({ ok: true, added: seedResult.added, updated: seedResult.updated, total: seedResult.total });
+}
+
 function adminGetSheetHeaders_(payload, e) {
   if (!payload.sheetId || !payload.sheetName) {
     return jsonOutput_({ ok: false, error: 'sheetId and sheetName are required' });
@@ -900,6 +908,7 @@ var ADMIN_ACTIONS_ = {
   listSheets: { handler: adminListSheets_, readOnly: true },
   getSheet: { handler: adminGetSheet_, readOnly: true },
   runScanTrackers: { handler: adminRunScanTrackers_, readOnly: false },
+  seedTeamDb: { handler: adminSeedTeamDb_, readOnly: false },
   getSheetHeaders: { handler: adminGetSheetHeaders_, readOnly: true },
   getSheetFormulas: { handler: adminGetSheetFormulas_, readOnly: true },
   sortTracker: { handler: adminSortTracker_, readOnly: false },

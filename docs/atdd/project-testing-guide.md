@@ -316,8 +316,8 @@ make judgement calls auditable instead of prose: `ENTRY_POINT_CLASSES` (which of
 classes each entry belongs to) and `ENTRY_POINT_READ_ONLY_EXEMPT` (every route, render or menu
 item deliberately *not* registered, each with the reason it writes nothing).
 
-The registry holds **46** state-modifying entry points, of which **14** carry a charter-journey
-call-site today and **32** are explicitly enumerated as **deferred** (umbrella bead `F3Go30-y8j7`,
+The registry holds **47** state-modifying entry points, of which **14** carry a charter-journey
+call-site today and **33** are explicitly enumerated as **deferred** (umbrella bead `F3Go30-y8j7`,
 partitioned by call-site class into `.1`–`.4`; `.1` — the `cmd=checkin`/`cmd=signup` product
 entry points — closed all five of its entries). Each deferral opens with `[backlog]` (a real gap
 a bead converts) or `[permanent]` (driving it inside a suite run is destructive or meaningless —
@@ -333,7 +333,7 @@ numbers with `node test/contract/entryPointRegistry.js --counts`.
 |---|---|---|---|---|
 | `cmd=checkin` doPost actions | 7 | 6 | 1 | `script/dashboardWebapp.js` — six covered: `identify`, `checkin`, `bonusAdd`, `bonusEdit`, `clientTelemetry`, `siteFeedback` (F3Go30-y8j7.1); `logout` deferred (node-tested only, no charter-journey call-site yet — F3Go30-1pqo.2) |
 | `cmd=signup` doPost actions | 3 | 3 | 0 | `script/WebApp.js` → `script/signupWebapp.js` — all three covered: `identify`, `save`, `feedback` (F3Go30-y8j7.1) |
-| `cmd=admin` doPost actions | 22 | 2 | 20 | `script/WebApp.js` — mostly operator/test tooling; registered because it writes, deferred because it is not product surface |
+| `cmd=admin` doPost actions | 23 | 2 | 21 | `script/WebApp.js` — mostly operator/test tooling; registered because it writes, deferred because it is not product surface |
 | `doGet` / `doPost` routes | 1 | 1 | 0 | `script/WebApp.js` — `doPost` is the single front door (secret gate + entry log); the four `doGet` routes render or read and are exempt |
 | Installable and simple triggers | 7 | 1 | 6 | `handleTrackerEdit_` covered; form-submit, auto-generate, minus-one, nag and the two cleanup sweeps deferred |
 | Sheet menu items | 6 | 1 | 5 | `script/onOpen.js` — `copyAndInit` covered; the trigger-management items are permanent exemptions |

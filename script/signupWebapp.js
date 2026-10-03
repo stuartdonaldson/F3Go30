@@ -26,6 +26,9 @@ var signupWebappCheckinSessionsModule_ = gasRequire_('./CheckinSessions.js', ['c
 var createOrTouchCheckinSession_sw_ = signupWebappCheckinSessionsModule_.createOrTouchCheckinSession_;
 var resolveOrCreateCheckinSessionGuid_sw_ = signupWebappCheckinSessionsModule_.resolveOrCreateCheckinSessionGuid_;
 
+var signupWebappTeamRosterModule_ = gasRequire_('./teamRoster.js', ['parseTeamListsFromListDbRows_']);
+var parseTeamListsFromListDbRows_sw_ = signupWebappTeamRosterModule_.parseTeamListsFromListDbRows_;
+
 var signupWebappEmailModule_ = gasRequire_('./signupEmail.js', ['resolveCheckinLinks_']);
 var resolveCheckinLinks_sw_ = signupWebappEmailModule_.resolveCheckinLinks_;
 
@@ -129,32 +132,12 @@ function classifyTeam_(storedTeamValue, aoList, goalList) {
   return { teamType: 'other', team: storedTeamValue };
 }
 
-/**
- * Parses ListDB rows (header row + data rows, column A = AO Teams, column B = Goal Team) into
- * the two flat lists classifyTeam_ needs. Blank cells are skipped. Read literally — sentinel-
- * looking entries like "Goal Based*" or "SOLO (no team)" are not filtered (requirements doc §6.4).
- */
-function parseTeamListsFromListDbRows_(rows) {
-  var aoList = [];
-  var goalList = [];
-
-  for (var i = 1; i < (rows || []).length; i++) {
-    var row = rows[i] || [];
-    var ao = normalizeTeamValue_(row[0]);
-    var goal = normalizeTeamValue_(row[1]);
-    if (ao) aoList.push(ao);
-    if (goal) goalList.push(goal);
-  }
-
-  return { aoList: aoList, goalList: goalList };
-}
-
 /** Thin GAS wrapper — reads ListDB live from the given spreadsheet. Not unit-tested. */
 function readTeamLists_(spreadsheet) {
   var sheet = spreadsheet.getSheetByName('ListDB');
   if (!sheet) return { aoList: [], goalList: [] };
   var rows = sheet.getDataRange().getValues();
-  return parseTeamListsFromListDbRows_(rows);
+  return parseTeamListsFromListDbRows_sw_(rows);
 }
 
 /**
@@ -841,7 +824,7 @@ if (typeof module !== 'undefined' && module.exports) {
     findSignupMatchByF3NameOnly_,
     findPaxDbMatch_,
     isDeletedSignupRow_,
-    parseTeamListsFromListDbRows_,
+    parseTeamListsFromListDbRows_: parseTeamListsFromListDbRows_sw_,
     readTeamLists_,
     trackerHasF3Name_,
     findEmptyTrackerSlotIndex_,

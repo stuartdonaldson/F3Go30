@@ -238,7 +238,64 @@ function installGasEnv_(options) {
   return handles;
 }
 
+/**
+ * Generic header + body `Sheet` stand-in: 1-based `getRange(row, col, numRows, numCols)` with
+ * `getValues`/`setValues`/`setValue`, `appendRow`, `getLastRow`/`getLastColumn`,
+ * `getDataRange`. Writes past the last row grow the body. `_headers`/`_rows` expose state.
+ * NOTE: several older test files still hand-roll their own per-sheet copy of this (see
+ * test_checkin_sessions.js makeFakeSessionsSheet_, test_go30tools.js makeFakePaxDbSheet) —
+ * new tests use this one.
+ * @param {!Array<string>} headers
+ * @param {!Array<!Array>=} initialRows
+ */
+function makeFakeSheet_(headers, initialRows) {
+  var hdr = headers.slice();
+  var rows = (initialRows || []).map(function(r) { return r.slice(); });
+  function width_() { return hdr.length; }
+  function rowAt_(rowIndex, create) {
+    if (rowIndex === 1) return hdr;
+    var bodyIdx = rowIndex - 2;
+    if (create) while (rows.length <= bodyIdx) rows.push(new Array(width_()).fill(''));
+    return rows[bodyIdx];
+  }
+  function rangeAt(row, col, numRows, numCols) {
+    numRows = numRows || 1;
+    numCols = numCols || 1;
+    return {
+      getValues: function() {
+        var out = [];
+        for (var r = 0; r < numRows; r++) {
+          var slice = (rowAt_(row + r, false) || []).slice(col - 1, col - 1 + numCols);
+          while (slice.length < numCols) slice.push('');
+          out.push(slice);
+        }
+        return out;
+      },
+      setValues: function(values) {
+        for (var r = 0; r < values.length; r++) {
+          var target = rowAt_(row + r, true);
+          for (var c = 0; c < values[r].length; c++) target[col - 1 + c] = values[r][c];
+        }
+        return this;
+      },
+      setValue: function(value) { return this.setValues([[value]]); },
+      setFontWeight: function() { return this; },
+    };
+  }
+  return {
+    getLastRow: function() { return rows.length + 1; },
+    getLastColumn: function() { return width_(); },
+    getRange: rangeAt,
+    getDataRange: function() { return rangeAt(1, 1, rows.length + 1, width_()); },
+    appendRow: function(values) { rows.push(values.slice()); return this; },
+    setFrozenRows: function() { return this; },
+    _headers: hdr,
+    _rows: rows,
+  };
+}
+
 module.exports = {
+  makeFakeSheet_,
   makeFakeProperties_,
   makeFakeCache_,
   makeFakeLogger_,

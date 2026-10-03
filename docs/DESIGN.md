@@ -514,6 +514,7 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
 | Activity | Hidden audit log of script actions | A: Datetime, B: User email, C: Message, D: Sheet name |
 | TrackerDB | Template-resident registry of every monthly tracker (formerly a separate `Links` sheet — consolidated, SheetId-keyed); aggregates cross-tracker metrics and (ADR-010) resolves which spreadsheet a centrally-dispatched function should target for a given context date | Date Modified, StartDate, SpreadsheetName, ShortTracker, TrackerURL, ShortHC, HC URL, SheetId, FormId, TotalPAX, TotalTeams, AverageScore, LastSignupAt, TriggersInitializedAt, LastMinusOneRunAt, LastNagRunAt |
 | PaxDB | Template-resident aggregate of individual PAX records across all trackers | Sheet ID, date, F3 Name, team, goal data, hit/miss/no-checkin stats |
+| TeamDB | Template-resident sign-up team roster (ADR-023); never copied to trackers | Team, Aliases, Status (active/hidden), LastUsed, UseCount — `recordTeamUse_` (teamRoster.js) is the single save path: snaps a typed name to its canonical spelling by name/alias (case/whitespace-insensitive) and records the use, or appends a new active row |
 
 ## References
 

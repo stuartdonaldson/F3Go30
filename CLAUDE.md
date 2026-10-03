@@ -248,7 +248,8 @@ Default: `--cmd admin --env sit`.
 
 Common admin actions: `setScriptProperties`, `cleanupTracker`,
 `runScanTrackers`, `getSheet`, `runAutoGenerate`, `createTrackerForMonth`, `copyTemplate`,
-`copyProdTrackerToSit`, `teardownEnvironment`, `setContextDate`, `setConfigValue`, `getConfigValue`
+`copyProdTrackerToSit`, `teardownEnvironment`, `setContextDate`, `setConfigValue`, `getConfigValue`,
+`seedTeamDb` (ADR-023 TeamDB roster seed — see docs/OPERATIONS.md §TeamDB team roster)
 
 - `copyProdTrackerToSit` (F3Go30-956l) overlays a source deployment's current-month tracker's
   `Tracker`/`Bonus Tracker`/`Responses` values onto the target deployment's own current-month

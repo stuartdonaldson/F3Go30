@@ -333,6 +333,25 @@ available quotes.
 
 ---
 
+### TeamDB
+
+**Visibility:** Template only — `Delete` in the tracker sheet disposition, never copied to trackers.
+**Who uses it:** `teamRoster.js` (ADR-023); admins edit it to fix spelling, alias, or hide teams.
+
+| Col | Field | Notes |
+|-----|-------|-------|
+| A | Team | Canonical spelling written to Responses on save |
+| B | Aliases | Comma/semicolon-separated alternate spellings that snap to Team |
+| C | Status | `active` (blank = active) or `hidden` (excluded from suggestions) |
+| D | LastUsed | Date of the most recent save using this team |
+| E | UseCount | Number of saves using this team |
+
+Matching is case- and whitespace-insensitive on Team and every alias. Suggestions = active rows
+with LastUsed within Config `TeamSuggestWindowDays` (default 90) plus pinned `SOLO (no team)`.
+Supersedes `ListDB` for sign-up (ListDB is read only by the `seedTeamDb` admin action).
+
+---
+
 ### Activity
 
 **Visibility:** Hidden  

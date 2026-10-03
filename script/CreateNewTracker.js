@@ -22,6 +22,7 @@ var TRACKER_SHEET_INDEX_ = {
   'Tracker':         'Visible',
   'Config':          'Hidden',
   'ListDB':          'Delete',
+  'TeamDB':          'Delete',
   'Links':           'Delete',
   'TrackerDB':       'Delete',
   'Inspiration':     'Hidden',
