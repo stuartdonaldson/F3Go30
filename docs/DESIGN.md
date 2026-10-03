@@ -2,8 +2,7 @@
 
 ## Solution Strategy
 
-Spreadsheet creation follows a **copy-from-template** pattern: a working spreadsheet (and its
-bound form) is duplicated rather than built from scratch each month. New tracker names are
+Spreadsheet creation follows a **copy-from-template** pattern: a working spreadsheet is duplicated rather than built from scratch each month. New tracker names are
 auto-generated as `YYYY-MM-NameSpace` (e.g. `2026-04-F3Waxhaw`) using the start date and the
 `NameSpace` value from the Config sheet; operators are not prompted for a name. This avoids the
 complexity of programmatically creating Google Forms with correct ownership — a restriction
@@ -14,7 +13,8 @@ long-running copy operations without blocking execution.
 
 Programmatic form generation was explored but deferred — the Google Forms API does not support
 ownership transfer, making full automation impossible for cross-account regional bootstrapping.
-See ADR-004.
+See ADR-004. (Moot since ADR-024: the HC Google Form is retired and new trackers are created
+without a Form.)
 
 **Script execution is centralized** (ADR-010): only the spreadsheet-creation step above produces
 a new physical spreadsheet. All triggers, dispatch, and logic run exclusively in the Template's
@@ -49,7 +49,7 @@ graph TD
     C -- Yes --> D[F3 Go30 menu shown]
     C -- No --> E[No menu]
     D --> F[Copy and Initialize]
-    F --> G[Copies spreadsheet + form]
+    F --> G[Copies spreadsheet — any Form the copy brings is unlinked + trashed]
     G --> H[initSheets — resets all sheets]
     H --> I[URL shortening]
     I --> TDB[Register row in TrackerDB]
@@ -60,9 +60,9 @@ graph TD
     %% Centralized dispatch — installed once on the Template
     L[Daily 1 AM trigger — Template only] --> LDB[Resolve context date against TrackerDB]
     LDB --> P[markEmptyCellsAsMinusOne — writes −1 for missed days, per resolved tracker]
-    N[PAX submits HC form] --> M[Form-submit dispatcher — Template only]
-    M --> MDB[Resolve form ID against TrackerDB]
-    MDB --> O[onFormSubmit — adds PAX row to resolved Tracker]
+    N[PAX signs up on the Go30 sign-up page] --> M[Sign-up webapp — cmd=signup]
+    M --> MDB[Resolve namespace / current tracker via TrackerDB]
+    MDB --> O[handleSignupSave_ — writes Responses, adds or updates PAX row in Tracker]
     D --> MT[Initialize Monthly Trigger]
     MT --> MTrig[Monthly trigger — 20th of month, Template only]
     MTrig --> AGS[autoGenerateNextMonthTracker]
@@ -82,13 +82,13 @@ class BG1,BG3 lightgreen
 | Module | Files | Responsibility |
 |--------|-------|---------------|
 | Entry Points | `onOpen.js` | Custom menu |
-| Tracker Lifecycle | `CreateNewTracker.js`, `CopyTemplate.js`, `addResponseOnSubmit.js`, `markMinusOne.js`, `nag.js` | Copy-and-init workflow, template-copy mechanics, form-submit handler, nightly miss marking, daily reminder email workflow — all triggers installed once on the Template and dispatching by `TrackerDB` lookup (ADR-010) |
+| Tracker Lifecycle | `CreateNewTracker.js`, `CopyTemplate.js`, `trackerSheet.js`, `hcFormRetirement.js`, `markMinusOne.js`, `nag.js` | Copy-and-init workflow, template-copy mechanics, canonical Tracker sort (`trackerSheet.js`), retired-HC-Form cleanup and `closeHcForms` (`hcFormRetirement.js`, ADR-024), nightly miss marking, daily reminder email workflow — all triggers installed once on the Template and dispatching by `TrackerDB` lookup (ADR-010) |
 | Dispatch / TrackerDB | `go30tools.js` | `TrackerDB`/`PaxDB` schema, cross-tracker aggregation, and (per ADR-010) the context-date → target-spreadsheet resolution used by every centrally-dispatched function |
 | Static Front End (PRIMARY) | `static-pages/src/index.html` | The PAX-facing front end since ADR-019: one GitHub Pages document carrying every PAX flow — sign-up, daily check-in, dashboard, bonus entries, and the month calendar — as in-page steps, over the same `cmd=signup`/`cmd=checkin` JSON API the GAS pages post to. Reached directly by its own URL (`buildStaticSignupUrl_`/`buildStaticCheckinUrl_`, `Utilities.js`); the build stamps each env's own GAS deployment URL in as the page's default backend (F3Go30-6bl6), so generated links no longer need to carry it as `?webapp=` (F3Go30-9jsa) — that param still works as a client-side override for older bookmarked links or the unbuilt page in local testing |
 | Web Apps (JSON API + redirect) | `WebApp.js`, `signupWebapp.js`, `dashboardWebapp.js`, `HomeApp.html`, `bonusWebapp.js`, `ClientTelemetryLog.js` | `doGet`/`doPost` dispatcher by `cmd` query param (`signup`, `checkin`, `admin`). **`doPost` is the JSON API** — `signupWebapp.js` = HC sign-up; `dashboardWebapp.js` = daily check-in + PAX dashboard, reading/writing the current month's Tracker sheet directly (no separate data store); `bonusWebapp.js` = bonus-list/add/edit actions under the same `checkin` cmd — this is the one surface the static front end and any legacy client both call. **`doGet` is redirect-only** since ADR-019, and unconditionally so since DR-04 (2026-08-04, `design-review-2026-08-04.md`; ADR-021 supersedes ADR-019's `?static=0` claim): `?cmd=signup`, `?cmd=checkin`, and the bare home route answer with a query-preserving redirect to the equivalent static URL. `SignupApp.html`/`CheckinApp.html`/`IdentityCore.html` — the `HtmlService` pages DR-04 removed — no longer exist; there is no opt-out and nothing left to render them. `HomeApp.html` is unaffected (out of DR-04's scope) and still renders when no static URL can be built (practically Node-test-only). `ClientTelemetryLog.js` (F3Go30-xyri/n40u) = the `clientTelemetry` action under the same `checkin` cmd — receives the static page's captured client errors and reconnect-poll outcomes (see the static page's own transport-block comments), dedupes by client-minted record id via a PropertiesService store, and logs each new one to Axiom via `GasLogger` |
 | Identity / Check-in | `CheckinSessions.js`, `IdentityToken.js` | Bookmarkable check-in link — `CheckinSessions.js` mints/resolves a server-stored GUID session so a returning PAX can reload the check-in/dashboard page without re-entering F3 Name + Email each visit; `IdentityToken.js`'s signed-token verify path is kept only to honor links minted before the rollout (see the decision below) |
 | Bonus Rules | `BonusTypes.js` | Centralized bonus-type registry (rule definitions: points, link requirement, cap) consumed by `dashboardWebapp.js`/`bonusWebapp.js` chip rendering and validation |
-| Email | `onboardingEmail.js`, `responseSettingsEmail.js`, `signupEmail.js`, `signupReuse.js` + matching `*Template.html` files | Site-Q onboarding email, response-settings confirmation email, sign-up confirmation email, and repeat-signup detection/reuse |
+| Email | `onboardingEmail.js`, `responseSettingsEmail.js`, `signupEmail.js` + matching `*Template.html` files | Site-Q onboarding email, response-settings confirmation email, and sign-up confirmation email |
 | UI / Notifications | `NotificationSBCode.js`, `NotificationSidebar.html` | Sidebar panel: log streaming, prompts, HTML link generation |
 | Utilities | `logActivity.js`, `urlShortener.js`, `Utilities.js`, `libSheets.js`, `response_utils.js`, `PaxCache.js`, `ScriptProperties.js`, `GasLogger.js`, `logFile.js`, `version.js` | Activity logging, URL shortening (TinyURL/Bitly), cell utilities, Config sheet reads, sheet-access helpers, response-parsing helpers, PAX lookup caching, the per-execution script-properties snapshot + the invalidating write facade every properties write goes through (`ScriptProperties.js`), Axiom log sink, log-file download support, version/About constants |
 
@@ -100,7 +100,6 @@ Known code-level risks:
 
 | Scenario | Risk | Status |
 |----------|------|--------|
-| Tracker has fewer than 4 rows when `onFormSubmit` runs | `getRange` throws on negative row count | Guard added — F3Go30-x82 |
 | URL shortener returns non-200 | Error caught but fallback URL not surfaced with actionable message | Known gap |
 | `autoGenerateNextMonthTracker` installed on wrong spreadsheet | If installed on a monthly tracker instead of the template, copies from that tracker not the template | Install monthly trigger only on the template spreadsheet |
 | Ambiguous or missing `TrackerDB` row match for a context date | A `TrackerDB` row with a duplicate StartDate, or no row at all covering a given date, leaves dispatch with no defined target | `resolveTrackerDbRowForContextDate_` (go30tools.js) throws rather than silently picking a row or no-op'ing (F3Go30-vr80) — an operator error (bad/missing `TrackerDB` row) still surfaces as a logged failure, not a misdirected write |
@@ -120,7 +119,7 @@ Two logging channels serve different execution contexts:
   opens the sidebar. Used inside `copyAndInit()` and `reinitializeSheets()`. Messages enqueue to
   `TO_CLIENT` PropertiesService; silently discarded if no sidebar is open.
 - **Apps Script Logger (`Logger.log`)** — always available. Required for all trigger-fired and
-  background functions (`onFormSubmit`, `markEmptyCellsAsMinusOne`, `autoGenerateNextMonthTracker`).
+  background functions (`markEmptyCellsAsMinusOne`, `autoGenerateNextMonthTracker`).
   Since these now run only in the Template (ADR-010), Logger output and `GasLogger`/Axiom sinks
   are visible in one place for every tracker's activity, not scattered across per-copy projects.
 
@@ -180,7 +179,7 @@ plus onEdit, plus the nightly purge — down from the wider fragmentation
 (poll, `asOf` marker) ADR-016's two-mechanism model converged on. The
 F3Go30-o39s epic tracks the sequencing that got here: onEdit extended to
 cover all three sheets, write-through added to the nightly sweep and
-form-submit signup, onEdit provisioned on every tracker including namespace
+sign-up, onEdit provisioned on every tracker including namespace
 copies, and the poll + `asOf` marker deleted once nothing depended on them.
 
 ## Decisions (short)
@@ -396,8 +395,14 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
   (`buildSignupIdentifyTeamFields_`). `handleSignupSave_` passes the typed team through
   `recordTeamUse_` (teamRoster.js) once, before any write, and uses the canonical result for
   Responses, PaxDB and the confirmation email; `TEAM_TYPE`/`OTHER_TEAM` are written blank.
-  The HC Google Form path (`onFormSubmitLocked_` Phase 3b, `applyRosterTeamToFormSubmit_`) snaps
-  and records the team the same way, with `lockHeld` since it already runs inside `runWithLock`.
+  The HC Google Form path no longer exists (ADR-024).
+- **HC Google Form retired (ADR-024, F3Go30-61ln) — DECIDED:** the static sign-up page (`cmd=signup`)
+  is the only sign-up path. New trackers are created without a Form (`createTrackerSpreadsheet_` calls
+  `retireCopiedHcForm_`, which unlinks + trashes any Form the Template copy brings along); the form-submit
+  pipeline (`handleFormSubmit_`/`onFormSubmit`, `signupReuse.js`) is deleted and `syncTrackerTriggers`
+  removes any trigger still registered under the retired handler names. The `closeHcForms` admin action
+  closes every existing Form with a pointer to the sign-up page and unlinks the Template's Form; it must
+  run only after the no-Form build is deployed (docs/OPERATIONS.md §Retiring the HC Form).
 - **Signup as a step of the static front end (F3Go30-833s.9) — DECIDED:** `static-pages/src/index.html`
   now carries the whole signup flow itself, over the same `cmd=signup` JSON API (`handleSignupPost_`,
   `WebApp.js`) `SignupApp.html` posts to. No server change: `handleSignupIdentify_` already returns
@@ -515,12 +520,12 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
 | Sheet | Purpose | Key Columns |
 |-------|---------|-------------|
 | Tracker | One row per PAX; daily check-in grid | A: F3 Name, B: Team/Goal (VLOOKUP), G: Raw Score, H: Score, columns I+ (row 3 header): a `Date` value = day column (PAX-entered 1/0, or −1 after nightly marking), the literal string `'Bonus'` = weekly bonus column (row 2 holds its period number, formula-computed); data rows 4+. `dashboardWebapp.js`'s `classifyTrackerColumns_` reads row 2/row 3 to tell day columns from bonus columns rather than hardcoding column letters. **G/H's own formulas sum every day column with no date cutoff** (docs/sheet-reference.md) — as of F3Go30-h8tt, `buildDashboardPaxRow_` no longer reads these two cells; it recomputes rawScore/score from the already-today-cutoff dayValues + bonus pills instead, so a PAX who pre-marks a future day doesn't get an inflated dashboard/leaderboard score. The cells themselves are untouched (still what `HIM Score`/`Team Score`'s spreadsheet-native `QUERY`s read, so those two sheets can diverge from the app's numbers for a PAX with a pre-marked future day) |
-| Responses | Raw Google Form submission data | Col 4 (index 3): F3 Name, Col 6: Team |
+| Responses | Sign-up records, written only by the sign-up webapp (`handleSignupSave_`) | Col 4 (index 3): F3 Name, Col 6: Team |
 | Config | Runtime configuration read by the script | A: variable name, B: primary value, C: secondary value |
 | Help | Operational links and config values | A: Label, B: URL |
 | Bonus Tracker | PAX bonus-point activity log | PAX-entered; not script-managed |
 | Activity | Hidden audit log of script actions | A: Datetime, B: User email, C: Message, D: Sheet name |
-| TrackerDB | Template-resident registry of every monthly tracker (formerly a separate `Links` sheet — consolidated, SheetId-keyed); aggregates cross-tracker metrics and (ADR-010) resolves which spreadsheet a centrally-dispatched function should target for a given context date | Date Modified, StartDate, SpreadsheetName, ShortTracker, TrackerURL, ShortHC, HC URL, SheetId, FormId, TotalPAX, TotalTeams, AverageScore, LastSignupAt, TriggersInitializedAt, LastMinusOneRunAt, LastNagRunAt |
+| TrackerDB | Template-resident registry of every monthly tracker (formerly a separate `Links` sheet — consolidated, SheetId-keyed); aggregates cross-tracker metrics and (ADR-010) resolves which spreadsheet a centrally-dispatched function should target for a given context date | Date Modified, StartDate, SpreadsheetName, ShortTracker, TrackerURL, ShortHC, HC URL, SheetId, FormId (`ShortHC`/`HC URL`/`FormId` historical — blank for new trackers, ADR-024), TotalPAX, TotalTeams, AverageScore, LastSignupAt, TriggersInitializedAt, LastMinusOneRunAt, LastNagRunAt |
 | PaxDB | Template-resident aggregate of individual PAX records across all trackers | Sheet ID, date, F3 Name, team, goal data, hit/miss/no-checkin stats |
 | TeamDB | Template-resident sign-up team roster (ADR-023); never copied to trackers | Team, Aliases, Status (active/hidden), LastUsed, UseCount — `recordTeamUse_` (teamRoster.js) is the single save path: snaps a typed name to its canonical spelling by name/alias (case/whitespace-insensitive) and records the use, or appends a new active row |
 

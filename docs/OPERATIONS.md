@@ -271,9 +271,9 @@ deploying or initializing anything:
    addressable via `ns=<folderName>` on webapp/admin requests (ADR-014 D1) — request-driven paths
    are unaffected by this gap.
 
-Deliberately out of scope: triggers, HC Form links, TinyURL short links, Script Properties,
+Deliberately out of scope: triggers, TinyURL short links, Script Properties,
 and any deployment. Bringing the new environment live (initializing triggers, deploying its own
-web app, re-linking forms) is a separate, manual step — see `script/CopyTemplate.js`'s file
+web app) is a separate, manual step — see `script/CopyTemplate.js`'s file
 header. Teardown (removing the `NamespaceDB` row and optionally trashing the folder) is the
 `teardownEnvironment` admin action / `teardownNamespaceEnvironment_` — see ADR-014 D6.
 
@@ -304,6 +304,38 @@ aliases become aliases of `to`, UseCount summed, from's row deleted); otherwise 
 exists) has its Responses Team / Other team cells and PaxDB rows rewritten, is re-sorted, and its
 caches wiped, so the dashboard regroups on the next read. Earlier months keep their historical
 spelling. An unknown `from` returns `{ok:false, error:"unknown_team"}` and changes nothing.
+
+### Retiring the HC Form (ADR-024, F3Go30-61ln)
+
+The HC Google Form is retired; the static sign-up page is the only sign-up path and new trackers
+are created without a Form. `closeHcForms` closes the Forms that already exist (the Template's
+linked Form and every `TrackerDB` `FormId`): each stops accepting responses and shows "The Go30
+sign-up form has moved. Sign up (or update your goals) here: <static sign-up URL>", then the
+Template's Form is unlinked. Forms and response sheets stay in Drive (closed, not trashed).
+
+**Ordering, per environment: deploy the no-Form build first, THEN run `closeHcForms`.** Unlinking
+the Template's Form before that build is live would make the next `autoGenerateNextMonthTracker`
+throw. Run SIT first, then PROD.
+
+```
+node tools/callWebapp.js closeHcForms --env <env> --body '{"dryRun":true}'   # report only, changes nothing
+node tools/callWebapp.js closeHcForms --env <env>                            # real run
+# -> {ok, dryRun, closed, alreadyClosed, missing, messageFailed, templateFormId, templateUnlinked}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `closed` | Forms closed by this call (would be closed, under `dryRun`) |
+| `alreadyClosed` | Forms that were already closed — nothing changed |
+| `missing` | `FormId`s that could not be opened (deleted/inaccessible) |
+| `messageFailed` | `{formId, error}` for Forms that were closed but rejected the closed-message text (Forms can return "Invalid data updating form"); the Form is still closed. Retry with a different `--body '{"message":"..."}'` |
+| `templateFormId` | The Template's linked Form, if any |
+| `templateUnlinked` | Whether the Template's Form was unlinked |
+
+The action is idempotent: a rerun reports everything under `alreadyClosed` and changes nothing.
+If `callWebapp` prints a bare "❌" with no message, prefix the command with
+`NODE_OPTIONS=--dns-result-order=ipv4first` (client-side IPv6 connect failure, not a server error).
+`cleanupTracker` still trashes a Form-era tracker's linked Form.
 
 ### Refreshing SIT's current-month tracker with PROD data (F3Go30-956l)
 
@@ -399,16 +431,15 @@ visible only when the spreadsheet is opened by the owner account.
 
 | Menu Item | Function | When to Use |
 |-----------|----------|------------|
-| Copy and Initialize | `copyAndInit()` | Start of each new month (manual). Registers the new tracker in `TrackerDB` and installs its form-submit trigger directly — no separate trigger step needed on the copy. |
+| Copy and Initialize | `copyAndInit()` | Start of each new month (manual). Registers the new tracker in `TrackerDB` — no per-tracker trigger step needed on the copy. |
 | Initialize Template Dispatch Triggers (Template only!) | `initializeTemplateDispatchTriggers()` | Once, on the Template only — installs the daily minus-one, nag-email, check-in session cleanup, and PaxCache purge dispatch triggers. Warns if run elsewhere. |
 | Initialize Monthly Trigger | `initializeMonthlyTrigger()` | Once on the template spreadsheet to schedule auto-generate |
 | Reinitialize this spreadsheet | `reinitializeSheets()` | Development or reset |
 | Run test function (DEV) | `testFunction()` | Developer use only |
 
 > **Removed:** "Initialize Triggers" / `initializeTriggers()` is no longer part of the monthly
-> workflow. Form-submit triggers are installed per-tracker at creation time (`copyAndInit()` /
-> `autoGenerateNextMonthTracker()`); daily −1 marking and nag-email triggers are installed once,
-> on the Template, via "Initialize Template Dispatch Triggers". All three dispatch to the correct
+> workflow. No form-submit trigger is installed for any tracker (ADR-024); daily −1 marking and nag-email triggers are installed once,
+> on the Template, via "Initialize Template Dispatch Triggers". Both dispatch to the correct
 > tracker by resolving against `TrackerDB` or the firing event (ADR-010). A fourth trigger,
 > `cleanupStaleCheckinSessions` (`CheckinSessions.js`), is installed the same way and prunes
 > abandoned/stale check-in bookmark sessions nightly — it does not resolve a tracker, since the
@@ -459,8 +490,6 @@ entries = fetch_log_entries(log_file_url)
 latest = entries[-1]
 assert latest["trigger"] == "copyAndInit"
 assert "trackerUrl" in latest["payload"]
-assert "formUrl" in latest["payload"]
-assert "confirmationMessage" in latest["payload"]
 ```
 
 **Log entry payload keys (copyAndInit):**
@@ -470,17 +499,15 @@ assert "confirmationMessage" in latest["payload"]
 | `spreadsheetName` | New spreadsheet name (e.g. `2026-04-F3Waxhaw`) |
 | `startDateIso` | Start date entered by Q in `YYYY-MM-DD` format; written to the `TrackerDB` sheet's StartDate column |
 | `trackerUrl` | Short URL to the Tracker sheet |
-| `formUrl` | Short URL to the HC form |
-| `slackMessage` | Ready-to-paste Slack message text (form URL + tracker URL) |
+| `slackMessage` | Ready-to-paste Slack message text (tracker URL) |
 | `siteQName` | Site Q display name from Config |
 | `siteQEmail` | Site Q email from Config |
-| `confirmationMessage` | Text set on the HC form confirmation |
 | `templateSpreadsheetId` | File ID of the template spreadsheet; used by test scripts to verify the `TrackerDB` sheet |
 | `error` | Present only on failure; contains error message |
 | `warning` | Present in a separate entry when URL shortening falls back to raw URL; includes `alias` (attempted TinyURL alias) and `rawUrl` (raw URL returned) |
 
 **Security:** The LogFile URL grants read access to anyone with the link. It contains Site Q
-email and spreadsheet/form URLs. Do not share publicly or commit the URL to version control.
+email and spreadsheet URLs. Do not share publicly or commit the URL to version control.
 
 ---
 
@@ -491,9 +518,7 @@ email and spreadsheet/form URLs. Do not share publicly or commit the URL to vers
 | Menu does not appear | User is not the spreadsheet owner | Open with the owner account |
 | URL shortening fails | Sidebar shows full URL instead of short URL | Check `TINYURL_ACCESS_TOKEN` in Script Properties; use full URL manually |
 | Copy and Initialize stops mid-run | Sidebar log shows last completed step | Note the step; complete remaining steps manually using Apps Script editor |
-| Tracker not populated after HC form submit | Row missing after form submit | Verify the Template's form-submit dispatcher trigger exists in its Triggers panel, and that the tracker's form ID is registered correctly in `TrackerDB` |
 | −1 not appearing for missed days | Nightly trigger not firing, or `TrackerDB` lookup failing for that tracker | Verify the Template's daily dispatcher trigger for `markEmptyCellsAsMinusOne` exists in its Triggers panel; verify the tracker's date range in `TrackerDB` actually covers the missed date |
-| `onFormSubmit` throws when Tracker is empty | Range error if Tracker has fewer than 4 rows | Script exits early with a log message; verify Tracker has at least one data row |
 | Auto-generate fails | Site Q receives failure email with error details and orphaned spreadsheet ID | Delete orphaned spreadsheet from Drive; run "Copy and Initialize" manually; check Config sheet for missing NameSpace or Site Q rows |
 | Email test mode blocks delivery | A mail-sending workflow logs a delivery failure and no email is sent | If `Email Test Mode` is enabled, verify the `Site Q` row has a valid email address in column C; otherwise disable `Email Test Mode` |
 | A `regional`/`demo` namespace gets no nightly −1 marking, nag emails, auto-generate, or session cleanup | `NamespaceDB`'s per-trigger opt-in columns are set to Enabled but nothing runs, silently | Expected today (ADR-020, DR-02) — ADR-014 D4's fan-out loop was never implemented; every time-based trigger still only runs against the bound Template. Implement the fan-out before relying on those columns |

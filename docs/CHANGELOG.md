@@ -27,6 +27,8 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+- **The old Google sign-up Form is closed** — sign up (or update your goals) on the Go30 page; anyone
+  opening an old Form link sees a note pointing there. New monthly trackers no longer come with a Form.
 - **One team field at sign-up** — the AO-based / Custom Team choice is gone. Start typing and
   pick from teams used in the last 3 months, or type a new one and it's added. A name that looks
   like a typo of an existing team ("Hawks Nest", "Thunderdom") asks "Did you mean …?" first, so

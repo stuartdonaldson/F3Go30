@@ -21,13 +21,14 @@ onward is one day of the month. PAX navigate to their row and enter `1` (complet
 
 **How a PAX row gets added**
 
-When a PAX submits the Hard Commit signup form, Google Forms writes the response to the
-Responses sheet. This fires the `handleFormSubmit_()` GAS function (installed as an
-`onFormSubmit` trigger). That function:
+When a PAX signs up on the Go30 sign-up page, the sign-up webapp's save
+(`handleSignupSave_()`, `signupWebapp.js`) writes the sign-up to the Responses sheet and then
+ensures a Tracker row (the retired Google Form / `onFormSubmit` path no longer exists — ADR-024).
+For the Tracker it:
 
-1. Reads the F3 Name from the form response (field index 3).
-2. Checks whether that name already exists in the Tracker. If it does, skips the insert
-   (last-write-wins on re-submission — no duplicate rows are created).
+1. Takes the F3 Name from the sign-up.
+2. Checks whether that name already exists in the Tracker. If it does, updates that row's data
+   in place (no duplicate rows are created).
 3. Finds the next empty row in column A (starting at row 4) and writes the F3 Name there.
 4. Copies all formulas and formatting from the previous PAX row down to the new row, so
    every new PAX immediately has correct score formulas, bonus columns, and date cells.
@@ -40,7 +41,7 @@ Responses sheet. This fires the `handleFormSubmit_()` GAS function (installed as
 
 | Column | Label | How it works |
 |--------|-------|-------------|
-| A | F3 Name | Written by `handleFormSubmit_()`. PAX's F3 handle. |
+| A | F3 Name | Written by the sign-up webapp's save (`handleSignupSave_()`). PAX's F3 handle. |
 | B | Goal / Team | `=IFNA(VLOOKUP($A4,'Goals by HIM'!A:B,2,0),"")` — pulls the PAX's stated goal or team from the Goals by HIM sheet. |
 | C | Fellowship *(hidden)* | `=SUMIFS(UBonus_Multiplier, UBonus_Name, $A4, UBonus_Type, C$3, ...)` — sum of fellowship bonus points earned. Hidden to reduce visual clutter. |
 | D | Q-Point | Sum of Q-Point bonuses earned this month. |
@@ -146,9 +147,9 @@ for that flag, so `bonusWebapp.js`'s `BONUS_TYPE_RULES_` is a manual mirror kept
 ### Responses
 
 **Visibility:** Visible  
-**Who uses it:** Written by Google Forms; read by `handleFormSubmit_()` and the Goals by HIM query.
+**Who uses it:** Written only by the sign-up webapp (`handleSignupSave_()`), never by Google Forms (retired, ADR-024); read by the Goals by HIM query and the dashboard/check-in lookups.
 
-This is the form response destination. Google Forms appends one row per submission. Columns:
+One row per sign-up. The column layout is inherited from the old Google Form's response sheet. Columns E ("Team type") and G ("Goal/Other team") are legacy — written blank since ADR-023. Columns:
 
 | Col | Question |
 |-----|---------|
@@ -167,11 +168,13 @@ This is the form response destination. Google Forms appends one row per submissi
 | M | Success Story |
 
 **Important:** The F3 Name field (column D) is the key that links a response to a Tracker row.
-If a PAX re-submits with the same F3 name, `handleFormSubmit_()` detects the duplicate and does
-not add a second Tracker row — but it still logs the new response here. If a PAX edits their
-response via the Google Forms "edit response" link and changes their F3 name, the Tracker row
-keyed on the original name will **not** update automatically. An operator must manually update
-the Tracker cell to match.
+If a PAX signs up again with the same F3 name, the existing Responses and Tracker rows are
+updated in place; no second Tracker row is added. If an operator changes an F3 name in Responses
+by hand, the Tracker row keyed on the original name will **not** update automatically — update the
+Tracker cell to match.
+
+A legacy "Form Responses 1" sheet (the old Google Form's destination, where one exists in a
+historical tracker) is no longer written.
 
 ---
 

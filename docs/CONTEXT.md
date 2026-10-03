@@ -11,8 +11,8 @@
 ### Purpose
 
 F3Go30 automates the monthly lifecycle of a Go30 habit-challenge tracker in Google Sheets:
-copying a template spreadsheet, linking a Google Form for sign-ups, initializing sheets, and —
-from the Template's centrally-dispatched triggers — handling form submissions and marking missed
+copying a template spreadsheet, initializing sheets, and — from the Template's
+centrally-dispatched triggers — marking missed
 check-ins nightly for every active tracker. It allows a single Q (site leader) to stand up a new
 month's tracker in minutes without manual sheet or trigger configuration in the copy itself.
 
@@ -29,7 +29,7 @@ month's tracker in minutes without manual sheet or trigger configuration in the 
 | Stakeholder | Expectation |
 |-------------|-------------|
 | Site Q | Menu-driven workflow; no scripting required |
-| PAX (participants) | HC form always linked and accessible; Tracker sheet reflects accurate daily status |
+| PAX (participants) | Go30 sign-up page always available; Tracker sheet reflects accurate daily status |
 | Developer | Fast context reload; clear module boundaries; known dead code is labeled |
 
 ---
@@ -41,8 +41,7 @@ month's tracker in minutes without manual sheet or trigger configuration in the 
 - Runs exclusively in Google Apps Script (V8 runtime); no local execution
 - Bound to a specific Google Sheets spreadsheet; cannot run standalone
 - Menu access restricted to the spreadsheet owner's Google account
-- Google Forms API does not support programmatic ownership transfer across accounts; initial form
-  linking requires a one-time manual step for new regions (see ADR-004)
+- The HC Google Form is retired (ADR-024); ADR-004's Form-ownership constraint no longer applies
 - URL shortening requires a TinyURL API token stored as a Script Property; Bitly is supported as
   an alternative
 
@@ -57,17 +56,15 @@ month's tracker in minutes without manual sheet or trigger configuration in the 
 
 - Copy the active tracker spreadsheet to a new named spreadsheet in the same Drive folder
 - Initialize all sheets in a new tracker for the target month and start date
-- Link, title, and set the confirmation message on the associated Google Form HC sign-up
-- Shorten tracker and form URLs via TinyURL (or Bitly) and surface them in a notification sidebar
+- Shorten tracker URLs via TinyURL (or Bitly) and surface them in a notification sidebar
 - Set sharing permissions on the new tracker to anyone-with-link/view
 - Set up a daily 1 AM trigger to mark empty check-in cells as −1 after a 24-hour grace period
 - Send a daily nag email to opted-in team members when teammates missed the previous day's check-in, using a randomly-selected `FunFacts` entry for motivational content
-- Set up a form-submit trigger to populate the Tracker sheet when a PAX submits the HC form and send a registration confirmation email summarizing the current goals for that tracker month
-- Auto-generate next month's tracker and HC form via a scheduled trigger on the 20th of each
+- Populate the Tracker sheet and send a registration confirmation email when a PAX signs up on the Go30 sign-up page (the only sign-up path; the HC Google Form was retired by ADR-024)
+- Auto-generate next month's tracker via a scheduled trigger on the 20th of each
   month; email Site Q with links and a ready-to-paste Slack message on success or failure
 - Log all menu-initiated activity to a hidden Activity sheet
-- Upsert a row (date modified, start date, name, tracker URL, form URL, spreadsheet ID, form
-  ID) into the template's `TrackerDB` sheet each time a new tracker is created, keyed by
+- Upsert a row (date modified, start date, name, tracker URL, spreadsheet ID) into the template's `TrackerDB` sheet each time a new tracker is created, keyed by
   spreadsheet ID — the same row is also the dispatch target for centralized triggers (ADR-010)
 - Serve a PAX-facing daily check-in + dashboard web app: identifies the PAX by
   F3 Name + Email (same pair as HC sign-up), prompts for today's (and, if missed, yesterday's)
@@ -142,9 +139,9 @@ Primary Flow:
 1. Q opens the spreadsheet; the F3 Go30 menu appears
 2. Q selects "Copy and Initialize"
 3. Q enters the start date when prompted; tracker name is auto-generated as `YYYY-MM-NameSpace`
-4. Script copies the spreadsheet and HC form to the same Drive folder
-5. Script initializes all sheets, sets form title, sets sharing permissions, and shortens URLs
-6. Sidebar displays links to the new spreadsheet and form, plus a ready-to-paste Slack message
+4. Script copies the spreadsheet to the same Drive folder (any Form the copy brings along is unlinked and trashed — ADR-024)
+5. Script initializes all sheets, sets sharing permissions, and shortens URLs
+6. Sidebar displays a link to the new spreadsheet, plus a ready-to-paste Slack message
 
 Alternate Flows:
 A1: Q cancels a prompt → script exits cleanly with a sidebar log message
@@ -153,10 +150,10 @@ A3: Site Q email missing from Config sheet → script exits with an actionable e
 
 Postconditions:
 - New tracker spreadsheet exists in Drive with initialized sheets and correct sharing
-- Sidebar contains clickable links to the new tracker and HC form, and a ready-to-paste Slack message
+- Sidebar contains a clickable link to the new tracker, and a ready-to-paste Slack message
 - `TrackerDB` sheet in the template spreadsheet has a new row, keyed by spreadsheet ID: date
-  modified, start date (YYYY-MM-DD), spreadsheet name, tracker URL, form URL, spreadsheet ID,
-  form ID — this same row registers the tracker for centralized dispatch (form-submit, nightly
+  modified, start date (YYYY-MM-DD), spreadsheet name, tracker URL, spreadsheet ID, form ID
+  (historical; blank for new trackers) — this same row registers the tracker for centralized dispatch (nightly
   −1 marking, nag email) by the Template; no per-spreadsheet trigger setup needed
 
 Constraints:
@@ -164,32 +161,29 @@ Constraints:
 
 ---
 
-### UC-2: PAX Submits HC Sign-Up Form
+### UC-2: PAX Signs Up on the Go30 Sign-Up Page
 
 Actor: PAX (participant)
 
 Preconditions:
-- The HC form is linked to the tracker spreadsheet
-- The tracker's form ID and spreadsheet ID are registered in `TrackerDB`, so the Template's centrally-installed form-submit dispatcher can resolve and open the correct spreadsheet
+- The tracker spreadsheet is registered in `TrackerDB`, so the sign-up web app can resolve and open the correct spreadsheet
+- (The HC Google Form is retired — ADR-024; the sign-up page is the only sign-up path)
 
 Primary Flow:
-1. PAX opens the HC form link and submits their goal and F3 name
-2. Form response lands in the Responses sheet
-3. Form-submit trigger fires `onFormSubmit`
-4. Script sends a registration confirmation email that summarizes the current goals for the tracker month derived from the Tracker start date
-5. Script checks for a duplicate F3 name in the Tracker sheet
-6. If not a duplicate, adds a new row with the PAX's data, copies formulas from the prior row, and sorts
+1. PAX opens the Go30 sign-up page (`?cmd=signup`) and submits F3 name, email, goals, team and reminder (NAG) consent
+2. Script writes the sign-up to the Responses sheet
+3. Script ensures a Tracker row exists: an existing F3 name is updated in place, otherwise a new row is added with formulas copied from the prior row, and the Tracker is sorted
+4. Script sends a sign-up confirmation email that summarizes the PAX's goals for the tracker month
 
 Alternate Flows:
-A1: F3 name already exists in Tracker → submission is ignored; no duplicate row added
-A2: Fewer than 4 form fields present → function exits without writing
+A1: F3 name already exists → the existing Responses/Tracker row is updated; no duplicate row added
 
 Postconditions:
 - PAX row exists in the Tracker sheet, sorted and formula-populated
-- PAX receives a registration confirmation email for the target tracker month unless the reuse-specific email path already handled the submit
+- PAX receives a sign-up confirmation email for the target tracker month
 
 Constraints:
-- Deduplication is by F3 name only; name collisions between distinct PAX are possible
+- Matching is by F3 name only; name collisions between distinct PAX are possible
 
 ---
 
@@ -224,13 +218,12 @@ Actor: Time-based trigger (20th of each month, 2 AM) — template spreadsheet on
 Preconditions:
 - Monthly trigger has been installed via "Initialize Monthly Trigger" on the template spreadsheet
 - Config sheet contains `NameSpace` (column B) and `Site Q` rows (name in column B, email in column C)
-- Template spreadsheet has a bound HC form
 
 Primary Flow:
 1. Trigger fires `autoGenerateNextMonthTracker` on the 20th of the month
 2. Script derives next month's start date and reads NameSpace and Site Q config
-3. Script copies template, renames and moves the HC form, initializes sheets, shortens URLs
-4. Script emails Site Q with tracker link, HC form link, and a ready-to-paste Slack message
+3. Script copies template (no Form), initializes sheets, shortens URLs
+4. Script emails Site Q with tracker link and a ready-to-paste Slack message
 
 Alternate Flows:
 A1: Site Q email or NameSpace missing from Config → script logs error and sends email to Site Q if possible; exits without copying
@@ -255,7 +248,7 @@ Preconditions:
 - Developer has saved the LogFile URL from a prior run, or is prepared to record it after first use
 
 Primary Flow:
-1. Developer triggers a GAS action (e.g., Copy and Initialize, form submit simulation)
+1. Developer triggers a GAS action (e.g., Copy and Initialize, sign-up simulation)
 2. GAS checks Config sheet for `LogFile` URL; if absent, creates a Drive file with anyone-with-link read
    permissions and writes the URL to column B
 3. GAS appends a structured log entry (timestamp, trigger name, JSON payload including sidebar HTML, URLs,
@@ -285,7 +278,7 @@ Preconditions:
 - The daily nag trigger is installed only on the Template, not on individual tracker copies
 - Every active tracker has a row in `TrackerDB` with a matching date range
 - Tracker and Responses sheets exist and contain current-month data for each active tracker
-- Reminder recipients have explicitly opted in via the HC form reminder-consent field
+- Reminder recipients have explicitly opted in via the sign-up page's reminder (NAG) checkbox
 
 Primary Flow:
 1. Trigger fires the centralized nag dispatcher at 10 AM with today as the context date
@@ -378,7 +371,6 @@ Constraints:
 - Not a public SaaS; the sign-up and dashboard/check-in web apps are Apps Script `doGet`/`doPost`
   endpoints reading/writing the region's own spreadsheet directly — no external hosting, API, or
   database of their own
-- Does not automate the initial one-time form linking step when bootstrapping a new region
 - No automated testing or CI/CD pipeline
 
 ---
@@ -388,19 +380,19 @@ Constraints:
 | Term | Definition |
 |------|------------|
 | PAX | Participant in an F3 workout or Go30 challenge |
-| HC | Hard Commit — a formal commitment by a PAX to participate; submitted via Google Form |
+| HC | Hard Commit — a formal commitment by a PAX to participate; submitted via the Go30 sign-up page (formerly a Google Form, retired by ADR-024) |
 | Q | Leader of an F3 workout or challenge session; in this context the site Q manages the Go30 tracker |
 | Site Q | The Q responsible for a specific F3 region's Go30 instance; typically the spreadsheet owner |
 | Go30 | A monthly F3 habit-building challenge, rooted in *Atomic Habits*: each PAX picks one small, specific Daily Challenge and scores it Hit (1) / Miss (0) / Failed to report (−1) each day for the month, with a team for accountability. Tracked in Google Sheets. The "30" is the ~30 days of consistent daily repetition, not a per-day duration |
 | FNG | Friendly New Guy — a first-time F3 participant |
 | Tracker sheet | The primary worksheet in the Go30 spreadsheet; one row per PAX, one column per day |
 | Bonus Tracker | A secondary sheet where PAX log bonus-point activities (EH, Fellowship, Inspiration, Q) |
-| Responses sheet | Google Form response destination sheet; source data for `onFormSubmit` |
+| Responses sheet | Sign-up record sheet, written by the sign-up webapp (`handleSignupSave_`); formerly a Google Form destination |
 | Help sheet | Sheet containing operational URLs (e.g., Next Month HC Signup link) |
 | Activity sheet | Hidden sheet logging all script-initiated actions with timestamp and user |
 | Template | The canonical Go30 spreadsheet from which new monthly trackers are copied; since ADR-010, also the sole runtime container for all triggers and dispatch logic |
 | NameSpace | Region identifier read from Config (e.g., `F3Waxhaw`); drives spreadsheet naming |
-| TrackerDB | Sheet in the Template recording every monthly tracker's spreadsheet ID, form ID, and active date range; used both to aggregate cross-tracker metrics and, since ADR-010, to resolve which spreadsheet a centrally-dispatched function should operate on for a given context date |
+| TrackerDB | Sheet in the Template recording every monthly tracker's spreadsheet ID, and active date range (form ID is historical, blank for new trackers); used both to aggregate cross-tracker metrics and, since ADR-010, to resolve which spreadsheet a centrally-dispatched function should operate on for a given context date |
 | Static origin | The GitHub Pages host serving `static-pages/src/index.html` — since ADR-019 the primary front end for every PAX-facing flow. It calls the Apps Script deployment as a JSON API; each env's build bakes in its own deployment URL as the default backend, so generated links no longer need a `?webapp=` param to carry it (F3Go30-9jsa) — that param still works as a client-side override for older links |
 | GAS origin | The Apps Script `/exec` deployment (`script.google.com`). Still the JSON API and the whole admin/trigger runtime; as a *front end* it is redirect-only since ADR-019 — a page GET there redirects to the static origin rather than rendering |
 | Legacy-link redirect | The query-preserving GAS→static redirect that honours links distributed before the migration (bookmarks, TinyURL short links, Slack posts). It is why the GAS HTML pages still exist; it is *not* an availability guarantee — no PAX-facing flow is entitled to a working GAS-rendered page if the static origin is down (ADR-019, `F3Go30-ys15`) |

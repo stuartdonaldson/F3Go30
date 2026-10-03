@@ -250,7 +250,8 @@ Common admin actions: `setScriptProperties`, `cleanupTracker`,
 `runScanTrackers`, `getSheet`, `runAutoGenerate`, `createTrackerForMonth`, `copyTemplate`,
 `copyProdTrackerToSit`, `teardownEnvironment`, `setContextDate`, `setConfigValue`, `getConfigValue`,
 `seedTeamDb`, `renameTeam` (ADR-023 TeamDB roster seed / rename-merge — see docs/OPERATIONS.md
-§TeamDB team roster)
+§TeamDB team roster), `closeHcForms` (ADR-024 HC Form retirement — see docs/OPERATIONS.md
+§Retiring the HC Form)
 
 - `copyProdTrackerToSit` (F3Go30-956l) overlays a source deployment's current-month tracker's
   `Tracker`/`Bonus Tracker`/`Responses` values onto the target deployment's own current-month
@@ -289,7 +290,7 @@ Common admin actions: `setScriptProperties`, `cleanupTracker`,
   skipped month or create one out of band:
   `node tools/callWebapp.js createTrackerForMonth --env <env> --body '{"startDateIso":"2026-07-01"}'`
 - To undo a wrongly-created tracker: `cleanupTracker --body '{"sheetId":"<id>","trashSpreadsheet":true}'`
-  removes the TrackerDB row + PaxDB rows and trashes the spreadsheet + its linked HC Form.
+  removes the TrackerDB row + PaxDB rows and trashes the spreadsheet + any linked legacy HC Form.
 - `teardownEnvironment` tears down a whole namespace environment provisioned by `copyTemplate`
   (ADR-014 D6): `node tools/callWebapp.js teardownEnvironment --body '{"nameSpace":"<ns>","trashFolder":true}'`
   removes the `NamespaceDB` row first (the safety cut — makes the ns unresolvable immediately),
