@@ -331,31 +331,16 @@ function sendConfiguredEmail_(options) {
 }
 
 /**
- * Builds the standard Slack copy-paste message for a new monthly tracker.
- * @param {number} year - Full year (e.g. 2026).
- * @param {string} month - Long month name (e.g. 'April').
- * @param {string} formUrl - HC form URL (TinyURL preferred).
- * @param {string} trackerUrl - Tracker sheet URL (TinyURL preferred).
- * @returns {string} Slack message text.
- */
-function buildSlackMessage_(year, month, formUrl, trackerUrl) {
-  const prefix = year + ' ' + month;
-  return prefix + ' Hard Commit Signup form is up:\n' + formUrl + '\n\n' + prefix + ' Tracker:\n' + trackerUrl;
-}
-
-/**
  * Builds the Slack copy-paste message for autoGenerateNextMonthTracker_. The signup web app
  * URL is the primary, stable entry point PAX should use to sign up themselves; the tracker
- * link lets them see where their commit will land. The HC form link is included only as an
- * optional fallback for PAX who prefer it — it is not the primary instruction.
+ * link lets them see where their commit will land. No HC form link (ADR-024 retired the Form).
  * @param {number} year - Full year (e.g. 2026).
  * @param {string} month - Long month name (e.g. 'April').
  * @param {string} signupUrl - Stable, NameSpace-derived signup short URL.
  * @param {string} trackerUrl - Tracker sheet URL (TinyURL preferred).
- * @param {string=} formUrl - HC form URL, mentioned only as an optional alternative.
  * @returns {string} Slack message text.
  */
-function buildSignupSlackMessage_(year, month, signupUrl, trackerUrl, formUrl) {
+function buildSignupSlackMessage_(year, month, signupUrl, trackerUrl) {
   const prefix = year + ' ' + month;
   var lines = [
     prefix + ' Hard Commit Signup is open!',
@@ -364,10 +349,6 @@ function buildSignupSlackMessage_(year, month, signupUrl, trackerUrl, formUrl) {
     '',
     prefix + ' Tracker: ' + trackerUrl
   ];
-  if (formUrl) {
-    lines.push('');
-    lines.push('(Prefer the old HC form? You can still use it: ' + formUrl + ')');
-  }
   return lines.join('\n');
 }
 
@@ -606,7 +587,6 @@ if (typeof module !== 'undefined' && module.exports) {
     buildStaticRedirectUrl_: buildStaticRedirectUrl_,
     buildStaticSignupRedirectUrl_: buildStaticSignupRedirectUrl_,
     buildStaticCheckinRedirectUrl_: buildStaticCheckinRedirectUrl_,
-    buildSlackMessage_: buildSlackMessage_,
     buildSignupSlackMessage_: buildSignupSlackMessage_
   };
 }

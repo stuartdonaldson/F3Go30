@@ -18,7 +18,6 @@ function renderOnboardingEmailHtml_(options) {
   template.trackerName = options.trackerName;
   template.siteName = options.siteName;
   template.trackerUrl = options.trackerUrl;
-  template.formUrl = options.formUrl;
   template.ownerAccount = options.ownerAccount;
   template.initSteps = options.initSteps || [];
   template.postCopyChecklist = options.postCopyChecklist || [];
@@ -42,9 +41,6 @@ function buildOnboardingEmailTemplate_(options) {
   bodyLines.push('');
   if (options.trackerUrl) {
     bodyLines.push('Tracker: ' + options.trackerUrl);
-  }
-  if (options.formUrl) {
-    bodyLines.push('HC Form: ' + options.formUrl);
   }
   bodyLines.push('');
   bodyLines.push('Next step: open the new spreadsheet and verify it looks correct.');

@@ -129,17 +129,12 @@ assert.deepEqual(
 );
 
 // --- buildSignupSlackMessage_ — signup link is primary, tracker link must always be
-// present (it was dropped along the way once), HC form is mentioned only as an optional
-// fallback, never as the primary instruction ---
+// present (it was dropped along the way once); ADR-024: the HC Form is retired, so the message
+// never mentions a form ---
 
-const slackMsgWithForm = buildSignupSlackMessage_(2026, 'July', 'https://tinyurl.com/signup', 'https://tinyurl.com/tracker', 'https://docs.google.com/forms/d/old-form');
-assert.ok(slackMsgWithForm.includes('Sign up here: https://tinyurl.com/signup'), 'signup link is the primary instruction');
-assert.ok(slackMsgWithForm.includes('July Tracker: https://tinyurl.com/tracker'), 'tracker link present');
-assert.ok(slackMsgWithForm.includes('Prefer the old HC form?'), 'HC form framed as optional, not primary');
-assert.ok(slackMsgWithForm.includes('https://docs.google.com/forms/d/old-form'));
-
-const slackMsgNoForm = buildSignupSlackMessage_(2026, 'July', 'https://tinyurl.com/signup', 'https://tinyurl.com/tracker');
-assert.ok(!slackMsgNoForm.includes('HC form'), 'no form URL -> no form mention at all');
-assert.ok(slackMsgNoForm.includes('https://tinyurl.com/tracker'));
+const slackMsg = buildSignupSlackMessage_(2026, 'July', 'https://tinyurl.com/signup', 'https://tinyurl.com/tracker');
+assert.ok(slackMsg.includes('Sign up here: https://tinyurl.com/signup'), 'signup link is the primary instruction');
+assert.ok(slackMsg.includes('July Tracker: https://tinyurl.com/tracker'), 'tracker link present');
+assert.ok(!/form/i.test(slackMsg), 'no form mention at all');
 
 console.log('test_utilities.js: PASS');

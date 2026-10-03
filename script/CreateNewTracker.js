@@ -128,7 +128,7 @@ function upsertLinksRow_(linksSheet, rowData) {
   return 'appended';
 }
 
-function writeTrackerConfigRows_(configSheet, formName, formUrl, templateUrl) {
+function writeTrackerConfigRows_(configSheet, templateUrl) {
   if (!configSheet) return;
 
   const cfgRange = configSheet.getDataRange();
@@ -145,7 +145,9 @@ function writeTrackerConfigRows_(configSheet, formName, formUrl, templateUrl) {
     sheet.appendRow([key, primary || '', secondary || '']);
   }
 
-  upsertConfigRow(configSheet, cfgValues, 'Signup HC Form', formName, formUrl);
+  // ADR-024: the HC Form is retired — blank the row the Template copy carried in, so nothing that
+  // still reads it (go30tools.js _readTrackerConfigInfo_) picks up the Template's own Form.
+  upsertConfigRow(configSheet, cfgValues, 'Signup HC Form', '', '');
   upsertConfigRow(configSheet, cfgValues, 'Sheet Template', templateUrl || '', '');
 }
 
@@ -190,7 +192,7 @@ function copyAndInit() {
 /**
  * Shared tracker-creation core used by both copyAndInit_ (manual, sidebar) and
  * autoGenerateNextMonthTracker_ (automated, trigger). Performs the Drive file copy,
- * sheet cleanup, form copy + link, config writes, initSheets, TrackerDB upsert,
+ * sheet cleanup, retiring any Form the copy brought along (ADR-024), config writes, initSheets, TrackerDB upsert,
  * trigger installation, and signup URL resolution.
  *
  * @param {Object} options
@@ -199,12 +201,11 @@ function copyAndInit() {
  * @param {string}      options.newSpreadsheetName  Name for the new spreadsheet
  * @param {Folder}      options.folder              Drive folder for the new artifacts
  * @param {string}      options.nameSpace           e.g. "F3 Go30"
- * @param {Object}      options.siteQConfig         { primary: name, secondary: email }
  * @param {Sheet|null}  options.configSheet         Config sheet of sourceSpreadsheet
  * @param {Array[]|null} options.configData         Config sheet values
  * @param {Function}    [options.logFn]             Progress logger — defaults to no-op
  * @returns {{ newSpreadsheet, newSpreadsheetId, newSpreadsheetName, trackerSheetUrl,
- *             trackerSheetShortUrl, formUrl, formShortUrl, formName, formId,
+ *             trackerSheetShortUrl,
  *             signupShortUrl, slackMsg, startDateIso }}
  */
 function createTrackerSpreadsheet_(options) {
@@ -214,19 +215,11 @@ function createTrackerSpreadsheet_(options) {
   var newSpreadsheetName = options.newSpreadsheetName;
   var folder = options.folder;
   var nameSpace = options.nameSpace;
-  var siteQConfig = options.siteQConfig;
   var configSheet = options.configSheet;
   var configData = options.configData;
-  var siteQEmail = siteQConfig.secondary;
-  var siteQName = siteQConfig.primary || 'Site Q';
   var paddedMonth = String(startDate.getMonth() + 1).padStart(2, '0');
   var paddedDay = String(startDate.getDate()).padStart(2, '0');
   var startDateIso = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay;
-
-  var templateFormUrl = sourceSpreadsheet.getFormUrl();
-  if (!templateFormUrl) {
-    throw new Error('No form linked to the template spreadsheet — the template must have an associated Google Form.');
-  }
 
   // Check for an existing tracker with the same name before creating any artifacts.
   // If found, rename it (and its form) to "(Expired)" — non-destructive, reversible.
@@ -262,11 +255,11 @@ function createTrackerSpreadsheet_(options) {
     newSpreadsheetId = newFile.getId();
     var newSpreadsheet = SpreadsheetApp.openById(newSpreadsheetId);
 
-    // PAX interact via the Form only — VIEW permission is sufficient and prevents data corruption
+    // PAX write through the webapp only (ADR-024 retired the HC Form) — VIEW permission is
+    // sufficient and prevents data corruption
     newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
-    // Remove template-only sheets. Leave "Form Responses 1" — it arrived with the spreadsheet
-    // copy already linked to the auto-copied form, so deleting it breaks "Tools > Manage form".
+    // Remove template-only sheets.
     newSpreadsheet.getSheets().forEach(function(s) {
       var name = s.getName();
       if (TRACKER_SHEET_INDEX_[name] === 'Delete') {
@@ -287,38 +280,13 @@ function createTrackerSpreadsheet_(options) {
       GasLogger.log('createTrackerSpreadsheet.shortenUrlFailed', { target: 'tracker', error: e.message });
     }
 
-    // The spreadsheet makeCopy auto-copies the linked form and keeps it associated.
-    // Use getFormUrl() to access that copy — no separate form copy or setDestination needed.
-    logFn('Updating form...');
-    var formName = newSpreadsheetName + ' HC';
-    var ftitle = startDate.getFullYear() + '-' + paddedMonth + '-' + paddedDay + ' HC Form';
-    var newFormUrl = newSpreadsheet.getFormUrl();
-    if (!newFormUrl) {
-      throw new Error('Form was not auto-copied with the spreadsheet — ensure the template spreadsheet has a linked Google Form.');
-    }
-    var form = FormApp.openByUrl(newFormUrl);
-    var newFormFile = DriveApp.getFileById(form.getId());
-    newFormFile.setName(formName);
-    newFormFile.moveTo(folder);
-    form.setTitle(ftitle);
-    form.setAcceptingResponses(true);
-    ensureReuseOptionOnLinkedForm_(form);
-    form.setConfirmationMessage(
-      'Thank you for your Hard Commit!\n\n' +
-      'View the Go30 tracker here: ' + trackerSheetShortUrl + '\n\n' +
-      'Questions? Contact ' + siteQName + ' (' + siteQEmail + ').'
-    );
-
-    var formUrl = form.getPublishedUrl();
-    var formShortUrl = formUrl;
-    try {
-      formShortUrl = shortenUrl(formUrl, formName, 5, 'tinyurl');
-    } catch (e) {
-      GasLogger.log('createTrackerSpreadsheet.shortenUrlFailed', { target: 'form', error: e.message });
-    }
+    // ADR-024: new trackers carry no HC Form. A Drive copy of a Template that still has a linked
+    // Form brings its own copy of that Form — unlink and trash it so no new tracker ever accepts
+    // Form submissions (a no-op once the Template's Form is unlinked by closeHcForms).
+    retireCopiedHcForm_(newSpreadsheet);
 
     var newConfigSheet = newSpreadsheet.getSheetByName('Config');
-    writeTrackerConfigRows_(newConfigSheet, formName, formUrl, sourceSpreadsheet.getUrl());
+    writeTrackerConfigRows_(newConfigSheet, sourceSpreadsheet.getUrl());
 
     initSheets(newSpreadsheet, startDate);
 
@@ -327,11 +295,11 @@ function createTrackerSpreadsheet_(options) {
       startDate: startDateIso,
       spreadsheetName: newSpreadsheetName,
       sheetId: newSpreadsheetId,
-      formId: form.getId(),
+      formId: '',
       shortTracker: trackerSheetShortUrl,
       trackerUrl: trackerSheetUrl,
-      shortHc: formShortUrl,
-      hcUrl: formUrl
+      shortHc: '',
+      hcUrl: ''
     });
     // F3Go30-m732: this is TrackerDB's OTHER writer, separate from go30tools.js's _updateTrackerDB
     // (which invalidates itself) — a new tracker month just landed in sourceSpreadsheet's
@@ -343,12 +311,8 @@ function createTrackerSpreadsheet_(options) {
       invalidateTrackerDbAvailableMonthsCache_(sourceSpreadsheet);
     }
 
-    // Form-submit dispatch (ADR-010): installed once here, from the Template, targeting
-    // the new tracker directly — no per-copy "Initialize Triggers" step required.
-    setupFormSubmitTrigger(newSpreadsheet);
-
-    // Edit-trigger PaxCache invalidation (F3Go30-440b.4): same centralization rationale as
-    // setupFormSubmitTrigger above — installed once here so a manual Sheets-UI edit on this
+    // Edit-trigger PaxCache invalidation (F3Go30-440b.4): installed once here, from the Template,
+    // targeting the new tracker directly (ADR-010) — so a manual Sheets-UI edit on this
     // tracker proactively invalidates the shared cache (the sole invalidation path for such
     // edits since F3Go30-o39s.7 retired the per-request Drive-modtime poll).
     setupTrackerEditTrigger_(newSpreadsheet);
@@ -357,7 +321,7 @@ function createTrackerSpreadsheet_(options) {
 
     var slackMsg = buildSignupSlackMessage_(
       startDate.getFullYear(), MONTH_NAMES_[startDate.getMonth()],
-      signupShortUrl, trackerSheetShortUrl, formShortUrl
+      signupShortUrl, trackerSheetShortUrl
     );
 
     return {
@@ -366,10 +330,6 @@ function createTrackerSpreadsheet_(options) {
       newSpreadsheetName: newSpreadsheetName,
       trackerSheetUrl: trackerSheetUrl,
       trackerSheetShortUrl: trackerSheetShortUrl,
-      formUrl: formUrl,
-      formShortUrl: formShortUrl,
-      formName: formName,
-      formId: form.getId(),
       signupShortUrl: signupShortUrl,
       slackMsg: slackMsg,
       startDateIso: startDateIso,
@@ -379,6 +339,60 @@ function createTrackerSpreadsheet_(options) {
     e.orphanedSpreadsheetId = newSpreadsheetId;
     throw e;
   }
+}
+
+/**
+ * ADR-024: unlinks and trashes the HC Form a Drive copy of the Template brings with it, so a new
+ * tracker never accepts Form submissions. No-op when the copy has no linked Form (the Template's
+ * Form has been unlinked). A failure is logged and reported, never thrown — tracker creation
+ * must not fail on Form housekeeping.
+ * @returns {{retired: boolean, formId: (string|undefined), error: (string|undefined)}}
+ */
+function retireCopiedHcForm_(newSpreadsheet) {
+  var formUrl = newSpreadsheet.getFormUrl();
+  if (!formUrl) return { retired: false };
+  try {
+    var form = FormApp.openByUrl(formUrl);
+    var formId = form.getId();
+    form.removeDestination();
+    DriveApp.getFileById(formId).setTrashed(true);
+    GasLogger.log('retireCopiedHcForm_', { formId: formId });
+    return { retired: true, formId: formId };
+  } catch (e) {
+    GasLogger.log('retireCopiedHcForm_.failed', { error: e.message });
+    return { retired: false, error: e.message };
+  }
+}
+
+/**
+ * The onboarding email options for a newly created tracker — ONE builder shared by copyAndInit
+ * (sidebar) and autoGenerateNextMonthTracker (headless), which used to hand-copy the step and
+ * checklist lists. No HC Form content (ADR-024).
+ */
+function buildTrackerOnboardingEmailOptions_(fields) {
+  return {
+    trackerName: fields.trackerName,
+    siteName: fields.siteName,
+    trackerUrl: fields.trackerUrl,
+    ownerAccount: fields.ownerAccount,
+    expiredTrackerName: fields.expiredTrackerName,
+    initSteps: [
+      'Open the new spreadsheet and verify it looks correct'
+    ],
+    postCopyChecklist: [
+      'Open new spreadsheet and verify layout',
+      'Verify Config rows (Sheet Template, Site Q, NameSpace)',
+      'Confirm TrackerDB sheet entry for new tracker',
+      'Verify spreadsheet sharing (view-only), file name and folder placement',
+      'Copy Slack message from sidebar and post to channel',
+      'Verify Help sheet Next Month signup link (optional)',
+      'Verify Config sheet hidden and sensitive values protected'
+    ],
+    slackReadyMessage: fields.slackReadyMessage,
+    operatorName: null,
+    contactEmail: fields.contactEmail,
+    appVersion: fields.appVersion
+  };
 }
 
 function copyAndInit_() {
@@ -479,7 +493,6 @@ function createTrackerForMonth_(currentSpreadsheet, startDate, logFn) {
       newSpreadsheetName: newSpreadsheetName,
       folder: folder,
       nameSpace: nameSpace,
-      siteQConfig: siteQConfig,
       configSheet: configSheet,
       configData: configData,
       logFn: logFn
@@ -505,11 +518,9 @@ function createTrackerForMonth_(currentSpreadsheet, startDate, logFn) {
     logFn("-");
   }
   logFn('New spreadsheet tracker sheet link: ' + createHtmlLink(result.newSpreadsheetName, result.trackerSheetShortUrl));
-  logFn('New HC Form: ' + createHtmlLink(result.formName, result.formShortUrl));
   logFn("-");
   logFn('<b>Next steps:</b>');
   logFn('1. Open the new spreadsheet (link above) and verify it looks correct');
-  logFn('2. Open the HC form (link above) and verify it looks correct');
   logFn("-");
   logFn('<b>Slack channel message:</b>');
   logFn('<textarea rows="5" style="width:100%;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;" readonly onclick="this.select()">' + escapeHtml_(result.slackMsg) + '</textarea>');
@@ -521,38 +532,20 @@ function createTrackerForMonth_(currentSpreadsheet, startDate, logFn) {
     spreadsheetName: result.newSpreadsheetName,
     startDateIso: result.startDateIso,
     trackerUrl: result.trackerSheetShortUrl,
-    formUrl: result.formShortUrl,
     signupShortUrl: result.signupShortUrl,
     templateSpreadsheetId: currentSpreadsheet.getId()
   });
 
-  const emailMessage = buildOnboardingEmailTemplate_({
+  const emailMessage = buildOnboardingEmailTemplate_(buildTrackerOnboardingEmailOptions_({
     trackerName: result.newSpreadsheetName,
     siteName: siteQConfig.primary || 'Site Q',
     trackerUrl: result.trackerSheetShortUrl,
-    formUrl: result.formShortUrl,
     ownerAccount: siteQConfig.primary,
     expiredTrackerName: result.expiredTracker ? result.expiredTracker.name : null,
-    initSteps: [
-      'Open the new spreadsheet and verify it looks correct',
-      'Open the HC form and verify it looks correct'
-    ],
-    postCopyChecklist: [
-      'Open new spreadsheet and verify layout',
-      'Open HC form and verify title + choices',
-      'Verify Config rows (Signup HC Form, Sheet Template, Site Q, NameSpace)',
-      'Confirm TrackerDB sheet entry for new tracker and form',
-      'Verify form sharing, file name and folder placement',
-      'Run test reuse flow (Test Reuse menu or submit sample)',
-      'Copy Slack message from sidebar and post to channel',
-      'Verify Help sheet Next Month signup link (optional)',
-      'Verify Config sheet hidden and sensitive values protected'
-    ],
     slackReadyMessage: result.slackMsg,
-    operatorName: null,
     contactEmail: siteQEmail,
     appVersion: APP_VERSION
-  });
+  }));
   try {
     sendConfiguredEmail_({
       spreadsheet: currentSpreadsheet,
@@ -781,7 +774,7 @@ var MONTHLY_AUTO_GENERATE_HANDLER_ = 'autoGenerateNextMonthTracker';
 
 /**
  * Installs a time-based trigger that fires on the 20th of each month at 2 AM to auto-generate
- * the next month's tracker and HC form. Intended for the template spreadsheet only.
+ * the next month's tracker. Intended for the template spreadsheet only.
  * Clears any existing monthly auto-generate trigger before registering.
  */
 function initializeMonthlyTrigger() {
@@ -820,7 +813,7 @@ function isTemplateHost_() {
 }
 
 /**
- * Headless auto-generate: creates next month's tracker spreadsheet and HC form without
+ * Headless auto-generate: creates next month's tracker spreadsheet without
  * any UI interaction. Intended to be run by a time-based trigger installed via
  * initializeMonthlyTrigger(). Emails the Site Q on success or failure.
  */
@@ -1008,38 +1001,20 @@ function autoGenerateNextMonthTracker_() {
       newSpreadsheetName: newSpreadsheetName,
       folder: folder,
       nameSpace: nameSpace,
-      siteQConfig: siteQConfig,
       configSheet: configSheet,
       configData: configData
     });
 
-    const emailMessage = buildOnboardingEmailTemplate_({
+    const emailMessage = buildOnboardingEmailTemplate_(buildTrackerOnboardingEmailOptions_({
       trackerName: newSpreadsheetName,
       siteName: siteQName,
       trackerUrl: result.trackerSheetShortUrl,
-      formUrl: result.formShortUrl,
       ownerAccount: siteQConfig.primary,
       expiredTrackerName: result.expiredTracker ? result.expiredTracker.name : null,
-      initSteps: [
-        'Open the new spreadsheet and verify it looks correct',
-        'Open the HC form and verify it looks correct'
-      ],
-      postCopyChecklist: [
-        'Open new spreadsheet and verify layout',
-        'Open HC form and verify title + choices',
-        'Verify Config rows (Signup HC Form, Sheet Template, Site Q, NameSpace)',
-        'Confirm TrackerDB sheet entry for new tracker and form',
-        'Verify form sharing, file name and folder placement',
-        'Run test reuse flow (Test Reuse menu or submit sample)',
-        'Copy Slack message from sidebar and post to channel',
-        'Verify Help sheet Next Month signup link (optional)',
-        'Verify Config sheet hidden and sensitive values protected'
-      ],
       slackReadyMessage: result.slackMsg,
-      operatorName: null,
       contactEmail: siteQEmail,
       appVersion: APP_VERSION
-    });
+    }));
 
     sendConfiguredEmail_({
       spreadsheet: currentSpreadsheet,
@@ -1056,8 +1031,7 @@ function autoGenerateNextMonthTracker_() {
       spreadsheetId: result.newSpreadsheetId,
       spreadsheetName: newSpreadsheetName,
       trackerUrl: result.trackerSheetShortUrl,
-      formUrl: result.formShortUrl,
-      signupShortUrl: result.signupShortUrl,
+        signupShortUrl: result.signupShortUrl,
       emailSent: true
     });
 
@@ -1089,6 +1063,8 @@ function autoGenerateNextMonthTracker_() {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    retireCopiedHcForm_: retireCopiedHcForm_,
+    buildTrackerOnboardingEmailOptions_: buildTrackerOnboardingEmailOptions_,
     decideSignupShortUrlAction_: decideSignupShortUrlAction_,
     ensureLinksSheetSchema_: ensureLinksSheetSchema_,
     getTemplateSpreadsheetForInit_: getTemplateSpreadsheetForInit_,
