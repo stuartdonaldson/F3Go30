@@ -48,21 +48,23 @@ function planHcFormClosures_(rowsBySheetId) {
 
 /**
  * Closes one Form (stop accepting responses + closed message). Already closed with the same
- * message -> 'alreadyClosed'. dryRun reports without writing. Closing is done first and on its
- * own: Forms can reject the closed-message text ("Invalid data updating form", seen live on SIT
- * 2026-10-02) — that must not leave the Form open or abort the sweep, so a message failure is
- * reported via onMessageFailed and the Form still counts as closed.
+ * message -> 'alreadyClosed'. dryRun reports without writing. Forms can reject the closed-message
+ * text ("Invalid data updating form", seen live on SIT 2026-10-02) — that must not leave the Form
+ * open or abort the sweep, so a message failure is reported via onMessageFailed and the Form is
+ * still closed.
  * @returns {'closed'|'alreadyClosed'}
  */
 function closeOneHcForm_(form, message, dryRun, onMessageFailed) {
   if (!form.isAcceptingResponses() && form.getCustomClosedFormMessage() === message) return 'alreadyClosed';
   if (dryRun) return 'closed';
-  if (form.isAcceptingResponses()) form.setAcceptingResponses(false);
+  // Message first, while the Form may still be open: on SIT every setCustomClosedFormMessage
+  // against an already-CLOSED Form was rejected, URL or not (2026-10-02). Close regardless.
   try {
     form.setCustomClosedFormMessage(message);
   } catch (e) {
     onMessageFailed(form.getId(), e.message);
   }
+  if (form.isAcceptingResponses()) form.setAcceptingResponses(false);
   return 'closed';
 }
 

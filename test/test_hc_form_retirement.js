@@ -117,6 +117,16 @@ test('closeHcForms_: a Form that rejects the closed message is still closed, the
   assert.equal(result.templateUnlinked, true);
 });
 
+test('closeHcForms_ sets the closed message while the Form is still open, then closes it', () => {
+  const { template, rowsBySheetId } = setup_();
+  const order = [];
+  const realSet = forms.f1.setCustomClosedFormMessage;
+  forms.f1.setCustomClosedFormMessage = (m) => { order.push('message:' + (forms.f1._accepting ? 'open' : 'closed')); return realSet(m); };
+  closeHcForms_(template, rowsBySheetId, { signupUrl: SIGNUP_URL });
+  assert.deepEqual(order, ['message:open']);
+  assert.equal(forms.f1._accepting, false);
+});
+
 test('closeHcForms_ message override replaces the default closed message', () => {
   const { template, rowsBySheetId } = setup_();
   closeHcForms_(template, rowsBySheetId, { signupUrl: SIGNUP_URL, message: 'Closed.' });

@@ -333,6 +333,11 @@ node tools/callWebapp.js closeHcForms --env <env>                            # r
 | `templateUnlinked` | Whether the Template's Form was unlinked |
 
 The action is idempotent: a rerun reports everything under `alreadyClosed` and changes nothing.
+**SIT result (2026-10-02):** all Forms closed and the Template Form unlinked, but Google Forms
+rejected *every* closed-message text (`messageFailed`, "Invalid data updating form." — with or
+without a URL) when set on an already-closed Form; those Forms show Google's default "no longer
+accepting responses" text. The action now sets the message *before* closing, so the PROD run
+(Forms still open) is the first test of that order — check `messageFailed` in its result.
 If `callWebapp` prints a bare "❌" with no message, prefix the command with
 `NODE_OPTIONS=--dns-result-order=ipv4first` (client-side IPv6 connect failure, not a server error).
 `cleanupTracker` still trashes a Form-era tracker's linked Form.
