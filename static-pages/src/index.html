@@ -437,10 +437,13 @@
   .callout { background: var(--warn-bg); border-left: 3px solid var(--warn-border); padding: 10px 12px; border-radius: 4px; font-size: 15px; line-height: 1.5; margin-bottom: 18px; color: var(--warn-fg); }
   /* F3Go30-qeuu.3 (ADR-023): single team combobox + "Did you mean" prompt */
   .team-combo { position: relative; }
-  .team-combo-list { position: absolute; left: 0; right: 0; top: calc(100% - 14px); z-index: 20; margin: 0; padding: 4px 0; list-style: none; max-height: 220px; overflow-y: auto; background: var(--input-bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.18); }
-  .team-combo-list li { padding: 11px 12px; font-size: 17px; color: var(--text); cursor: pointer; }
-  .team-combo-list li.active, .team-combo-list li:hover { background: var(--soft-bg); }
-  .team-combo-list li.team-combo-new { color: var(--text-muted); font-style: italic; }
+  .team-combo-list { position: absolute; left: 0; right: 0; top: calc(100% - 14px); z-index: 20; margin: 0; padding: 0 0 4px; list-style: none; max-height: 260px; overflow-y: auto; background: var(--soft-bg); border: 2px solid var(--brand); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.28); }
+  .team-combo-list li { padding: 11px 12px; font-size: 17px; color: var(--text); cursor: pointer; border-top: 1px solid var(--soft-border); border-left: 4px solid transparent; }
+  .team-combo-list li.active, .team-combo-list li:hover { background: var(--card-bg); border-left-color: var(--brand); font-weight: bold; }
+  .team-combo-list li.team-combo-head { position: sticky; top: 0; cursor: default; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: .04em; color: var(--brand-contrast); background: var(--brand-bg); border: none; padding: 7px 12px; }
+  .team-combo input { padding-right: 46px; }
+  .team-combo-toggle { position: absolute; right: 1px; top: 1px; height: calc(100% - 18px); width: 42px; border: none; border-left: 1px solid var(--border); border-radius: 0 7px 7px 0; background: var(--soft-bg); color: var(--brand); font-size: 20px; line-height: 1; cursor: pointer; font-family: inherit; }
+  .team-combo-toggle[aria-expanded="true"] { background: var(--brand-bg); color: var(--brand-contrast); }
   .team-dym { margin: -6px 0 16px; padding: 10px 12px; border: 1px solid var(--brand); border-radius: 8px; background: var(--soft-bg); color: var(--text); font-size: 16px; line-height: 1.4; }
   .team-dym-actions { display: flex; gap: 8px; margin-top: 8px; }
   .team-dym-actions button.secondary { margin-top: 0; }
@@ -751,7 +754,8 @@
 
         <label class="field-label" for="suTeamInput">Team <button type="button" id="suTeamInfoBtn" class="info-btn" aria-label="Why does my team matter?">ℹ️</button></label>
         <div class="team-combo">
-          <input type="text" id="suTeamInput" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suTeamListbox" autocomplete="off" autocapitalize="words" placeholder="Start typing — pick one or add a new team">
+          <input type="text" id="suTeamInput" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suTeamListbox" autocomplete="off" autocapitalize="words" placeholder="Type a team, or tap ▾ to pick">
+          <button type="button" id="suTeamToggle" class="team-combo-toggle" aria-label="Show team list" aria-controls="suTeamListbox" aria-expanded="false" tabindex="-1">&#9662;</button>
           <ul id="suTeamListbox" class="team-combo-list hidden" role="listbox" aria-label="Team suggestions"></ul>
         </div>
         <div id="suTeamDidYouMean" class="team-dym hidden" role="alert">
@@ -4095,19 +4099,35 @@
 
   var teamComboActive_ = -1;
 
+  // showAll: the ▾ toggle lists every suggestion regardless of what's typed.
+  var teamComboShowAll_ = false;
+
+  function teamComboMatches_() {
+    return teamComboShowAll_ ? (signupState.teamList || []).slice()
+      : filterTeamSuggestions_(signupState.teamList, $('suTeamInput').value);
+  }
+
   function renderTeamCombo_(open) {
     var listEl = $('suTeamListbox');
     var input = $('suTeamInput');
-    var matches = filterTeamSuggestions_(signupState.teamList, input.value);
+    var matches = teamComboMatches_();
     listEl.innerHTML = '';
     if (!open || !matches.length) {
+      teamComboShowAll_ = false;
       listEl.classList.add('hidden');
       input.setAttribute('aria-expanded', 'false');
+      $('suTeamToggle').setAttribute('aria-expanded', 'false');
       input.removeAttribute('aria-activedescendant');
       teamComboActive_ = -1;
       return;
     }
     if (teamComboActive_ >= matches.length) teamComboActive_ = matches.length - 1;
+    var head = document.createElement('li');
+    head.className = 'team-combo-head';
+    head.setAttribute('role', 'presentation');
+    head.textContent = 'Teams used recently — pick one, or keep typing to add yours';
+    head.addEventListener('mousedown', function(ev) { ev.preventDefault(); });
+    listEl.appendChild(head);
     matches.forEach(function(name, idx) {
       var li = document.createElement('li');
       li.id = 'suTeamOpt' + idx;
@@ -4121,6 +4141,7 @@
     });
     listEl.classList.remove('hidden');
     input.setAttribute('aria-expanded', 'true');
+    $('suTeamToggle').setAttribute('aria-expanded', 'true');
     if (teamComboActive_ >= 0) input.setAttribute('aria-activedescendant', 'suTeamOpt' + teamComboActive_);
     else input.removeAttribute('aria-activedescendant');
   }
@@ -4445,8 +4466,17 @@
     runSignupIdentify_(f3Name, email, $('suIdentifyBtn'));
   });
 
+  $('suTeamToggle').addEventListener('mousedown', function(ev) {
+    ev.preventDefault(); // keep focus in the input so its blur doesn't immediately close the list
+    var open = $('suTeamListbox').classList.contains('hidden');
+    $('suTeamInput').focus();
+    teamComboShowAll_ = open;
+    teamComboActive_ = -1;
+    renderTeamCombo_(open);
+  });
   $('suTeamInput').addEventListener('input', function() {
     signupState.team = this.value;
+    teamComboShowAll_ = false;
     teamComboActive_ = -1;
     hideTeamDidYouMean_();
     renderTeamCombo_(true);
@@ -4454,7 +4484,7 @@
   $('suTeamInput').addEventListener('focus', function() { renderTeamCombo_(true); });
   $('suTeamInput').addEventListener('blur', function() { renderTeamCombo_(false); });
   $('suTeamInput').addEventListener('keydown', function(ev) {
-    var count = filterTeamSuggestions_(signupState.teamList, this.value).length;
+    var count = teamComboMatches_().length;
     if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
       if (!count) return;
       ev.preventDefault();
@@ -4463,7 +4493,7 @@
       renderTeamCombo_(true);
     } else if (ev.key === 'Enter' && teamComboActive_ >= 0 && !$('suTeamListbox').classList.contains('hidden')) {
       ev.preventDefault();
-      pickTeam_(filterTeamSuggestions_(signupState.teamList, this.value)[teamComboActive_]);
+      pickTeam_(teamComboMatches_()[teamComboActive_]);
     } else if (ev.key === 'Escape') {
       renderTeamCombo_(false);
     }
