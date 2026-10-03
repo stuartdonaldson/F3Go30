@@ -16,6 +16,8 @@ var teamRosterUtilitiesModule_ = gasRequire_('./Utilities.js', ['getConfigValue_
 var getConfigValue_tr_ = teamRosterUtilitiesModule_.getConfigValue_;
 var teamRosterGo30ToolsModule_ = gasRequire_('./go30tools.js', ['_readPaxDbRowsBySheetId_']);
 var readPaxDbRowsBySheetId_tr_ = teamRosterGo30ToolsModule_._readPaxDbRowsBySheetId_;
+var teamRosterResponseUtilsModule_ = gasRequire_('./response_utils.js', ['resolveResponseColumns']);
+var resolveResponseColumns_tr_ = teamRosterResponseUtilsModule_.resolveResponseColumns;
 
 var TEAM_DB_SHEET_NAME_ = 'TeamDB';
 var TEAM_DB_HEADERS_ = ['Team', 'Aliases', 'Status', 'LastUsed', 'UseCount'];
@@ -299,10 +301,157 @@ function seedTeamDb_(spreadsheet, paxRecords) {
         .setValues(plan.appends);
     }
     var result = { added: plan.appends.length, updated: plan.updates.length, total: entries.length + plan.appends.length };
-    GasLogger.log('seedTeamDb_', result);
+    // Logged under already-registered Axiom field names (test/fixtures/axiomFieldRegistry.json).
+    GasLogger.log('seedTeamDb_', { created: result.added, updated: result.updated, count: result.total });
     return result;
   }, function() {
     throw new Error('seedTeamDb_: could not acquire script lock');
+  });
+}
+
+/**
+ * Plans an admin rename/merge (ADR-023 Decision 6). `from` must match a roster row by name or
+ * alias. If `to` matches a DIFFERENT row, from merges into it: from's name and aliases become
+ * aliases of to, LastUsed is the later of the two, UseCount is summed, to's Status stands, and
+ * from's row is deleted. Otherwise from's row is renamed in place and its old name joins its
+ * aliases. Aliases the new name's match key already covers are dropped as redundant.
+ * matchKeys are every spelling that resolved to `from` — the cells a tracker rewrite targets.
+ * @returns {{ok: boolean, error: (string|undefined), merged: boolean, team: string,
+ *   updates: Array<{rowNumber: number, values: Array}>, deleteRowNumber: ?number,
+ *   matchKeys: Array<string>}}
+ */
+function planTeamRename_(entries, from, to) {
+  var newName = String(to == null ? '' : to).trim();
+  if (!newName) return { ok: false, error: 'to is required' };
+  var fromEntry = findTeamEntry_(entries, from);
+  if (!fromEntry) return { ok: false, error: 'unknown_team' };
+  var toEntry = findTeamEntry_(entries, newName);
+  var merged = !!toEntry && toEntry !== fromEntry;
+  var target = merged ? toEntry : fromEntry;
+  var canonical = merged ? toEntry.team : newName;
+
+  var fromSpellings = fromEntry.aliases.concat([fromEntry.team]);
+  var seen = {};
+  seen[teamMatchKey_(canonical)] = true;
+  var aliases = [];
+  (merged ? toEntry.aliases : []).concat(fromSpellings).forEach(function(a) {
+    var key = teamMatchKey_(a);
+    if (!key || seen[key]) return;
+    seen[key] = true;
+    aliases.push(a);
+  });
+
+  var values = target.raw.slice();
+  values[TEAM_DB_COL_.TEAM] = canonical;
+  values[TEAM_DB_COL_.ALIASES] = aliases.join(', ');
+  if (merged) {
+    var lastUsed = toEntry.lastUsed;
+    if (fromEntry.lastUsed && (!lastUsed || fromEntry.lastUsed.getTime() > lastUsed.getTime())) lastUsed = fromEntry.lastUsed;
+    values[TEAM_DB_COL_.LAST_USED] = lastUsed || '';
+    values[TEAM_DB_COL_.USE_COUNT] = toEntry.useCount + fromEntry.useCount;
+  }
+
+  var matchKeys = [];
+  fromSpellings.forEach(function(a) {
+    var key = teamMatchKey_(a);
+    if (key && matchKeys.indexOf(key) === -1) matchKeys.push(key);
+  });
+
+  return {
+    ok: true,
+    merged: merged,
+    team: canonical,
+    updates: [{ rowNumber: target.rowNumber, values: values }],
+    deleteRowNumber: merged ? fromEntry.rowNumber : null,
+    matchKeys: matchKeys
+  };
+}
+
+/**
+ * Rewrites, in place, every cell of a single-column values array whose match key is in matchKeys.
+ * @returns {Array<number>} the 0-based indexes that changed.
+ */
+function rewriteTeamColumn_(values, matchKeys, newName) {
+  var changed = [];
+  for (var i = 0; i < values.length; i++) {
+    var key = teamMatchKey_(values[i][0]);
+    if (key && matchKeys.indexOf(key) !== -1 && values[i][0] !== newName) {
+      values[i][0] = newName;
+      changed.push(i);
+    }
+  }
+  return changed;
+}
+
+/** Rewrites one sheet column (1-based col, data rows 2+) via rewriteTeamColumn_; returns changed indexes. */
+function rewriteSheetTeamColumn_(sheet, col, matchKeys, newName, rowFilter) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2 || col < 1) return [];
+  var range = sheet.getRange(2, col, lastRow - 1, 1);
+  var values = range.getValues();
+  var candidates = values.map(function(r, i) { return rowFilter && !rowFilter(i) ? [''] : [r[0]]; });
+  var changed = rewriteTeamColumn_(candidates, matchKeys, newName);
+  if (!changed.length) return [];
+  changed.forEach(function(i) { values[i][0] = newName; });
+  range.setValues(values);
+  return changed;
+}
+
+/**
+ * Admin rename/merge (ADR-023 Decision 6): applies planTeamRename_ to TeamDB, then rewrites the
+ * Team (and Other team) cells of each given tracker's Responses sheet and that tracker's PaxDB
+ * rows. Other months keep their historical spelling. All under the TeamDB lock.
+ * @param {{trackerSheetIds: Array<string>, openById: function(string): Spreadsheet,
+ *   onTrackerChanged: function(string)}} deps onTrackerChanged runs for each tracker whose
+ *   Responses changed (the caller wipes its caches and re-sorts it).
+ */
+function renameTeam_(spreadsheet, from, to, deps) {
+  var sheet = openOrCreateTeamDbSheet_(spreadsheet);
+  return withTeamDbLock_('renameTeam_', function() {
+    var plan = planTeamRename_(readTeamDbEntries_(sheet), from, to);
+    if (!plan.ok) return { ok: false, error: plan.error };
+
+    plan.updates.forEach(function(u) {
+      sheet.getRange(u.rowNumber, 1, 1, u.values.length).setValues([u.values]);
+    });
+    if (plan.deleteRowNumber) sheet.deleteRow(plan.deleteRowNumber);
+
+    var responsesUpdated = 0;
+    var trackersChanged = [];
+    (deps.trackerSheetIds || []).forEach(function(sheetId) {
+      var responses = deps.openById(sheetId).getSheetByName('Responses');
+      if (!responses || responses.getLastColumn() < 1) return;
+      var columns = resolveResponseColumns_tr_(responses.getRange(1, 1, 1, responses.getLastColumn()).getValues()[0]);
+      var changed = rewriteSheetTeamColumn_(responses, columns.TEAM + 1, plan.matchKeys, plan.team);
+      if (typeof columns.OTHER_TEAM === 'number') {
+        changed = changed.concat(rewriteSheetTeamColumn_(responses, columns.OTHER_TEAM + 1, plan.matchKeys, plan.team));
+      }
+      if (!changed.length) return;
+      responsesUpdated += changed.filter(function(v, i, a) { return a.indexOf(v) === i; }).length;
+      trackersChanged.push(sheetId);
+      deps.onTrackerChanged(sheetId);
+    });
+
+    var paxDbUpdated = 0;
+    var paxDb = spreadsheet.getSheetByName('PaxDB');
+    if (paxDb && paxDb.getLastRow() > 1 && (deps.trackerSheetIds || []).length) {
+      var headers = paxDb.getRange(1, 1, 1, paxDb.getLastColumn()).getValues()[0];
+      var sheetIdCol = headers.indexOf('SheetId');
+      var teamCol = headers.indexOf('Team');
+      if (sheetIdCol !== -1 && teamCol !== -1) {
+        var sheetIds = paxDb.getRange(2, sheetIdCol + 1, paxDb.getLastRow() - 1, 1).getValues();
+        paxDbUpdated = rewriteSheetTeamColumn_(paxDb, teamCol + 1, plan.matchKeys, plan.team, function(i) {
+          return deps.trackerSheetIds.indexOf(String(sheetIds[i][0])) !== -1;
+        }).length;
+      }
+    }
+
+    var result = { ok: true, merged: plan.merged, team: plan.team, responsesUpdated: responsesUpdated, paxDbUpdated: paxDbUpdated, trackersChanged: trackersChanged };
+    // Logged under already-registered Axiom field names (test/fixtures/axiomFieldRegistry.json).
+    GasLogger.log('renameTeam_', { alias: String(from), team: plan.team, mode: plan.merged ? 'merge' : 'rename', updated: responsesUpdated, rows: paxDbUpdated });
+    return result;
+  }, function() {
+    return { ok: false, error: 'lock_timeout' };
   });
 }
 
@@ -336,5 +485,8 @@ if (typeof module !== 'undefined' && module.exports) {
     readTeamRosterView_: readTeamRosterView_,
     seedTeamDb_: seedTeamDb_,
     collectPaxTeamRecords_: collectPaxTeamRecords_,
+    planTeamRename_: planTeamRename_,
+    rewriteTeamColumn_: rewriteTeamColumn_,
+    renameTeam_: renameTeam_,
   };
 }

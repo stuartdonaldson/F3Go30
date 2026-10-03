@@ -290,7 +290,20 @@ node tools/callWebapp.js seedTeamDb --env <env>     # -> {ok, added, updated, to
 Admin edits are made directly in the sheet: correct a spelling by renaming `Team` and putting the
 old spelling in `Aliases` (comma- or semicolon-separated) so future saves snap to the new name;
 set `Status` to `hidden` to drop a team from suggestions (a matching save still resolves to it).
-Editing the sheet does not rewrite team names already stored on trackers.
+Editing the sheet does not rewrite team names already stored on trackers — for that, use
+`renameTeam`:
+
+```
+node tools/callWebapp.js renameTeam --env <env> --body '{"from":"Hawks Nest","to":"Hawk'"'"'s Nest"}'
+# -> {ok, merged, team, responsesUpdated, paxDbUpdated, trackersChanged}
+```
+
+If `to` is already a roster team (by name or alias), `from` is **merged** into it (from's name and
+aliases become aliases of `to`, UseCount summed, from's row deleted); otherwise `from` is
+**renamed** and its old name kept as an alias. The current-month tracker (and next month's, if it
+exists) has its Responses Team / Other team cells and PaxDB rows rewritten, is re-sorted, and its
+caches wiped, so the dashboard regroups on the next read. Earlier months keep their historical
+spelling. An unknown `from` returns `{ok:false, error:"unknown_team"}` and changes nothing.
 
 ### Refreshing SIT's current-month tracker with PROD data (F3Go30-956l)
 

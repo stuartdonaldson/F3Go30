@@ -683,6 +683,36 @@ function adminSeedTeamDb_(payload, e) {
   return jsonOutput_({ ok: true, added: seedResult.added, updated: seedResult.updated, total: seedResult.total });
 }
 
+function adminRenameTeam_(payload, e) {
+  // ADR-023 Decision 6 / F3Go30-qeuu.5: rename a TeamDB team, or merge it into another, and
+  // rewrite the current (and, if one exists, next) month tracker's Responses Team cells plus
+  // their PaxDB rows. No PROD guard — this is a real admin correction, meant for PROD.
+  if (!payload.from || !payload.to) {
+    return jsonOutput_({ ok: false, error: 'from and to are required' });
+  }
+  var renameSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+  var renameMonths = getCurrentAndNextMonths_(renameSpreadsheet, undefined, payload.contextDate);
+  var renameSheetIds = [renameMonths.current, renameMonths.next]
+    .filter(function(m) { return m && m.sheetId; })
+    .map(function(m) { return m.sheetId; });
+  var openedTrackers = {};
+  function openTracker(sheetId) {
+    return openedTrackers[sheetId] || (openedTrackers[sheetId] = SpreadsheetApp.openById(sheetId));
+  }
+  var renameResult = renameTeam_(renameSpreadsheet, payload.from, payload.to, {
+    trackerSheetIds: renameSheetIds,
+    openById: openTracker,
+    onTrackerChanged: function(sheetId) {
+      // Tracker column B is a VLOOKUP into Responses — flush so the re-sort sees the new team.
+      SpreadsheetApp.flush();
+      var renamedTrackerSheet = openTracker(sheetId).getSheetByName('Tracker');
+      if (renamedTrackerSheet) sortTrackerSheet_(renamedTrackerSheet);
+      wipePaxCacheAndRelatedCachesForSheet_(sheetId);
+    }
+  });
+  return jsonOutput_(renameResult);
+}
+
 function adminGetSheetHeaders_(payload, e) {
   if (!payload.sheetId || !payload.sheetName) {
     return jsonOutput_({ ok: false, error: 'sheetId and sheetName are required' });
@@ -909,6 +939,7 @@ var ADMIN_ACTIONS_ = {
   getSheet: { handler: adminGetSheet_, readOnly: true },
   runScanTrackers: { handler: adminRunScanTrackers_, readOnly: false },
   seedTeamDb: { handler: adminSeedTeamDb_, readOnly: false },
+  renameTeam: { handler: adminRenameTeam_, readOnly: false },
   getSheetHeaders: { handler: adminGetSheetHeaders_, readOnly: true },
   getSheetFormulas: { handler: adminGetSheetFormulas_, readOnly: true },
   sortTracker: { handler: adminSortTracker_, readOnly: false },

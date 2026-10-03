@@ -126,6 +126,8 @@ const ENTRY_POINT_REGISTRY = {
     '[admin] clears a PAX\'s CheckinSessions row so the next identify mints a fresh guid',
   'admin.runScanTrackers':
     '[admin] rescans the tracker folder and upserts TrackerDB, preserving rows it did not scan',
+  'admin.renameTeam':
+    '[admin] renames a TeamDB team or merges it into another, rewriting the current/next tracker Responses Team cells and their PaxDB rows (ADR-023)',
   'admin.seedTeamDb':
     '[admin] seeds/refreshes the Template TeamDB roster from ListDB + PaxDB (idempotent; ADR-023)',
   'admin.sortTracker':
@@ -209,6 +211,7 @@ const ENTRY_POINT_CLASSES = {
   'admin.resetCheckinSession': CLASS_ADMIN,
   'admin.runScanTrackers': CLASS_ADMIN,
   'admin.seedTeamDb': CLASS_ADMIN,
+  'admin.renameTeam': CLASS_ADMIN,
   'admin.sortTracker': CLASS_ADMIN,
   'admin.runMinusOneCheck': CLASS_ADMIN,
   'admin.runNagCheck': CLASS_ADMIN,
@@ -279,6 +282,8 @@ const ENTRY_POINT_DEFERRED = {
     '[backlog] no call-site; would pair naturally with a signup or check-in journey that needs a cold session — F3Go30-y8j7.2',
   'admin.runScanTrackers':
     '[permanent] rescans the entire live tracker Drive folder and upserts TrackerDB project-wide; on inspection (F3Go30-y8j7.2) tools/smokeTestNamespace.js provisions via admin.copyTemplate, not this action — runScanTrackers has no automated call-site, and driving it in a suite run would touch every tracker in the shared environment, not a disposable namespace, the same shared-state objection as admin.syncTrackerTriggers — F3Go30-y8j7.2',
+  'admin.renameTeam':
+    '[backlog] operator data-correction tool; plan/rewrite logic node-tested (test_team_roster.js planTeamRename_/rewriteTeamColumn_/renameTeam_); no automated live call-site — F3Go30-qeuu.5',
   'admin.seedTeamDb':
     '[backlog] one-time operator seed of TeamDB; planning logic node-tested (test_team_roster.js planTeamSeed_/seedTeamDb_ idempotence); no live call-site — F3Go30-qeuu.1',
   'admin.sortTracker':

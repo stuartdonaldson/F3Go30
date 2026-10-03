@@ -348,7 +348,9 @@ available quotes.
 
 Matching is case- and whitespace-insensitive on Team and every alias. Suggestions = active rows
 with LastUsed within Config `TeamSuggestWindowDays` (default 90) plus pinned `SOLO (no team)`.
-Supersedes `ListDB` for sign-up (ListDB is read only by the `seedTeamDb` admin action).
+Supersedes `ListDB` for sign-up (ListDB is read only by the `seedTeamDb` admin action). Renames
+and merges that must also fix already-saved tracker values go through the `renameTeam` admin
+action (docs/OPERATIONS.md §TeamDB team roster), not a sheet edit.
 
 ---
 

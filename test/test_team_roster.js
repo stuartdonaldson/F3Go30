@@ -234,3 +234,92 @@ test('AC4 TeamDB is marked Delete in the tracker sheet disposition', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../script/CreateNewTracker.js'), 'utf8');
   assert.match(src, /'TeamDB':\s*'Delete'/);
 });
+
+// --- renameTeam (F3Go30-qeuu.5, ADR-023 Decision 6) --------------------------------------------
+
+const { planTeamRename_, rewriteTeamColumn_, renameTeam_ } = require('../script/teamRoster.js');
+
+test('planTeamRename_ rename: row renamed, old name (and its aliases) kept as aliases', () => {
+  const entries = parseTeamDbRows_(teamDbValues([
+    ['Crucible', '', 'active', daysAgo(5), 3],
+    ['Shield Lock', 'ShieldLok', 'active', daysAgo(2), 4],
+  ]));
+  const plan = planTeamRename_(entries, 'shield lock', 'Shieldlock Brothers');
+  assert.equal(plan.ok, true);
+  assert.equal(plan.merged, false);
+  assert.equal(plan.team, 'Shieldlock Brothers');
+  assert.deepEqual(plan.updates, [{ rowNumber: 3, values: ['Shieldlock Brothers', 'ShieldLok, Shield Lock', 'active', daysAgo(2), 4] }]);
+  assert.equal(plan.deleteRowNumber, null);
+  assert.deepEqual(plan.matchKeys.sort(), ['shieldlock', 'shieldlok']);
+});
+
+test('planTeamRename_ merge: from folds into the existing to row (aliases, max LastUsed, summed UseCount), from row deleted', () => {
+  const entries = parseTeamDbRows_(teamDbValues([
+    ["Hawk's Nest", '', 'active', daysAgo(30), 10],
+    ['Hawks Nest', 'Hawks', 'hidden', daysAgo(3), 2],
+  ]));
+  const plan = planTeamRename_(entries, 'Hawks Nest', "hawk's nest");
+  assert.equal(plan.merged, true);
+  assert.equal(plan.team, "Hawk's Nest");
+  assert.deepEqual(plan.updates, [{ rowNumber: 2, values: ["Hawk's Nest", 'Hawks, Hawks Nest', 'active', daysAgo(3), 12] }]);
+  assert.equal(plan.deleteRowNumber, 3);
+  assert.deepEqual(plan.matchKeys.sort(), ['hawks', 'hawksnest']);
+});
+
+test('planTeamRename_ respelling onto its own alias renames in place; spellings the match key already covers are not kept as aliases', () => {
+  const entries = parseTeamDbRows_(teamDbValues([['Thunder Dome', 'Thunderdome', 'active', '', 1]]));
+  const plan = planTeamRename_(entries, 'Thunder Dome', 'Thunderdome');
+  assert.equal(plan.merged, false);
+  assert.deepEqual(plan.updates, [{ rowNumber: 2, values: ['Thunderdome', '', 'active', '', 1] }]);
+  assert.deepEqual(plan.matchKeys, ['thunderdome']);
+});
+
+test('planTeamRename_ AC4: unknown from or blank to -> {ok:false}, nothing planned', () => {
+  const entries = parseTeamDbRows_(teamDbValues([['Crucible', '', 'active', '', 1]]));
+  assert.deepEqual(planTeamRename_(entries, 'Nope', 'Crucible'), { ok: false, error: 'unknown_team' });
+  assert.deepEqual(planTeamRename_(entries, 'Crucible', '  '), { ok: false, error: 'to is required' });
+});
+
+test('rewriteTeamColumn_ replaces every cell matching a key, case/whitespace-insensitively', () => {
+  const values = [['Shield Lock'], ['Crucible'], ['shieldlok '], [''], ['SHIELDLOCK']];
+  const changed = rewriteTeamColumn_(values, ['shieldlock', 'shieldlok'], 'Shieldlock Brothers');
+  assert.deepEqual(changed, [0, 2, 4]);
+  assert.deepEqual(values.map((r) => r[0]), ['Shieldlock Brothers', 'Crucible', 'Shieldlock Brothers', '', 'Shieldlock Brothers']);
+});
+
+test('AC1/AC2 renameTeam_: TeamDB, each tracker Responses Team (+Other team) and that tracker\'s PaxDB rows rewritten; changed trackers reported', () => {
+  const teamDb = makeFakeSheet_(TEAM_DB_HEADERS_, [
+    ['Crucible', '', 'active', daysAgo(5), 3],
+    ['Crucibel', '', 'active', daysAgo(1), 1],
+  ]);
+  const paxDb = makeFakeSheet_(['SheetId', 'Date', 'F3 Name', 'Team'], [
+    ['cur', '', 'A', 'crucibel'], ['cur', '', 'B', 'Crucible'], ['old', '', 'C', 'Crucibel'],
+  ]);
+  const template = fakeSpreadsheet({ [TEAM_DB_SHEET_NAME_]: teamDb, PaxDB: paxDb });
+  const responsesHeaders = ['Timestamp', 'Email Address', 'Are you currently participating in Go30?', 'F3 Name',
+    'Team type', 'Team', 'Other team name', 'WHO do you ultimately want to become?', 'WHAT is your Go30 Challenge?',
+    'HOW are you going to be successful this month?', 'Cell Phone Number'];
+  const curResponses = makeFakeSheet_(responsesHeaders, [
+    ['', 'a@x', 'Yes', 'A', '', 'Crucibel', 'Crucibel'], ['', 'b@x', 'Yes', 'B', '', 'Crucible', ''],
+  ]);
+  const trackers = { cur: fakeSpreadsheet({ Responses: curResponses }) };
+  const changedSheets = [];
+  const result = renameTeam_(template, 'Crucibel', 'Crucible', {
+    trackerSheetIds: ['cur'],
+    openById: (id) => trackers[id],
+    onTrackerChanged: (id) => changedSheets.push(id),
+  });
+  assert.deepEqual(result, { ok: true, merged: true, team: 'Crucible', responsesUpdated: 1, paxDbUpdated: 1, trackersChanged: ['cur'] });
+  assert.deepEqual(teamDb._rows, [['Crucible', 'Crucibel', 'active', daysAgo(1), 4]]);
+  assert.deepEqual(curResponses._rows[0].slice(5), ['Crucible', 'Crucible']);
+  assert.deepEqual(paxDb._rows.map((r) => r[3]), ['Crucible', 'Crucible', 'Crucibel'], 'other months keep their historical spelling');
+  assert.deepEqual(changedSheets, ['cur']);
+});
+
+test('renameTeam_ unknown team changes nothing', () => {
+  const teamDb = makeFakeSheet_(TEAM_DB_HEADERS_, [['Crucible', '', 'active', '', 1]]);
+  const template = fakeSpreadsheet({ [TEAM_DB_SHEET_NAME_]: teamDb });
+  const result = renameTeam_(template, 'Nope', 'X', { trackerSheetIds: [], openById: () => null, onTrackerChanged: () => {} });
+  assert.deepEqual(result, { ok: false, error: 'unknown_team' });
+  assert.deepEqual(teamDb._rows, [['Crucible', '', 'active', '', 1]]);
+});

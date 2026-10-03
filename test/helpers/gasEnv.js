@@ -241,7 +241,7 @@ function installGasEnv_(options) {
 /**
  * Generic header + body `Sheet` stand-in: 1-based `getRange(row, col, numRows, numCols)` with
  * `getValues`/`setValues`/`setValue`, `appendRow`, `getLastRow`/`getLastColumn`,
- * `getDataRange`. Writes past the last row grow the body. `_headers`/`_rows` expose state.
+ * `getDataRange`, `deleteRow`. Writes past the last row grow the body. `_headers`/`_rows` expose state.
  * NOTE: several older test files still hand-roll their own per-sheet copy of this (see
  * test_checkin_sessions.js makeFakeSessionsSheet_, test_go30tools.js makeFakePaxDbSheet) —
  * new tests use this one.
@@ -288,6 +288,7 @@ function makeFakeSheet_(headers, initialRows) {
     getRange: rangeAt,
     getDataRange: function() { return rangeAt(1, 1, rows.length + 1, width_()); },
     appendRow: function(values) { rows.push(values.slice()); return this; },
+    deleteRow: function(rowNumber) { rows.splice(rowNumber - 2, 1); return this; },
     setFrozenRows: function() { return this; },
     _headers: hdr,
     _rows: rows,
