@@ -342,29 +342,6 @@ function createTrackerSpreadsheet_(options) {
 }
 
 /**
- * ADR-024: unlinks and trashes the HC Form a Drive copy of the Template brings with it, so a new
- * tracker never accepts Form submissions. No-op when the copy has no linked Form (the Template's
- * Form has been unlinked). A failure is logged and reported, never thrown — tracker creation
- * must not fail on Form housekeeping.
- * @returns {{retired: boolean, formId: (string|undefined), error: (string|undefined)}}
- */
-function retireCopiedHcForm_(newSpreadsheet) {
-  var formUrl = newSpreadsheet.getFormUrl();
-  if (!formUrl) return { retired: false };
-  try {
-    var form = FormApp.openByUrl(formUrl);
-    var formId = form.getId();
-    form.removeDestination();
-    DriveApp.getFileById(formId).setTrashed(true);
-    GasLogger.log('retireCopiedHcForm_', { formId: formId });
-    return { retired: true, formId: formId };
-  } catch (e) {
-    GasLogger.log('retireCopiedHcForm_.failed', { error: e.message });
-    return { retired: false, error: e.message };
-  }
-}
-
-/**
  * The onboarding email options for a newly created tracker — ONE builder shared by copyAndInit
  * (sidebar) and autoGenerateNextMonthTracker (headless), which used to hand-copy the step and
  * checklist lists. No HC Form content (ADR-024).
@@ -1063,7 +1040,6 @@ function autoGenerateNextMonthTracker_() {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    retireCopiedHcForm_: retireCopiedHcForm_,
     buildTrackerOnboardingEmailOptions_: buildTrackerOnboardingEmailOptions_,
     decideSignupShortUrlAction_: decideSignupShortUrlAction_,
     ensureLinksSheetSchema_: ensureLinksSheetSchema_,

@@ -714,6 +714,22 @@ function adminRenameTeam_(payload, e) {
   return jsonOutput_(renameResult);
 }
 
+function adminCloseHcForms_(payload, e) {
+  // ADR-024 / F3Go30-61ln.3: closes every TrackerDB HC Form (and the Template's) with a message
+  // pointing at the static sign-up page, and unlinks the Template's Form so future tracker copies
+  // carry none. {"dryRun":true} reports without changing anything. No PROD guard — this is the
+  // PROD retirement step (docs/OPERATIONS.md §Retiring the HC Form).
+  var closeFormsSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
+  var webAppBase = resolveWebAppBaseUrl_();
+  var signupUrl = buildStaticSignupUrl_(webAppBase, {}) || (webAppBase ? webAppBase + '?cmd=signup' : '');
+  var closeFormsResult = closeHcForms_(
+    closeFormsSpreadsheet,
+    _readTrackerDbRowsBySheetId_(closeFormsSpreadsheet).bySheetId,
+    { dryRun: !!payload.dryRun, signupUrl: signupUrl }
+  );
+  return jsonOutput_(closeFormsResult);
+}
+
 function adminGetSheetHeaders_(payload, e) {
   if (!payload.sheetId || !payload.sheetName) {
     return jsonOutput_({ ok: false, error: 'sheetId and sheetName are required' });
@@ -940,6 +956,7 @@ var ADMIN_ACTIONS_ = {
   runScanTrackers: { handler: adminRunScanTrackers_, readOnly: false },
   seedTeamDb: { handler: adminSeedTeamDb_, readOnly: false },
   renameTeam: { handler: adminRenameTeam_, readOnly: false },
+  closeHcForms: { handler: adminCloseHcForms_, readOnly: false },
   getSheetHeaders: { handler: adminGetSheetHeaders_, readOnly: true },
   getSheetFormulas: { handler: adminGetSheetFormulas_, readOnly: true },
   sortTracker: { handler: adminSortTracker_, readOnly: false },

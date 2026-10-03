@@ -126,6 +126,8 @@ const ENTRY_POINT_REGISTRY = {
     '[admin] clears a PAX\'s CheckinSessions row so the next identify mints a fresh guid',
   'admin.runScanTrackers':
     '[admin] rescans the tracker folder and upserts TrackerDB, preserving rows it did not scan',
+  'admin.closeHcForms':
+    '[admin] closes every TrackerDB HC Form and the Template Form with a sign-up-page message, and unlinks the Template Form (ADR-024)',
   'admin.renameTeam':
     '[admin] renames a TeamDB team or merges it into another, rewriting the current/next tracker Responses Team cells and their PaxDB rows (ADR-023)',
   'admin.seedTeamDb':
@@ -210,6 +212,7 @@ const ENTRY_POINT_CLASSES = {
   'admin.runScanTrackers': CLASS_ADMIN,
   'admin.seedTeamDb': CLASS_ADMIN,
   'admin.renameTeam': CLASS_ADMIN,
+  'admin.closeHcForms': CLASS_ADMIN,
   'admin.sortTracker': CLASS_ADMIN,
   'admin.runMinusOneCheck': CLASS_ADMIN,
   'admin.runNagCheck': CLASS_ADMIN,
@@ -279,6 +282,8 @@ const ENTRY_POINT_DEFERRED = {
     '[backlog] no call-site; would pair naturally with a signup or check-in journey that needs a cold session — F3Go30-y8j7.2',
   'admin.runScanTrackers':
     '[permanent] rescans the entire live tracker Drive folder and upserts TrackerDB project-wide; on inspection (F3Go30-y8j7.2) tools/smokeTestNamespace.js provisions via admin.copyTemplate, not this action — runScanTrackers has no automated call-site, and driving it in a suite run would touch every tracker in the shared environment, not a disposable namespace, the same shared-state objection as admin.syncTrackerTriggers — F3Go30-y8j7.2',
+  'admin.closeHcForms':
+    '[permanent] one-time per-environment retirement step (closes real Forms, unlinks the Template Form); sweep logic node-tested in test_hc_form_retirement.js; a suite call-site would re-run an irreversible environment change — F3Go30-61ln.3',
   'admin.renameTeam':
     '[backlog] operator data-correction tool; plan/rewrite logic node-tested (test_team_roster.js planTeamRename_/rewriteTeamColumn_/renameTeam_); no automated live call-site — F3Go30-qeuu.5',
   'admin.seedTeamDb':
