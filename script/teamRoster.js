@@ -201,7 +201,10 @@ function readTeamDbEntries_(sheet) {
   return parseTeamDbRows_(sheet.getRange(1, 1, sheet.getLastRow(), TEAM_DB_HEADERS_.length).getValues());
 }
 
-function withTeamDbLock_(label, fn, fallback) {
+function withTeamDbLock_(label, fn, fallback, lockHeld) {
+  // lockHeld: the caller already holds the script lock (form submit runs inside runWithLock) —
+  // taking and releasing it again here would release the caller's lock early.
+  if (lockHeld) return fn();
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(TEAM_DB_LOCK_WAIT_MS_);
@@ -223,9 +226,10 @@ function withTeamDbLock_(label, fn, fallback) {
  * A blank name writes nothing. On lock timeout the canonical name is still resolved from an
  * unlocked read so a sign-up never fails on roster bookkeeping.
  * @param {Spreadsheet} spreadsheet The Template (TeamDB lives only there).
+ * @param {{lockHeld: (boolean|undefined)}=} options lockHeld: caller already holds the script lock.
  * @returns {{team: string, created: boolean}}
  */
-function recordTeamUse_(spreadsheet, name, now) {
+function recordTeamUse_(spreadsheet, name, now, options) {
   var trimmed = String(name == null ? '' : name).trim();
   if (!trimmed) return { team: '', created: false };
   var sheet = openOrCreateTeamDbSheet_(spreadsheet);
@@ -243,7 +247,7 @@ function recordTeamUse_(spreadsheet, name, now) {
   }, function() {
     var match = findTeamEntry_(readTeamDbEntries_(sheet), trimmed);
     return { team: match ? match.team : trimmed, created: false };
-  });
+  }, !!(options && options.lockHeld));
 }
 
 /** Reads Config TeamSuggestWindowDays (positive number) or the default. */

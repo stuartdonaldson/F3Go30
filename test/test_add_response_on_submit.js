@@ -566,3 +566,26 @@ function col(values) {
 }
 
 console.log('test_add_response_on_submit.js: PASS');
+
+// --- applyRosterTeamToFormSubmit_ — ADR-023 / F3Go30-qeuu.4: Form-path team snaps to TeamDB ---
+{
+  const { applyRosterTeamToFormSubmit_ } = require('../script/addResponseOnSubmit.js');
+  const cols = { TEAM: 1 };
+  const row = ['x', 'shield lock'];
+  const seen = [];
+  const result = applyRosterTeamToFormSubmit_(row, cols, function(name) { seen.push(name); return 'Shieldlock'; });
+  assert.deepEqual(result, { team: 'Shieldlock', changed: true });
+  assert.equal(row[1], 'Shieldlock', 'formResponses TEAM rewritten to the roster spelling');
+  assert.deepEqual(seen, ['shield lock']);
+
+  const same = ['x', 'Crucible'];
+  assert.deepEqual(applyRosterTeamToFormSubmit_(same, cols, function() { return 'Crucible'; }), { team: 'Crucible', changed: false });
+
+  let called = false;
+  assert.deepEqual(applyRosterTeamToFormSubmit_(['x', ''], cols, function() { called = true; return ''; }), { team: '', changed: false });
+  assert.equal(called, false, 'blank team never touches the roster');
+
+  // A roster failure never fails the submission — the typed team stands.
+  const failing = ['x', 'Crucible'];
+  assert.deepEqual(applyRosterTeamToFormSubmit_(failing, cols, function() { throw new Error('boom'); }), { team: 'Crucible', changed: false });
+}

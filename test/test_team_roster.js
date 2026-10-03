@@ -323,3 +323,15 @@ test('renameTeam_ unknown team changes nothing', () => {
   assert.deepEqual(result, { ok: false, error: 'unknown_team' });
   assert.deepEqual(teamDb._rows, [['Crucible', '', 'active', '', 1]]);
 });
+
+test('recordTeamUse_ {lockHeld:true} (caller already holds the script lock, e.g. form submit) takes no lock', () => {
+  const env = installGasEnv_({ lock: true, logger: true });
+  const sheet = makeFakeSheet_(TEAM_DB_HEADERS_, [['Crucible', '', 'active', daysAgo(3), 1]]);
+  const ss = fakeSpreadsheet({ [TEAM_DB_SHEET_NAME_]: sheet });
+  assert.deepEqual(recordTeamUse_(ss, 'crucible', NOW, { lockHeld: true }), { team: 'Crucible', created: false });
+  assert.equal(env.lock._waits, 0);
+  assert.equal(env.lock._releases, 0);
+  recordTeamUse_(ss, 'crucible', NOW);
+  assert.equal(env.lock._waits, 1);
+  assert.equal(env.lock._releases, 1);
+});

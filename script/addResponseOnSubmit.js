@@ -17,6 +17,10 @@ var deletePaxRosterIndex_ars_ = addResponsePaxCacheModule_.deletePaxRosterIndex_
 // F3Go30-mk3a: the full-roster CacheService key builders are dashboardCache.js's — required
 // directly (no circularity: dashboardCache.js doesn't depend back on this file), replacing the
 // hand-copied prefix-string constants that used to live here.
+var addResponseTeamRosterModule_ = gasRequire_('./teamRoster.js', ['recordTeamUse_']);
+var recordTeamUse_ars_ = addResponseTeamRosterModule_.recordTeamUse_;
+var addResponseCreateNewTrackerModule_ = gasRequire_('./CreateNewTracker.js', ['getTemplateSpreadsheetForInit_']);
+var getTemplateSpreadsheetForInit_ars_ = addResponseCreateNewTrackerModule_.getTemplateSpreadsheetForInit_;
 var addResponseCacheModule_ = gasRequire_('./dashboardCache.js', ['trackerValuesCacheKey_', 'responsesValuesCacheKey_']);
 var trackerValuesCacheKey_ars_ = addResponseCacheModule_.trackerValuesCacheKey_;
 var responsesValuesCacheKey_ars_ = addResponseCacheModule_.responsesValuesCacheKey_;
@@ -234,6 +238,28 @@ function appendToResponsesSheet_(responsesSheet, formResponses, formColumns) {
   return responsesSheet.getLastRow();
 }
 
+/**
+ * ADR-023 / F3Go30-qeuu.4: snaps the submitted TEAM to its TeamDB roster spelling (and records the
+ * use) via recordFn(name) -> canonical name, rewriting formResponses in place. A blank team never
+ * touches the roster; a roster failure is logged and the typed team stands — bookkeeping must
+ * never fail a submission.
+ * @returns {{team: string, changed: boolean}}
+ */
+function applyRosterTeamToFormSubmit_(formResponses, responseColumns, recordFn) {
+  var teamVal = String(formResponses[responseColumns.TEAM] || '').trim();
+  if (!teamVal) return { team: '', changed: false };
+  var canonical;
+  try {
+    canonical = recordFn(teamVal);
+  } catch (err) {
+    GasLogger.log('formSubmit.teamRosterFailed', { error: err.message });
+    return { team: teamVal, changed: false };
+  }
+  if (!canonical || canonical === teamVal) return { team: teamVal, changed: false };
+  formResponses[responseColumns.TEAM] = canonical;
+  return { team: canonical, changed: true };
+}
+
 function onFormSubmitLocked_(e) {
   var sheet = resolveFormSubmitSpreadsheet_(e);
   // formSubmitSheet: the form destination sheet created by setDestination — resolved from
@@ -278,6 +304,17 @@ function onFormSubmitLocked_(e) {
     formResponses[responseColumns.TEAM] = otherTeamVal;
     formSubmitSheet.getRange(submittedRowNumber, responseColumns.TEAM + 1).setValue(otherTeamVal);
     GasLogger.log('formSubmit.teamPromoted', { otherTeam: otherTeamVal });
+  }
+
+  // Phase 3b — ADR-023: snap the team to its TeamDB spelling and record the use. Runs inside
+  // runWithLock already, hence lockHeld. The Template is found via this tracker's Config
+  // "Sheet Template" row — the handler runs centrally (ADR-010), so there is no active Template.
+  var rosterTeam = applyRosterTeamToFormSubmit_(formResponses, responseColumns, function(name) {
+    var templateSpreadsheet = getTemplateSpreadsheetForInit_ars_(sheet, sheet.getSheetByName('Config'));
+    return recordTeamUse_ars_(templateSpreadsheet, name, new Date(), { lockHeld: true }).team;
+  });
+  if (rosterTeam.changed) {
+    formSubmitSheet.getRange(submittedRowNumber, responseColumns.TEAM + 1).setValue(rosterTeam.team);
   }
 
   // Append the processed row to Responses (template column order) — Goals by HIM/AO read here.
@@ -443,6 +480,7 @@ if (typeof module !== 'undefined' && module.exports) {
     maybeSendRegistrationConfirmation_,
     appendToResponsesSheet_,
     onFormSubmitLocked_,
+    applyRosterTeamToFormSubmit_,
     resolveFormSubmitSpreadsheet_,
     setupFormSubmitTrigger,
     clearFormSubmitTrigger

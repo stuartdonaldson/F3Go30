@@ -396,6 +396,8 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
   (`buildSignupIdentifyTeamFields_`). `handleSignupSave_` passes the typed team through
   `recordTeamUse_` (teamRoster.js) once, before any write, and uses the canonical result for
   Responses, PaxDB and the confirmation email; `TEAM_TYPE`/`OTHER_TEAM` are written blank.
+  The HC Google Form path (`onFormSubmitLocked_` Phase 3b, `applyRosterTeamToFormSubmit_`) snaps
+  and records the team the same way, with `lockHeld` since it already runs inside `runWithLock`.
 - **Signup as a step of the static front end (F3Go30-833s.9) — DECIDED:** `static-pages/src/index.html`
   now carries the whole signup flow itself, over the same `cmd=signup` JSON API (`handleSignupPost_`,
   `WebApp.js`) `SignupApp.html` posts to. No server change: `handleSignupIdentify_` already returns
