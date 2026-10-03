@@ -104,8 +104,14 @@ const AC_REGISTRY = {
     'cmd=signup save persists team, goals and profile for the target month and reports the saved record back',
   'signup info-step-validates':
     'the signup info step blocks Continue until team and goals are supplied, rather than saving a blank record (F3Go30-9u68)',
-  'signup team-match-precedence':
-    'team resolution tries AO match (case-insensitively, canonical casing wins), then goal match, then preserves an "other" value verbatim',
+  'signup team-snaps-to-roster':
+    'a saved or prefilled team resolves to its TeamDB roster spelling by name or alias, case- and whitespace-insensitively; an unmatched name is kept verbatim and joins the roster (ADR-023, F3Go30-qeuu.1/.2)',
+  'signup team-suggestions-selectable':
+    'typing in the signup team field lists matching roster teams used recently, and picking one fills the field (ADR-023, F3Go30-qeuu.3)',
+  'signup team-near-match-prompts':
+    'a typed team close to a roster team (punctuation or a small typo) prompts "Did you mean" before saving, and "Use" saves the roster spelling (ADR-023, F3Go30-qeuu.3)',
+  'signup new-team-joins-roster':
+    'a brand-new team name saves without a prompt and appears in the next identify\'s team suggestions (ADR-023, F3Go30-qeuu.3)',
   'signup reuse-last-month-goals':
     'a returning PAX offered last month\'s goals gets them applied only on an affirmative choice, and the flow completes when no prior tracker exists',
   'signup done-url-bookmarkable':

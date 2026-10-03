@@ -56,7 +56,7 @@ global.getConfigValue_ = function() { return {}; };
 global.resolveTemplateSpreadsheet_ = function() {
   return { id: 'bound', getSheetByName: function() { return null; }, getId: function() { return 'bound'; } };
 };
-global.readTeamRosterView_ = function() { return { suggestions: [], entries: [] }; };
+global.readTeamRosterView_ = function() { return { suggestions: [], knownTeams: [], entries: [] }; };
 global.getCurrentAndNextMonths_ = function() { return { current: null, next: null }; };
 global.resolveContextDate_ = function() { return new Date(); };
 global.Utilities = { getUuid: function() { return 'fake-uuid'; } };

@@ -27,6 +27,11 @@ go-live matters.
 
 _User/admin-facing changes landed since the last minor release, awaiting the next series cut._
 
+- **One team field at sign-up** — the AO-based / Custom Team choice is gone. Start typing and
+  pick from teams used in the last 3 months, or type a new one and it's added. A name that looks
+  like a typo of an existing team ("Hawks Nest", "Thunderdom") asks "Did you mean …?" first, so
+  groups stop splitting over spelling. Admins correct spelling, add aliases, or hide a team in the
+  Template's new **TeamDB** sheet (ADR-023).
 - **No more false "Couldn't reach the server" after a check-in** — when the network drops the
   confirmation of a check-in that actually saved, the app now checks with the server and keeps your
   check-in instead of showing an error. You'll briefly see "Still saving… confirming with the

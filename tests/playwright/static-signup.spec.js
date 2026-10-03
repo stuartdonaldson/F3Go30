@@ -107,8 +107,7 @@ function startStaticServer() {
 /** Fills the su- prefixed team/who/what/how block once su-step-info is showing. Mirrors
  * identity-token-flow.spec.js's fillSignupInfo, adapted to this page's su-prefixed ids. */
 async function fillStaticSignupTeamAndGoals(page, pax) {
-  await page.locator('#suTtOtherOption').click();
-  await page.locator('#suTeamOtherInput').fill(pax.team);
+  await page.locator('#suTeamInput').fill(pax.team);
   await page.locator('#suWhoInput').fill(pax.who);
   await page.locator('#suWhatInput').fill(pax.what);
   await page.locator('#suHowInput').fill(pax.how);
@@ -120,6 +119,11 @@ async function saveStaticSignup(page) {
   // just landed #su-step-info — clickThroughAnnouncement_ retries through it rather than dying
   // on "element intercepts pointer events" (see live-check-helpers.js).
   await clickThroughAnnouncement_(page.locator('#suInfoNextBtn'));
+  await finishSignupSave_(page);
+}
+
+/** After the info step's Continue has fired: pick "current" if the month step shows, then wait for done. */
+async function finishSignupSave_(page) {
   const chooseVisible = await page.locator('#su-step-choose').isVisible().catch(() => false);
   if (chooseVisible) {
     await page.locator('.month-option[data-key="current"]').click();
@@ -393,8 +397,7 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     await expect(page.locator('#su-step-info')).toBeVisible();
 
     // Team filled, goals still blank — must now block on goals instead of silently proceeding.
-    await page.locator('#suTtOtherOption').click();
-    await page.locator('#suTeamOtherInput').fill('Crucible');
+    await page.locator('#suTeamInput').fill('Crucible');
     await page.locator('#suInfoNextBtn').click();
     await expect(page.locator('#suInfoError')).toBeVisible();
     await expect(page.locator('#suInfoError')).toContainText(/who|what|how/i);
@@ -406,5 +409,78 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     await page.locator('#suHowInput').fill('Daily check-in with my team.');
     await saveStaticSignup(page);
     await expect(page.locator('#suInfoError')).toBeHidden();
+  });
+
+  // ── Team roster (ADR-023, F3Go30-qeuu.3/.6) ──────────────────────────────────────────────────
+  async function identifyViaApi_(request, pax) {
+    const res = await request.post(checkinUrl + '?cmd=signup', {
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      data: JSON.stringify({ action: 'identify', f3Name: pax.f3Name, email: pax.email }),
+      maxRedirects: 5,
+    });
+    return res.json();
+  }
+
+  async function openFreshInfoStep_(page, pax) {
+    await page.goto(signupPageUrl());
+    await expect(page.locator('#su-step-intro')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await page.locator('#suIntroNextBtn').click();
+    await page.locator('#suF3Name').fill(pax.f3Name);
+    await page.locator('#suEmail').fill(pax.email);
+    await page.locator('#suIdentifyBtn').click();
+    await expect(page.locator('#su-step-info')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await dismissAnnouncementIfPresent_(page);
+  }
+
+  async function fillGoals_(page) {
+    await page.locator('#suWhoInput').fill('An available, attentive partner');
+    await page.locator('#suWhatInput').fill('No alcohol.');
+    await page.locator('#suHowInput').fill('Daily check-in with my team.');
+  }
+
+  test('team field: suggestions are selectable, and a near-match prompts "Did you mean" whose Use saves the roster spelling', async ({ page, request }) => {
+    const pax = freshValidationTestPax_();
+    await openFreshInfoStep_(page, pax);
+
+    // signup team-suggestions-selectable — Crucible is used every run by this file's fixtures,
+    // so it is always inside SIT's suggestion window.
+    await page.locator('#suTeamInput').fill('cruc');
+    const option = page.locator('#suTeamListbox li', { hasText: 'Crucible' });
+    await expect(option).toBeVisible();
+    await option.click();
+    await expect(page.locator('#suTeamInput')).toHaveValue('Crucible');
+    await expect(page.locator('#suTeamListbox')).toBeHidden();
+
+    // signup team-near-match-prompts — one letter short of a roster team.
+    await page.locator('#suTeamInput').fill('Crucibl');
+    await fillGoals_(page);
+    await clickThroughAnnouncement_(page.locator('#suInfoNextBtn'));
+    await expect(page.locator('#suTeamDidYouMean')).toBeVisible();
+    await expect(page.locator('#suTeamDidYouMeanText')).toContainText('Crucible');
+    await expect(page.locator('#su-step-info')).toBeVisible();
+    await page.locator('#suTeamUseNearBtn').click();
+    await expect(page.locator('#suTeamInput')).toHaveValue('Crucible');
+    await finishSignupSave_(page);
+
+    const idJson = await identifyViaApi_(request, pax);
+    expect(idJson.matched).toBe(true);
+    expect(idJson.data.team).toBe('Crucible');
+  });
+
+  test('team field: a brand-new team saves without a prompt and joins the roster suggestions', async ({ page, request }) => {
+    // A fixed name, not per-run: TeamDB has no delete action, so a per-run name would add a new
+    // SIT roster row every run. Re-using one keeps it to a single row (UseCount just grows).
+    const NEW_TEAM = 'ZZ Playwright Roster Team';
+    const pax = freshValidationTestPax_();
+    await openFreshInfoStep_(page, pax);
+
+    await page.locator('#suTeamInput').fill(NEW_TEAM);
+    await fillGoals_(page);
+    await saveStaticSignup(page);
+    await expect(page.locator('#suTeamDidYouMean')).toBeHidden();
+
+    const idJson = await identifyViaApi_(request, pax);
+    expect(idJson.data.team).toBe(NEW_TEAM);
+    expect(idJson.teamList).toContain(NEW_TEAM);
   });
 });

@@ -235,16 +235,17 @@ console.log('test_signup_webapp.js: PASS');
   const { parseTeamDbRows_, TEAM_DB_HEADERS_ } = require('../script/teamRoster.js');
   const roster = {
     suggestions: ['SOLO (no team)', 'Crucible', 'Shieldlock'],
+    knownTeams: ['Ballard', 'Crucible', 'Shieldlock'],
     entries: parseTeamDbRows_([TEAM_DB_HEADERS_, ['Shieldlock', 'Shield-Lock', 'active', '', 1]]),
   };
   // Stored team snaps to the roster spelling; installed (pre-ADR-023) clients read aoList/goalList,
   // so both carry the roster and teamType 'other' routes an old client to its free-text field.
   assert.deepEqual(buildSignupIdentifyTeamFields_(roster, 'shield lock'), {
-    teamList: roster.suggestions, aoList: roster.suggestions, goalList: roster.suggestions,
+    teamList: roster.suggestions, knownTeams: roster.knownTeams, aoList: roster.suggestions, goalList: roster.suggestions,
     teamType: 'other', team: 'Shieldlock',
   });
   assert.deepEqual(buildSignupIdentifyTeamFields_(roster, '  Brand New '), {
-    teamList: roster.suggestions, aoList: roster.suggestions, goalList: roster.suggestions,
+    teamList: roster.suggestions, knownTeams: roster.knownTeams, aoList: roster.suggestions, goalList: roster.suggestions,
     teamType: 'other', team: 'Brand New',
   });
   const blank = buildSignupIdentifyTeamFields_(roster, '');

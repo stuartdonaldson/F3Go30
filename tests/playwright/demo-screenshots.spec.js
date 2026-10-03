@@ -185,11 +185,9 @@ test.describe('Go30 demo screenshots (SIT)', () => {
     await page.locator('#suIdentifyBtn').click();
     await expect(page.locator('#su-step-info')).toBeVisible({ timeout: 15000 });
 
-    // "Other" free-text rather than probing the AO/goal selects: the static signup uses the
-    // same su-prefixed team block static-signup.spec.js drives, and the demo team name only
-    // needs to render, not to resolve to a real configured team on this environment.
-    await page.locator('#suTtOtherOption').click();
-    await page.locator('#suTeamOtherInput').fill(DEMO_PAX.team);
+    // Typed into the single team field (ADR-023) — the demo team name only needs to render, not
+    // to resolve to a real roster team on this environment.
+    await page.locator('#suTeamInput').fill(DEMO_PAX.team);
     await page.locator('#suWhoInput').fill(DEMO_PAX.who);
     await page.locator('#suWhatInput').fill(DEMO_PAX.what);
     await page.locator('#suHowInput').fill(DEMO_PAX.how);

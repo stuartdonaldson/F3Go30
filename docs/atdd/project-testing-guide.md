@@ -137,7 +137,7 @@ Realizes `T24`.
     --ac-list-cmd "node test/contract/acRegistry.js"
   ```
 - **Authoritative coverage registry:** `test/contract/acRegistry.js` (`F3Go30-emwk.7`,
-  2026-09-06) — **82** acceptance criteria as `AC_REGISTRY` (`{id: description}`, ids behavioural,
+  2026-09-06) — **85** acceptance criteria as `AC_REGISTRY` (`{id: description}`, ids behavioural,
   never a bead id), plus a sibling `AC_SELFTEST_FIXTURES` (7 entries) holding the harness's own
   self-test tags. Nothing that computes coverage reads `AC_SELFTEST_FIXTURES`, and `listAcIds()`
   deliberately excludes it: in the reference implementation those tags once lived inside
@@ -238,8 +238,8 @@ placeholder remains, and both columns are checked to exist in their registry rat
 prose.
 
 **What an AC id in this table means.** That this journey is the *responsible* call-site for that
-obligation — not that a per-test tag proves it (emission is `F3Go30-emwk.12`, deferred). The 31 ACs
-named below are a minority of the registry's 82 on purpose: most obligations are held by the
+obligation — not that a per-test tag proves it (emission is `F3Go30-emwk.12`, deferred). The 34 ACs
+named below are a minority of the registry's 85 on purpose: most obligations are held by the
 network-free `test/test_*.js` files, which are not journeys. Charter membership is not suite
 coverage.
 
@@ -253,12 +253,12 @@ grades of live are recorded, and deliberately **not** split into separate tiers 
 records the distinction so a later `test:prep`/auth-setup stage has something to act on.
 
 There are **12** journeys, of which **11** are tier members and one is a purpose exclusion;
-together they drain **31** of the registry's acceptance criteria and drive **14** state-modifying
+together they drain **34** of the registry's acceptance criteria and drive **14** state-modifying
 entry points.
 
 | Journey (spec) | Theme / failure domain | Entry points it is call-site for (`T17`) | AC ids drained | Why separate from each adjacent journey | Tier | Status |
 |---|---|---|---|---|---|---|
-| `static-signup` | Registration + goal capture through the static front end, cross-origin | `signup.identify` · `signup.save` · `signup.feedback` | `signup identify-requires-name-and-email` · `signup save-persists-goals` · `signup info-step-validates` · `signup done-url-bookmarkable` · `signup next-month-checkin-link` · `signup feedback-writes-and-rejects-unmatched` | The only signup E2E coverage since DR-04 removed `SignupApp.html`; check-in journeys never create a PAX | live (webapp) | built |
+| `static-signup` | Registration + goal capture through the static front end, cross-origin | `signup.identify` · `signup.save` · `signup.feedback` | `signup identify-requires-name-and-email` · `signup save-persists-goals` · `signup info-step-validates` · `signup team-suggestions-selectable` · `signup team-near-match-prompts` · `signup new-team-joins-roster` · `signup done-url-bookmarkable` · `signup next-month-checkin-link` · `signup feedback-writes-and-rejects-unmatched` | The only signup E2E coverage since DR-04 removed `SignupApp.html`; check-in journeys never create a PAX | live (webapp) | built |
 | `static-checkin` | Cross-origin check-in from a genuinely different origin against the live `/exec` | `route.doPost` · `checkin.identify` · `checkin.checkin` · `checkin.bonusAdd` · `checkin.bonusEdit` · `checkin.siteFeedback` | `transport cors-boundary-holds` · `checkin identify-returns-month-state` · `checkin submit-writes-day` · `checkin write-through-overlay` · `dashboard renders-from-cache-then-revalidates` · `bonus live-add-and-edit-via-ui` · `checkin sitefeedback-live-send` | Proves the CORS boundary itself — a header/CORS regression surfaces here and nowhere else. The only journey that drives `route.doPost` as its subject rather than as transport | live (webapp) | built |
 | `checkin-advanced-grid` | Whole-month check-in grid: calendar + unified selection panel | `checkin.checkin` · `checkin.clientTelemetry` | `checkin advanced-grid-selection` · `checkin month-grid-request` · `checkin submit-writes-day` · `telemetry live-upload-and-dedupe` | Multi-day selection state is a client-state failure domain the single-day journey cannot reach; it also holds the direct-API write contract (invalid day, out-of-range date, the -1 past-only rule) | live (webapp) | built |
 | `checkin-concurrency-live-check` | Cross-day rapid-tap burst; global concurrency cap and the `dataset.saving` flag surviving a re-render | `checkin.checkin` | `checkin concurrency-cap-holds` · `checkin saving-label-recovers` | Concurrency is only observable under real interleaved in-flight POSTs; instruments the network without mocking it | live (webapp) | built |

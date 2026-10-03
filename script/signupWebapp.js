@@ -115,6 +115,7 @@ function buildSignupIdentifyTeamFields_(roster, storedTeam) {
   var team = canonicalTeamName_sw_(roster.entries, storedTeam);
   return {
     teamList: roster.suggestions,
+    knownTeams: roster.knownTeams,
     aoList: roster.suggestions,
     goalList: roster.suggestions,
     teamType: team ? 'other' : '',
@@ -494,7 +495,7 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
   if (!match) {
     GasLogger.log('signupWebapp.identify', { matched: false });
     var blankTeam = buildSignupIdentifyTeamFields_(roster, '');
-    return { ok: true, matched: false, months: months, teamList: blankTeam.teamList, aoList: blankTeam.aoList, goalList: blankTeam.goalList };
+    return { ok: true, matched: false, months: months, teamList: blankTeam.teamList, knownTeams: blankTeam.knownTeams, aoList: blankTeam.aoList, goalList: blankTeam.goalList };
   }
 
   var teamFields = buildSignupIdentifyTeamFields_(roster, match.team || match.otherTeam || '');
@@ -505,6 +506,7 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
     matched: true,
     months: months,
     teamList: teamFields.teamList,
+    knownTeams: teamFields.knownTeams,
     aoList: teamFields.aoList,
     goalList: teamFields.goalList,
     data: {

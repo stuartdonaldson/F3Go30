@@ -259,15 +259,21 @@ function canonicalTeamName_(entries, name) {
 }
 
 /**
- * Read-only roster view for sign-up identify: the suggestion list plus the parsed entries (for
- * canonicalTeamName_ on a stored team) from one TeamDB read. Never creates TeamDB.
+ * Read-only roster view for sign-up identify, from one TeamDB read (never creates TeamDB):
+ * suggestions (the time-windowed list), knownTeams (every non-hidden name regardless of age —
+ * the client's "Did you mean …?" check compares against these), and the parsed entries (for
+ * canonicalTeamName_ on a stored team).
  * @param {function(string): ?{primary: *}=} configLookup Test seam; defaults to getConfigValue_.
- * @returns {{suggestions: Array<string>, entries: Array<Object>}}
+ * @returns {{suggestions: Array<string>, knownTeams: Array<string>, entries: Array<Object>}}
  */
 function readTeamRosterView_(spreadsheet, now, configLookup) {
   var entries = readTeamDbEntries_(spreadsheet.getSheetByName(TEAM_DB_SHEET_NAME_));
+  var knownTeams = entries.filter(function(e) { return e.status !== 'hidden'; })
+    .map(function(e) { return e.team; })
+    .sort(function(a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
   return {
     suggestions: buildTeamSuggestions_(entries, now, resolveTeamSuggestWindowDays_(spreadsheet, configLookup)),
+    knownTeams: knownTeams,
     entries: entries
   };
 }

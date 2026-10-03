@@ -104,8 +104,15 @@ test('readTeamRosterView_ uses Config TeamSuggestWindowDays, defaulting when abs
   assert.deepEqual(suggestions(() => ({ primary: 'abc' })), [SOLO_TEAM_LABEL_, 'Older', 'Recent']);
   assert.deepEqual(suggestions(() => ({ primary: 30 })), [SOLO_TEAM_LABEL_, 'Recent']);
   assert.deepEqual(readTeamRosterView_(fakeSpreadsheet({}), NOW, () => null),
-    { suggestions: [SOLO_TEAM_LABEL_], entries: [] });
+    { suggestions: [SOLO_TEAM_LABEL_], knownTeams: [], entries: [] });
   assert.equal(readTeamRosterView_(ss, NOW, () => null).entries.length, 2);
+});
+
+test('readTeamRosterView_ knownTeams: every non-hidden roster name regardless of age, sorted', () => {
+  const rows = [['thunderdome', '', 'active', daysAgo(400), 9], ['Ballard', '', '', '', 0],
+    ['Hidden Team', '', 'hidden', daysAgo(1), 1]];
+  const ss = fakeSpreadsheet({ [TEAM_DB_SHEET_NAME_]: makeFakeSheet_(TEAM_DB_HEADERS_, rows) });
+  assert.deepEqual(readTeamRosterView_(ss, NOW, () => null).knownTeams, ['Ballard', 'thunderdome']);
 });
 
 test('canonicalTeamName_: roster spelling for a name/alias match, else the trimmed input', () => {
