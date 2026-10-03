@@ -131,6 +131,40 @@ assert.equal(ttlMonthStart_(new Date('2026-01-05T00:00:00'), -1).getTime(), new 
     ['handleFormSubmit_', 'handleTrackerEdit_', 'onFormSubmit']);
 })();
 
+// ── removeRetiredFormSubmitTriggers_ — ADR-024 (F3Go30-61ln.2): the HC Form is retired, so the
+// sweep deletes every form-submit trigger (current + legacy handler names) on ANY source, and
+// nothing else ─────────────────────────────────────────────────────────────────────────────
+(function() {
+  const { removeRetiredFormSubmitTriggers_ } = require('../script/TrackerTriggerLifecycle.js');
+  var deleted = [];
+  function makeFakeTrigger(handlerFunction, sourceId) {
+    return {
+      getHandlerFunction: function() { return handlerFunction; },
+      getTriggerSourceId: function() { return sourceId; }
+    };
+  }
+  global.ScriptApp = {
+    getProjectTriggers: function() {
+      return [
+        makeFakeTrigger('handleTrackerEdit_', 'tracker-a'),
+        makeFakeTrigger('handleFormSubmit_', 'tracker-a'),
+        makeFakeTrigger('handleFormSubmit_', 'tracker-live'),
+        makeFakeTrigger('onFormSubmit', 'tracker-old'),
+        makeFakeTrigger('autoGenerateNextMonthTracker', 'template')
+      ];
+    },
+    deleteTrigger: function(trigger) { deleted.push(trigger); }
+  };
+  var removed = removeRetiredFormSubmitTriggers_();
+  assert.deepEqual(removed, [
+    { handlerFunction: 'handleFormSubmit_', sourceId: 'tracker-a' },
+    { handlerFunction: 'handleFormSubmit_', sourceId: 'tracker-live' },
+    { handlerFunction: 'onFormSubmit', sourceId: 'tracker-old' },
+  ]);
+  assert.deepEqual(deleted.map(function(t) { return t.getHandlerFunction(); }),
+    ['handleFormSubmit_', 'handleFormSubmit_', 'onFormSubmit'], 'edit and other triggers untouched');
+})();
+
 // ── ttlMergeTrackerRowsAcrossNamespaces_ — multi-namespace sweep (F3Go30-jykq) ──────────────
 // syncTrackerTriggers_ only ever read the bound (Template) spreadsheet's own TrackerDB, so a
 // tracker created inside an ADR-014 namespace-provisioned copy (tools/smokeTestNamespace.js)

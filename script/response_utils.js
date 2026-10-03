@@ -54,6 +54,18 @@ var RESPONSE_COLUMN_MAP = {
   }
 };
 
+/** A mapped Responses cell; throws when the column map lacks key (a required column). */
+function getResponseValue_(responseRow, columnMap, key) {
+  if (!columnMap || typeof columnMap[key] !== 'number') throw new Error('Missing header mapping for ' + key);
+  return responseRow[columnMap[key]];
+}
+
+/** Like getResponseValue_ but returns '' when key is unmapped — for optional columns (e.g. NAG_EMAIL). */
+function getOptionalResponseValue_(responseRow, columnMap, key) {
+  if (!columnMap || typeof columnMap[key] !== 'number') return '';
+  return responseRow[columnMap[key]] || '';
+}
+
 function getResponseColumnSpec_(key) {
   if (!(key in RESPONSE_COLUMN_MAP)) throw new Error('Unknown response column key: ' + key);
   return RESPONSE_COLUMN_MAP[key];
@@ -223,9 +235,9 @@ function buildGoalSummaryLinesFromResponse_(responseRow, responseColumns, respon
  * goal settings (Team/WHO/WHAT/HOW/TeamType/OtherTeam/Phone/NagEmail) into the current
  * tracker's Responses sheet, then emails them a summary.
  *
- * Use when a PAX needs their settings backfilled manually outside the normal form-submit
- * path (which handles this automatically via maybeReuseLastMonthsGoals_). Looks up by
- * email via PaxDB's Email column since only an email address is known at call time.
+ * Use when a PAX needs their settings backfilled manually (the sign-up page prefills from
+ * PaxDB on its own). Looks up by email via PaxDB's Email column since only an email address is
+ * known at call time.
  *
  * Usage: applyPaxDbSettingsToCurrentTracker('foo@example.com')
  */
@@ -320,6 +332,8 @@ function sendResponseSettingsEmail(spreadsheet, email, recipientName, data) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     RESPONSE_COLUMN_MAP,
+    getResponseValue_,
+    getOptionalResponseValue_,
     getResponseColumnSpec_,
     getResponseColumnHeader_,
     getResponseFieldTitles_,

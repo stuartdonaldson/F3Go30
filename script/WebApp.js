@@ -474,12 +474,13 @@ function adminListTriggers_(payload, e) {
 }
 
 function adminDeleteOrphanedTriggers_(payload, e) {
-  // Removes only per-tracker installable triggers (form-submit + edit — every trigger type
+  // Removes only per-tracker installable triggers (edit, plus retired form-submit — every type
   // that's registered per-Tracker-spreadsheet, F3Go30-440b.4) whose source spreadsheet is
   // trashed or gone — the leak cleanupTracker used to leave behind before it started
-  // calling clearFormSubmitTrigger/clearTrackerEditTrigger_. Never touches other trigger
-  // types (e.g. the monthly auto-generate trigger) regardless of source state.
-  var formHandlers = [FORM_SUBMIT_HANDLER_, LEGACY_FORM_SUBMIT_HANDLER_, TRACKER_EDIT_HANDLER_];
+  // clearing per-tracker triggers. Never touches other trigger types (e.g. the monthly
+  // auto-generate trigger) regardless of source state. The handler list is
+  // TrackerTriggerLifecycle.js's TTL_PER_TRACKER_HANDLERS_ — one list, not a local copy.
+  var formHandlers = TTL_PER_TRACKER_HANDLERS_;
   var removed = [];
   ScriptApp.getProjectTriggers().forEach(function(trigger) {
     if (formHandlers.indexOf(trigger.getHandlerFunction()) === -1) return;
@@ -750,8 +751,7 @@ function adminGetSheetFormulas_(payload, e) {
 
 function adminSortTracker_(payload, e) {
   // Re-sorts an arbitrary tracker's Tracker sheet by column B then column A — the same
-  // sort handleFormSubmit_/handleSignupSave_ apply on every write (addResponseOnSubmit.js
-  // sortTrackerSheet_). Exposed as a standalone admin action so a tracker written to by a
+  // sort handleSignupSave_ applies on every write (trackerSheet.js sortTrackerSheet_). Exposed as a standalone admin action so a tracker written to by a
   // save path that predates that sort being wired up can be fixed without a full re-deploy.
   if (!payload.sheetId) {
     return jsonOutput_({ ok: false, error: 'sheetId is required' });

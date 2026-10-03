@@ -137,4 +137,16 @@ assert.ok(slackMsg.includes('Sign up here: https://tinyurl.com/signup'), 'signup
 assert.ok(slackMsg.includes('July Tracker: https://tinyurl.com/tracker'), 'tracker link present');
 assert.ok(!/form/i.test(slackMsg), 'no form mention at all');
 
+// --- response_utils send sanitizers (moved from test_signup_reuse.js when ADR-024 retired the
+// Form-only signupReuse.js) ---
+{
+  const { sanitizeTextForEmailLine_, sanitizeEmailAddressForSend_, getResponseValue_, getOptionalResponseValue_ } = require('../script/response_utils.js');
+  assert.equal(sanitizeTextForEmailLine_('  F3\nNew\tGuy\u0007  '), 'F3 New Guy');
+  assert.equal(sanitizeEmailAddressForSend_('  Test<User>@Example.com\n'), '', 'invalid address characters are rejected');
+  assert.equal(sanitizeEmailAddressForSend_(' Test.User+go30@example.com\n'), 'test.user+go30@example.com');
+  assert.equal(getResponseValue_(['a', 'b'], { WHO: 1 }, 'WHO'), 'b');
+  assert.throws(() => getResponseValue_(['a'], {}, 'WHO'), /Missing header mapping for WHO/);
+  assert.equal(getOptionalResponseValue_(['a'], {}, 'NAG_EMAIL'), '');
+}
+
 console.log('test_utilities.js: PASS');

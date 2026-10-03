@@ -29,11 +29,14 @@ var trackerTriggerLifecycleGo30ToolsModule_ = gasRequire_('./go30tools.js', ['_r
 var ttlReadTrackerDbRowsBySheetId_ = trackerTriggerLifecycleGo30ToolsModule_._readTrackerDbRowsBySheetId_;
 var ttlListNamespaceRegistryRows_ = trackerTriggerLifecycleGo30ToolsModule_._listNamespaceRegistryRows_;
 var TTL_TRACKER_EDIT_HANDLER_ = 'handleTrackerEdit_';
-var TTL_FORM_SUBMIT_HANDLER_ = (typeof globalThis !== 'undefined' && globalThis.FORM_SUBMIT_HANDLER_) || 'handleFormSubmit_';
-var TTL_LEGACY_FORM_SUBMIT_HANDLER_ = (typeof globalThis !== 'undefined' && globalThis.LEGACY_FORM_SUBMIT_HANDLER_) || 'onFormSubmit';
 
-// Every per-tracker installable trigger handler this sweep cleans up on trash/aging-out.
-var TTL_PER_TRACKER_HANDLERS_ = [TTL_TRACKER_EDIT_HANDLER_, TTL_FORM_SUBMIT_HANDLER_, TTL_LEGACY_FORM_SUBMIT_HANDLER_];
+// ADR-024 retired the HC Google Form. These form-submit handler names (current + legacy) no longer
+// exist in code; they survive only so the sweep can delete triggers still registered under them.
+var TTL_RETIRED_FORM_SUBMIT_HANDLERS_ = ['handleFormSubmit_', 'onFormSubmit'];
+
+// Every per-tracker installable trigger handler — THE list (WebApp.js's deleteOrphanedTriggers and
+// go30tools.js's cleanupTrackerArtifact_ use it too, via clearAllPerTrackerTriggersBySheetId_).
+var TTL_PER_TRACKER_HANDLERS_ = [TTL_TRACKER_EDIT_HANDLER_].concat(TTL_RETIRED_FORM_SUBMIT_HANDLERS_);
 
 /** Same YYYY-MM/YYYY-MM-DD-tolerant parse as go30tools.js's _parseDateish_ (duplicated to avoid
  * a circular require — see PaxCache.js's own comment on this convention). */
@@ -158,8 +161,7 @@ function ttlMergeTrackerRowsAcrossNamespaces_(boundTrackerState, namespaceRows, 
  * Removes every per-tracker installable trigger (form-submit + edit, current and legacy
  * handler names) whose source matches sheetId — direct ScriptApp filtering, same pattern as
  * WebApp.js's deleteOrphanedTriggers, deliberately not routed through
- * clearTrackerEditTrigger_/clearFormSubmitTrigger (which both require opening the spreadsheet
- * by id first — unnecessary here, and can't be relied on for a spreadsheet that's trashed or
+ * clearTrackerEditTrigger_ (which requires opening the spreadsheet by id first — unnecessary here, and can't be relied on for a spreadsheet that's trashed or
  * gone).
  * @param {string} sheetId
  * @returns {number} count of triggers removed.
@@ -171,6 +173,22 @@ function clearAllPerTrackerTriggersBySheetId_(sheetId) {
     if (trigger.getTriggerSourceId() !== sheetId) return;
     ScriptApp.deleteTrigger(trigger);
     removed++;
+  });
+  return removed;
+}
+
+/**
+ * ADR-024: deletes every trigger registered under a retired form-submit handler name, whatever
+ * its source — a Form-era tracker still inside the active window keeps its edit trigger but must
+ * lose this one, which the trash/aged-out cleanup alone would never reach.
+ * @returns {Array<{handlerFunction: string, sourceId: ?string}>} what was removed.
+ */
+function removeRetiredFormSubmitTriggers_() {
+  var removed = [];
+  ScriptApp.getProjectTriggers().forEach(function(trigger) {
+    if (TTL_RETIRED_FORM_SUBMIT_HANDLERS_.indexOf(trigger.getHandlerFunction()) === -1) return;
+    removed.push({ handlerFunction: trigger.getHandlerFunction(), sourceId: trigger.getTriggerSourceId() || null });
+    ScriptApp.deleteTrigger(trigger);
   });
   return removed;
 }
@@ -201,6 +219,8 @@ function syncTrackerTriggers_(spreadsheet, today) {
       GasLogger.log('syncTrackerTriggers_.namespaceUnreachable', { namespace: nsRow.namespace, templateId: nsRow.templateId, error: err.message });
     }
   );
+
+  var retiredFormTriggers = removeRetiredFormSubmitTriggers_();
 
   var existingEditTriggerSourceIds = ScriptApp.getProjectTriggers()
     .filter(function(trigger) { return trigger.getHandlerFunction() === TTL_TRACKER_EDIT_HANDLER_; })
@@ -240,8 +260,12 @@ function syncTrackerTriggers_(spreadsheet, today) {
     }
   });
 
-  GasLogger.log('syncTrackerTriggers_', { backfilledCount: backfilledCount, cleanedCount: cleanedCount });
-  return { ok: true, backfilledCount: backfilledCount, cleanedCount: cleanedCount, detail: detail };
+  retiredFormTriggers.forEach(function(t) {
+    detail.push({ sheetId: t.sourceId, action: 'formSubmitTriggerRemoved', reason: 'hc_form_retired' });
+  });
+
+  GasLogger.log('syncTrackerTriggers_', { backfilledCount: backfilledCount, cleanedCount: cleanedCount, removed: retiredFormTriggers.length });
+  return { ok: true, backfilledCount: backfilledCount, cleanedCount: cleanedCount, formSubmitTriggersRemoved: retiredFormTriggers.length, detail: detail };
 }
 
 if (typeof module !== 'undefined' && module.exports) {
@@ -249,6 +273,8 @@ if (typeof module !== 'undefined' && module.exports) {
     planTrackerTriggerSync_: planTrackerTriggerSync_,
     ttlMergeTrackerRowsAcrossNamespaces_: ttlMergeTrackerRowsAcrossNamespaces_,
     clearAllPerTrackerTriggersBySheetId_: clearAllPerTrackerTriggersBySheetId_,
+    removeRetiredFormSubmitTriggers_: removeRetiredFormSubmitTriggers_,
+    TTL_PER_TRACKER_HANDLERS_: TTL_PER_TRACKER_HANDLERS_,
     syncTrackerTriggers_: syncTrackerTriggers_,
     ttlParseDateish_: ttlParseDateish_,
     ttlMonthStart_: ttlMonthStart_

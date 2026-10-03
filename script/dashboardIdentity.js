@@ -66,7 +66,7 @@ var readPaxDbRowsBySheetId_dw_ = dashboardIdentityGo30ToolsModule_._readPaxDbRow
 var getCachedTrackerDbAvailableMonths_dw_ = dashboardIdentityGo30ToolsModule_.getCachedTrackerDbAvailableMonths_;
 var setCachedTrackerDbAvailableMonths_dw_ = dashboardIdentityGo30ToolsModule_.setCachedTrackerDbAvailableMonths_;
 
-var dashboardIdentityAddResponseModule_ = gasRequire_('./addResponseOnSubmit.js', ['formatRegistrationMonth_']);
+var dashboardIdentityAddResponseModule_ = gasRequire_('./trackerSheet.js', ['formatRegistrationMonth_']);
 var formatRegistrationMonth_dw_ = dashboardIdentityAddResponseModule_.formatRegistrationMonth_;
 
 var dashboardIdentityIdentityTokenModule_ = gasRequire_('./IdentityToken.js', ['verifyIdentityToken_']);

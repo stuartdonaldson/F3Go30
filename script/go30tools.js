@@ -823,30 +823,18 @@ function cleanupTrackerArtifact_(sheetId, trashSpreadsheet) {
 	var triggerCleared = false;
 
 	try {
-		var triggerSs = SpreadsheetApp.openById(sheetId);
-		clearFormSubmitTrigger(triggerSs);
-		clearTrackerEditTrigger_(triggerSs);
+		// One per-tracker trigger list (TrackerTriggerLifecycle.js) — edit + retired form-submit.
+		clearAllPerTrackerTriggersBySheetId_(sheetId);
 		triggerCleared = true;
 	} catch (triggerErr) {
-		GasLogger.log('cleanupTrackerArtifact_.clearFormSubmitTriggerFailed', { error: triggerErr.message });
+		GasLogger.log('cleanupTrackerArtifact_.clearTriggersFailed', { error: triggerErr.message });
 	}
 
 	if (trashSpreadsheet) {
 		try {
 			var trackerSs = SpreadsheetApp.openById(sheetId);
-			var linkedFormUrl = trackerSs.getFormUrl();
-			if (linkedFormUrl) {
-				try {
-					var linkedForm = FormApp.openByUrl(linkedFormUrl);
-					var formId = linkedForm.getId();
-					linkedForm.removeDestination();
-					DriveApp.getFileById(formId).setTrashed(true);
-					GasLogger.log('cleanupTrackerArtifact_.trashForm', { formId: formId });
-					formTrashed = true;
-				} catch (formErr) {
-					GasLogger.log('cleanupTrackerArtifact_.trashFormFailed', { error: formErr.message });
-				}
-			}
+			// A Form-era tracker's linked HC Form (ADR-024) — the same unlink+trash as tracker creation.
+			formTrashed = retireCopiedHcForm_(trackerSs).retired;
 			DriveApp.getFileById(sheetId).setTrashed(true);
 			GasLogger.log('cleanupTrackerArtifact_.trashSpreadsheet', { sheetId: sheetId });
 			trashed = true;

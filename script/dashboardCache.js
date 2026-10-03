@@ -5,7 +5,7 @@
  * split-cache finding — see docs/staging/review-260910.md). Gives the three
  * previously-duplicated CacheService key-string literals (dashboardWebapp.js's own copies,
  * TrackerEditTrigger.js's RESPONSES_LAYOUT_CACHE_PREFIX_TE_/RESPONSES_VALUES_CACHE_PREFIX_TE_,
- * and addResponseOnSubmit.js's FULL_ROSTER_CACHE_PREFIX_TRACKER_ARS_/RESPONSES_ARS_) one home:
+ * and trackerSheet.js's — then addResponseOnSubmit.js's — FULL_ROSTER_CACHE_PREFIX_TRACKER_ARS_/RESPONSES_ARS_) one home:
  * both of those files now require this module's key-builder functions instead of hand-copying
  * the prefix strings. Pure structural move — no cache key string or TTL changed; this file's
  * contents are the original dashboardWebapp.js block verbatim.

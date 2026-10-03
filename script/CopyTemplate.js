@@ -239,9 +239,8 @@ function copyTemplateToNewEnvironment_(folderName, sourceTemplateId, trackerCoun
 		// C4 (F3Go30-o39s.5): copied trackers get no triggers of their own from Drive's file
 		// copy (installable triggers live in the script project that created them, not on the
 		// spreadsheet file), so without this a human editing a namespace/smoke tracker directly
-		// would silently get no PaxCache invalidation at all. No setupFormSubmitTrigger call here
-		// deliberately — copied trackers carry no HC Form (formId is left blank; see
-		// buildCopiedTrackerDbRow_ below), so there is nothing that could ever submit into one.
+		// would silently get no PaxCache invalidation at all. Copied trackers carry no HC Form
+		// (formId is left blank; see buildCopiedTrackerDbRow_ below; ADR-024 retired the Form).
 		ct_setupTrackerEditTrigger_(copiedSpreadsheet);
 		logFn('  Installed edit trigger for ' + copiedFile.getName());
 

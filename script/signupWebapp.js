@@ -1,17 +1,16 @@
 /*
  * signupWebapp.js
  *
- * Backend for the web-based HC signup form (doGet/doPost ?cmd=signup), per
- * docs/signup-webapp-requirements.md. Independent implementation from the Google Form's
- * onFormSubmit path (script/addResponseOnSubmit.js) — does not call into it — but must produce
- * the same net effect on the Responses/Tracker sheets (see requirements doc §8, §11).
+ * Backend for the web-based signup (doPost ?cmd=signup), per docs/signup-webapp-requirements.md.
+ * Since ADR-024 retired the HC Google Form this is the only sign-up path; it writes the
+ * Responses/Tracker sheets directly.
  */
 
 var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').gasRequire_ : globalThis.gasRequire_;
 var signupWebappResponseUtilsModule_ = gasRequire_('./response_utils.js', ['getResponseEmailValue_', 'resolveResponseColumns']);
 var getResponseEmailValue_ = signupWebappResponseUtilsModule_.getResponseEmailValue_;
 
-var signupWebappAddResponseModule_ = gasRequire_('./addResponseOnSubmit.js', ['formatRegistrationMonth_', 'sortTrackerSheet_']);
+var signupWebappAddResponseModule_ = gasRequire_('./trackerSheet.js', ['formatRegistrationMonth_', 'sortTrackerSheet_']);
 var formatRegistrationMonth_ = signupWebappAddResponseModule_.formatRegistrationMonth_;
 var sortTrackerSheet_ = signupWebappAddResponseModule_.sortTrackerSheet_;
 
@@ -84,8 +83,7 @@ function isDeletedSignupRow_(row, responseColumns) {
 /**
  * Finds an active (non-DELETED) row matching F3 Name alone, ignoring email — used to detect
  * an email change: same PAX, different email, per ADR-008's "keyed on F3 Name so a PAX can
- * change their email" convention already used by the Form-submit path's dedup
- * (deduplicateResponsesSheet_ in addResponseOnSubmit.js).
+ * change their email" convention.
  */
 function findSignupMatchByF3NameOnly_(rows, f3Name, responseColumns) {
   var normName = normalizeIdentityValue_(f3Name);
@@ -124,9 +122,8 @@ function buildSignupIdentifyTeamFields_(roster, storedTeam) {
 }
 
 /**
- * Mirrors handleFormSubmit_'s Tracker dedup check exactly (addResponseOnSubmit.js Phase 4)
- * — case-insensitive, trim/case-fold normalized — so the webapp's independent save path
- * produces the same net effect (requirements doc §8, §11).
+ * Tracker uniqueness check — case-insensitive, trim/case-fold normalized (requirements doc
+ * §8, §11).
  */
 function trackerHasF3Name_(trackerNameColumnRows, f3Name) {
   var norm = String(f3Name || '').trim().toLowerCase();
@@ -137,8 +134,7 @@ function trackerHasF3Name_(trackerNameColumnRows, f3Name) {
 
 /**
  * Finds the 0-based offset (relative to row 4) of the first blank F3 Name slot in the
- * Tracker's name column. Mirrors handleFormSubmit_'s emptyIdx logic exactly
- * (addResponseOnSubmit.js Phase 4: `dataValues.findIndex(row => row[0] === '')`) — initSheets
+ * Tracker's name column — initSheets
  * leaves row 4 as a blank template row (formulas intact, F3 Name cleared) for the first real
  * entry to fill in; skipping straight to trackerLastRow + 1 without checking for this slot
  * leaves it permanently blank.
@@ -161,9 +157,8 @@ function maxColumnIndex_(responseColumns) {
 }
 
 /**
- * Maps webapp signup form fields into a Responses row array — independent of
- * onFormSubmitLocked_'s Form-driven row shape, but targeting the same RESPONSE_COLUMN_MAP
- * columns so downstream sheets (Goals by HIM, Tracker VLOOKUP) see identical data.
+ * Maps webapp signup form fields into a Responses row array, targeting RESPONSE_COLUMN_MAP
+ * columns so downstream sheets (Goals by HIM, Tracker VLOOKUP) read it.
  *
  * existingRow: the matched row to update in place (array), or null/undefined to build a new row.
  * responseColumns: column-index map from resolveResponseColumns — FEEDBACK_RATING/FEEDBACK_COMMENT
@@ -287,7 +282,7 @@ function addOneMonthKey_(key) {
 
 /**
  * Parses the Template's TrackerDB sheet (header row + data rows) into row objects — case-insensitive
- * header lookup, same convention as signupReuse.js's resolveTrackerReferenceFromLinks_. Rows
+ * header lookup, the TrackerDB header-lookup convention. Rows
  * without a StartDate are skipped (incomplete/in-progress rows).
  */
 function parseLinksRows_(values) {
@@ -398,7 +393,7 @@ function selectTargetMonth_(months, targetMonth) {
 
 // ─────────────────────────────────────────────────────────────────────────
 // GAS orchestration (not unit-tested — composes the pure functions above;
-// verified against the live TEST_APP deployment, same boundary as signupReuse.js's
+// verified against the live TEST_APP deployment, the same boundary the retired Form-path reuse code had
 // sheet-mutating functions).
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -526,9 +521,8 @@ function handleSignupIdentify_(templateSpreadsheet, payload) {
 /**
  * cmd=signup save action: writes the signup to the chosen target month's Responses sheet
  * (update in place if a match exists there, else a new row), then ensures a Tracker row exists
- * for that F3 Name — independent implementation, but the same net effect as handleFormSubmit_
- * (requirements doc §8, §11): same exact-match Tracker uniqueness check (trackerHasF3Name_),
- * same formula-row-copy mechanics.
+ * for that F3 Name (requirements doc §8, §11): exact-match Tracker uniqueness check
+ * (trackerHasF3Name_), then a formula-row copy.
  */
 function handleSignupSave_(templateSpreadsheet, payload) {
   var months = getCurrentAndNextMonths_(templateSpreadsheet, payload.targetSheetId, payload.contextDate);
@@ -585,8 +579,8 @@ function handleSignupSave_(templateSpreadsheet, payload) {
   } else {
     // No exact (name+email) match — check whether this is the same PAX under a different
     // email (ADR-008). If so, retire the old row (DELETED) rather than leaving it sitting
-    // there as an active duplicate; the new row stands on its own, same as the Form path's
-    // deduplicateResponsesSheet_ never merges old + new on an email change.
+    // there as an active duplicate; the new row stands on its own — old and new are never
+    // merged on an email change.
     var nameOnlyMatch = findSignupMatchByF3NameOnly_(state.dataRows, payload.f3Name, state.columns);
     if (nameOnlyMatch) {
       state.sheet.getRange(nameOnlyMatch.rowIndex + 2, state.columns.PARTICIPATION + 1).setValue('DELETED');
@@ -662,8 +656,7 @@ function handleSignupSave_(templateSpreadsheet, payload) {
           .copyTo(trackerSheet.getRange(nextRow, 2, 1, lastColumn - 1));
       }
 
-      // Clear manually-entered numbers so a copied formula row starts clean (mirrors
-      // handleFormSubmit_'s same cleanup — addResponseOnSubmit.js Phase 4).
+      // Clear manually-entered numbers so a copied formula row starts clean.
       var rowRange = trackerSheet.getRange(nextRow, 1, 1, lastColumn);
       var rowValues = rowRange.getValues()[0];
       var rowFormulas = rowRange.getFormulas()[0];
@@ -687,8 +680,7 @@ function handleSignupSave_(templateSpreadsheet, payload) {
       GasLogger.log('signupWebapp.save', { trackerRowAdded: nextRow });
     }
 
-    // Mirrors handleFormSubmit_'s Phase 5 (addResponseOnSubmit.js) — re-sort Tracker by
-    // column B then column A on every save, not just on insert, so an in-place score/goal
+    // Re-sort Tracker by column B then column A on every save, not just on insert, so an in-place score/goal
     // edit that changes standings is reflected immediately too.
     sortTrackerSheet_(trackerSheet);
   }

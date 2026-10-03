@@ -154,8 +154,6 @@ const ENTRY_POINT_REGISTRY = {
   // ── installable and simple triggers ───────────────────────────────────────────────────────
   handleTrackerEdit_:
     '[trigger] forSpreadsheet().onEdit() handler (TrackerEditTrigger.js) — updates the PAX row and cache on a genuine Sheets-UI edit. Never fires for API writes (ADR-013)',
-  handleFormSubmit_:
-    '[trigger] forSpreadsheet().onFormSubmit() handler (addResponseOnSubmit.js) — writes the Responses row and dispatches the settings/goal-reuse email; resolves its spreadsheet from the event\'s own range',
   autoGenerateNextMonthTracker:
     '[trigger] monthly time-based handler (CreateNewTracker.js) — creates next month\'s tracker and emails Site Q',
   markEmptyCellsAsMinusOne:
@@ -224,7 +222,6 @@ const ENTRY_POINT_CLASSES = {
   'route.doPost': CLASS_ROUTES,
 
   handleTrackerEdit_: CLASS_TRIGGERS,
-  handleFormSubmit_: CLASS_TRIGGERS,
   autoGenerateNextMonthTracker: CLASS_TRIGGERS,
   markEmptyCellsAsMinusOne: CLASS_TRIGGERS,
   sendNagEmail: CLASS_TRIGGERS,
@@ -319,8 +316,6 @@ const ENTRY_POINT_DEFERRED = {
   // F3Go30-sit-trigger-quota-exceeded) — so these stay deferred, now [permanent] rather than
   // [backlog], since the blocker is structural (a standing architecture decision), not a
   // transient quota that will clear.
-  handleFormSubmit_:
-    '[permanent] handler logic is node-tested (test_form_submit_dispatch.js, test_add_response_on_submit.js); proving the installed trigger fires would need a live Playwright drive of the tracker\'s actual linked Google Form, but (unlike handleTrackerEdit_\'s Sheets grid, whose click coordinates were calibrated against a previously-viewed live layout) this project\'s live-check authoring has no live visual access to calibrate the Form\'s real question layout against, and that layout is Template content, not a stable code constant — the same blind-calibration objection tracker-edit-trigger-live-check.spec.js already declines for its header-row/Bonus-Tracker cases — F3Go30-y8j7.3',
   autoGenerateNextMonthTracker:
     '[backlog] same body as admin.runAutoGenerate, which already calls this exact trigger-named function (not an _ helper) — the dispatch is correct today; only blocked live by the SIT trigger quota (bd memory F3Go30-sit-trigger-quota-exceeded), which is transient ops state, not a structural blocker — F3Go30-y8j7.3',
   markEmptyCellsAsMinusOne:

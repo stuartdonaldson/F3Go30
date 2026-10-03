@@ -13,8 +13,7 @@
  * nothing to do with any user-facing round trip's latency — see
  * docs/staging/tracker-edit-cache-invalidation.md.
  *
- * Registered centrally (ADR-010 pattern, mirrors addResponseOnSubmit.js's setupFormSubmitTrigger/
- * clearFormSubmitTrigger exactly): installable triggers run using the code of the project that
+ * Registered centrally (ADR-010 pattern): installable triggers run using the code of the project that
  * creates them, not the project bound to the watched spreadsheet, so an edit trigger created
  * here from the Template's script project can reach the shared PaxCache PropertiesService store
  * that a Tracker copy's own (unused) bound script never could.
@@ -216,7 +215,7 @@ function rebuildRosterIndexAfterWipe_te_(sheet, sheetName, sheetId) {
 /**
  * Installs the edit trigger for a specific tracker spreadsheet. Callable from any script
  * project with access to `spreadsheet` (e.g. the Template, for a tracker it just created) —
- * same centralization rationale as setupFormSubmitTrigger.
+ * the ADR-010 centralization rationale.
  * @param {Spreadsheet} spreadsheet Target tracker spreadsheet.
  */
 function setupTrackerEditTrigger_(spreadsheet) {
@@ -244,8 +243,7 @@ function clearTrackerEditTrigger_(spreadsheet) {
 
 /**
  * Resolves the spreadsheet an edit event landed in directly from the event's own range, rather
- * than assuming the handler runs bound to the target spreadsheet (ADR-010) — same pattern as
- * resolveFormSubmitSpreadsheet_ (addResponseOnSubmit.js).
+ * than assuming the handler runs bound to the target spreadsheet (ADR-010).
  * @param {Object} e Edit event object (forSpreadsheet().onEdit()).
  * @returns {Spreadsheet}
  */
