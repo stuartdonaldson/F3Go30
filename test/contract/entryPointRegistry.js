@@ -156,6 +156,8 @@ const ENTRY_POINT_REGISTRY = {
   // ── installable and simple triggers ───────────────────────────────────────────────────────
   handleTrackerEdit_:
     '[trigger] forSpreadsheet().onEdit() handler (TrackerEditTrigger.js) — updates the PAX row and cache on a genuine Sheets-UI edit. Never fires for API writes (ADR-013)',
+  handleTeamDbEdit_:
+    '[trigger] forSpreadsheet(Template).onEdit() handler (teamDbEditTrigger.js) — a TeamDB Team-cell edit renames/merges the team and moves its PAX in the current/next tracker Responses + PaxDB (ADR-023, F3Go30-qeuu.7)',
   autoGenerateNextMonthTracker:
     '[trigger] monthly time-based handler (CreateNewTracker.js) — creates next month\'s tracker and emails Site Q',
   markEmptyCellsAsMinusOne:
@@ -225,6 +227,7 @@ const ENTRY_POINT_CLASSES = {
   'route.doPost': CLASS_ROUTES,
 
   handleTrackerEdit_: CLASS_TRIGGERS,
+  handleTeamDbEdit_: CLASS_TRIGGERS,
   autoGenerateNextMonthTracker: CLASS_TRIGGERS,
   markEmptyCellsAsMinusOne: CLASS_TRIGGERS,
   sendNagEmail: CLASS_TRIGGERS,
@@ -321,6 +324,8 @@ const ENTRY_POINT_DEFERRED = {
   // F3Go30-sit-trigger-quota-exceeded) — so these stay deferred, now [permanent] rather than
   // [backlog], since the blocker is structural (a standing architecture decision), not a
   // transient quota that will clear.
+  handleTeamDbEdit_:
+    '[backlog] decision logic node-tested (test_team_db_edit_trigger.js processTeamDbEdit_; renameTeamFromEdit_ in test_team_roster.js); proving the installed trigger fires needs a live Sheets-UI edit of the Template TeamDB — same blind-calibration objection as the tracker edit trigger header-row cases — F3Go30-qeuu.7',
   autoGenerateNextMonthTracker:
     '[backlog] same body as admin.runAutoGenerate, which already calls this exact trigger-named function (not an _ helper) — the dispatch is correct today; only blocked live by the SIT trigger quota (bd memory F3Go30-sit-trigger-quota-exceeded), which is transient ops state, not a structural blocker — F3Go30-y8j7.3',
   markEmptyCellsAsMinusOne:

@@ -36,6 +36,7 @@ test('AC2 findNearTeam_: punctuation-only and small-typo differences prompt with
   assert.equal(h.findNearTeam_(KNOWN, 'Thunderdom'), 'Thunderdome');
   assert.equal(h.findNearTeam_(KNOWN, 'Balard'), 'Ballard');
   assert.equal(h.findNearTeam_(KNOWN, 'Meditaiton'), 'Meditation');
+  assert.equal(h.findNearTeam_(KNOWN, 'Crucibel'), 'Crucible', 'adjacent swap');
 });
 
 test('findNearTeam_: short names only prompt on punctuation differences, never on a letter change', () => {
@@ -43,8 +44,9 @@ test('findNearTeam_: short names only prompt on punctuation differences, never o
   assert.equal(h.findNearTeam_(KNOWN, 'P.B.J.'), 'PBJ');
 });
 
-test('teamEditDistance_ is plain Levenshtein', () => {
+test('teamEditDistance_: Levenshtein, with an adjacent swap counted as one edit', () => {
   assert.equal(h.teamEditDistance_('kitten', 'sitting'), 3);
+  assert.equal(h.teamEditDistance_('crucibel', 'crucible'), 1);
   assert.equal(h.teamEditDistance_('', 'abc'), 3);
   assert.equal(h.teamEditDistance_('same', 'same'), 0);
 });

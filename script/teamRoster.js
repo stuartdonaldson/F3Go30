@@ -20,8 +20,8 @@ var teamRosterResponseUtilsModule_ = gasRequire_('./response_utils.js', ['resolv
 var resolveResponseColumns_tr_ = teamRosterResponseUtilsModule_.resolveResponseColumns;
 
 var TEAM_DB_SHEET_NAME_ = 'TeamDB';
-var TEAM_DB_HEADERS_ = ['Team', 'Aliases', 'Status', 'LastUsed', 'UseCount'];
-var TEAM_DB_COL_ = { TEAM: 0, ALIASES: 1, STATUS: 2, LAST_USED: 3, USE_COUNT: 4 };
+var TEAM_DB_HEADERS_ = ['Team', 'Aliases', 'Status', 'LastUsed', 'UseCount', 'Possible Duplicate'];
+var TEAM_DB_COL_ = { TEAM: 0, ALIASES: 1, STATUS: 2, LAST_USED: 3, USE_COUNT: 4, POSSIBLE_DUPLICATE: 5 };
 var SOLO_TEAM_LABEL_ = 'SOLO (no team)';
 var TEAM_SUGGEST_WINDOW_DAYS_DEFAULT_ = 90;
 var TEAM_SUGGEST_WINDOW_CONFIG_KEY_ = 'TeamSuggestWindowDays';
@@ -83,6 +83,86 @@ function findTeamEntry_(entries, name) {
     }
   }
   return null;
+}
+
+// ── Near-duplicate rule (F3Go30-qeuu.7) ─────────────────────────────────────────────────────
+// SERVER copy of the sign-up page's "Did you mean" rule (static-pages/src/index.html
+// teamNearKey_/teamEditDistance_/findNearTeam_). The two run in different runtimes and cannot
+// share code; test/test_team_near_match_parity.js runs both on the same cases so they can't drift.
+
+/** Letters and digits only ("Hawk's Nest" === "hawksnest"). */
+function teamNearKey_(name) {
+  return String(name == null ? '' : name).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/** Edit distance counting an adjacent swap ("Crucibel"/"Crucible") as one edit (optimal string alignment). */
+function teamEditDistance_(a, b) {
+  var d = [];
+  for (var i = 0; i <= a.length; i++) { d.push([i]); }
+  for (var j = 1; j <= b.length; j++) d[0][j] = j;
+  for (i = 1; i <= a.length; i++) {
+    for (j = 1; j <= b.length; j++) {
+      var cost = a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a.charAt(i - 1) === b.charAt(j - 2) && a.charAt(i - 2) === b.charAt(j - 1)) {
+        d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+      }
+    }
+  }
+  return d[a.length][b.length];
+}
+
+/**
+ * True when `a` is probably meant to be `b`: different text but the same name ignoring case,
+ * whitespace and punctuation, or within a small edit distance of it (none for names of 4 or fewer
+ * letters/digits, 1 up to 8, 2 beyond — measured on `a`, the same as the sign-up page).
+ */
+function isTeamNear_(a, b) {
+  var aText = String(a == null ? '' : a).trim();
+  var bText = String(b == null ? '' : b).trim();
+  if (!aText || !bText || aText === bText) return false;
+  var aKey = teamNearKey_(aText);
+  var bKey = teamNearKey_(bText);
+  if (!aKey || !bKey) return false;
+  if (aKey === bKey) return true;
+  var maxDist = aKey.length <= 4 ? 0 : (aKey.length <= 8 ? 1 : 2);
+  return teamEditDistance_(aKey, bKey) <= maxDist;
+}
+
+/**
+ * Possible Duplicate column values: for each active entry, the other active team it is probably a
+ * duplicate of — checked most-used first, so the flag points at the established spelling. Hidden
+ * entries get ''.
+ * @returns {Object<number, string>} rowNumber -> duplicate team name ('' for none).
+ */
+function planDuplicateFlags_(entries) {
+  var active = (entries || []).filter(function(e) { return e.status !== 'hidden'; });
+  var byUse = active.slice().sort(function(x, y) { return y.useCount - x.useCount; });
+  var flags = {};
+  (entries || []).forEach(function(e) { flags[e.rowNumber] = ''; });
+  active.forEach(function(e) {
+    for (var i = 0; i < byUse.length; i++) {
+      if (byUse[i] !== e && isTeamNear_(e.team, byUse[i].team)) {
+        flags[e.rowNumber] = byUse[i].team;
+        return;
+      }
+    }
+  });
+  return flags;
+}
+
+/** Recomputes TeamDB's Possible Duplicate column (adding its header to an older sheet). */
+function refreshTeamDbDuplicates_(sheet) {
+  var col = TEAM_DB_COL_.POSSIBLE_DUPLICATE + 1;
+  if (sheet.getLastColumn() < col || sheet.getRange(1, col).getValues()[0][0] !== TEAM_DB_HEADERS_[col - 1]) {
+    sheet.getRange(1, col).setValues([[TEAM_DB_HEADERS_[col - 1]]]);
+  }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  var flags = planDuplicateFlags_(readTeamDbEntries_(sheet));
+  var values = [];
+  for (var r = 2; r <= lastRow; r++) values.push([flags[r] || '']);
+  sheet.getRange(2, col, values.length, 1).setValues(values);
 }
 
 /**
@@ -242,6 +322,7 @@ function recordTeamUse_(spreadsheet, name, now, options) {
       return { team: existing.team, created: false };
     }
     sheet.appendRow([trimmed, '', 'active', now, 1]);
+    refreshTeamDbDuplicates_(sheet);
     GasLogger.log('recordTeamUse_.created', { team: trimmed });
     return { team: trimmed, created: true };
   }, function() {
@@ -301,9 +382,10 @@ function seedTeamDb_(spreadsheet, paxRecords) {
       sheet.getRange(u.rowNumber, 1, 1, u.values.length).setValues([u.values]);
     });
     if (plan.appends.length) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, plan.appends.length, TEAM_DB_HEADERS_.length)
+      sheet.getRange(sheet.getLastRow() + 1, 1, plan.appends.length, plan.appends[0].length)
         .setValues(plan.appends);
     }
+    refreshTeamDbDuplicates_(sheet);
     var result = { added: plan.appends.length, updated: plan.updates.length, total: entries.length + plan.appends.length };
     // Logged under already-registered Axiom field names (test/fixtures/axiomFieldRegistry.json).
     GasLogger.log('seedTeamDb_', { created: result.added, updated: result.updated, count: result.total });
@@ -320,14 +402,15 @@ function seedTeamDb_(spreadsheet, paxRecords) {
  * from's row is deleted. Otherwise from's row is renamed in place and its old name joins its
  * aliases. Aliases the new name's match key already covers are dropped as redundant.
  * matchKeys are every spelling that resolved to `from` — the cells a tracker rewrite targets.
+ * fromEntryOverride pins `from` to a specific entry (the row whose Team cell was just edited).
  * @returns {{ok: boolean, error: (string|undefined), merged: boolean, team: string,
  *   updates: Array<{rowNumber: number, values: Array}>, deleteRowNumber: ?number,
  *   matchKeys: Array<string>}}
  */
-function planTeamRename_(entries, from, to) {
+function planTeamRename_(entries, from, to, fromEntryOverride) {
   var newName = String(to == null ? '' : to).trim();
   if (!newName) return { ok: false, error: 'to is required' };
-  var fromEntry = findTeamEntry_(entries, from);
+  var fromEntry = fromEntryOverride || findTeamEntry_(entries, from);
   if (!fromEntry) return { ok: false, error: 'unknown_team' };
   var toEntry = findTeamEntry_(entries, newName);
   var merged = !!toEntry && toEntry !== fromEntry;
@@ -413,50 +496,90 @@ function renameTeam_(spreadsheet, from, to, deps) {
   var sheet = openOrCreateTeamDbSheet_(spreadsheet);
   return withTeamDbLock_('renameTeam_', function() {
     var plan = planTeamRename_(readTeamDbEntries_(sheet), from, to);
-    if (!plan.ok) return { ok: false, error: plan.error };
-
-    plan.updates.forEach(function(u) {
-      sheet.getRange(u.rowNumber, 1, 1, u.values.length).setValues([u.values]);
-    });
-    if (plan.deleteRowNumber) sheet.deleteRow(plan.deleteRowNumber);
-
-    var responsesUpdated = 0;
-    var trackersChanged = [];
-    (deps.trackerSheetIds || []).forEach(function(sheetId) {
-      var responses = deps.openById(sheetId).getSheetByName('Responses');
-      if (!responses || responses.getLastColumn() < 1) return;
-      var columns = resolveResponseColumns_tr_(responses.getRange(1, 1, 1, responses.getLastColumn()).getValues()[0]);
-      var changed = rewriteSheetTeamColumn_(responses, columns.TEAM + 1, plan.matchKeys, plan.team);
-      if (typeof columns.OTHER_TEAM === 'number') {
-        changed = changed.concat(rewriteSheetTeamColumn_(responses, columns.OTHER_TEAM + 1, plan.matchKeys, plan.team));
-      }
-      if (!changed.length) return;
-      responsesUpdated += changed.filter(function(v, i, a) { return a.indexOf(v) === i; }).length;
-      trackersChanged.push(sheetId);
-      deps.onTrackerChanged(sheetId);
-    });
-
-    var paxDbUpdated = 0;
-    var paxDb = spreadsheet.getSheetByName('PaxDB');
-    if (paxDb && paxDb.getLastRow() > 1 && (deps.trackerSheetIds || []).length) {
-      var headers = paxDb.getRange(1, 1, 1, paxDb.getLastColumn()).getValues()[0];
-      var sheetIdCol = headers.indexOf('SheetId');
-      var teamCol = headers.indexOf('Team');
-      if (sheetIdCol !== -1 && teamCol !== -1) {
-        var sheetIds = paxDb.getRange(2, sheetIdCol + 1, paxDb.getLastRow() - 1, 1).getValues();
-        paxDbUpdated = rewriteSheetTeamColumn_(paxDb, teamCol + 1, plan.matchKeys, plan.team, function(i) {
-          return deps.trackerSheetIds.indexOf(String(sheetIds[i][0])) !== -1;
-        }).length;
-      }
-    }
-
-    var result = { ok: true, merged: plan.merged, team: plan.team, responsesUpdated: responsesUpdated, paxDbUpdated: paxDbUpdated, trackersChanged: trackersChanged };
-    // Logged under already-registered Axiom field names (test/fixtures/axiomFieldRegistry.json).
-    GasLogger.log('renameTeam_', { alias: String(from), team: plan.team, mode: plan.merged ? 'merge' : 'rename', updated: responsesUpdated, rows: paxDbUpdated });
-    return result;
+    return applyTeamRenamePlan_(spreadsheet, sheet, plan, from, deps);
   }, function() {
     return { ok: false, error: 'lock_timeout' };
   });
+}
+
+/**
+ * F3Go30-qeuu.7: the TeamDB edit-to-reconcile path. The admin has already overwritten row
+ * `rowNumber`'s Team cell OLD -> NEW; this treats that row as OLD (it no longer says so in the
+ * sheet) and applies the same rename/merge as renameTeam_ — NEW matching another row merges the
+ * edited row into it, otherwise the row is renamed with OLD kept as an alias.
+ */
+function renameTeamFromEdit_(spreadsheet, rowNumber, oldName, newName, deps) {
+  var sheet = openOrCreateTeamDbSheet_(spreadsheet);
+  return withTeamDbLock_('renameTeamFromEdit_', function() {
+    var entries = readTeamDbEntries_(sheet);
+    var edited = null;
+    var asBeforeEdit = entries.map(function(e) {
+      if (e.rowNumber !== rowNumber) return e;
+      var raw = e.raw.slice();
+      raw[TEAM_DB_COL_.TEAM] = oldName;
+      edited = Object.assign({}, e, { team: String(oldName).trim(), raw: raw });
+      return edited;
+    });
+    if (!edited) return { ok: false, error: 'row_not_found' };
+    var plan = planTeamRename_(asBeforeEdit, oldName, newName, edited);
+    return applyTeamRenamePlan_(spreadsheet, sheet, plan, oldName, deps);
+  }, function() {
+    return { ok: false, error: 'lock_timeout' };
+  });
+}
+
+/**
+ * Applies a planTeamRename_ plan (caller holds the TeamDB lock): TeamDB row update/delete, then the
+ * Team (and Other team) cells of each given tracker's Responses sheet and that tracker's PaxDB
+ * rows. Other months keep their historical spelling. Refreshes Possible Duplicate.
+ * @param {{trackerSheetIds: Array<string>, openById: function(string): Spreadsheet,
+ *   onTrackerChanged: function(string)}} deps onTrackerChanged runs for each tracker whose
+ *   Responses changed (the caller wipes its caches and re-sorts it).
+ */
+function applyTeamRenamePlan_(spreadsheet, sheet, plan, from, deps) {
+  if (!plan.ok) return { ok: false, error: plan.error };
+
+  plan.updates.forEach(function(u) {
+    sheet.getRange(u.rowNumber, 1, 1, u.values.length).setValues([u.values]);
+  });
+  if (plan.deleteRowNumber) sheet.deleteRow(plan.deleteRowNumber);
+
+  var responsesUpdated = 0;
+  var trackersChanged = [];
+  (deps.trackerSheetIds || []).forEach(function(sheetId) {
+    var responses = deps.openById(sheetId).getSheetByName('Responses');
+    if (!responses || responses.getLastColumn() < 1) return;
+    var columns = resolveResponseColumns_tr_(responses.getRange(1, 1, 1, responses.getLastColumn()).getValues()[0]);
+    var changed = rewriteSheetTeamColumn_(responses, columns.TEAM + 1, plan.matchKeys, plan.team);
+    if (typeof columns.OTHER_TEAM === 'number') {
+      changed = changed.concat(rewriteSheetTeamColumn_(responses, columns.OTHER_TEAM + 1, plan.matchKeys, plan.team));
+    }
+    if (!changed.length) return;
+    responsesUpdated += changed.filter(function(v, i, a) { return a.indexOf(v) === i; }).length;
+    trackersChanged.push(sheetId);
+    deps.onTrackerChanged(sheetId);
+  });
+
+  var paxDbUpdated = 0;
+  var paxDb = spreadsheet.getSheetByName('PaxDB');
+  if (paxDb && paxDb.getLastRow() > 1 && (deps.trackerSheetIds || []).length) {
+    var headers = paxDb.getRange(1, 1, 1, paxDb.getLastColumn()).getValues()[0];
+    var sheetIdCol = headers.indexOf('SheetId');
+    var teamCol = headers.indexOf('Team');
+    if (sheetIdCol !== -1 && teamCol !== -1) {
+      var sheetIds = paxDb.getRange(2, sheetIdCol + 1, paxDb.getLastRow() - 1, 1).getValues();
+      paxDbUpdated = rewriteSheetTeamColumn_(paxDb, teamCol + 1, plan.matchKeys, plan.team, function(i) {
+        return deps.trackerSheetIds.indexOf(String(sheetIds[i][0])) !== -1;
+      }).length;
+    }
+  }
+
+  refreshTeamDbDuplicates_(sheet);
+
+  var result = { ok: true, merged: plan.merged, team: plan.team, responsesUpdated: responsesUpdated, paxDbUpdated: paxDbUpdated, trackersChanged: trackersChanged };
+  // Logged under already-registered Axiom field names (test/fixtures/axiomFieldRegistry.json).
+  GasLogger.log('renameTeam_', { alias: String(from), team: plan.team, mode: plan.merged ? 'merge' : 'rename', updated: responsesUpdated, rows: paxDbUpdated });
+  return result;
 }
 
 /** Flattens the Template's PaxDB into {team, date} records for seedTeamDb_. */
@@ -492,5 +615,11 @@ if (typeof module !== 'undefined' && module.exports) {
     planTeamRename_: planTeamRename_,
     rewriteTeamColumn_: rewriteTeamColumn_,
     renameTeam_: renameTeam_,
+    renameTeamFromEdit_: renameTeamFromEdit_,
+    teamNearKey_: teamNearKey_,
+    teamEditDistance_: teamEditDistance_,
+    isTeamNear_: isTeamNear_,
+    planDuplicateFlags_: planDuplicateFlags_,
+    refreshTeamDbDuplicates_: refreshTeamDbDuplicates_,
   };
 }

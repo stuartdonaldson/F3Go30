@@ -25,6 +25,9 @@ var gasRequire_ = (typeof require === 'function') ? require('./GasRequire.js').g
 var trackerTriggerLifecycleEditModule_ = gasRequire_('./TrackerEditTrigger.js', ['setupTrackerEditTrigger_']);
 var ttlSetupTrackerEditTrigger_ = trackerTriggerLifecycleEditModule_.setupTrackerEditTrigger_;
 
+var trackerTriggerLifecycleTeamDbModule_ = gasRequire_('./teamDbEditTrigger.js', ['ensureTeamDbEditTrigger_']);
+var ttlEnsureTeamDbEditTrigger_ = trackerTriggerLifecycleTeamDbModule_.ensureTeamDbEditTrigger_;
+
 var trackerTriggerLifecycleGo30ToolsModule_ = gasRequire_('./go30tools.js', ['_readTrackerDbRowsBySheetId_', '_listNamespaceRegistryRows_']);
 var ttlReadTrackerDbRowsBySheetId_ = trackerTriggerLifecycleGo30ToolsModule_._readTrackerDbRowsBySheetId_;
 var ttlListNamespaceRegistryRows_ = trackerTriggerLifecycleGo30ToolsModule_._listNamespaceRegistryRows_;
@@ -221,6 +224,13 @@ function syncTrackerTriggers_(spreadsheet, today) {
   );
 
   var retiredFormTriggers = removeRetiredFormSubmitTriggers_();
+  // F3Go30-qeuu.7: the Template's TeamDB edit-to-reconcile trigger (not per-tracker).
+  var teamDbTrigger = { installed: false };
+  try {
+    teamDbTrigger = ttlEnsureTeamDbEditTrigger_(spreadsheet);
+  } catch (err) {
+    GasLogger.log('syncTrackerTriggers_.teamDbTriggerFailed', { error: err.message });
+  }
 
   var existingEditTriggerSourceIds = ScriptApp.getProjectTriggers()
     .filter(function(trigger) { return trigger.getHandlerFunction() === TTL_TRACKER_EDIT_HANDLER_; })
@@ -265,7 +275,7 @@ function syncTrackerTriggers_(spreadsheet, today) {
   });
 
   GasLogger.log('syncTrackerTriggers_', { backfilledCount: backfilledCount, cleanedCount: cleanedCount, removed: retiredFormTriggers.length });
-  return { ok: true, backfilledCount: backfilledCount, cleanedCount: cleanedCount, formSubmitTriggersRemoved: retiredFormTriggers.length, detail: detail };
+  return { ok: true, backfilledCount: backfilledCount, cleanedCount: cleanedCount, formSubmitTriggersRemoved: retiredFormTriggers.length, teamDbTriggerInstalled: teamDbTrigger.installed, detail: detail };
 }
 
 if (typeof module !== 'undefined' && module.exports) {

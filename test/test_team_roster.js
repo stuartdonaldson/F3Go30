@@ -149,7 +149,7 @@ test('AC1 recordTeamUse_: unmatched name appends an active row, verbatim trimmed
   const sheet = makeFakeSheet_(TEAM_DB_HEADERS_, [['Crucible', '', 'active', daysAgo(40), 1]]);
   const ss = fakeSpreadsheet({ [TEAM_DB_SHEET_NAME_]: sheet });
   assert.deepEqual(recordTeamUse_(ss, '  Morning Rucks ', NOW), { team: 'Morning Rucks', created: true });
-  assert.deepEqual(sheet._rows[1], ['Morning Rucks', '', 'active', NOW, 1]);
+  assert.deepEqual(sheet._rows[1].slice(0, 5), ['Morning Rucks', '', 'active', NOW, 1]);
 });
 
 test('recordTeamUse_ creates the TeamDB sheet with headers when missing', () => {
@@ -157,7 +157,7 @@ test('recordTeamUse_ creates the TeamDB sheet with headers when missing', () => 
   recordTeamUse_(ss, 'Crucible', NOW);
   const sheet = ss._sheets[TEAM_DB_SHEET_NAME_];
   assert.deepEqual(sheet._headers, TEAM_DB_HEADERS_);
-  assert.deepEqual(sheet._rows, [['Crucible', '', 'active', NOW, 1]]);
+  assert.deepEqual(sheet._rows.map((r) => r.slice(0, 5)), [['Crucible', '', 'active', NOW, 1]]);
 });
 
 test('recordTeamUse_ on a blank name writes nothing', () => {
@@ -213,7 +213,7 @@ test('planTeamSeed_ against existing rows: raises LastUsed/UseCount, never lower
   ]));
   const plan = planTeamSeed_(existing, LISTDB_ROWS, PAX_RECORDS);
   assert.deepEqual(plan.updates, [
-    { rowNumber: 2, values: ['Thunderdome', 'T-Dome', 'hidden', new Date('2026-09-15T07:00:00Z'), 2] },
+    { rowNumber: 2, values: ['Thunderdome', 'T-Dome', 'hidden', new Date('2026-09-15T07:00:00Z'), 2, ''] },
   ]);
   assert.deepEqual(plan.appends.map((r) => r[0]), ['Hawk\'s Nest', 'Hawks Nest', 'Meditation', SOLO_TEAM_LABEL_]);
 });
@@ -248,7 +248,7 @@ test('planTeamRename_ rename: row renamed, old name (and its aliases) kept as al
   assert.equal(plan.ok, true);
   assert.equal(plan.merged, false);
   assert.equal(plan.team, 'Shieldlock Brothers');
-  assert.deepEqual(plan.updates, [{ rowNumber: 3, values: ['Shieldlock Brothers', 'ShieldLok, Shield Lock', 'active', daysAgo(2), 4] }]);
+  assert.deepEqual(plan.updates, [{ rowNumber: 3, values: ['Shieldlock Brothers', 'ShieldLok, Shield Lock', 'active', daysAgo(2), 4, ''] }]);
   assert.equal(plan.deleteRowNumber, null);
   assert.deepEqual(plan.matchKeys.sort(), ['shieldlock', 'shieldlok']);
 });
@@ -261,7 +261,7 @@ test('planTeamRename_ merge: from folds into the existing to row (aliases, max L
   const plan = planTeamRename_(entries, 'Hawks Nest', "hawk's nest");
   assert.equal(plan.merged, true);
   assert.equal(plan.team, "Hawk's Nest");
-  assert.deepEqual(plan.updates, [{ rowNumber: 2, values: ["Hawk's Nest", 'Hawks, Hawks Nest', 'active', daysAgo(3), 12] }]);
+  assert.deepEqual(plan.updates, [{ rowNumber: 2, values: ["Hawk's Nest", 'Hawks, Hawks Nest', 'active', daysAgo(3), 12, ''] }]);
   assert.equal(plan.deleteRowNumber, 3);
   assert.deepEqual(plan.matchKeys.sort(), ['hawks', 'hawksnest']);
 });
@@ -270,7 +270,7 @@ test('planTeamRename_ respelling onto its own alias renames in place; spellings 
   const entries = parseTeamDbRows_(teamDbValues([['Thunder Dome', 'Thunderdome', 'active', '', 1]]));
   const plan = planTeamRename_(entries, 'Thunder Dome', 'Thunderdome');
   assert.equal(plan.merged, false);
-  assert.deepEqual(plan.updates, [{ rowNumber: 2, values: ['Thunderdome', '', 'active', '', 1] }]);
+  assert.deepEqual(plan.updates, [{ rowNumber: 2, values: ['Thunderdome', '', 'active', '', 1, ''] }]);
   assert.deepEqual(plan.matchKeys, ['thunderdome']);
 });
 
@@ -310,7 +310,7 @@ test('AC1/AC2 renameTeam_: TeamDB, each tracker Responses Team (+Other team) and
     onTrackerChanged: (id) => changedSheets.push(id),
   });
   assert.deepEqual(result, { ok: true, merged: true, team: 'Crucible', responsesUpdated: 1, paxDbUpdated: 1, trackersChanged: ['cur'] });
-  assert.deepEqual(teamDb._rows, [['Crucible', 'Crucibel', 'active', daysAgo(1), 4]]);
+  assert.deepEqual(teamDb._rows.map((r) => r.slice(0, 5)), [['Crucible', 'Crucibel', 'active', daysAgo(1), 4]]);
   assert.deepEqual(curResponses._rows[0].slice(5), ['Crucible', 'Crucible']);
   assert.deepEqual(paxDb._rows.map((r) => r[3]), ['Crucible', 'Crucible', 'Crucibel'], 'other months keep their historical spelling');
   assert.deepEqual(changedSheets, ['cur']);
@@ -334,4 +334,86 @@ test('recordTeamUse_ {lockHeld:true} (caller already holds the script lock, e.g.
   recordTeamUse_(ss, 'crucible', NOW);
   assert.equal(env.lock._waits, 1);
   assert.equal(env.lock._releases, 1);
+});
+
+
+// --- F3Go30-qeuu.7: duplicate detection + edit-to-reconcile ------------------------------------
+
+const { isTeamNear_, planDuplicateFlags_, refreshTeamDbDuplicates_, renameTeamFromEdit_ } = require('../script/teamRoster.js');
+
+test('isTeamNear_: case/space/punctuation-only or small-typo differences; short names only on punctuation', () => {
+  assert.equal(isTeamNear_('Hawks Nest', "Hawk's Nest"), true);
+  assert.equal(isTeamNear_('Thunder Dome', 'Thunderdome'), true);
+  assert.equal(isTeamNear_('Crucibel', 'Crucible'), true);
+  assert.equal(isTeamNear_('Meditaiton', 'Meditation'), true);
+  assert.equal(isTeamNear_('PBX', 'PBJ'), false);
+  assert.equal(isTeamNear_('P.B.J.', 'PBJ'), true);
+  assert.equal(isTeamNear_('Crucible', 'Thunderdome'), false);
+  assert.equal(isTeamNear_('Crucible', 'Crucible'), false, 'a team is not a duplicate of itself');
+});
+
+test('AC5 planDuplicateFlags_: each active row flags its likely duplicate (the more-used one first); hidden rows ignored', () => {
+  const entries = parseTeamDbRows_(teamDbValues([
+    ["Hawk's Nest", '', 'active', '', 10],
+    ['Hawks Nest', '', 'active', '', 1],
+    ['Crucible', '', 'active', '', 5],
+    ['Crucibel', '', 'hidden', '', 1],
+    ['Thunderdome', '', 'active', '', 3],
+  ]));
+  assert.deepEqual(planDuplicateFlags_(entries), { 2: 'Hawks Nest', 3: "Hawk's Nest", 4: '', 5: '', 6: '' });
+});
+
+test('refreshTeamDbDuplicates_ adds the Possible Duplicate header to an older 5-column TeamDB and writes column F', () => {
+  const sheet = makeFakeSheet_(TEAM_DB_HEADERS_.slice(0, 5), [
+    ["Hawk's Nest", '', 'active', '', 10], ['Hawks Nest', '', 'active', '', 1], ['Crucible', '', 'active', '', 5],
+  ]);
+  refreshTeamDbDuplicates_(sheet);
+  assert.equal(sheet._headers[5], 'Possible Duplicate');
+  assert.deepEqual(sheet._rows.map((r) => r[5]), ['Hawks Nest', "Hawk's Nest", '']);
+});
+
+function editFixture_() {
+  const teamDb = makeFakeSheet_(TEAM_DB_HEADERS_, [
+    ["Hawk's Nest", '', 'active', daysAgo(30), 10, ''],
+    ["Hawk's Nest", 'Hawks', 'active', daysAgo(3), 2, ''],   // the edited row, AFTER the edit (was "Hawks Nest")
+    ['Crucible', '', 'active', daysAgo(5), 4, ''],
+  ]);
+  const paxDb = makeFakeSheet_(['SheetId', 'Date', 'F3 Name', 'Team'], [['cur', '', 'A', 'Hawks Nest'], ['cur', '', 'B', "Hawk's Nest"]]);
+  const template = fakeSpreadsheet({ [TEAM_DB_SHEET_NAME_]: teamDb, PaxDB: paxDb });
+  const responses = makeFakeSheet_(['Timestamp', 'Email Address', 'Are you currently participating in Go30?', 'F3 Name',
+    'Team type', 'Team', 'Other team name', 'WHO do you ultimately want to become?', 'WHAT is your Go30 Challenge?',
+    'HOW are you going to be successful this month?', 'Cell Phone Number'], [
+    ['', 'a@x', 'Yes', 'A', '', 'Hawks Nest', ''], ['', 'b@x', 'Yes', 'B', '', "Hawk's Nest", ''], ['', 'c@x', 'Yes', 'C', '', 'hawks', ''],
+  ]);
+  const trackers = { cur: fakeSpreadsheet({ Responses: responses }) };
+  const deps = { trackerSheetIds: ['cur'], openById: (id) => trackers[id], onTrackerChanged: () => {} };
+  return { teamDb, paxDb, template, responses, deps };
+}
+
+test('AC1 renameTeamFromEdit_: Team cell edited onto an existing team merges the edited row into it and moves its PAX (incl. alias spellings)', () => {
+  const f = editFixture_();
+  const result = renameTeamFromEdit_(f.template, 3, 'Hawks Nest', "Hawk's Nest", f.deps);
+  assert.deepEqual(result, { ok: true, merged: true, team: "Hawk's Nest", responsesUpdated: 2, paxDbUpdated: 1, trackersChanged: ['cur'] });
+  assert.deepEqual(f.teamDb._rows.map((r) => r.slice(0, 5)), [
+    ["Hawk's Nest", 'Hawks, Hawks Nest', 'active', daysAgo(3), 12],
+    ['Crucible', '', 'active', daysAgo(5), 4],
+  ]);
+  assert.deepEqual(f.responses._rows.map((r) => r[5]), ["Hawk's Nest", "Hawk's Nest", "Hawk's Nest"]);
+  assert.deepEqual(f.paxDb._rows.map((r) => r[3]), ["Hawk's Nest", "Hawk's Nest"]);
+});
+
+test('AC2 renameTeamFromEdit_: Team cell edited to a brand-new name renames in place, keeping the old name as an alias', () => {
+  const f = editFixture_();
+  f.teamDb._rows[2][0] = 'Crucible Brothers';   // the edit: "Crucible" -> "Crucible Brothers"
+  const result = renameTeamFromEdit_(f.template, 4, 'Crucible', 'Crucible Brothers', f.deps);
+  assert.equal(result.merged, false);
+  assert.deepEqual(f.teamDb._rows[2].slice(0, 5), ['Crucible Brothers', 'Crucible', 'active', daysAgo(5), 4]);
+});
+
+test('renameTeamFromEdit_: an edit that only changes case/spacing is a respelling, not a merge, and rewrites PAX', () => {
+  const f = editFixture_();
+  f.teamDb._rows[2][0] = 'CRUCIBLE';
+  const result = renameTeamFromEdit_(f.template, 4, 'Crucible', 'CRUCIBLE', f.deps);
+  assert.equal(result.merged, false);
+  assert.equal(f.teamDb._rows[2][0], 'CRUCIBLE');
 });

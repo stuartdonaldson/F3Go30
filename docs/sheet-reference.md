@@ -348,12 +348,14 @@ available quotes.
 | C | Status | `active` (blank = active) or `hidden` (excluded from suggestions) |
 | D | LastUsed | Date of the most recent save using this team |
 | E | UseCount | Number of saves using this team |
+| F | Possible Duplicate | Computed — the other roster team this row probably duplicates (blank if none) |
 
 Matching is case- and whitespace-insensitive on Team and every alias. Suggestions = active rows
 with LastUsed within Config `TeamSuggestWindowDays` (default 90) plus pinned `SOLO (no team)`.
-Supersedes `ListDB` for sign-up (ListDB is read only by the `seedTeamDb` admin action). Renames
-and merges that must also fix already-saved tracker values go through the `renameTeam` admin
-action (docs/OPERATIONS.md §TeamDB team roster), not a sheet edit.
+Supersedes `ListDB` for sign-up (ListDB is read only by the `seedTeamDb` admin action).
+**Editing a Team cell reconciles:** an installable edit trigger renames the team — or merges it
+into an existing team when the new name already exists — and moves its PAX in the current/next
+month's tracker (docs/OPERATIONS.md §TeamDB team roster).
 
 ---
 

@@ -396,6 +396,13 @@ copies, and the poll + `asOf` marker deleted once nothing depended on them.
   `recordTeamUse_` (teamRoster.js) once, before any write, and uses the canonical result for
   Responses, PaxDB and the confirmation email; `TEAM_TYPE`/`OTHER_TEAM` are written blank.
   The HC Google Form path no longer exists (ADR-024).
+- **TeamDB edit-to-reconcile (F3Go30-qeuu.7) — DECIDED:** editing a Template `TeamDB` Team cell
+  is the reconcile action for near-duplicate teams — an installable Template onEdit trigger
+  (`handleTeamDbEdit_`, teamDbEditTrigger.js, ensured by `syncTrackerTriggers_`) runs
+  `renameTeamFromEdit_`, the same plan/apply as the `renameTeam` admin action (merge when the new
+  name already exists, else rename), over the trackers `buildTeamRenameDeps_` names. Chosen over a
+  menu item by the user (2026-10-03). The near-duplicate rule exists twice (sign-up page "Did you
+  mean", server Possible Duplicate column) and is held equal by test_team_near_match_parity.js.
 - **HC Google Form retired (ADR-024, F3Go30-61ln) — DECIDED:** the static sign-up page (`cmd=signup`)
   is the only sign-up path. New trackers are created without a Form (`createTrackerSpreadsheet_` calls
   `retireCopiedHcForm_`, which unlinks + trashes any Form the Template copy brings along); the form-submit

@@ -280,18 +280,32 @@ header. Teardown (removing the `NamespaceDB` row and optionally trashing the fol
 ### TeamDB team roster (ADR-023, F3Go30-qeuu)
 
 The Template's `TeamDB` sheet is the sign-up team roster (`Team | Aliases | Status | LastUsed |
-UseCount`); trackers never get a copy. Seed or refresh it from `ListDB` + `PaxDB` — idempotent,
+UseCount | Possible Duplicate`); trackers never get a copy. Seed or refresh it from `ListDB` + `PaxDB` — idempotent,
 it only ever raises `LastUsed`/`UseCount`, never renames or re-statuses a row:
 
 ```
 node tools/callWebapp.js seedTeamDb --env <env>     # -> {ok, added, updated, total}
 ```
 
-Admin edits are made directly in the sheet: correct a spelling by renaming `Team` and putting the
-old spelling in `Aliases` (comma- or semicolon-separated) so future saves snap to the new name;
-set `Status` to `hidden` to drop a team from suggestions (a matching save still resolves to it).
-Editing the sheet does not rewrite team names already stored on trackers — for that, use
-`renameTeam`:
+**Reconciling near-duplicate teams is a sheet edit (F3Go30-qeuu.7).** When two people type
+slightly different names for the same team, the **Possible Duplicate** column flags it (the other
+roster team it probably duplicates — same letters ignoring case/spaces/punctuation, or a typo or
+two; recomputed whenever a sign-up adds a team and after every merge/rename). To fix it, **edit
+the misspelled row's `Team` cell to the correct name**:
+
+- If the new name is already a roster team, the row is **merged** into it — every PAX on the old
+  spelling in the current (and next, if it exists) month's tracker moves to the correct team
+  (Responses + PaxDB), the old spelling becomes an alias, and the misspelled row is deleted.
+- Otherwise the row is **renamed** (old name kept as an alias) and its PAX are rewritten the same way.
+- A toast in the sheet reports what happened ("Merged … — 3 PAX moved").
+
+This runs from an installable edit trigger on the Template (`handleTeamDbEdit_`, installed by
+`syncTrackerTriggers`, which every deploy runs). Edit **one Team cell at a time** — a multi-cell
+paste is not reconciled (a toast says so). Clearing a Team cell restores it; to drop a team from
+suggestions set `Status` to `hidden` (a matching save still resolves to it). Editing `Aliases` only
+affects future saves. Earlier months keep their historical spelling.
+
+The same rename/merge is available from the command line as `renameTeam`:
 
 ```
 node tools/callWebapp.js renameTeam --env <env> --body '{"from":"Hawks Nest","to":"Hawk'"'"'s Nest"}'

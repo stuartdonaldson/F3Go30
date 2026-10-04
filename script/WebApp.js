@@ -691,25 +691,10 @@ function adminRenameTeam_(payload, e) {
     return jsonOutput_({ ok: false, error: 'from and to are required' });
   }
   var renameSpreadsheet = resolveTemplateSpreadsheet_(e, payload);
-  var renameMonths = getCurrentAndNextMonths_(renameSpreadsheet, undefined, payload.contextDate);
-  var renameSheetIds = [renameMonths.current, renameMonths.next]
-    .filter(function(m) { return m && m.sheetId; })
-    .map(function(m) { return m.sheetId; });
-  var openedTrackers = {};
-  function openTracker(sheetId) {
-    return openedTrackers[sheetId] || (openedTrackers[sheetId] = SpreadsheetApp.openById(sheetId));
-  }
-  var renameResult = renameTeam_(renameSpreadsheet, payload.from, payload.to, {
-    trackerSheetIds: renameSheetIds,
-    openById: openTracker,
-    onTrackerChanged: function(sheetId) {
-      // Tracker column B is a VLOOKUP into Responses — flush so the re-sort sees the new team.
-      SpreadsheetApp.flush();
-      var renamedTrackerSheet = openTracker(sheetId).getSheetByName('Tracker');
-      if (renamedTrackerSheet) sortTrackerSheet_(renamedTrackerSheet);
-      wipePaxCacheAndRelatedCachesForSheet_(sheetId);
-    }
-  });
+  // Which trackers a rename touches and what to do to each changed one — shared with the TeamDB
+  // edit trigger (teamDbEditTrigger.js buildTeamRenameDeps_).
+  var renameResult = renameTeam_(renameSpreadsheet, payload.from, payload.to,
+    buildTeamRenameDeps_(renameSpreadsheet, payload.contextDate));
   return jsonOutput_(renameResult);
 }
 
