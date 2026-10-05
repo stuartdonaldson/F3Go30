@@ -29,6 +29,11 @@ Examples:
         --format jsonl --apl "| where name == 'clientTelemetry' and kind == 'error' \\
         | summarize n=count() by version, clientVersion, action"
 
+Local store (tools/axiom_store.py, F3Go30-43qv — Parquet under data/axiom/, queried with DuckDB):
+    python tools/query_axiom.py --sync --env prod       # pull new events into the store, then prune
+    python tools/query_axiom.py --local --sql "select name, count(*) n from events group by 1 order by 2 desc"
+        # views: events, timing_daily (PROD only), each with an `env` column; --env omitted = both
+
 Field names are bare (`execId`, `kind`, `target`), NOT `data.`-prefixed — `data.x` fails with a
 400 "invalid field". The `data` wrapper only appears in the legacy JSON response (--raw).
 
@@ -212,6 +217,21 @@ def _emit(columns: list[str], records: list[dict], fmt: str) -> None:
             print("  ".join(v.ljust(w) for v, w in zip(row, widths)).rstrip())
 
 
+def _store_main(args, parser) -> int:
+    import axiom_store
+    axiom_store.require()  # store operations: no live fallback possible
+    if args.sync:
+        if not args.env:
+            parser.error("--sync requires --env sit|prod")
+        print(json.dumps(axiom_store.sync(args.env)))
+        return 0
+    if not args.sql:
+        parser.error("--local requires --sql")
+    rows = axiom_store.rows(axiom_store.connect([args.env] if args.env else sorted(ENV_TARGET)), args.sql)
+    _emit(list(rows[0]) if rows else [], rows, args.format)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--limit", "-n", type=int, default=200, help="Max events to return (default: 200; ignored with --apl)")
@@ -227,9 +247,17 @@ def main() -> int:
                         help="APL pipeline to run after the filters, e.g. \"| summarize count() by name\"")
     parser.add_argument("--format", choices=["table", "tsv", "json", "jsonl"], default="table",
                         help="stdout format (default: table, human-readable)")
+    parser.add_argument("--sync", action="store_true",
+                        help="Sync --env's events into the local store (data/axiom/), then prune; prints stats")
+    parser.add_argument("--local", action="store_true",
+                        help="Run --sql against the local store (views events, timing_daily) instead of Axiom")
+    parser.add_argument("--sql", help="SELECT to run with --local, using --format")
     parser.add_argument("--raw", nargs="?", const="-", metavar="PATH",
                         help="Dump full JSON response (to PATH, or stdout if no PATH given)")
     args = parser.parse_args()
+
+    if args.sync or args.local:
+        return _store_main(args, parser)
 
     dataset, token = require_axiom_credentials()
     since = _parse_duration(args.since) if args.since else None

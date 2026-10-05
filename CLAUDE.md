@@ -155,6 +155,12 @@ Runtime GAS logs are sent to the Axiom service. Query them with `tools/query_axi
 (`--env sit|prod`, `--since` or `--start/--end`, `--apl "| summarize ..."` for server-side
 aggregation, `--format tsv|json|jsonl` for scripts; field names are bare, never `data.`-prefixed).
 `tools/activity_log.py` is the human-readable PAX activity narrative built on top of it.
+`tools/activity_log.py --health --env <env>` is the periodic aggregate health report (by version
+and by week, absolute + %, flags for follow-up) — docs/OPERATIONS.md §Periodic health report.
+Axiom keeps only 30 days, so `tools/axiom_store.py` mirrors events into a local gitignored
+Parquet store (`data/axiom/`; needs `duckdb` in the uv1 venv): `query_axiom.py --sync --env <e>`, `--local --sql "select ..."`.
+`activity_log.py` (narrative and `--health`) syncs then reads it (`--no-sync` skips the network).
+PROD kept indefinitely, SIT 30d, PROD `*.timing` rolled up daily after 30d — docs/OPERATIONS.md §Local Axiom store.
 ## clasp - command line tool for google apps script credentials.
 The local.settings.json file claspAuth setting contains the clasp auth credentials file which must be passed in to clasp with the "--auth" arguent or via the "clasp_config_auth" environment variable.
 

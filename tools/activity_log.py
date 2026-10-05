@@ -16,7 +16,7 @@ than printed as separate, disconnected events. Signup and nag-email activity are
 into a session line.
 
 Usage:
-    python tools/activity_log.py [--limit N] [--since DURATION] [--env sit|prod]
+    python tools/activity_log.py [--limit N] [--since DURATION] [--env sit|prod] [--no-sync]
 
 Examples:
     python tools/activity_log.py                    # last 200 events, last 24h
@@ -24,6 +24,9 @@ Examples:
     python tools/activity_log.py --env sit
 
 Notes:
+    - Reads the local Axiom store (tools/axiom_store.py, F3Go30-43qv), first syncing the selected
+      env(s) from Axiom — both when --env is omitted; --no-sync skips the network and reads what
+      is already stored. Without duckdb installed it warns and reads live Axiom instead (last 30 days).
     - A leading section prints ahead of the main log: server-side exceptions ([SERVER ERROR],
       any GasLogger 'error'/'*.error' tag), client-captured crashes/errors ([CLIENT ERROR],
       captureClientError_ in static-pages/src/index.html, F3Go30-xyri), and reconnect-poll runs
@@ -85,10 +88,12 @@ Notes:
 import argparse
 import pathlib
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from query_axiom import ENV_TARGET, query, require_axiom_credentials, _filters, _parse_duration
+import axiom_store
+from query_axiom import (ENV_TARGET, query, require_axiom_credentials, _filters, _parse_duration,
+                         _parse_instant, _window)
 
 # Activities within this many seconds of each other, for the same PAX, are treated as one
 # authentication session and collapsed onto a single report line.
@@ -511,26 +516,59 @@ def _group_sessions(activities: list) -> list:
     return lines
 
 
+def _stored_matches(args, envs) -> list:
+    """Newest-first legacy-shape events for the last --since from the local store (<= limit*3)."""
+    end = datetime.now(timezone.utc)
+    stored = [r for env in envs for r in axiom_store.event_rows(
+        env, start=end - _parse_duration(args.since), end=end + timedelta(minutes=1))]
+    stored.sort(key=lambda r: r["_time"], reverse=True)
+    return axiom_store.to_legacy_matches(stored[:args.limit * 3])
+
+
+def _live_matches(args) -> list:
+    """Same rows straight from Axiom — the fallback when duckdb is not installed."""
+    dataset, token = require_axiom_credentials()
+    result = query(dataset, token, limit=args.limit * 3, since=_parse_duration(args.since),
+                   side=None, name=None, where=" and ".join(_filters(env=args.env)) or None)
+    return result.get("matches", [])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--limit", "-n", type=int, default=200, help="Max summaries to output (default: 200)")
-    parser.add_argument("--since", default="24h", help="How far back to look, e.g. 30m, 2h, 1d (default: 24h)")
+    parser.add_argument("--since", help="How far back to look, e.g. 30m, 2h, 1d (default: 24h; --health defaults to --weeks)")
     parser.add_argument("--env", choices=sorted(ENV_TARGET), help="Filter to SIT (TEST) or PROD (TEMPLATE) deploy target")
+    health = parser.add_argument_group("--health mode (aggregate comparison by version and week, F3Go30-lsoj)")
+    health.add_argument("--health", action="store_true",
+                        help="Print the aggregate health report instead of the session narrative (requires --env)")
+    health.add_argument("--weeks", type=int, default=4,
+                        help="Default window: this many whole weeks (Sunday start, UTC) plus the current "
+                             "partial week, when neither --since nor --start is given (default: 4)")
+    health.add_argument("--start", help="Absolute window start, ISO-8601 (overrides --since)")
+    parser.add_argument("--no-sync", action="store_true",
+                        help="Skip the Axiom sync and read the local store as it is (no network)")
+    health.add_argument("--end", help="Absolute window end, ISO-8601 (default: now)")
+    health.add_argument("--format", choices=["text", "md", "json"], default="text",
+                        help="Report format: text (default, for reading), md (markdown), json (for analysis)")
+    health.add_argument("--out", help="Also write the report to this file")
     args = parser.parse_args()
 
-    dataset, token = require_axiom_credentials()
+    if args.health and not args.env:
+        parser.error("--health requires --env sit|prod")
+    envs = [args.env] if args.env else sorted(ENV_TARGET)
+    live = not axiom_store.AVAILABLE
+    if live:
+        print("WARNING: duckdb not installed — reading live Axiom, last 30 days only; install: "
+              f"{axiom_store.INSTALL_CMD}", file=sys.stderr)
+    elif not args.no_sync:
+        for env in envs:
+            print(f"synced {env}: {axiom_store.sync(env)}", file=sys.stderr)
 
-    where_clause = " and ".join(_filters(env=args.env)) or None
+    if args.health:
+        return _health_main(args, live)
+    args.since = args.since or "24h"
 
-    result = query(
-        dataset, token,
-        limit=args.limit * 3,
-        since=_parse_duration(args.since),
-        side=None,
-        name=None,
-        where=where_clause,
-    )
-    matches = result.get("matches", [])
+    matches = _live_matches(args) if live else _stored_matches(args, envs)
 
     # Built over the whole raw result set (not just the classified activities) — the doGet/doPost
     # request events these join against are never themselves reported as activities.
@@ -568,6 +606,37 @@ def main() -> int:
         print(s)
     print("=" * 90)
 
+    return 0
+
+
+def _health_main(args, live=False) -> int:
+    import activity_health
+    end = _parse_instant(args.end) if args.end else None
+    if args.start or args.since:
+        start, end = _window(_parse_duration(args.since) if args.since else None,
+                             _parse_instant(args.start) if args.start else None, end)
+    else:
+        # Whole weeks, so only the current week is partial and every earlier week compares.
+        end = end or datetime.now(timezone.utc)
+        sunday = (end - timedelta(days=(end.weekday() + 1) % 7)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        start = sunday - timedelta(weeks=args.weeks)
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    if live:
+        raw = activity_health.fetch_live(*require_axiom_credentials(), args.env, start, end)
+    else:
+        raw = activity_health.fetch(axiom_store.connect([args.env]), args.env, start, end)
+    report = activity_health.build_report(raw, args.env, start.strftime(fmt), end.strftime(fmt),
+                                          datetime.now(timezone.utc).strftime(fmt))
+    render = {"text": activity_health.render_text, "md": activity_health.render_markdown,
+              "json": activity_health.render_json}[args.format]
+    text = render(report)
+    print(text)
+    if args.out:
+        out = pathlib.Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text)
+        print(f"Wrote {out}", file=sys.stderr)
     return 0
 
 

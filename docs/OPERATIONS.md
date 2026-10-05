@@ -602,6 +602,81 @@ the loss is query-able: `python tools/query_axiom.py --name gasLogger.ingestReje
   `datasets: read` + `update` (map fields); freeing legacy fields (trim/vacuum) is done in the Axiom
   console or with a token that can also do that.
 
+### Periodic health report (F3Go30-lsoj)
+
+`tools/activity_log.py --health` aggregates one environment's Axiom events into a comparison
+**by version** (server `version` / browser `clientVersion`, normalised to x.y.z) and **by week**
+(Sunday start, UTC), each count shown absolute and as a percent of its natural denominator, and
+lists rule-based findings under *Needs attention*. Read-only; safe on PROD.
+
+Formats (`--format`): `text` (default — plain-text findings then aligned tables, for reading in a
+terminal or a saved file), `md` (markdown; tables also show the change vs the previous row in
+pp), `json` (everything, plus a `tools/query_axiom.py` drill-down query per finding — the
+hand-off for follow-up analysis).
+
+```
+/mnt/c/dev/venvs/uv1/bin/python tools/activity_log.py --health --env prod                  # last 4 whole weeks + current
+/mnt/c/dev/venvs/uv1/bin/python tools/activity_log.py --health --env prod --weeks 8
+/mnt/c/dev/venvs/uv1/bin/python tools/activity_log.py --health --env prod --format json --out /tmp/prod-health.json
+```
+
+- **Flags** (thresholds are constants at the top of `tools/activity_health.py`): `log-loss`
+  (`gasLogger.ingestRejected` — every other number undercounts), `rate-regression` (latest
+  version/complete week vs the previous, worse direction only, both sides need ≥20 trials),
+  `latency-regression` (login p95 ≥1.25×), `volume-drop` (POSTs/day halves), `event-gap` (an event
+  present before and after a complete week all but vanishes in it — a stopped code path or lost
+  logs), `server-error`, `new-event` / `new-client-error` (only seen in the last 7 days),
+  `stale-client` (older client versions still posting in the last 7 days), `repeat-failures`
+  (a PAX with ≥10 client failures in the last 7 days).
+- **Partial weeks** (the current one, or one clipped by `--since`/`--start`) are shown but never
+  compared.
+- **A 0 is not always healthy**: a metric older versions never emitted (`lostResponse` before
+  2.6.6) reads 0 — a `rate-regression` whose previous period was 0 says "possibly newly
+  instrumented".
+- **Further analysis**: hand the `--format json` output to an LLM session and have it run the
+  `drill` queries for the findings worth chasing.
+- Unit tests (network-free): `/mnt/c/dev/venvs/uv1/bin/python test/test_activity_health.py` —
+  Python, so not part of the glob-discovered node tier in `pnpm run test:local`.
+
+### Local Axiom store (F3Go30-43qv)
+
+Axiom's free plan keeps 30 days. `tools/axiom_store.py` mirrors each environment's events into
+local Parquet files so PROD metrics persist, and the reports run against them.
+
+- **Dependency**: DuckDB (Python package `duckdb`, 1.5.6 as of 2026-10-05) in the `uv1` venv — the
+  only non-stdlib package the Axiom tools need. Install or upgrade:
+  `uv pip install --python /mnt/c/dev/venvs/uv1/bin/python duckdb`. Without it, `activity_log.py`
+  (narrative and `--health`) prints a stderr WARNING and falls back to live Axiom — last 30 days
+  only, no persisted history, no sync (`activity_health.fetch_live()` is the APL twin of the SQL
+  `fetch()`; the two must change together). `query_axiom.py --sync/--local` have no live
+  equivalent and exit with the install command; live `--apl` queries never need duckdb. No `pytz`:
+  TIMESTAMPTZ values are returned as ISO strings by `axiom_store.rows()`.
+- **Location**: `data/axiom/<env>/events/<YYYY-MM>.parquet` (zstd) and
+  `data/axiom/prod/timing_daily/<YYYY-MM>.parquet`. Gitignored and **local only — not backed up**;
+  deleting it just means the next sync re-pulls Axiom's last 30 days (anything older is gone).
+- **Sync**: `python tools/query_axiom.py --sync --env prod|sit` pulls rows newer than the stored
+  watermark (minus a 1h overlap, up to now-10m) in 1-day chunks and prints
+  `{fetched, added, pruned, rolled_up}`; re-running adds 0 (row-hash dedup). A first sync backfills
+  30 days. `activity_log.py` (narrative and `--health`) syncs the selected env(s) itself — both when
+  `--env` is omitted — and `--no-sync` reads the store as it is, with no network. If the stored
+  watermark is older than 30 days, sync warns on stderr naming the unrecoverable gap window.
+- **Retention** (applied after every sync): SIT rows older than 30 days are deleted; PROD
+  `*.timing` rows older than 30 days are replaced by daily rows in `timing_daily`
+  (`day, name, kind, version, n, p50, p95, max` over `durationMs`, or `totalMs` for the multi-phase
+  timings); all other PROD rows are kept forever.
+- **Querying**: `python tools/query_axiom.py --local [--env prod|sit] --sql "select name, count(*) n
+  from events group by 1 order by 2 desc" --format tsv`. Views `events` and `timing_daily`, each with
+  an `env` column; the columns are `_time`, the typed fields the reports use (`name, kind, target,
+  side, version, clientVersion, execId, f3Name, action, outcome, message, errorText, matched,
+  durationMs, count`), `data` (JSON of every other field, e.g. `json_extract_string(data,
+  '$.ctx.mode')`) and `row_hash`.
+- **Health-report drill-down commands** are still live APL, so they reach only Axiom's last 30 days;
+  use `--local --sql` for older findings.
+- Versus the old live-APL health report: percentiles are interpolated (`quantile_cont`) rather than
+  t-digest estimates, distinct users are exact and no longer count an empty `f3Name` as a user, and
+  the newest ~10 minutes (ingest lag) are not yet in the store.
+- Unit tests (network-free): `/mnt/c/dev/venvs/uv1/bin/python test/test_axiom_store.py`.
+
 ### Axiom monitor on `bootstrapAdminSecret_` (F3Go30-4xgj, REVIEW-260910 finding 15)
 
 `bootstrapAdminSecret_` (`script/WebApp.js`) is an unauthenticated race by design — the webapp is

@@ -59,6 +59,8 @@ conformance, or a waiver under `H5`, and it does so in the harness design's §9a
     the helper deliberately does not offer a generic one.
   - `tests/playwright/*.spec.js` (11 specs) — Playwright/Chromium; 10 cross a live boundary.
   - `test/test_gas_logger_axiom.py` (1) — Python, queries the live Axiom service.
+  - `test/test_axiom_store.py`, `test/test_activity_health.py` (2) — Python (`uv1` venv + `duckdb`),
+    network-free; the local Axiom store and the `--health` report. Run directly; not in the node glob.
 - **Platform execution ceiling (if any):** Apps Script enforces a 6-minute ceiling per
   `doPost`/trigger invocation; a `UrlFetchApp` round trip from a test is bounded by it. The
   per-test duration ceiling this project enforces against that is `H4` — declared 2026-09-06
@@ -170,6 +172,7 @@ Realizes `T5`, `T11`.
 | `PaxCache` (`PropertiesService`) + `CacheService` | only indirectly, through a dashboard/check-in response | live | no — inferred, not read |
 | Static PWA DOM | Playwright against `static-pages/src/` served locally, hitting the live `/exec` | live; bounded poll | no — drained by the spec that drives it |
 | GAS execution log → Axiom | `tools/query_axiom.py` | live; lagged | no |
+| Local Axiom mirror (`data/axiom/`, Parquet) | `tools/query_axiom.py --local --sql` (after `--sync`) | cheap; lags by last sync | no |
 | Deployed version stamp | `node tools/callWebapp.js version --cmd version` | cheap | yes |
 
 ## 4. Fixture isolation
