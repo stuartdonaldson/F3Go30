@@ -19,22 +19,34 @@ Headings are **minor-series** (`v2.3`, `v2.4`), never per-patch or per-build. Ac
 user/admin-facing bullets under **Unreleased** as they land — however many patch/build bumps happen
 underneath — and promote them to a dated minor heading when the series is cut as a coherent release.
 Stamp with the minor series + date; note a specific PROD patch inline only when one item's exact
-go-live matters.
+go-live matters. When patches within a series ship to PROD before the series is cut, they get one
+patch-range heading (e.g. `v2.6.1–v2.6.7`) so **Unreleased** holds only what is still SIT-only.
 
 ---
 
 ## Unreleased
 
-_User/admin-facing changes landed since the last minor release, awaiting the next series cut._
+_On SIT, not yet in PROD (PROD is v2.6.7). Awaiting the next release._
 
 - **The old Google sign-up Form is closed** — sign up (or update your goals) on the Go30 page; anyone
   opening an old Form link sees a note pointing there. New monthly trackers no longer come with a Form.
 - **One team field at sign-up** — the AO-based / Custom Team choice is gone. Start typing and
   pick from teams used in the last 3 months, or type a new one and it's added; "SOLO (no team)"
-  is still there, at the end of the list. A name that looks
-  like a typo of an existing team ("Hawks Nest", "Thunderdom") asks "Did you mean …?" first, so
-  groups stop splitting over spelling. Admins correct spelling, add aliases, hide a team, or pin one so it's always
-  suggested, in the Template's new **TeamDB** sheet (ADR-023).
+  is still there, at the end of the list. A name that looks like a typo of an existing team
+  ("Hawks Nest", "Thunderdom") asks "Did you mean …?" as you leave the field, so groups stop
+  splitting over spelling. The team info (ⓘ) now explains the usual ways to pick a team: a
+  frequent AO, a shared goal such as Meditation or Sobriety, or any name you like.
+- **Admins manage teams in the Template's new TeamDB sheet** (ADR-023) — correct a spelling, add
+  aliases, hide a team, or pin one so it's always suggested. Renaming a team in TeamDB, or renaming
+  it to an existing team to merge the two, also moves its PAX in this month's and next month's
+  trackers.
+
+---
+
+## v2.6.1–v2.6.7 — Scorecard, roster preview, steadier check-in and dashboard (PROD, 2026-08-31 – 2026-09-30)
+
+_Patch releases within the 2.6 series; all of this is live in PROD as of v2.6.7 (2026-09-30)._
+
 - **No more false "Couldn't reach the server" after a check-in** — when the network drops the
   confirmation of a check-in that actually saved, the app now checks with the server and keeps your
   check-in instead of showing an error. You'll briefly see "Still saving… confirming with the
@@ -44,7 +56,6 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
   most of the wait (typically 2-4 seconds).
 - **Teammate goals always belong to the teammate** — tapping a teammate now always shows that
   PAX's own WHO/WHAT/HOW. A stale lookup could previously show blank goals.
-
 - **Next-month sign-up popup only appears near the month boundary** — the pop-up prompting you to sign up for next month now waits until next month is within 5 days of starting, instead of appearing for the whole month beforehand. (The smaller inline nudge on the check-in page keeps its existing 3-day window.)
 - **New Scorecard screen** — tap your name and choose Scorecard to see The Grind Board (every PAX
   ranked, top-3 podium, switchable between total score / workout days / bonus points) and Top
@@ -58,6 +69,17 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
 - **Bonus Points: month-to-month nav** — the Bonus Points screen now has the same month-to-month
   arrows as Scorecard, so you can page back up to two months and view or edit a bonus entry from
   a previous month, not just the current one.
+- **Dashboard opens from your last visit, and rides out slow responses** — the current month's
+  board is kept on your device, so it appears straight away and then refreshes. A request that's
+  slow or comes back garbled is retried (up to 3 tries, shown as "Syncing…") instead of failing.
+- **Dashboard no longer comes up empty at the start of a month** — on 1–2 September some
+  dashboards showed no history; the cause is fixed.
+- **Check-in calendar keeps up with quick taps** — tapping several days quickly could leave the
+  highlight on the wrong day or drop days from the calendar.
+- **Bonus form: "Description (required)"** — the ambiguous "What / Where / Who" label is renamed.
+- **Feedback: star ratings are marked optional.**
+- **Logging out signs you out on the server too**, not just on that device.
+- **Admins: site-feedback emails no longer arrive blank.**
 
 ---
 
