@@ -78,7 +78,7 @@ test('parseTeamDbRows_ tolerates blank cells and string dates, skips blank team 
 
 // --- suggestions (AC2) -------------------------------------------------------------------------
 
-test('AC2 suggestions: active and used within the window, sorted, Solo pinned first once', () => {
+test('AC2 suggestions: active and used within the window, sorted; an active Solo row is just a team', () => {
   const entries = parseTeamDbRows_(teamDbValues([
     ['thunderdome', '', 'active', daysAgo(10), 9],
     ['Crucible', '', 'active', daysAgo(89), 2],
@@ -88,11 +88,47 @@ test('AC2 suggestions: active and used within the window, sorted, Solo pinned fi
     [SOLO_TEAM_LABEL_, '', 'active', daysAgo(3), 1],
   ]));
   assert.deepEqual(buildTeamSuggestions_(entries, NOW, 90),
-    [SOLO_TEAM_LABEL_, 'Crucible', 'thunderdome']);
+    ['Crucible', SOLO_TEAM_LABEL_, 'thunderdome']);
 });
 
-test('suggestions with an empty roster are just the pinned Solo entry', () => {
-  assert.deepEqual(buildTeamSuggestions_([], NOW, 90), [SOLO_TEAM_LABEL_]);
+test('qeuu.9 AC6 suggestions with an empty roster are empty (no hard-coded Solo)', () => {
+  assert.deepEqual(buildTeamSuggestions_([], NOW, 90), []);
+});
+
+// --- pinned status (F3Go30-qeuu.9) -------------------------------------------------------------
+
+test('qeuu.9 AC1/AC2 pinned: listed last in TeamDB row order whatever LastUsed, once, after the recent teams', () => {
+  const entries = parseTeamDbRows_(teamDbValues([
+    ['Zeta Pinned', '', 'pinned', daysAgo(400), 0],
+    ['thunderdome', '', 'active', daysAgo(10), 9],
+    ['Alpha Pinned', '', 'Pinned', '', 0],
+    ['Recent Pinned', '', ' PINNED ', daysAgo(1), 5],
+    ['Crucible', '', '', daysAgo(5), 2],
+  ]));
+  assert.deepEqual(buildTeamSuggestions_(entries, NOW, 90),
+    ['Crucible', 'thunderdome', 'Zeta Pinned', 'Alpha Pinned', 'Recent Pinned']);
+});
+
+test('qeuu.9 AC4/AC6 a pinned Solo row lists last like any pinned team; hidden and old active excluded', () => {
+  const entries = parseTeamDbRows_(teamDbValues([
+    ['Hidden Team', '', 'hidden', daysAgo(1), 1],
+    ['Meditation', '', 'pinned', '', 0],
+    ['Old Team', '', 'active', daysAgo(91), 7],
+    ['Crucible', '', 'active', daysAgo(2), 3],
+    [SOLO_TEAM_LABEL_, '', 'pinned', daysAgo(1), 4],
+  ]));
+  assert.deepEqual(buildTeamSuggestions_(entries, NOW, 90), ['Crucible', 'Meditation', SOLO_TEAM_LABEL_]);
+});
+
+test('qeuu.9 AC3 pinned counts as a known team and in Possible Duplicate; a save keeps it pinned', () => {
+  const rows = [['Pinned Team', 'PT', 'pinned', daysAgo(400), 1], ['Pinned Teams', '', 'active', daysAgo(2), 1]];
+  const sheet = makeFakeSheet_(TEAM_DB_HEADERS_, rows);
+  const ss = fakeSpreadsheet({ [TEAM_DB_SHEET_NAME_]: sheet });
+  assert.deepEqual(readTeamRosterView_(ss, NOW, () => null).knownTeams, ['Pinned Team', 'Pinned Teams']);
+  const flags = planDuplicateFlags_(parseTeamDbRows_(teamDbValues(rows)));
+  assert.ok(flags[2] === 'Pinned Teams' || flags[3] === 'Pinned Team', 'pinned row takes part in duplicate flags');
+  assert.deepEqual(recordTeamUse_(ss, 'pt', NOW), { team: 'Pinned Team', created: false });
+  assert.deepEqual(sheet._rows[0].slice(0, 5), ['Pinned Team', 'PT', 'pinned', NOW, 2]);
 });
 
 test('readTeamRosterView_ uses Config TeamSuggestWindowDays, defaulting when absent/invalid', () => {
@@ -100,11 +136,11 @@ test('readTeamRosterView_ uses Config TeamSuggestWindowDays, defaulting when abs
   const ss = fakeSpreadsheet({ [TEAM_DB_SHEET_NAME_]: makeFakeSheet_(TEAM_DB_HEADERS_, rows) });
   const suggestions = (lookup) => readTeamRosterView_(ss, NOW, lookup).suggestions;
   assert.equal(TEAM_SUGGEST_WINDOW_DAYS_DEFAULT_, 90);
-  assert.deepEqual(suggestions(() => null), [SOLO_TEAM_LABEL_, 'Older', 'Recent']);
-  assert.deepEqual(suggestions(() => ({ primary: 'abc' })), [SOLO_TEAM_LABEL_, 'Older', 'Recent']);
-  assert.deepEqual(suggestions(() => ({ primary: 30 })), [SOLO_TEAM_LABEL_, 'Recent']);
+  assert.deepEqual(suggestions(() => null), ['Older', 'Recent']);
+  assert.deepEqual(suggestions(() => ({ primary: 'abc' })), ['Older', 'Recent']);
+  assert.deepEqual(suggestions(() => ({ primary: 30 })), ['Recent']);
   assert.deepEqual(readTeamRosterView_(fakeSpreadsheet({}), NOW, () => null),
-    { suggestions: [SOLO_TEAM_LABEL_], knownTeams: [], entries: [] });
+    { suggestions: [], knownTeams: [], entries: [] });
   assert.equal(readTeamRosterView_(ss, NOW, () => null).entries.length, 2);
 });
 
@@ -201,9 +237,18 @@ test('planTeamSeed_: ListDB spelling wins, PaxDB sets LastUsed/UseCount, sentine
     ['Hawk\'s Nest', '', 'active', new Date('2026-07-01T07:00:00Z'), 2],
     ['Hawks Nest', '', 'active', new Date('2026-06-01T07:00:00Z'), 1],
     ['Meditation', '', 'active', '', 0],
-    [SOLO_TEAM_LABEL_, '', 'active', '', 0],
     ['Thunderdome', '', 'active', new Date('2026-09-01T07:00:00Z'), 2],
+    [SOLO_TEAM_LABEL_, '', 'pinned', '', 0],
   ]);
+});
+
+test('qeuu.9 AC7 planTeamSeed_ always ensures a pinned Solo row last, and never re-statuses an existing one', () => {
+  assert.deepEqual(planTeamSeed_([], [['AO Teams', 'Goal Team']], []).appends,
+    [[SOLO_TEAM_LABEL_, '', 'pinned', '', 0]]);
+  const existing = parseTeamDbRows_(teamDbValues([['solo (no team)', '', 'active', '', 0]]));
+  const plan = planTeamSeed_(existing, [['AO Teams', 'Goal Team'], ['Crucible', '']], []);
+  assert.deepEqual(plan.appends, [['Crucible', '', 'active', '', 0]]);
+  assert.deepEqual(plan.updates, []);
 });
 
 test('planTeamSeed_ against existing rows: raises LastUsed/UseCount, never lowers or renames', () => {
@@ -216,6 +261,7 @@ test('planTeamSeed_ against existing rows: raises LastUsed/UseCount, never lower
     { rowNumber: 2, values: ['Thunderdome', 'T-Dome', 'hidden', new Date('2026-09-15T07:00:00Z'), 2, ''] },
   ]);
   assert.deepEqual(plan.appends.map((r) => r[0]), ['Hawk\'s Nest', 'Hawks Nest', 'Meditation', SOLO_TEAM_LABEL_]);
+  assert.equal(plan.appends[3][2], 'pinned');
 });
 
 test('AC3 seedTeamDb_ run twice yields an identical TeamDB', () => {

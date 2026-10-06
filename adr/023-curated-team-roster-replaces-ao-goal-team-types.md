@@ -27,7 +27,9 @@ near-duplicates ("Shieldlock" / "Shield Lock") that ADR-012 recorded as an accep
    UseCount`), replacing `ListDB`. It is not copied into trackers. Admins edit it directly to fix
    spelling, hide teams, or add aliases.
 3. **Suggestions are time-windowed:** active teams whose `LastUsed` falls within the last
-   `TeamSuggestWindowDays` days (Config, default 90), plus a pinned "Solo (no team)".
+   `TeamSuggestWindowDays` days (Config, default 90), then every `pinned` team in TeamDB row
+   order. "SOLO (no team)" is an ordinary pinned row kept last, to promote joining a team while
+   still showing Solo is an option (F3Go30-qeuu.9).
 4. **Every save canonicalizes.** Sign-up save and HC Form submit both pass the team through one
    shared server function that matches name or alias case/space-insensitively, stores the
    canonical spelling, and upserts `LastUsed`/`UseCount` (new row if unmatched).

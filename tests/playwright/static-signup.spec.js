@@ -387,6 +387,8 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     await page.locator('#suTeamInfoBtn').click();
     await expect(page.locator('#teamInfoModal')).toBeVisible();
     await expect(page.locator('#teamInfoModal')).toContainText(/accountability/i);
+    await expect(page.locator('#teamInfoModal')).toContainText(/shared goal/i);
+    await expect(page.locator('#teamInfoModal')).not.toContainText(/AO-based|Custom team/i);
     await page.locator('#teamInfoCloseBtn').click();
     await expect(page.locator('#teamInfoModal')).toBeHidden();
 
@@ -451,9 +453,21 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
     await expect(page.locator('#suTeamInput')).toHaveValue('Crucible');
     await expect(page.locator('#suTeamListbox')).toBeHidden();
 
-    // signup team-near-match-prompts — one letter short of a roster team.
+    // signup team-near-match-prompts — one letter short of a roster team. The prompt appears on
+    // leaving the field (F3Go30-qeuu.8), and Use there resolves it without leaving the step.
+    await page.locator('#suTeamInput').fill('Crucibl');
+    await page.locator('#suTeamInput').blur();
+    await expect(page.locator('#suTeamDidYouMean')).toBeVisible();
+    await expect(page.locator('#suTeamDidYouMeanText')).toContainText('Crucible');
+    await page.locator('#suTeamUseNearBtn').click();
+    await expect(page.locator('#suTeamInput')).toHaveValue('Crucible');
+    await expect(page.locator('#suTeamDidYouMean')).toBeHidden();
+    await expect(page.locator('#su-step-info')).toBeVisible();
+
+    // Continue still blocks on an unresolved near-match, and Use from there continues.
     await page.locator('#suTeamInput').fill('Crucibl');
     await fillGoals_(page);
+    await expect(page.locator('#suTeamDidYouMean')).toBeVisible();
     await clickThroughAnnouncement_(page.locator('#suInfoNextBtn'));
     await expect(page.locator('#suTeamDidYouMean')).toBeVisible();
     await expect(page.locator('#suTeamDidYouMeanText')).toContainText('Crucible');

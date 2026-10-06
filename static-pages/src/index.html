@@ -561,11 +561,13 @@
         <p>Your team is your accountability and support structure for this Go30 month — the
           people who notice if you go missing and cheer when you hit a milestone. Go30 works
           because someone else knows what you committed to.</p>
-        <p><strong>AO-based team:</strong> pick your regular F3 AO (e.g. Iron Mtn, The Ranch) —
-          your teammates are the other PAX who signed up from that same AO.</p>
-        <p><strong>Custom team:</strong> not tied to one AO, or want to team up with specific
-          PAX? Type a team name (a Slack channel, a nickname your crew agrees on) — anyone who
-          types that same name lands on your team.</p>
+        <p>Many PAX choose a team around an AO they post at often, so they can partner with the
+          brothers they already see in the gloom. Some choose a team around a shared goal, like
+          Meditation or Sobriety. You could also pick any other name your crew agrees on, such as
+          a Slack channel or a nickname.</p>
+        <p>Start typing to see teams used in recent months. Everyone who picks the same name is on
+          the same team, so if your team is already listed, pick it rather than typing a new
+          spelling.</p>
       </div>
       <div class="announce-modal-actions">
         <button id="teamInfoCloseBtn" type="button">Got it</button>
@@ -617,8 +619,8 @@
           Bonus Points screen (Menu &rarr; Log Bonus Points). EHing FNG, Q Point, and Inspire
           each need a Slack link as evidence before they count.</dd>
         <dt>Can I change my team after signing up?</dt>
-        <dd>Yes — update it from the signup flow at any time; teams are just a shared name
-          (AO-based or custom), not a fixed roster.</dd>
+        <dd>Yes — update it from the signup flow at any time; teams are just a shared name,
+          not a fixed roster.</dd>
         <dt>I can't find my check-in page. What do I do?</dt>
         <dd>Use Menu &rarr; Send Feedback to reach your Site Q, or open the Tracker sheet
           directly from the dashboard's spreadsheet icon (top right) — every PAX's data lives
@@ -3939,6 +3941,7 @@
     // The team value the PAX already answered "Keep mine" to in the "Did you mean" prompt —
     // Continue doesn't re-ask for that same value.
     teamNearDismissed: '',
+    teamNearFromContinue: false,
     targetMonth: 'current',
     feedbackRating: 0,
   };
@@ -4009,6 +4012,7 @@
         var d = (res.matched && res.data) ? res.data : {};
         signupState.team = d.team || '';
         signupState.teamNearDismissed = '';
+        signupState.teamNearFromContinue = false;
         signupState.who = d.who || '';
         signupState.what = d.what || '';
         signupState.how = d.how || '';
@@ -4483,10 +4487,16 @@
     teamComboShowAll_ = false;
     teamComboActive_ = -1;
     hideTeamDidYouMean_();
+    signupState.teamNearFromContinue = false;
     renderTeamCombo_(true);
   });
   $('suTeamInput').addEventListener('focus', function() { renderTeamCombo_(true); });
-  $('suTeamInput').addEventListener('blur', function() { renderTeamCombo_(false); });
+  // F3Go30-qeuu.8: the "Did you mean" check runs when the PAX leaves the field, not only on
+  // Continue — so the prompt appears while they're still thinking about the team.
+  $('suTeamInput').addEventListener('blur', function() {
+    renderTeamCombo_(false);
+    maybeShowTeamDidYouMean_();
+  });
   $('suTeamInput').addEventListener('keydown', function(ev) {
     var count = teamComboMatches_().length;
     if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
@@ -4502,14 +4512,20 @@
       renderTeamCombo_(false);
     }
   });
+  // A prompt raised by leaving the field resolves in place; one raised by Continue continues.
+  function resolveTeamDidYouMean_() {
+    var resume = signupState.teamNearFromContinue;
+    signupState.teamNearFromContinue = false;
+    if (resume) $('suInfoNextBtn').click();
+  }
   $('suTeamUseNearBtn').addEventListener('click', function() {
     pickTeam_(this.dataset.team);
-    $('suInfoNextBtn').click();
+    resolveTeamDidYouMean_();
   });
   $('suTeamKeepMineBtn').addEventListener('click', function() {
     signupState.teamNearDismissed = String(signupState.team || '').trim();
     hideTeamDidYouMean_();
-    $('suInfoNextBtn').click();
+    resolveTeamDidYouMean_();
   });
   $('suWhoInput').addEventListener('input', function() { signupState.who = this.value; });
   $('suWhatInput').addEventListener('input', function() { signupState.what = this.value; });
@@ -4528,7 +4544,7 @@
       return;
     }
     $('suInfoError').classList.add('hidden');
-    if (maybeShowTeamDidYouMean_()) return;
+    if (maybeShowTeamDidYouMean_()) { signupState.teamNearFromContinue = true; return; }
     if (!signupState.months || !signupState.months.next) {
       signupState.targetMonth = 'current';
       performSignupSave_($('suInfoNextBtn'));

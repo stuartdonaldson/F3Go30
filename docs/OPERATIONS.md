@@ -100,7 +100,7 @@ secondary value.
 | `NameSpace` | Region identifier (e.g. `F3Waxhaw`) | — | `copyAndInit()`, `autoGenerateNextMonthTracker()` — drives spreadsheet name (`YYYY-MM-NameSpace`) and URL aliases |
 | `LogFile` | Drive file URL (written automatically on first use) | — | `copyAndInit()` — appends structured JSON log entries for UC-5 developer verification |
 | `Context Date` | `YYYY-MM-DD` override (optional, blank = unset) | — | `resolveContextDate_()` (go30tools.js) — namespace-scoped fallback "today" for the webapp's month-boundary/date-navigation logic (F3Go30-31w5.1); set via the `setContextDate` admin action or the Template's "Set Test Context Date..." menu item. Ignored outright on PROD. |
-| `TeamSuggestWindowDays` | Positive number of days (optional; default 90) | — | `readTeamSuggestions_()` (teamRoster.js, ADR-023) — sign-up team suggestions are the active `TeamDB` teams whose `LastUsed` falls within this many days, plus the pinned `SOLO (no team)`. Template-resolved Config row. |
+| `TeamSuggestWindowDays` | Positive number of days (optional; default 90) | — | `readTeamRosterView_()` (teamRoster.js, ADR-023) — sign-up team suggestions are the active `TeamDB` teams whose `LastUsed` falls within this many days, then every `pinned` team (Solo is one, listed last). Template-resolved Config row. |
 | `Announce.<day>` (e.g. `Announce.11`) | Splash-notice **title** (plain text) | Splash-notice **body** (rendered as HTML — links/formatting allowed) | `checkinClientConfig_dw_` / `resolveActiveAnnouncement_dw_` (dashboardWebapp.js, F3Go30-g9bi) — pushes a blocking splash notice ("HC moved to Saturday") to the check-in app for pax. `<day>` is the integer day-of-month the notice starts on; it auto-expires after day+3 (server-computed against `resolveContextDate_`'s "today", so it honors a `Context Date` override on SIT). A **blank title** is treated as an unconfigured/empty entry and is never shown, even if the body column has leftover text — the title is the "is this row filled in" signal. The body may be blank (title-only notice) and, when present, is rendered as HTML (`innerHTML`, not escaped text) so it can include a link — safe only because this column is Site-Q/admin-edited, never PAX-supplied. Same scope as `Context Date` above — the ns/Template-resolved Config sheet, shared by every monthly tracker under that namespace, not a per-monthly-tracker-copy row. Set/clear via the `setConfigValue` admin action (e.g. `setConfigValue --body '{"key":"Announce.11","primary":"HC Moved","secondary":"Moved to <a href=\"...\">Saturday</a> this week"}'`) rather than hand-editing the sheet. If more than one row's window is active at once, the newest (highest) day wins — only one shows at a time. Dismissal is client-only (localStorage) in V1 — clearing/editing this row on an already-open PAX device closes the splash on their next identify/dashboard/resume-refresh (no manual client-side reset needed). |
 
 ### Environments
@@ -301,9 +301,25 @@ the misspelled row's `Team` cell to the correct name**:
 
 This runs from an installable edit trigger on the Template (`handleTeamDbEdit_`, installed by
 `syncTrackerTriggers`, which every deploy runs). Edit **one Team cell at a time** — a multi-cell
-paste is not reconciled (a toast says so). Clearing a Team cell restores it; to drop a team from
-suggestions set `Status` to `hidden` (a matching save still resolves to it). Editing `Aliases` only
+paste is not reconciled (a toast says so). Clearing a Team cell restores it. Editing `Aliases` only
 affects future saves. Earlier months keep their historical spelling.
+
+**`Status` controls the sign-up suggestion list** (any case; a sign-up save never changes it):
+
+| Status | Suggested at sign-up | "Did you mean" / save matching |
+|--------|----------------------|--------------------------------|
+| `active` (or blank) | Only if `LastUsed` is within `TeamSuggestWindowDays` (Config, default 90), sorted A–Z | Yes |
+| `pinned` | Always, at the **end** of the list, in TeamDB row order — reorder the rows to reorder them (F3Go30-qeuu.9) | Yes |
+| `hidden` | Never — PAX already on it keep it, and an exact name/alias match still joins it | Save matching only |
+
+To add an always-suggested team, add a row with the `Team` name and `Status` `pinned`
+(`LastUsed`/`UseCount` can stay blank).
+
+`SOLO (no team)` has no special handling in the list: it is a `pinned` row, kept as the **last**
+pinned row so the list leads with teams and ends with Solo. `seedTeamDb` adds it (pinned, last)
+when TeamDB has no Solo row, but never changes an existing row's Status — if Solo is `active`,
+set it to `pinned` and move it below the other pinned rows. Deleting or hiding the Solo row removes
+Solo from the list.
 
 The same rename/merge is available from the command line as `renameTeam`:
 

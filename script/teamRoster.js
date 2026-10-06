@@ -6,8 +6,10 @@
  * Every team save goes through recordTeamUse_, which snaps the typed name to the roster's
  * canonical spelling (name or alias, case- and whitespace-insensitive) and records the use, or
  * appends a new active row. Sign-up suggestions are the active teams used within
- * TeamSuggestWindowDays (Config, default 90) plus the pinned Solo entry. Admins edit TeamDB
- * directly to fix spelling (add the old spelling as an alias), hide a team, or merge.
+ * TeamSuggestWindowDays (Config, default 90), then Status 'pinned' teams in row order. Solo is an
+ * ordinary pinned row (seedTeamDb_ ensures it), kept last to promote joining a team.
+ * Admins edit TeamDB directly to fix spelling (add the old spelling as an alias), hide or pin a
+ * team, or merge.
  *
  * Pure planning helpers are split from the thin sheet wrappers so the decisions are node-tested.
  */
@@ -24,6 +26,8 @@ var TEAM_DB_HEADERS_ = ['Team', 'Aliases', 'Status', 'LastUsed', 'UseCount', 'Po
 var TEAM_DB_COL_ = { TEAM: 0, ALIASES: 1, STATUS: 2, LAST_USED: 3, USE_COUNT: 4, POSSIBLE_DUPLICATE: 5 };
 var SOLO_TEAM_LABEL_ = 'SOLO (no team)';
 var TEAM_SUGGEST_WINDOW_DAYS_DEFAULT_ = 90;
+// Status values: 'active' (blank), 'hidden' (never suggested), 'pinned' (always suggested, last).
+var TEAM_STATUS_PINNED_ = 'pinned';
 var TEAM_SUGGEST_WINDOW_CONFIG_KEY_ = 'TeamSuggestWindowDays';
 var TEAM_DB_LOCK_WAIT_MS_ = 10000;
 var DAY_MS_TR_ = 86400000;
@@ -167,17 +171,20 @@ function refreshTeamDbDuplicates_(sheet) {
 
 /**
  * Sign-up suggestions: active entries with LastUsed within windowDays of now, sorted
- * case-insensitively, with SOLO_TEAM_LABEL_ pinned first exactly once.
+ * case-insensitively, then every `pinned` entry whatever its LastUsed, in TeamDB row order
+ * (F3Go30-qeuu.9). Entries arrive in row order (parseTeamDbRows_). Solo has no special case: it
+ * is listed only through its own TeamDB row.
  */
 function buildTeamSuggestions_(entries, now, windowDays) {
   var cutoff = now.getTime() - windowDays * DAY_MS_TR_;
-  var soloKey = teamMatchKey_(SOLO_TEAM_LABEL_);
-  var recent = (entries || []).filter(function(e) {
-    return e.status !== 'hidden' && e.lastUsed && e.lastUsed.getTime() >= cutoff &&
-      teamMatchKey_(e.team) !== soloKey;
+  var listed = entries || [];
+  var recent = listed.filter(function(e) {
+    return e.status !== 'hidden' && e.status !== TEAM_STATUS_PINNED_ && e.lastUsed && e.lastUsed.getTime() >= cutoff;
   }).map(function(e) { return e.team; });
   recent.sort(function(a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
-  return [SOLO_TEAM_LABEL_].concat(recent);
+  var pinned = listed.filter(function(e) { return e.status === TEAM_STATUS_PINNED_; })
+    .map(function(e) { return e.team; });
+  return recent.concat(pinned);
 }
 
 /**
@@ -203,7 +210,8 @@ function parseTeamListsFromListDbRows_(rows) {
  * to the latest PaxDB date and UseCount raised to the PaxDB count — never lowered, renamed, or
  * re-statused. New teams append as active; ListDB spelling wins, else the most frequent PaxDB
  * spelling (ties -> most recent). ListDB-only teams get a blank LastUsed, so they are not
- * suggested until someone actually uses them. Appends are sorted by match key.
+ * suggested until someone actually uses them. Appends are sorted by match key, except that a
+ * missing Solo row is always appended pinned and last (F3Go30-qeuu.9).
  * @returns {{appends: Array<Array>, updates: Array<{rowNumber: number, values: Array}>}}
  */
 function planTeamSeed_(existingEntries, listDbRows, paxRecords) {
@@ -240,6 +248,8 @@ function planTeamSeed_(existingEntries, listDbRows, paxRecords) {
 
   var appends = [];
   var updates = [];
+  var soloKey = teamMatchKey_(SOLO_TEAM_LABEL_);
+  var soloAppend = findTeamEntry_(existingEntries, SOLO_TEAM_LABEL_) ? null : [SOLO_TEAM_LABEL_, '', TEAM_STATUS_PINNED_, '', 0];
   order.sort();
   order.forEach(function(key) {
     var c = candidates[key];
@@ -249,6 +259,10 @@ function planTeamSeed_(existingEntries, listDbRows, paxRecords) {
       return (sb.count - sa.count) || (sb.latest - sa.latest);
     })[0];
     var existing = findTeamEntry_(existingEntries, name);
+    if (!existing && key === soloKey) {
+      soloAppend = [name, '', TEAM_STATUS_PINNED_, c.lastUsed || '', c.count];
+      return;
+    }
     if (!existing) {
       appends.push([name, '', 'active', c.lastUsed || '', c.count]);
       return;
@@ -262,6 +276,7 @@ function planTeamSeed_(existingEntries, listDbRows, paxRecords) {
     values[TEAM_DB_COL_.USE_COUNT] = useCount;
     updates.push({ rowNumber: existing.rowNumber, values: values });
   });
+  if (soloAppend) appends.push(soloAppend);
 
   return { appends: appends, updates: updates };
 }

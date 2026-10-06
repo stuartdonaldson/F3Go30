@@ -30,10 +30,11 @@ _User/admin-facing changes landed since the last minor release, awaiting the nex
 - **The old Google sign-up Form is closed** — sign up (or update your goals) on the Go30 page; anyone
   opening an old Form link sees a note pointing there. New monthly trackers no longer come with a Form.
 - **One team field at sign-up** — the AO-based / Custom Team choice is gone. Start typing and
-  pick from teams used in the last 3 months, or type a new one and it's added. A name that looks
+  pick from teams used in the last 3 months, or type a new one and it's added; "SOLO (no team)"
+  is still there, at the end of the list. A name that looks
   like a typo of an existing team ("Hawks Nest", "Thunderdom") asks "Did you mean …?" first, so
-  groups stop splitting over spelling. Admins correct spelling, add aliases, or hide a team in the
-  Template's new **TeamDB** sheet (ADR-023).
+  groups stop splitting over spelling. Admins correct spelling, add aliases, hide a team, or pin one so it's always
+  suggested, in the Template's new **TeamDB** sheet (ADR-023).
 - **No more false "Couldn't reach the server" after a check-in** — when the network drops the
   confirmation of a check-in that actually saved, the app now checks with the server and keeps your
   check-in instead of showing an error. You'll briefly see "Still saving… confirming with the
