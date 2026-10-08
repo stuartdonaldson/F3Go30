@@ -22,6 +22,23 @@ function makeFakeEl_() {
   return { fakeEl_: fakeEl_, elements: elements };
 }
 
+// F3Go30-kitk: the bounds are relative to the device clock (new Date()), so the harness injects a
+// fixed "today" as the extracted functions' Date — a zero-arg new Date() returns that day, every
+// other form behaves like the real Date. Without this the fixture months aged out of the cap window.
+function makeFixedDate_(todayIso) {
+  var parts = todayIso.split('-').map(Number);
+  var fixedMs = new Date(parts[0], parts[1] - 1, parts[2], 12).getTime();
+  function FixedDate() {
+    var args = Array.prototype.slice.call(arguments);
+    return args.length ? new (Function.prototype.bind.apply(Date, [null].concat(args)))() : new Date(fixedMs);
+  }
+  FixedDate.now = function() { return fixedMs; };
+  FixedDate.prototype = Date.prototype;
+  return FixedDate;
+}
+
+var TODAY_ISO_ = null;
+
 function loadHarness_(state, bonusState, callApiImpl) {
   var src = readStaticPage_();
   var body = 'var BONUS_MAX_MONTHS_BACK_ = 2;\nvar BONUS_MAX_MONTHS_FORWARD_ = 0;\n' + [
@@ -31,7 +48,7 @@ function loadHarness_(state, bonusState, callApiImpl) {
   ].map(function(name) { return extractFunction_(src, name); }).join('\n');
 
   var factory = new Function(
-    'state', 'bonusState_', '$', 'callApi', 'hideApiError_', 'showApiError_',
+    'state', 'bonusState_', '$', 'callApi', 'hideApiError_', 'showApiError_', 'Date',
     body + '\nreturn { loadBonusList_: loadBonusList_, navigateBonusMonth_: navigateBonusMonth_, ' +
       'renderBonusMonthNav_: renderBonusMonthNav_, bonusMonthBounds_: bonusMonthBounds_, ' +
       'setBonusWhenRange_: setBonusWhenRange_ };'
@@ -40,47 +57,64 @@ function loadHarness_(state, bonusState, callApiImpl) {
   var fns = factory(
     state, bonusState, fakeEl_,
     callApiImpl || function() { throw new Error('callApi should not have been called'); },
-    function() {}, function() {}
+    function() {}, function() {}, makeFixedDate_(TODAY_ISO_)
   );
   return { fns: fns, elements: elements };
 }
 
-var MONTHS_ = [
-  { monthKey: '2026-07', label: 'July 2026', startDateIso: '2026-07-01' },
-  { monthKey: '2026-08', label: 'August 2026', startDateIso: '2026-08-01' },
-  { monthKey: '2026-09', label: 'September 2026', startDateIso: '2026-09-01' },
-];
+var MONTH_NAMES_ = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+  'September', 'October', 'November', 'December'];
+
+// The fixture is the injected today's month and the two before it, so the 2-back/0-forward cap
+// window always lands on exactly these three months. M0 = earliest, M2 = today's month.
+function monthsEndingAt_(todayIso) {
+  var parts = todayIso.split('-').map(Number);
+  var out = [];
+  for (var back = 2; back >= 0; back--) {
+    var d = new Date(parts[0], parts[1] - 1 - back, 1);
+    var key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    out.push({ monthKey: key, label: MONTH_NAMES_[d.getMonth()] + ' ' + d.getFullYear(), startDateIso: key + '-01' });
+  }
+  return out;
+}
+
+function isoOf_(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+var MONTHS_ = null;
+var M0, M1, M2;
 
 // AC2: back capped at BONUS_MAX_MONTHS_BACK_(2) behind real-today's month; forward capped AT
 // real-today's month (BONUS_MAX_MONTHS_FORWARD_ = 0 — no future months for new bonus entries).
 function testBoundsCapBackTwoAndForwardZero() {
   var state = { availableMonths: MONTHS_ };
-  var h = loadHarness_(state, { monthKey: '2026-09', loading: false });
+  var h = loadHarness_(state, { monthKey: M2.monthKey, loading: false });
   var bounds = h.fns.bonusMonthBounds_();
-  assert.equal(MONTHS_[bounds.minIdx].monthKey, '2026-07', 'AC2: must allow paging back to the earliest month within the 2-month cap');
-  assert.equal(MONTHS_[bounds.maxIdx].monthKey, '2026-09', 'AC2: must cap forward at the real current month');
+  assert.equal(MONTHS_[bounds.minIdx].monthKey, M0.monthKey, 'AC2: must allow paging back to the earliest month within the 2-month cap');
+  assert.equal(MONTHS_[bounds.maxIdx].monthKey, M2.monthKey, 'AC2: must cap forward at the real current month');
 }
 
 // AC1/AC5: nav label reflects the viewed month and buttons disable at the bounds.
 function testRenderShowsLabelAndDisablesAtBounds() {
   var state = { availableMonths: MONTHS_ };
-  var h = loadHarness_(state, { monthKey: '2026-07', loading: false });
+  var h = loadHarness_(state, { monthKey: M0.monthKey, loading: false });
   h.fns.renderBonusMonthNav_();
-  assert.equal(h.elements.bonusMonthNavLabel.textContent, 'July 2026');
+  assert.equal(h.elements.bonusMonthNavLabel.textContent, M0.label);
   assert.equal(h.elements.bonusPrevMonthBtn.disabled, true, 'AC5: prev must disable at the back bound');
   assert.equal(h.elements.bonusNextMonthBtn.disabled, false);
 }
 
 function testRenderDisablesNextAtForwardBound() {
   var state = { availableMonths: MONTHS_ };
-  var h = loadHarness_(state, { monthKey: '2026-09', loading: false });
+  var h = loadHarness_(state, { monthKey: M2.monthKey, loading: false });
   h.fns.renderBonusMonthNav_();
   assert.equal(h.elements.bonusNextMonthBtn.disabled, true, 'AC5: next must disable at the real-current-month forward bound');
 }
 
 function testRenderShowsLoadingLabelAndDisablesBothWhileLoading() {
   var state = { availableMonths: MONTHS_ };
-  var h = loadHarness_(state, { monthKey: '2026-08', loading: true });
+  var h = loadHarness_(state, { monthKey: M1.monthKey, loading: true });
   h.fns.renderBonusMonthNav_();
   assert.match(h.elements.bonusMonthNavLabel.textContent, /Loading/, 'AC5: label must show a loading state');
   assert.equal(h.elements.bonusPrevMonthBtn.disabled, true);
@@ -91,7 +125,7 @@ function testRenderShowsLoadingLabelAndDisablesBothWhileLoading() {
 // state.availableMonths, not the day-nav's state.viewDate.
 function testNavigatePrevFetchesPreviousMonthByDateIso() {
   var state = { availableMonths: MONTHS_, f3Name: 'Crucible', email: 'c@x.com', bonusEntries: [] };
-  var bonusState = { monthKey: '2026-09', loading: false };
+  var bonusState = { monthKey: M2.monthKey, loading: false };
   var seenPayload = null;
   var callApi = function(action, payload) {
     seenPayload = payload;
@@ -99,27 +133,27 @@ function testNavigatePrevFetchesPreviousMonthByDateIso() {
   };
   var h = loadHarness_(state, bonusState, callApi);
   return h.fns.navigateBonusMonth_(-1).then(function() {
-    assert.equal(bonusState.monthKey, '2026-08', 'AC3: navigating back must move to the previous available month');
-    assert.equal(seenPayload.dateISO, '2026-08-01', "AC3: must fetch using that month's startDateIso");
+    assert.equal(bonusState.monthKey, M1.monthKey, 'AC3: navigating back must move to the previous available month');
+    assert.equal(seenPayload.dateISO, M1.startDateIso, "AC3: must fetch using that month's startDateIso");
   });
 }
 
 // Navigating past a bound, or while already loading, must not fire a fetch.
 function testNavigateNextBeyondForwardBoundNoOps() {
   var state = { availableMonths: MONTHS_, bonusEntries: [] };
-  var bonusState = { monthKey: '2026-09', loading: false };
+  var bonusState = { monthKey: M2.monthKey, loading: false };
   var calls = 0;
   var callApi = function() { calls++; return Promise.resolve({ entries: [] }); };
   var h = loadHarness_(state, bonusState, callApi);
   var result = h.fns.navigateBonusMonth_(1);
   assert.equal(result, undefined);
   assert.equal(calls, 0, 'must not fetch when already at the forward bound');
-  assert.equal(bonusState.monthKey, '2026-09');
+  assert.equal(bonusState.monthKey, M2.monthKey);
 }
 
 function testNavigateWhileLoadingNoOps() {
   var state = { availableMonths: MONTHS_, bonusEntries: [] };
-  var bonusState = { monthKey: '2026-09', loading: true };
+  var bonusState = { monthKey: M2.monthKey, loading: true };
   var calls = 0;
   var callApi = function() { calls++; return Promise.resolve({ entries: [] }); };
   var h = loadHarness_(state, bonusState, callApi);
@@ -131,13 +165,17 @@ function testNavigateWhileLoadingNoOps() {
 // window covering that month (setBonusWhenRange_ must follow the VIEWED month, not real today).
 function testWhenRangeFollowsViewedMonthNotRealToday() {
   var state = { availableMonths: MONTHS_ };
-  var h = loadHarness_(state, { monthKey: '2026-07', loading: false });
+  var h = loadHarness_(state, { monthKey: M0.monthKey, loading: false });
   h.fns.setBonusWhenRange_();
-  assert.equal(h.elements.bonusWhen.min, '2026-06-01', 'min must be one month before the VIEWED month, not real-today\'s month');
-  assert.equal(h.elements.bonusWhen.max, '2026-07-31', 'max must be the end of the VIEWED month');
+  var m0 = new Date(Number(M0.monthKey.slice(0, 4)), Number(M0.monthKey.slice(5)) - 1, 1);
+  assert.equal(h.elements.bonusWhen.min, isoOf_(new Date(m0.getFullYear(), m0.getMonth() - 1, 1)), 'min must be one month before the VIEWED month, not real-today\'s month');
+  assert.equal(h.elements.bonusWhen.max, isoOf_(new Date(m0.getFullYear(), m0.getMonth() + 1, 0)), 'max must be the end of the VIEWED month');
 }
 
-function run() {
+function runAt_(todayIso) {
+  TODAY_ISO_ = todayIso;
+  MONTHS_ = monthsEndingAt_(todayIso);
+  M0 = MONTHS_[0]; M1 = MONTHS_[1]; M2 = MONTHS_[2];
   var sync = [
     testBoundsCapBackTwoAndForwardZero,
     testRenderShowsLabelAndDisablesAtBounds,
@@ -148,9 +186,18 @@ function run() {
     testWhenRangeFollowsViewedMonthNotRealToday,
   ];
   sync.forEach(function(t) { t(); });
-  return testNavigatePrevFetchesPreviousMonthByDateIso().then(function() {
-    console.log('test_bonus_month_nav.js: all assertions passed');
-  });
+  return testNavigatePrevFetchesPreviousMonthByDateIso();
 }
 
-run().catch(function(err) { console.error(err); process.exit(1); });
+// F3Go30-kitk AC2: the same assertions must hold at dates months apart, including a year boundary
+// inside the cap window (2027-01: Nov..Jan) and the real clock.
+var DATES_ = ['2026-09-15', '2027-01-10', '2027-03-15', isoOf_(new Date())];
+
+function run() {
+  return DATES_.reduce(function(p, iso) { return p.then(function() { return runAt_(iso); }); }, Promise.resolve())
+    .then(function() {
+      console.log('test_bonus_month_nav.js: all assertions passed at ' + DATES_.join(', '));
+    });
+}
+
+run().catch(function(err) { console.error('today=' + TODAY_ISO_, err); process.exit(1); });

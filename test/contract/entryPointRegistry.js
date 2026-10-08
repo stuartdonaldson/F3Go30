@@ -269,10 +269,6 @@ const ENTRY_POINT_DEFERRED = {
     '[permanent] deletes a script property on the shared deployment; a suite-driven call could remove a real key from the live SIT project outside a disposable namespace — same shared-state objection as setScriptProperties — F3Go30-bm2m',
   'admin.runAutoGenerate':
     '[backlog] creates a real tracker, spreadsheet, form and triggers; currently blocked outright on SIT by the Apps Script per-script trigger quota (bd memory F3Go30-sit-trigger-quota-exceeded) — F3Go30-y8j7.2',
-  'admin.createTrackerForMonth':
-    '[backlog] driven only by an operator from the command line (tools/callWebapp.js, the backfill path for a skipped month). The charter join at F3Go30-emwk.9 found no journey drives it: copy-and-init.spec.js runs the copyAndInit MENU entry through the GAS editor, never this admin route, so the covered claim stage 3 authored for it was unearned. Same SIT trigger-quota block as runAutoGenerate — F3Go30-y8j7.2',
-  'admin.cleanupTracker':
-    '[permanent] trashes one named tracker\'s spreadsheet and its TrackerDB/PaxDB rows; on inspection (F3Go30-y8j7.2) tools/smokeTestNamespace.js\'s teardown calls admin.teardownEnvironment, a distinct whole-namespace action, not this one — cleanupTracker has no automated call-site anywhere and CLAUDE.md documents it as the operator\'s manual backfill-undo path (tools/callWebapp.js cleanupTracker) only, which a suite run should not invoke against real data — F3Go30-y8j7.2',
   'admin.deleteOrphanedTriggers':
     '[permanent] deletes triggers project-wide on the shared deployment, outside any per-run sandbox — F3Go30-y8j7.2',
   'admin.syncTrackerTriggers':
@@ -306,7 +302,7 @@ const ENTRY_POINT_DEFERRED = {
   'admin.teardownEnvironment':
     '[permanent] tagged (F3Go30-y8j7.2) as the real call-site in tools/smokeTestNamespace.js — both the stale-namespace disposal step and the end-of-run teardown — same charter-scope reasoning as copyTemplate — F3Go30-y8j7.2',
   'admin.copyProdTrackerToSit':
-    '[backlog] operator-only, on-demand SIT data refresh tool (tools/callWebapp.js copyProdTrackerToSit) with no automated call-site — same charter-scope reasoning as createTrackerForMonth: not a product journey, so deferred by design rather than by omission — F3Go30-956l',
+    '[backlog] operator-only, on-demand SIT data refresh tool (tools/callWebapp.js copyProdTrackerToSit) with no automated call-site — not a product journey, so deferred by design rather than by omission — F3Go30-956l',
 
   // ── triggers (F3Go30-y8j7.3) ──────────────────────────────────────────────────────────────
   // Investigated per-function (not just re-stamped): admin.runMinusOneCheck and

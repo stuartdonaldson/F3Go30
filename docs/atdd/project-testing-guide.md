@@ -139,7 +139,7 @@ Realizes `T24`.
     --ac-list-cmd "node test/contract/acRegistry.js"
   ```
 - **Authoritative coverage registry:** `test/contract/acRegistry.js` (`F3Go30-emwk.7`,
-  2026-09-06) — **85** acceptance criteria as `AC_REGISTRY` (`{id: description}`, ids behavioural,
+  2026-09-06) — **86** acceptance criteria as `AC_REGISTRY` (`{id: description}`, ids behavioural,
   never a bead id), plus a sibling `AC_SELFTEST_FIXTURES` (7 entries) holding the harness's own
   self-test tags. Nothing that computes coverage reads `AC_SELFTEST_FIXTURES`, and `listAcIds()`
   deliberately excludes it: in the reference implementation those tags once lived inside
@@ -241,8 +241,8 @@ placeholder remains, and both columns are checked to exist in their registry rat
 prose.
 
 **What an AC id in this table means.** That this journey is the *responsible* call-site for that
-obligation — not that a per-test tag proves it (emission is `F3Go30-emwk.12`, deferred). The 34 ACs
-named below are a minority of the registry's 85 on purpose: most obligations are held by the
+obligation — not that a per-test tag proves it (emission is `F3Go30-emwk.12`, deferred). The 35 ACs
+named below are a minority of the registry's 86 on purpose: most obligations are held by the
 network-free `test/test_*.js` files, which are not journeys. Charter membership is not suite
 coverage.
 
@@ -255,8 +255,8 @@ retiring a journey without deferring what it drove, now fails in the network-fre
 grades of live are recorded, and deliberately **not** split into separate tiers yet: the charter
 records the distinction so a later `test:prep`/auth-setup stage has something to act on.
 
-There are **12** journeys, of which **11** are tier members and one is a purpose exclusion;
-together they drain **34** of the registry's acceptance criteria and drive **14** state-modifying
+There are **13** journeys, of which **12** are tier members and one is a purpose exclusion;
+together they drain **35** of the registry's acceptance criteria and drive **16** state-modifying
 entry points.
 
 | Journey (spec) | Theme / failure domain | Entry points it is call-site for (`T17`) | AC ids drained | Why separate from each adjacent journey | Tier | Status |
@@ -270,6 +270,7 @@ entry points.
 | `announcement-splash-live-check` | Announcement splash: real CSS cascade in a real browser | `admin.setConfigValue` | `announce splash-renders-above-content` | The defect class is stylesheet source order — invisible to a synthetic DOM stand-in. Mutates a live Config row and restores it (§4) | live (webapp) | built |
 | `tracker-edit-trigger-live-check` | `onEdit` handler against a genuine human Sheets-UI edit | `handleTrackerEdit_` | `tracker edit-trigger-fires-on-human-edit` | `onEdit` never fires for API writes (ADR-013), so no other path can prove it | **live (authenticated Google browser session)** | built |
 | `copy-and-init` | `copyAndInit()` driven through the Apps Script editor: new month tracker, short URL, notification | `copyAndInit` | `tracker create-for-explicit-month` | Tracker creation is a destructive/lifecycle domain (`T22` risk order) and is driven from the GAS editor UI — the only journey that runs a menu entry point | **live (authenticated Google browser session)** | built |
+| `tracker-create-without-form-live-check` | Tracker creation through the admin route for a far-future month: no linked HC Form, blank HC columns, then cleanup | `admin.createTrackerForMonth` · `admin.cleanupTracker` | `tracker create-without-form` | `copy-and-init` runs the menu entry, which prompts for the month, so it cannot know which tracker it created; this drives the admin route for a known month and removes it afterwards (F3Go30-61ln.5) | live (webapp) | built |
 | `transport-resilience` | Transport failure handling with real `fetch`, real `AbortController`, real timers; failures injected by routing | — | `transport retries-lost-response` · `transport abort-on-timeout` | The **only** network-free spec. Deliberately cannot fail because SIT is having a bad minute — that is the failure mode it defends against | network-free | built |
 | `dashboard-hedged-read-live-check` | Hedged dashboard reads (first-wins, second-wins, deadline) with a real Apps Script response held or never delivered, real `fetch`/`AbortController`, real Chromium | — | `transport hedged-slow-attempt-wins` · `transport hedged-second-attempt-wins` · `transport hedged-deadline-surfaces-error` | The only journey that lets a REAL SIT response arrive late or never. `transport-resilience` is network-free by definition (synthetic bodies, fake clock) and must not depend on SIT; `static-checkin` is a cross-origin check-in journey with no read-latency fault. Reads only (`checkin.dashboard` is read-only exempt), so it drives no state-modifying entry point | live (webapp) | built |
 | `demo-screenshots` | Demo screenshot capture for `docs/Go30-Demo-Script.md` | — | — | **Not a tier member — a purpose exclusion.** It produces screenshots headed and asserts nothing a regression run needs (plan E3, following GActionSheet's `doc_export_wip` precedent). Stays runnable via `pnpm run demo:screenshots` | excluded | built |
@@ -302,7 +303,7 @@ drove, not about the store as a whole.
 - `static-signup` · `static-checkin` · `checkin-advanced-grid` ·
   `checkin-concurrency-live-check` · `scorecard-live-check` ·
   `announcement-splash-live-check` · `tracker-edit-trigger-live-check` · `copy-and-init` ·
-  `transport-resilience` · `dashboard-hedged-read-live-check` · `demo-screenshots` — **assert none**, explicitly. Each asserts only
+  `tracker-create-without-form-live-check` · `transport-resilience` · `dashboard-hedged-read-live-check` · `demo-screenshots` — **assert none**, explicitly. Each asserts only
   about the PAX, day, row or request it drove. The nearest thing the project has to a whole-store
   sweep is `smokeTestNamespace.js` over a provisioned namespace, which is a tool, not a journey.
 
@@ -319,8 +320,8 @@ make judgement calls auditable instead of prose: `ENTRY_POINT_CLASSES` (which of
 classes each entry belongs to) and `ENTRY_POINT_READ_ONLY_EXEMPT` (every route, render or menu
 item deliberately *not* registered, each with the reason it writes nothing).
 
-The registry holds **49** state-modifying entry points, of which **14** carry a charter-journey
-call-site today and **35** are explicitly enumerated as **deferred** (umbrella bead `F3Go30-y8j7`,
+The registry holds **49** state-modifying entry points, of which **16** carry a charter-journey
+call-site today and **33** are explicitly enumerated as **deferred** (umbrella bead `F3Go30-y8j7`,
 partitioned by call-site class into `.1`–`.4`; `.1` — the `cmd=checkin`/`cmd=signup` product
 entry points — closed all five of its entries). Each deferral opens with `[backlog]` (a real gap
 a bead converts) or `[permanent]` (driving it inside a suite run is destructive or meaningless —
@@ -336,7 +337,7 @@ numbers with `node test/contract/entryPointRegistry.js --counts`.
 |---|---|---|---|---|
 | `cmd=checkin` doPost actions | 7 | 6 | 1 | `script/dashboardWebapp.js` — six covered: `identify`, `checkin`, `bonusAdd`, `bonusEdit`, `clientTelemetry`, `siteFeedback` (F3Go30-y8j7.1); `logout` deferred (node-tested only, no charter-journey call-site yet — F3Go30-1pqo.2) |
 | `cmd=signup` doPost actions | 3 | 3 | 0 | `script/WebApp.js` → `script/signupWebapp.js` — all three covered: `identify`, `save`, `feedback` (F3Go30-y8j7.1) |
-| `cmd=admin` doPost actions | 25 | 2 | 23 | `script/WebApp.js` — mostly operator/test tooling; registered because it writes, deferred because it is not product surface |
+| `cmd=admin` doPost actions | 25 | 4 | 21 | `script/WebApp.js` — mostly operator/test tooling; registered because it writes, deferred because it is not product surface. `createTrackerForMonth` and `cleanupTracker` are covered by `tracker-create-without-form-live-check` (F3Go30-61ln.5) |
 | `doGet` / `doPost` routes | 1 | 1 | 0 | `script/WebApp.js` — `doPost` is the single front door (secret gate + entry log); the four `doGet` routes render or read and are exempt |
 | Installable and simple triggers | 7 | 1 | 6 | `handleTrackerEdit_` covered; TeamDB edit (`handleTeamDbEdit_`), auto-generate, minus-one, nag and the two cleanup sweeps deferred |
 | Sheet menu items | 6 | 1 | 5 | `script/onOpen.js` — `copyAndInit` covered; the trigger-management items are permanent exemptions |
@@ -348,7 +349,8 @@ join for the first time corrected one entry: `admin.createTrackerForMonth` was c
 by stage 3 on the strength of the charter's prose cell `copyAndInit / createTrackerForMonth`, but
 `copy-and-init.spec.js` drives the `copyAndInit` **menu** entry through the GAS editor and never
 the admin route, and no other spec calls it. It is now deferred with a reason and a bead, which is
-why the covered/deferred split reads 9/34 rather than stage 3's 10/33.
+why the covered/deferred split then read 9/34 rather than stage 3's 10/33. `F3Go30-61ln.5` later
+added a journey that drives the admin route (and `cleanupTracker`), so both are covered again.
 
 **What happens to an entry point absent from the registry:** it is silently uncovered — the state
 `H12` exists to remove. The registry is authored, not extracted (the scope judgement in

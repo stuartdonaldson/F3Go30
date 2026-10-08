@@ -425,6 +425,9 @@ function adminCreateTrackerForMonth_(payload, e) {
       sheetId: createTrackerResult.newSpreadsheetId,
       spreadsheetName: createTrackerResult.newSpreadsheetName,
       trackerUrl: createTrackerResult.trackerSheetShortUrl,
+      // ADR-024 / F3Go30-61ln.5: read back from the created spreadsheet itself, so a caller can
+      // prove the new tracker carries no linked HC Form ('' when none).
+      linkedFormUrl: SpreadsheetApp.openById(createTrackerResult.newSpreadsheetId).getFormUrl() || '',
       log: createTrackerLog,
     });
   } catch (err) {

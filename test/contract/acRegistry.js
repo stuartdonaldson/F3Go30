@@ -157,7 +157,9 @@ const AC_REGISTRY = {
 
   // ── tracker lifecycle: create, edit, age out ──────────────────────────────────────────────
   'tracker create-for-explicit-month':
-    'a tracker can be created for an explicitly named month, with its TrackerDB row, linked form and short URL',
+    'a tracker can be created for an explicitly named month, with its TrackerDB row and short URL',
+  'tracker create-without-form':
+    'a created tracker has no linked HC Form, and its TrackerDB ShortHC / HC URL / FormId and Config "Signup HC Form" are blank (ADR-024, F3Go30-61ln.5)',
   'tracker auto-generate-next-month':
     'the monthly trigger generates the next month\'s tracker and notifies Site Q; the operator-driven copyAndInit path does not send that email',
   'tracker short-url-repair':

@@ -195,6 +195,18 @@ const JOURNEY_CHARTER = {
     status: 'built',
   },
 
+  'tracker-create-without-form-live-check': {
+    theme:
+      'Tracker creation through the admin route for a far-future month: no linked HC Form, blank HC columns, then cleanup',
+    entryPoints: ['admin.createTrackerForMonth', 'admin.cleanupTracker'],
+    acIds: ['tracker create-without-form'],
+    invariants: null,
+    whySeparate:
+      '`copy-and-init` runs the menu entry, which prompts for the month, so it cannot know which tracker it created; this drives the admin route for a known month and removes it afterwards (F3Go30-61ln.5)',
+    tier: TIER_LIVE_WEBAPP,
+    status: 'built',
+  },
+
   'copy-and-init': {
     theme:
       '`copyAndInit()` driven through the Apps Script editor: new month tracker, short URL, notification',
