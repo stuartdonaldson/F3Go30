@@ -2791,3 +2791,34 @@ Open: `retire-hc-form` is not pushed and has no upstream. The store is local onl
 
 ### Key Learnings:
 DuckDB's Python driver needs `pytz` to fetch a TIMESTAMPTZ value. Without it, any ad-hoc `SELECT _time` crashes, so `axiom_store.rows()` converts those columns to ISO strings. `first` and `last` are reserved words in DuckDB SQL and cannot be used as bare column aliases. APL `dcount` counts an empty `f3Name` as a distinct value, which SQL `count(DISTINCT)` does not do.
+
+## 2026-10-07 20:24:32
+_session edcbae7b-80df-4c87-8f42-6d68858523a7 · v3 · 10-05→10-07_
+
+### Objective 1: Steer sign-up toward real, consistently spelled teams while keeping Solo available
+Rationale: The curated TeamDB roster (ADR-023) replaces the AO/Goal/Custom team types; sign-up should catch near-duplicate spellings at the moment a PAX leaves the field, and admins need a way to keep chosen teams always listed. Solo is part of that same roster, not a special case: "in the drop-down, Solo is last in order to promote team concept rather than the solo concept but to still let people know if they want solo, it's ok."
+Rejected: keeping Solo as hardcoded first-position code. The user overrode it: "All your arguments to keep solo as specific code are weak."
+Outcome [user-facing]: The team field shows "Did you mean" when the PAX leaves it, resolved in place with Use / Keep mine; a prompt raised by Continue resumes Continue. The info text now describes a team as a frequent AO, a shared goal, or any name.
+Outcome [user-facing]: TeamDB Status gains `pinned`. Pinned teams always list after the recent teams, in sheet order. Solo is an ordinary pinned row kept last, and seedTeamDb adds it if missing without ever changing an existing row's status.
+Outcome [developer-facing]: The live TeamDB edit-to-merge trigger was verified on SIT (Tundra and a test team merged into Timber, 6 rows moved). test_team_roster.js 36/36. ADR-023 Decision 3 and OPERATIONS §TeamDB updated.
+Open: sending reminder emails to Solo PAX individually rather than as one group (F3Go30-0r48). ADR-023/024 are still Proposed.
+
+### Objective 2: Bring the CHANGELOG up to date with what PROD actually runs  [accreted]
+Transition: requested after the team-field work reached SIT, so PROD-vs-SIT differences could be stated before a release.
+Rationale: "get a changelog updated for the current production version from the previous changelog entry, and then a changelog entry for what is different between production and the current work tree."
+Outcome [user-facing]: New CHANGELOG section for v2.6.1–v2.6.7 (PROD, 2026-08-31 – 2026-09-30), including 7 previously unlisted items. Unreleased now holds only SIT-only changes: HC Form closed, the single team field, admin-managed teams.
+
+### Objective 3: Clear the tests needed before shipping the HC-Form retirement and team roster to PROD  [accreted]
+Transition: followed the user's question "what is the drawback to deploying this to prod right now", whose answer listed the blocking items; the user then directed "fix kitk, then fix the tracker creation without a form test 61ln.5, and then do a full regression".
+Rationale: The regression entry point was red on a date-dependent test, and tracker creation without a Form (first real PROD run: November's tracker, generated late October) had no live test.
+Outcome [developer-facing]: test_bonus_month_nav.js runs on an injected clock with fixture months derived from it, passing at four dates including a year boundary. A Date-shifting preload run of the whole node tier at four dates found no other date-dependent tests. Node tier 266/266.
+Outcome [developer-facing]: New live journey tracker-create-without-form-live-check creates a 2031-01 tracker through admin createTrackerForMonth, asserts no linked Form plus blank TrackerDB HC columns and Config "Signup HC Form", then cleans up. The createTrackerForMonth response gains an additive `linkedFormUrl` field (SIT v2.6.7.14). admin.createTrackerForMonth/cleanupTracker are now covered; the charter, registries and doc counts were regenerated.
+Rejected: extending copy-and-init (bead disposition disp:2). It runs the menu entry, which prompts for the month, so it never knows which tracker it created. Re-disposed to disp:3.
+Outcome [developer-facing]: Three test faults fixed. The Apps Script editor-ready wait now targets the file list ("No functions" appears when the open file has only private functions). The stale-client banner tests release their route rewriter before teardown. The brand-new-team test uses a per-run random name, because a human merge had made the fixed name an alias of Timber (operator accepted one extra SIT TeamDB row per run).
+Outcome [internal]: Both full regressions were red for environmental reasons only: run 1 from SIT not answering, run 2 from single identify executions stalling 13–101s inside one TrackerDB read while concurrent calls took ~2s. Every failed test passed on rerun (except one that legitimately skipped). Saved as bd memory F3Go30-sit-resolvemonths-stalls.
+Open: nothing committed yet. The ADRs still need accepting before deploy:prod; after the deploy, seedTeamDb and closeHcForms (dry run first) must run on PROD.
+
+### Key Learnings:
+- The Apps Script editor hides `_`-suffixed functions from its picker; a file with only private functions shows "No functions" instead of the picker listbox.
+- An installed `globalThis.Date` subclass loaded via `NODE_OPTIONS=--require` shifts the clock for every `node --test` child process; it's a cheap whole-suite date-dependency sweep.
+- Playwright `route.fetch` failures write full request headers, including Google session cookies, into logs and error-context files (test-results/ is gitignored).

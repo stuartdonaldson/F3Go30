@@ -702,6 +702,9 @@ test.describe('Stale installed client: update banner + version footer (F3Go30-83
     const footer = await page.locator('#versionFooter').textContent();
     expect(footer).toContain(builtVersion);
     expect(footer).toContain('99.9.9');
+    // A background revalidation identify can still be inside the rewriting route when the test
+    // ends; release it so teardown doesn't fail the test (same as 'Reload re-fetches the document').
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
   });
 
   test('client current with the server -> no banner, footer shows the running build', async ({ page }) => {
@@ -750,6 +753,7 @@ test.describe('Stale installed client: update banner + version footer (F3Go30-83
     await serveVersion(page, '99.9.10');
     await page.goto(builtPageUrl());
     await expect(page.locator('#updateBanner')).toBeVisible({ timeout: LIVE_ROUND_TRIP_MS });
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
   });
 });
 

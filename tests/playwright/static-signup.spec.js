@@ -21,6 +21,7 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const http = require('http');
 const { dismissAnnouncementIfPresent_, clickThroughAnnouncement_ } = require('./live-check-helpers.js');
 
@@ -482,9 +483,12 @@ test.describe('Static signup front end (client, live SIT) — F3Go30-833s.12', (
   });
 
   test('team field: a brand-new team saves without a prompt and joins the roster suggestions', async ({ page, request }) => {
-    // A fixed name, not per-run: TeamDB has no delete action, so a per-run name would add a new
-    // SIT roster row every run. Re-using one keeps it to a single row (UseCount just grows).
-    const NEW_TEAM = 'ZZ Playwright Roster Team';
+    // A per-run name, so no TeamDB edit can make it not-new: a fixed name broke on 2026-10-07 once
+    // a human merge made it an alias of Timber, and the save then (correctly) became Timber.
+    // Cost, accepted by the operator: one 'ZZ Playwright New …' SIT roster row per run (TeamDB has
+    // no delete action — hide or merge them away). The 10 random characters keep it more than the
+    // near-match rule's 2 edits away from every earlier run's name, so no "Did you mean" fires.
+    const NEW_TEAM = 'ZZ Playwright New ' + crypto.randomBytes(8).toString('hex').slice(0, 10);
     const pax = freshValidationTestPax_();
     await openFreshInfoStep_(page, pax);
 

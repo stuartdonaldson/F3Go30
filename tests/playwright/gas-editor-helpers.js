@@ -14,10 +14,13 @@
 
 /**
  * Wait for the Apps Script editor to finish loading the project.
- * Signal: "Select function to run" listbox becomes visible in the toolbar.
+ * Signal: the "Project files" listbox becomes visible. Not the function picker: the editor opens
+ * on whichever file it last showed, and when that file has only private (`_`-suffixed) functions
+ * the toolbar shows "No functions" instead of the picker listbox (seen 2026-10-07 with
+ * BonusTypes.gs). selectFunction waits for the picker itself, after navigateToFile.
  */
 async function waitForEditorReady(page, timeout = 45000) {
-  await page.getByRole('listbox', { name: 'Select function to run' })
+  await page.getByRole('listbox', { name: 'Project files' })
     .waitFor({ state: 'visible', timeout });
 }
 
