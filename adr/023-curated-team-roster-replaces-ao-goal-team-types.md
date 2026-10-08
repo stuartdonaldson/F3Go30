@@ -1,6 +1,6 @@
 # ADR-023: Curated, Self-Growing Team Roster Replaces AO/Goal Team Types
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-10-02
 

@@ -1,6 +1,6 @@
 # ADR-024: HC Google Form Retired — the Static Sign-up Page Is the Only Sign-up Path
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-10-02
 
