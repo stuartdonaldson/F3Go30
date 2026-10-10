@@ -26,7 +26,13 @@ patch-range heading (e.g. `v2.6.1–v2.6.7`) so **Unreleased** holds only what i
 
 ## Unreleased
 
-_On SIT, not yet in PROD (PROD is v2.6.7). Awaiting the next release._
+_On SIT, not yet in PROD (PROD is v2.6.8). Nothing user-facing yet._
+
+---
+
+## v2.6.1–v2.6.8 — Scorecard, roster preview, one team field, sign-up Form retired, steadier check-in and dashboard (PROD, 2026-08-31 – 2026-10-07)
+
+_Patch releases within the 2.6 series; all of this is live in PROD as of v2.6.8 (2026-10-07). The first three items arrived in v2.6.8; the rest were live as of v2.6.7 (2026-09-30)._
 
 - **The old Google sign-up Form is closed** — sign up (or update your goals) on the Go30 page; anyone
   opening an old Form link sees a note pointing there. New monthly trackers no longer come with a Form.
@@ -40,13 +46,6 @@ _On SIT, not yet in PROD (PROD is v2.6.7). Awaiting the next release._
   aliases, hide a team, or pin one so it's always suggested. Renaming a team in TeamDB, or renaming
   it to an existing team to merge the two, also moves its PAX in this month's and next month's
   trackers.
-
----
-
-## v2.6.1–v2.6.7 — Scorecard, roster preview, steadier check-in and dashboard (PROD, 2026-08-31 – 2026-09-30)
-
-_Patch releases within the 2.6 series; all of this is live in PROD as of v2.6.7 (2026-09-30)._
-
 - **No more false "Couldn't reach the server" after a check-in** — when the network drops the
   confirmation of a check-in that actually saved, the app now checks with the server and keeps your
   check-in instead of showing an error. You'll briefly see "Still saving… confirming with the

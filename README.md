@@ -6,18 +6,18 @@ Google Apps Script automation for managing monthly Go30 habit-challenge trackers
 
 Go30 is an F3 monthly habit challenge, built on the *Atomic Habits* premise that small actions repeated consistently reshape who you become: each PAX picks one small, specific Daily Challenge (e.g. 15 minutes of stretching, journaling, no phone while driving), commits to it, and scores it Hit or Miss each day for the month — with a team for accountability. F3Go30 runs the whole cycle:
 
-- **Monthly tracker automation** — copies and initializes each month's tracker spreadsheet and signup form, wires time-based triggers, shortens URLs, and logs to Axiom, all driven from a single Template so a non-technical Site-Q never touches the plumbing.
-- **PAX web apps** — sign-up (Hard Commit), one-tap daily check-in, a personal dashboard (streaks, month-progress ring, team board), and bonus-point logging (Fellowship, Q, Inspire, EHing an FNG). All served as Apps Script `doGet`/`doPost` endpoints reading and writing the region's own spreadsheet — no external hosting, API, or database. The app remembers each PAX via a bookmarkable "identify-once" link.
+- **Monthly tracker automation** — copies and initializes each month's tracker spreadsheet, wires time-based triggers, shortens URLs, and logs to Axiom, all driven from a single Template so a non-technical Site-Q never touches the plumbing.
+- **PAX web apps** — sign-up (Hard Commit; replaces the retired Google sign-up Form), one-tap daily check-in, a personal dashboard (streaks, month-progress ring, team board), and bonus-point logging (Fellowship, Q, Inspire, EHing an FNG). All served as Apps Script `doGet`/`doPost` endpoints reading and writing the region's own spreadsheet — no external hosting, API, or database. The app remembers each PAX via a bookmarkable "identify-once" link.
 
 Topics: apps-script, google-sheets, automation, fitness, go30, beads, gdpr-conscious
 
 ## Status
 
-**Current — v2.3.15, deployed to PROD.** The full PAX-facing web app UI (sign-up, daily check-in, dashboard, bonus points) is live, with the "identify-once / remember me" flow hardened after a round of live bug-fixing. Two environments run in parallel: **PROD** (the live Template) and **SIT** (integration testing). See [docs/CHANGELOG.md](docs/CHANGELOG.md) for the user-facing feature history.
+**Current — v2.6.8, deployed to PROD (2026-10-07).** The full PAX-facing web app (sign-up, daily check-in, dashboard, Scorecard, bonus points) is live. Sign-up happens only on the Go30 page: the old Google sign-up Form is closed, and new monthly trackers no longer get one. Teams use a single field backed by the Template's TeamDB sheet. Two environments run in parallel: **PROD** (the live Template) and **SIT** (integration testing). See [docs/CHANGELOG.md](docs/CHANGELOG.md) for the user-facing feature history.
 
 **What's next, in order:**
 
-1. **Stability first.** Before new features, close out known defects and shore up test tooling — e.g. the dashboard hard-erroring when a PAX navigates to a month they weren't registered for (`F3Go30-awhw`), and re-architecting the SIT/smoke test harness so multi-month and bonus-edit flows have real coverage (`F3Go30-4j4o`). See `bd ready` for the current queue.
+1. **Stability first.** Watch the activity health report (below) for check-in reliability, especially lost responses on the current app version, and close known defects before new features. See `bd ready` for the current queue.
 2. **User-facing feature push.** Once stable, the next UI investment is **branding**, **awards for progress** (recognizing streaks and milestones), and **inspiration** woven into the check-in and dashboard experience.
 3. **Published documentation & explainer video.** Ship durable, publicly linkable docs (the newcomer [Intro](docs/Go30-Intro.md) and [FAQ](docs/Go30-FAQ.md) are drafted) and produce a PAX explainer video for registration and sign-in (`F3Go30-xc7`).
 
@@ -43,6 +43,39 @@ clasp push
 Open the spreadsheet with the owner account — the **F3 Go30** custom menu should appear.
 
 See [OPERATIONS.md](docs/OPERATIONS.md) for full configuration and failure mode reference.
+
+---
+
+## Activity & Health Reports
+
+Runtime logs go to Axiom and are mirrored into a local store (`data/axiom/`, needs `duckdb` in the
+uv1 venv) so PROD history outlives Axiom's 30 days. `tools/activity_log.py` reads that store
+(syncing first; `--no-sync` skips the network). `--env sit|prod` is required for the health and
+version reports (the narrative covers both environments without it). Run them with
+the uv1 venv Python (`/mnt/c/dev/venvs/uv1/bin/python`).
+
+| Report | Command | What it answers |
+|--------|---------|-----------------|
+| Activity narrative | `tools/activity_log.py --env prod --since 24h` | What did PAX do? Sessions in plain English, with errors and reconnect failures listed first |
+| Health report | `tools/activity_log.py --health --env prod` | How is the app doing? Findings first, then tables by version, week and hour of day |
+| One view | `… --health --env prod --view version` (or `week`, `hour`) | Just the server and app tables for that view, with no findings |
+| Who's on a version | `tools/activity_log.py --version-users 2.6.5 --env prod` | Who still uses an app version, when each PAX last used it, and the version they've moved to |
+
+- **By version:** server and app (browser) tables, each count shown as a number and a percent. The
+  app table also shows when each version first appeared and when it was mostly gone.
+- **By week:** Sunday-start weeks (UTC). The current week is shown but never compared.
+- **By hour:** hour of day in Pacific time, as rates, because traffic varies a lot by hour. Flags
+  hours whose failure rate or login p95 is well above the window's.
+- **Findings:** rule-based flags such as log loss, rate and latency regressions, new error
+  messages, old app versions still in use, and PAX with repeated failures.
+- App failures are counted when they happened on the device, not when the report reached the
+  server (offline failures are relayed later).
+- Window: `--weeks N` (default 4 whole weeks plus the current one), or `--since` / `--start` and
+  `--end`. Output: `--format text|md|json`, and `--out <file>`. `json` adds a drill-down query per
+  finding.
+- Raw queries: `tools/query_axiom.py` (live APL, or `--local --sql` against the store).
+
+Details: [OPERATIONS.md](docs/OPERATIONS.md) §Periodic health report and §Local Axiom store.
 
 ---
 

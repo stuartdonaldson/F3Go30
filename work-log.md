@@ -2822,3 +2822,34 @@ Open: nothing committed yet. The ADRs still need accepting before deploy:prod; a
 - The Apps Script editor hides `_`-suffixed functions from its picker; a file with only private functions shows "No functions" instead of the picker listbox.
 - An installed `globalThis.Date` subclass loaded via `NODE_OPTIONS=--require` shifts the clock for every `node --test` child process; it's a cheap whole-suite date-dependency sweep.
 - Playwright `route.fetch` failures write full request headers, including Google session cookies, into logs and error-context files (test-results/ is gitignored).
+
+## 2026-10-10 03:08:58
+_session 292f03fd · v3 · 10-08→10-10_
+
+### Objective 1: Test whether client failures track time-of-day server load
+Rationale: "I suspect some of the failures are tied to server load due to time of day. we need to normalize to % error because we know usage of our app also varies widly." The health report needed an hour-of-day view whose rates are comparable across hours of very different traffic, with failures placed at the moment they happened.
+Rejected: timing client failures by arrival (`_time`). User correction: "so the client faiulre does not save the time on the client when the failure occurred? that is the important time." Every clientTelemetry record carries the device capture time `ts` (7,025/7,025 on PROD), and 52% arrive more than an hour late, so the first by-hour table was wrong.
+Outcome [user-facing]: `activity_log.py --health` gained SERVER/APP BY HOUR (PT) tables (DST-aware, rate deltas vs the whole window) and an `hour-hotspot` finding (rate ≥1.5× and ≥1pp above the window, or login p95 ≥1.25×).
+Outcome [user-facing]: every client-telemetry count in the health report (by version/week/hour, recent errors, repeat failures, drill commands) now uses device capture time `ts`, falling back to `_time`.
+Outcome [internal]: analysis excluding 2.6.6 (the user's suspected outlier: 306 of its 630 requests lost) and restricted to 2.6.7+ (the clients that measure lost responses) found lost responses concentrated at 04:00–08:00 PT, but driven by 3–6 PAX per hour; one PAX (J...e) is ~24% of all 2.6.7+ lost responses. The only server-side hint is a modest 05:00 login p95 (7.3s vs ~5.3s).
+Outcome [developer-facing]: 41 unit tests at this point; the SQL (store) and APL (live) fetch twins changed together.
+Open: whether the 05:00 login slowdown survives a few more weeks of 2.6.7+ data with the repeat-failure PAX excluded; whether J...e's losses track one device or network.
+
+### Objective 2: Make app-version adoption and stragglers visible  [accreted]
+Transition: the 2.6.6 discussion led straight to "lets see the app version report", which raised when each version arrived and left, and who was still on 2.6.5.
+Rationale: to judge a version's health you need to know when it was live and who is stuck on an old build. The user asked for "easy report generation options in the tool for by version, and also one to see who is using a specific version and how recently."
+Outcome [user-facing]: the APP BY VERSION table shows First (first day in the whole local store; `<=` when the store's history starts that day) and Mostly gone (the day after the version's last day at ≥5% of that day's requests with ≥5 of its own; `in use` / `–`).
+Outcome [user-facing]: `--health --view version|week|hour` prints one view's tables without the findings; `--version-users X.Y.Z --env <env>` lists each PAX on that version with requests, telemetry, first/last seen (PT), days ago, and the newest version they've been seen on since.
+Outcome [developer-facing]: doPost rows carry no f3Name, so they are attributed via other events in the same execId. Masked names (`C...c`; an emoji's lone surrogate stored as U+FFFD) and capitalisation variants merge into one PAX. 51 unit tests in total; beads F3Go30-k624, -4k27, -barg closed.
+Outcome [internal]: Celtic's device kept 2.6.5 at 5–16% of daily traffic until it moved to 2.6.8 on 10/09; 22 PAX used 2.6.5, and all but 3 low-traffic ones have since been seen on 2.6.8.
+
+### Objective 3: Bring README and CHANGELOG in line with PROD v2.6.8  [accreted]
+Transition: end-of-session request to document the new reports and catch the changelog up with the previous PROD release.
+Rationale: the CHANGELOG still read "PROD is v2.6.7" with the team-field / TeamDB / Form-retirement items under Unreleased, though v2.6.8 shipped them to PROD on 2026-10-07.
+Outcome [user-facing]: CHANGELOG folds those items into a "v2.6.1–v2.6.8" PROD section (dated 2026-10-07); Unreleased now holds nothing user-facing.
+Outcome [developer-facing]: README gained an "Activity & Health Reports" section (narrative, health report, views, version users); the activity_log.py usage docstring and docs/OPERATIONS.md cover the new options.
+Open: README Status still says v2.3.15 and the Overview still mentions the retired signup form; no git tag exists for v2.6.8.
+
+### Key Learnings:
+Axiom APL has no `datetime_utc_to_local()`. Local hour has to be built as `hourofday(_time) + offset`, with the offset a piecewise `iff()` over the DST transitions in the window (computed in Python with zoneinfo). APL does allow `| extend _time = ...` to rebind the time column.
+DuckDB rejects `first`, `last`, `days` and `mode` as bare column aliases in ad-hoc `--local --sql` queries; use other names.
