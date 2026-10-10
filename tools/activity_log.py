@@ -22,6 +22,8 @@ Examples:
     python tools/activity_log.py                    # last 200 events, last 24h
     python tools/activity_log.py --limit 500 --since 7d
     python tools/activity_log.py --env sit
+    python tools/activity_log.py --health --env prod [--view version|week|hour]   # aggregate health report
+    python tools/activity_log.py --version-users 2.6.5 --env prod               # who is on an app version
 
 Notes:
     - Reads the local Axiom store (tools/axiom_store.py, F3Go30-43qv), first syncing the selected
@@ -551,10 +553,17 @@ def main() -> int:
     health.add_argument("--format", choices=["text", "md", "json"], default="text",
                         help="Report format: text (default, for reading), md (markdown), json (for analysis)")
     health.add_argument("--out", help="Also write the report to this file")
+    health.add_argument("--view", choices=["all", "version", "week", "hour"], default="all",
+                        help="--health: print only the by-version, by-week or by-hour tables, without "
+                             "the findings (default: all)")
+    parser.add_argument("--version-users", metavar="X.Y.Z",
+                        help="Who is on this app (client) version and how recently, with the newest "
+                             "version each PAX has moved to (requires --env; uses the --health window "
+                             "and --format/--out options; local store only)")
     args = parser.parse_args()
 
-    if args.health and not args.env:
-        parser.error("--health requires --env sit|prod")
+    if (args.health or args.version_users) and not args.env:
+        parser.error("--health / --version-users require --env sit|prod")
     envs = [args.env] if args.env else sorted(ENV_TARGET)
     live = not axiom_store.AVAILABLE
     if live:
@@ -564,6 +573,12 @@ def main() -> int:
         for env in envs:
             print(f"synced {env}: {axiom_store.sync(env)}", file=sys.stderr)
 
+    if args.version_users:
+        if live:
+            print(f"--version-users needs the local store (duckdb); install: {axiom_store.INSTALL_CMD}",
+                  file=sys.stderr)
+            return 2
+        return _version_users_main(args)
     if args.health:
         return _health_main(args, live)
     args.since = args.since or "24h"
@@ -609,8 +624,8 @@ def main() -> int:
     return 0
 
 
-def _health_main(args, live=False) -> int:
-    import activity_health
+def _health_window(args):
+    """(start, end) for --health / --version-users: --start/--since, else --weeks whole weeks."""
     end = _parse_instant(args.end) if args.end else None
     if args.start or args.since:
         start, end = _window(_parse_duration(args.since) if args.since else None,
@@ -621,6 +636,32 @@ def _health_main(args, live=False) -> int:
         sunday = (end - timedelta(days=(end.weekday() + 1) % 7)).replace(
             hour=0, minute=0, second=0, microsecond=0)
         start = sunday - timedelta(weeks=args.weeks)
+    return start, end
+
+
+def _emit(text, args):
+    print(text)
+    if args.out:
+        out = pathlib.Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text)
+        print(f"Wrote {out}", file=sys.stderr)
+
+
+def _version_users_main(args) -> int:
+    import activity_health
+    start, end = _health_window(args)
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    rows = activity_health.fetch_version_usage(axiom_store.connect([args.env]), args.env, start, end)
+    users = activity_health.version_users(rows, args.version_users, end.strftime(fmt))
+    _emit(activity_health.render_version_users(users, args.version_users, args.env, start.strftime(fmt),
+                                               end.strftime(fmt), args.format), args)
+    return 0
+
+
+def _health_main(args, live=False) -> int:
+    import activity_health
+    start, end = _health_window(args)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
     if live:
         raw = activity_health.fetch_live(*require_axiom_credentials(), args.env, start, end)
@@ -628,15 +669,10 @@ def _health_main(args, live=False) -> int:
         raw = activity_health.fetch(axiom_store.connect([args.env]), args.env, start, end)
     report = activity_health.build_report(raw, args.env, start.strftime(fmt), end.strftime(fmt),
                                           datetime.now(timezone.utc).strftime(fmt))
+    report = activity_health.select_view(report, args.view)
     render = {"text": activity_health.render_text, "md": activity_health.render_markdown,
               "json": activity_health.render_json}[args.format]
-    text = render(report)
-    print(text)
-    if args.out:
-        out = pathlib.Path(args.out)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(text)
-        print(f"Wrote {out}", file=sys.stderr)
+    _emit(render(report), args)
     return 0
 
 

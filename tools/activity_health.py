@@ -8,6 +8,9 @@ Where activity_log.py's default mode narrates individual PAX sessions, this mode
                 the browser's `clientVersion` — both normalised to x.y.z in the query, so SIT
                 builds like 2.6.7.11 fold into 2.6.7
     by week     both grouped by APL startofweek(_time) — Sunday-start, UTC
+    by hour     both grouped by hour of day (0-23) in Pacific time (HOUR_TZ, the GAS project's
+                timezone), each rate compared with the whole window's rate — traffic varies
+                widely by hour, so only the rates are comparable (F3Go30-k624)
 
 Every count with a natural denominator is shown as absolute AND percent (login match % of logins,
 client failures % of that client's POSTs, users affected % of active users, ...), with the change
@@ -28,10 +31,14 @@ Layering: fetch() (SQL over the local Axiom store, axiom_store.py, F3Go30-43qv �
 are the only functions that do I/O; they return identical raw dicts, and everything else is pure
 over the row dicts they return, and is unit-tested from fixtures in test/test_activity_health.py.
 
+Time of a client failure: a client queues telemetry offline and relays it later — about half of
+PROD's arrive over an hour late, some a day or more — so every clientTelemetry row is placed by
+the client's own capture time `ts` (when it happened), not its arrival `_time` (F3Go30-k624).
+fetch() swaps `ts` into `_time` for those rows before any query sees them, and selects the window
+by it; fetch_live() swaps it the same way but Axiom selects the window by arrival.
+
 Caveats:
-    - Client failure counts use the telemetry event's arrival time (_time). A client queues
-      telemetry offline and relays it later, sometimes days later, so a failure can land in a
-      later week than it happened in.
+    - `ts` is the browser's clock; a device with a wrong clock misplaces its own failures.
     - Metrics that only exist from a given version on (lostResponse from 2.6.6, hedgedRead from
       2.6.7) read as 0 for older versions — "not instrumented", not "no problem".
 """
@@ -40,6 +47,7 @@ import json
 import re
 import shlex
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import axiom_store
 from query_axiom import ENV_TARGET, run_apl
@@ -56,6 +64,9 @@ REPEAT_FAILURES = 10        # client failures by one PAX in the recent window
 RECENT_DAYS = 7             # 'recent' window for new-event / stale-client / repeat-failure flags
 GAP_BASELINE = 20           # an event must average this many per complete week ...
 GAP_RATIO = 0.1             # ... and fall below this fraction of it in one week to flag a gap
+GONE_SHARE = 0.05           # an app version is "mostly gone" after its last day at >= this share
+GONE_MIN = 5                # ... of all that day's requests, with at least this many of its own
+HOUR_TZ = "America/Los_Angeles"  # by-hour view: the GAS project timezone (script/appsscript.json)
 
 # (rate key, numerator, denominator, direction) — direction is which way is worse
 SERVER_RATE_METRICS = [
@@ -196,6 +207,105 @@ def build_client_table(client_rows, order):
             row[key] = pct(row.get(num), row.get(den))
         out.append(row)
     return _add_deltas(out, CLIENT_RATE_METRICS)
+
+
+def _vs_overall(table, metrics):
+    """Replace each row's delta with its rate minus the whole-table rate (counts are additive)."""
+    total = {}
+    for _, num, den, _ in metrics:
+        for f in (num, den):
+            total[f] = sum(r.get(f) or 0 for r in table)
+    overall = {key: pct(total[num], total[den]) for key, num, den, _ in metrics}
+    for r in table:
+        r["delta"] = {key: None if r.get(key) is None or overall[key] is None
+                      else round(r[key] - overall[key], 2) for key, *_ in metrics}
+    return overall
+
+
+def build_hour_tables(server_rows, latency_rows, client_rows):
+    """byHour {server, client}, hours 0-23 ascending; delta = rate minus the whole-window rate."""
+    order = sorted({r["period"] for r in server_rows + client_rows})
+    # users/affected are distinct per hour and do not add up across hours, so no overall for them
+    client_metrics = [m for m in CLIENT_RATE_METRICS if m[0] != "affectedPct"]
+    tables = {"server": build_server_table(server_rows, latency_rows, order),
+              "client": build_client_table(client_rows, order)}
+    tables["overall"] = {**_vs_overall(tables["server"], SERVER_RATE_METRICS),
+                         **_vs_overall(tables["client"], client_metrics)}
+    for r in tables["client"]:
+        r["delta"]["affectedPct"] = None
+    return tables
+
+
+def version_lifespans(day_rows):
+    """{x.y.z: firstDay, goneDay, inUse, firstClipped} from per-(version, day) request counts.
+
+    goneDay is the day after the version's last day at >= GONE_SHARE of all that day's requests
+    (with >= GONE_MIN of its own); inUse when that last day is within a day of the newest data;
+    neither when it never met that bar. firstClipped: its first day is the data's first day, so it
+    may have started earlier."""
+    per, total = {}, {}
+    for r in day_rows:
+        v, day, n = normalize_version(r["period"]), to_iso(r["day"])[:10], r.get("posts") or 0
+        per.setdefault(v, {})[day] = per.get(v, {}).get(day, 0) + n
+        total[day] = total.get(day, 0) + n
+    if not total:
+        return {}
+    first_data, last_data = min(total), max(total)
+    near_end = (datetime.fromisoformat(last_data) - timedelta(days=1)).strftime("%Y-%m-%d")
+    out = {}
+    for v, days in per.items():
+        active = [d for d, n in days.items() if n >= GONE_MIN and n / total[d] >= GONE_SHARE]
+        last = max(active) if active else None
+        in_use = bool(last) and last >= near_end
+        gone = None if not last or in_use else \
+            (datetime.fromisoformat(last) + timedelta(days=1)).strftime("%Y-%m-%d")
+        first = min(days)
+        out[v] = {"firstDay": first, "goneDay": gone, "inUse": in_use,
+                  "firstClipped": first == first_data}
+    return out
+
+
+def _hour_label(h):
+    return f"{int(h):02d}:00"
+
+
+def hour_hotspots(by_hour, p95_all=None, env=None, start=None, end=None):
+    """Hours whose failure rate (or login p95) stands well above the whole window's."""
+    overall = by_hour.get("overall", {})
+    tz_apl = apl_local_hour(start, end) if start and end else "hourofday(_time)"
+    flags = []
+
+    def add(hour, metric, summary, detail, where, apl):
+        flags.append(_flag("hour-hotspot", summary, {"metric": metric, "hour": hour, **detail},
+                           drill_cmd(env, where, f"{_APL_OCCURRED} | extend h = {tz_apl} | where h == {hour} {apl}",
+                                     start, end),
+                           key=f"{_hour_label(hour)} PT"))
+
+    for table, metrics in ((by_hour["server"], SERVER_RATE_METRICS), (by_hour["client"], CLIENT_RATE_METRICS)):
+        for r in table:
+            for key, num, den, direction in metrics:
+                base, rate = overall.get(key), r.get(key)
+                if direction != "higher" or base is None or rate is None:
+                    continue
+                if ((r.get(num) or 0) < MIN_COUNT or (r.get(den) or 0) < MIN_DENOMINATOR
+                        or rate - base < MIN_RATE_PP or (base and rate / base < REGRESSION_RATIO)):
+                    continue
+                label, num_noun, den_noun = METRIC_PHRASES[key]
+                add(r["period"], key,
+                    f"{label} {rate:.1f}% vs {base:.1f}% overall ({r.get(num):,} of {r.get(den):,} "
+                    f"{den_noun} {num_noun})",
+                    {"pct": rate, "overallPct": base, "count": r.get(num), "of": r.get(den)},
+                    METRIC_FILTERS[key], "| summarize n=count() by bin(_time, 1d), action, version")
+    for r in by_hour["server"]:
+        p95 = r.get("p95")
+        if p95_all and p95 and (r.get("n") or 0) >= MIN_DENOMINATOR and p95 / p95_all >= P95_RATIO:
+            add(r["period"], "p95",
+                f"Slowest 5% of logins took {p95 / 1000:.1f}s vs {p95_all / 1000:.1f}s overall "
+                f"({r.get('n'):,} logins)",
+                {"p95": p95, "overallP95": p95_all, "of": r.get("n")},
+                "name == 'checkinWebapp.identify.result'",
+                "| summarize p95=percentile(durationMs, 95), n=count() by bin(_time, 1d)")
+    return sorted(flags, key=lambda f: f["detail"]["hour"])
 
 
 # --- flags ----------------------------------------------------------------------------------
@@ -424,7 +534,8 @@ def repeat_failures(rows, latest_wk, env=None):
                   key=r["f3Name"])
             for r in rows if (r.get("n") or 0) >= REPEAT_FAILURES]
 
-GROUPED_KINDS = ("event-gap", "new-event", "new-client-error", "stale-client", "repeat-failures")
+GROUPED_KINDS = ("event-gap", "new-event", "new-client-error", "stale-client", "repeat-failures",
+                 "hour-hotspot")
 
 
 def group_flags(flags):
@@ -456,6 +567,7 @@ def group_flags(flags):
 _ISO = "'%Y-%m-%dT%H:%M:%SZ'"
 # APL startofweek(): Sunday 00:00 UTC (DuckDB's date_trunc('week') is Monday); dayofweek Sunday = 0.
 _WEEK = f"strftime(CAST(CAST(_time AS DATE) - CAST(dayofweek(_time) AS INTEGER) AS TIMESTAMP), {_ISO})"
+_HOUR = f"CAST(hour(timezone('{HOUR_TZ}', _time)) AS INTEGER)"
 
 
 def _iso_t(expr):
@@ -471,6 +583,9 @@ def _xyz(field):
 _EVENT_KEY = "CASE WHEN COALESCE(kind, '') = '' THEN name ELSE name || ':' || kind END"
 _FAILURE = "(kind IN ('error', 'lostResponse') OR (kind = 'reconnectPoll' AND outcome = 'failed'))"
 _LOGIN = "name = 'checkinWebapp.identify.result'"
+# When an event happened: a clientTelemetry row's own capture time (ts), else its arrival (_time).
+_OCCURRED = ("CASE WHEN name = 'clientTelemetry' THEN COALESCE("
+             "TRY_CAST(json_extract_string(data, '$.ts') AS TIMESTAMPTZ), _time) ELSE _time END")
 
 
 def _server_sql(dim):
@@ -520,14 +635,19 @@ def _events_by(con, env, start, end, bucket_raw, bucket_td):
             GROUP BY 1, 2) GROUP BY 1, 2""", [env, start, end, env, start, end])
 
 
+def _window_table(con, env, start, end, view="w"):
+    """Temp table `view` = env's events with _OCCURRED as _time, inside [start, end)."""
+    con.execute(f"CREATE OR REPLACE TEMP TABLE {view} AS SELECT * REPLACE ({_OCCURRED} AS _time) "
+                f"FROM events WHERE env = ? AND {_OCCURRED} >= ? AND {_OCCURRED} < ?", [env, start, end])
+
+
 def fetch(con, env, start, end) -> dict:
     """Raw row dicts for build_report, from a store connection (axiom_store.connect)."""
     recent_start = end - timedelta(days=RECENT_DAYS)
     rs = recent_start.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def q(sql, s=start, view="w"):
-        con.execute(f"CREATE OR REPLACE TEMP TABLE {view} AS SELECT * FROM events "
-                    "WHERE env = ? AND _time >= ? AND _time < ?", [env, s, end])
+        _window_table(con, env, s, end, view)
         return axiom_store.rows(con, sql)
 
     def week_or_recent(week):
@@ -540,6 +660,12 @@ def fetch(con, env, start, end) -> dict:
         "serverByVersion": q(_server_sql(ver)), "serverByWeek": q(_server_sql(_WEEK)),
         "latencyByVersion": q(_latency_sql(ver)), "latencyByWeek": q(_latency_sql(_WEEK)),
         "clientByVersion": q(_client_sql(cver)), "clientByWeek": q(_client_sql(_WEEK)),
+        # whole store history, not the window: when a version first appeared may predate it
+        "clientVersionDays": q(f"SELECT {cver} AS period, strftime(CAST(_time AT TIME ZONE 'UTC' AS DATE), "
+                               "'%Y-%m-%d') AS day, count(*) AS posts FROM w WHERE name = 'doPost' GROUP BY 1, 2",
+                               s=datetime(2000, 1, 1, tzinfo=timezone.utc)),
+        "serverByHour": q(_server_sql(_HOUR)), "latencyByHour": q(_latency_sql(_HOUR)),
+        "clientByHour": q(_client_sql(_HOUR)), "latencyAll": q(_latency_sql("'all'")),
         "eventsByWeek": _events_by(con, env, start, end, *week_or_recent(True)),
         "eventsRecent": _events_by(con, env, start, end, *week_or_recent(False)),
         "clientErrorsRecent": q(
@@ -566,8 +692,134 @@ def fetch(con, env, start, end) -> dict:
     return raw
 
 
+# --- --version-users: who is on a client version (store only, F3Go30-barg) -------------------
+def fetch_version_usage(con, env, start, end) -> list:
+    """Per (PAX, x.y.z clientVersion, src) counts and first/last times. src 'req' = doPost, which
+    carries no f3Name — attributed through any event in the same execId that does (an unmasked
+    name preferred); 'tel' = clientTelemetry, by its own f3Name and capture time."""
+    _window_table(con, env, start, end)
+    cver = _xyz("clientVersion")
+    return axiom_store.rows(con, f"""
+        WITH names AS (
+          SELECT execId, COALESCE(any_value(f3Name) FILTER (WHERE f3Name NOT LIKE '%...%'),
+                                  any_value(f3Name)) AS pax
+            FROM w WHERE execId IS NOT NULL AND COALESCE(f3Name, '') <> '' GROUP BY 1)
+        SELECT n.pax, {cver} AS version, 'req' AS src, count(*) AS n,
+               {_iso_t('min(_time)')} AS first, {_iso_t('max(_time)')} AS last
+          FROM w LEFT JOIN names n USING (execId) WHERE name = 'doPost' GROUP BY 1, 2
+        UNION ALL
+        SELECT NULLIF(f3Name, '') AS pax, {cver} AS version, 'tel' AS src, count(*) AS n,
+               {_iso_t('min(_time)')} AS first, {_iso_t('max(_time)')} AS last
+          FROM w WHERE name = 'clientTelemetry' GROUP BY 1, 2""")
+
+
+def _mask_matches(masked, name):
+    """maskPiiForLog_ (script/GasLogger.js) writes first + '...' + last; it slices UTF-16, so a name
+    ending in an emoji leaves a lone surrogate, stored as U+FFFD."""
+    if len(masked) != 5 or masked[1:4] != "..." or masked[0] != name[0]:
+        return False
+    return masked[4] == name[-1] or masked[4] == "\ufffd"
+
+
+def version_users(rows, version, now_iso) -> list:
+    """PAX seen on client `version`, newest last-seen first, with the newest version each was seen on."""
+    version = normalize_version(version)
+    names = {r["pax"] for r in rows if r.get("pax") and "..." not in r["pax"]}
+
+    # names typed with different capitalisation are one PAX, shown by the most-used spelling
+    weight = {}
+    for r in rows:
+        if r.get("pax") in names:
+            weight[r["pax"]] = weight.get(r["pax"], 0) + (r.get("n") or 0)
+    spelling = {}
+    for n in sorted(weight, key=weight.get, reverse=True):
+        spelling.setdefault(n.casefold(), n)
+
+    def canon(p):
+        if p and "..." in p:
+            hits = {spelling[n.casefold()] for n in names if _mask_matches(p, n)}
+            return hits.pop() if len(hits) == 1 else p
+        return spelling.get(p.casefold(), p) if p else p
+
+    now = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+    users, latest = {}, {}
+    for r in rows:
+        pax, v = canon(r.get("pax")), normalize_version(r.get("version"))
+        if pax and (pax not in latest or r["last"] > latest[pax][1]):
+            latest[pax] = (v, r["last"])
+        if v != version:
+            continue
+        u = users.setdefault(pax, {"pax": pax or "(unknown)", "requests": 0, "telemetry": 0,
+                                   "first": r["first"], "last": r["last"]})
+        u["requests" if r["src"] == "req" else "telemetry"] += r.get("n") or 0
+        u["first"], u["last"] = min(u["first"], r["first"]), max(u["last"], r["last"])
+    out = []
+    for pax, u in users.items():
+        lv, ls = latest.get(pax, (None, None)) if pax else (None, None)
+        last = datetime.fromisoformat(u["last"].replace("Z", "+00:00"))
+        out.append({**u, "daysAgo": (now - last).days, "latestVersion": lv, "latestSeen": ls})
+    return sorted(out, key=lambda u: u["last"], reverse=True)
+
+
+def _pt(iso):
+    return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(ZoneInfo(HOUR_TZ)).strftime("%m/%d %H:%M")
+
+
+def render_version_users(users, version, env, start_iso, end_iso, fmt="text") -> str:
+    version = normalize_version(version)
+    if fmt == "json":
+        return json.dumps({"env": env, "version": version, "start": start_iso, "end": end_iso,
+                           "users": users}, indent=2)
+    head = ["PAX", "Requests", "Telemetry", "First seen (PT)", "Last seen (PT)", "Days ago", "Now on"]
+
+    def now_on(u):
+        if not u["latestVersion"]:
+            return "–"
+        return "same" if u["latestVersion"] == version else \
+            f"{_label('version', u['latestVersion'])} ({_pt(u['latestSeen'])[:5]})"
+
+    rows = [[u["pax"], _num(u["requests"]), _num(u["telemetry"]), _pt(u["first"]), _pt(u["last"]),
+             str(u["daysAgo"]), now_on(u)] for u in users]
+    title = (f"{env.upper()} — WHO IS ON APP {_label('version', version)}   {_short_date(start_iso)} → "
+             f"{_short_date(end_iso)}   ({sum(1 for u in users if u['pax'] != '(unknown)')} PAX)")
+    notes = ["Requests carry no PAX name; they are matched to a PAX through other events in the same",
+             "server execution. (unknown) = requests with nothing to match. Telemetry times are when it",
+             "happened on the device. Now on = newest app version that PAX was seen on in the window."]
+    if fmt == "md":
+        out = [f"# {title}", "", "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+        out += ["| " + " | ".join(r) + " |" for r in rows]
+        return "\n".join(out + [""] + notes) + "\n"
+    widths = [max(len(h), *(len(r[i]) for r in rows)) if rows else len(h) for i, h in enumerate(head)]
+    line = lambda cells: "  " + "  ".join(c.ljust(w) if i in (0, 6) else c.rjust(w)
+                                          for i, (c, w) in enumerate(zip(cells, widths))).rstrip()
+    out = [title, ""] + ([line(head), "  " + "  ".join("─" * w for w in widths)] + [line(r) for r in rows]
+                         if rows else ["  Nobody seen on that version in the window."])
+    return "\n".join(out + ["", "NOTES"] + ["  " + n for n in notes]) + "\n"
+
+
 # --- fetch_live: the original APL translation (see the drift note above) ----------------------
 _APL_WEEK = "startofweek(_time)"
+
+
+def apl_local_hour(start, end, tz=HOUR_TZ):
+    """APL hour of day in `tz` over [start, end]. Axiom has no datetime_utc_to_local(), so the UTC
+    offset is a piecewise iff() over the DST transitions inside the window, found here."""
+    zone = ZoneInfo(tz)
+    start, end = (t if isinstance(t, datetime) else datetime.fromisoformat(t.replace("Z", "+00:00"))
+                  for t in (start, end))
+
+    def off(t):
+        return int(t.astimezone(zone).utcoffset().total_seconds() // 3600)
+
+    pieces, t = [], start.replace(minute=0, second=0, microsecond=0)
+    while t <= end:  # hour steps: a transition always lands on a UTC hour boundary for US zones
+        if not pieces or off(t) != pieces[-1][1]:
+            pieces.append((t, off(t)))
+        t += timedelta(hours=1)
+    expr = str(pieces[0][1])
+    for at, o in pieces[1:]:
+        expr = f"iff(_time >= datetime({at.strftime('%Y-%m-%dT%H:%M:%SZ')}), {o}, {expr})"
+    return f"((hourofday(_time) + 24 + {expr}) % 24)"
 
 
 def _apl_xyz(field):
@@ -578,6 +830,8 @@ def _apl_xyz(field):
 
 _APL_EVENT_KEY = "key = iff(isempty(kind), name, strcat(name, ':', kind))"
 _APL_FAILURE = "(kind == 'error' or kind == 'lostResponse' or (kind == 'reconnectPoll' and outcome == 'failed'))"
+# APL twin of _OCCURRED: place clientTelemetry rows by their capture time (ts), not arrival.
+_APL_OCCURRED = "| extend _time = iff(name == 'clientTelemetry' and isnotempty(ts), todatetime(ts), _time)"
 
 
 def _server_apl(dim):
@@ -604,7 +858,7 @@ def _latency_apl(dim):
 
 def _client_apl(dim):
     return ("| where name == 'doPost' or name == 'clientTelemetry'"
-            f" | extend period = {dim}"
+            f" {_APL_OCCURRED} | extend period = {dim}"
             " | summarize posts = countif(name == 'doPost'),"
             " err = countif(kind == 'error'), lost = countif(kind == 'lostResponse'),"
             " lostTimeout = countif(kind == 'lostResponse' and tostring(ctx.mode) == 'timeout'),"
@@ -617,6 +871,7 @@ def _client_apl(dim):
 def fetch_live(dataset, token, env, start, end) -> dict:
     """Same raw dict as fetch(), from live Axiom APL (no store, no duckdb)."""
     filters = [f"target == '{ENV_TARGET[env]}'"]
+    hour = apl_local_hour(start, end)
 
     recent_start = end - timedelta(days=RECENT_DAYS)
     recent = f"iff(_time >= datetime({recent_start.strftime('%Y-%m-%dT%H:%M:%SZ')}), 'recent', 'earlier')"
@@ -631,10 +886,16 @@ def fetch_live(dataset, token, env, start, end) -> dict:
         "latencyByWeek": q(_latency_apl(_APL_WEEK)),
         "clientByVersion": q(_client_apl(_apl_xyz("clientVersion"))),
         "clientByWeek": q(_client_apl(_APL_WEEK)),
+        "serverByHour": q(_server_apl(hour)),
+        "latencyByHour": q(_latency_apl(hour)),
+        "clientByHour": q(_client_apl(hour)),
+        "latencyAll": q(_latency_apl("'all'")),
+        "clientVersionDays": q(f"| where name == 'doPost' | extend period = {_apl_xyz('clientVersion')}"
+                               " | summarize posts = count() by period, day = bin(_time, 1d)"),
         "eventsByWeek": q(f"| extend wk = {_APL_WEEK}, {_APL_EVENT_KEY} | summarize n = count() by key, wk"),
         "eventsRecent": q(f"| extend wk = {recent}, {_APL_EVENT_KEY} | summarize n = count() by key, wk"),
         "clientErrorsRecent": q("| where name == 'clientTelemetry' and kind == 'error'"
-                                f" | extend wk = {recent}, key = substring(tostring(errorText), 0, 120)"
+                                f" {_APL_OCCURRED} | extend wk = {recent}, key = substring(tostring(errorText), 0, 120)"
                                 " | summarize n = count() by key, wk"),
         "serverErrors": q("| where name endswith '.error'"
                           " | extend message = substring(tostring(message), 0, 200)"
@@ -646,6 +907,7 @@ def fetch_live(dataset, token, env, start, end) -> dict:
                               f" | summarize n = count(), lost = sum(toint(['count'])) by version = {_apl_xyz('version')}")
     raw["recentStart"] = recent_start.strftime("%Y-%m-%dT%H:%M:%SZ")
     raw["repeatFailures"] = q(f"| where name == 'clientTelemetry' and {_APL_FAILURE}"
+                              f" {_APL_OCCURRED} | where _time >= datetime({recent_start.strftime('%Y-%m-%dT%H:%M:%SZ')})"
                               " | summarize n = count(), kinds = make_set(kind),"
                               " actions = make_set(action) by f3Name"
                               f" | where n >= {REPEAT_FAILURES} | order by n desc",
@@ -662,6 +924,9 @@ def build_report(raw, env, start_iso, end_iso, generated_iso) -> dict:
         r["period"] = r["period"] or "(none)"
     for r in raw["latencyByVersion"]:
         r["period"] = r["period"] or "(none)"
+    for key in ("serverByHour", "latencyByHour", "clientByHour"):
+        for r in raw.get(key, []):
+            r["period"] = int(r["period"])
     for r in raw["serverByVersion"] + raw["serverByWeek"]:
         r["first"], r["last"] = to_iso(r.get("first")), to_iso(r.get("last"))
 
@@ -674,8 +939,14 @@ def build_report(raw, env, start_iso, end_iso, generated_iso) -> dict:
 
     by_version = {"server": build_server_table(raw["serverByVersion"], raw["latencyByVersion"], sv_order),
                   "client": build_client_table(clients, cv_order)}
+    life = version_lifespans(raw.get("clientVersionDays", []))
+    for r in by_version["client"]:
+        r.update(life.get(r["period"], {}))
     by_week = {"server": build_server_table(raw["serverByWeek"], raw["latencyByWeek"], wk_order),
                "client": build_client_table(raw["clientByWeek"], wk_order)}
+    by_hour = build_hour_tables(raw.get("serverByHour", []), raw.get("latencyByHour", []),
+                                raw.get("clientByHour", []))
+    p95_all = next((r.get("p95") for r in raw.get("latencyAll", [])), None)
     # A week clipped by either end of the window is shown but never compared: a Sunday-only
     # "week" vs a full one reads as a volume collapse.
     complete_weeks = [w for w in wk_order if w >= start_iso and _week_end(w) <= end_iso]
@@ -710,14 +981,28 @@ def build_report(raw, env, start_iso, end_iso, generated_iso) -> dict:
                             f"'{k[:40].replace(chr(39), '')}'")
     flags += stale_clients(by_version["client"], current, recent, env)
     flags += repeat_failures(raw["repeatFailures"], recent, env)
+    flags += hour_hotspots(by_hour, p95_all, env, start_iso, end_iso)
 
     flags = group_flags(flags)
     return {"meta": {"env": env, "start": start_iso, "end": end_iso, "generated": generated_iso,
                      "currentVersion": current, "recentStart": recent},
-            "byVersion": by_version, "byWeek": by_week, "flags": flags}
+            "byVersion": by_version, "byWeek": by_week,
+            "byHour": {"server": by_hour["server"], "client": by_hour["client"],
+                       "overall": {**by_hour["overall"], "p95": p95_all}},
+            "flags": flags}
 
 
 # --- render ---------------------------------------------------------------------------------
+VIEWS = {"version": "byVersion", "week": "byWeek", "hour": "byHour"}
+
+
+def select_view(report, view):
+    """`--view`: the report trimmed to one view's tables (no findings); 'all' = unchanged."""
+    if view == "all":
+        return report
+    return {"meta": report["meta"], VIEWS[view]: report[VIEWS[view]]}
+
+
 def _week_end(wk):
     return to_iso((datetime.fromisoformat(wk.replace("Z", "+00:00")) + timedelta(days=7)).isoformat())
 
@@ -734,6 +1019,8 @@ def _short_time(t):
 def _label(scope, period):
     if scope == "week":
         return f"week of {_short_date(period)}"
+    if scope == "hour":
+        return f"{_hour_label(period)} PT"
     return f"v{period}" if _VERSION_RE.match(str(period)) else str(period)
 
 
@@ -764,6 +1051,7 @@ GROUP_TITLES = {
     "new-client-error": "Client error messages first seen in the last 7 days",
     "stale-client": "Old app versions still sending requests (server is on v{current})",
     "repeat-failures": "PAX with 10 or more client failures in the last 7 days",
+    "hour-hotspot": "Hours of the day (Pacific) with a failure rate or login p95 well above the window's",
 }
 
 # Table columns: (header, kind, fields). kind 'n' = count, 'rate' = count + percent,
@@ -775,6 +1063,18 @@ SERVER_COLUMNS = [
     ("Server errors", "rate", ("srvErr", "srvErrPct")), ("Login p50", "ms", "p50"),
     ("p95", "ms", "p95"), ("Logins >10s", "rate", ("slow", "slowPct")),
 ]
+def _first_cell(r):
+    d = r.get("firstDay")
+    return "–" if not d else ("<=" if r.get("firstClipped") else "") + f"{d[5:7]}/{d[8:10]}"
+
+
+def _gone_cell(r):
+    d = r.get("goneDay")
+    return "in use" if r.get("inUse") else "–" if not d else f"{d[5:7]}/{d[8:10]}"
+
+
+# App by-version only: when each version appeared and was mostly gone (F3Go30-4k27)
+VERSION_LIFE_COLUMNS = [("First", "row", _first_cell), ("Mostly gone", "row", _gone_cell)]
 CLIENT_COLUMNS = [
     ("Requests", "n", "posts"), ("Errors", "rate", ("err", "errPct")),
     ("Lost", "rate", ("lost", "lostPct")), ("Timed out", "rate", ("lostTimeout", "lostTimeoutPct")),
@@ -784,6 +1084,8 @@ CLIENT_COLUMNS = [
 
 
 def _text_column(header, kind, field, rows):
+    if kind == "row":
+        return header, [field(r) for r in rows]
     if kind == "rate":
         counts = [_num(r.get(field[0])) for r in rows]
         pcts = [_fmt_pct(r.get(field[1])) for r in rows]
@@ -795,9 +1097,9 @@ def _text_column(header, kind, field, rows):
 
 
 def _text_table(rows, scope, columns, indent="  "):
-    first = "Week of" if scope == "week" else "Version"
+    first = {"week": "Week of", "hour": "Hour (PT)"}.get(scope, "Version")
     labels = [(_short_date(r["period"]) + (" *" if r.get("partial") else "")) if scope == "week"
-              else r["period"] for r in rows]
+              else _hour_label(r["period"]) if scope == "hour" else r["period"] for r in rows]
     cols = [(first, labels)] + [_text_column(h, k, f, rows) for h, k, f in columns]
     widths = [max(len(h), *(len(c) for c in cells)) if cells else len(h) for h, cells in cols]
     def line(cells):
@@ -831,27 +1133,37 @@ def _finding_lines_text(i, f, current):
 def render_text(report) -> str:
     """Plain-text report for a terminal or a saved file: findings first, then aligned tables."""
     m = report["meta"]
-    flags = report["flags"]
+    flags = report.get("flags")
     out = [f"{m['env'].upper()} HEALTH REPORT   {_short_date(m['start'])} → {_short_date(m['end'])}"
            f"   (server on v{m['currentVersion']}, generated {_short_time(m['generated'])})", ""]
-    out.append(f"NEEDS ATTENTION ({len(flags)})" if flags else "NEEDS ATTENTION: nothing flagged")
-    for i, f in enumerate(flags, 1):
-        out += [""] + _finding_lines_text(i, f, m["currentVersion"])
+    if flags is not None:
+        out.append(f"NEEDS ATTENTION ({len(flags)})" if flags else "NEEDS ATTENTION: nothing flagged")
+        for i, f in enumerate(flags, 1):
+            out += [""] + _finding_lines_text(i, f, m["currentVersion"])
     sections = [
-        ("SERVER BY VERSION", report["byVersion"]["server"], "version", SERVER_COLUMNS),
-        ("APP (BROWSER) BY VERSION", report["byVersion"]["client"], "version", CLIENT_COLUMNS),
-        ("SERVER BY WEEK", report["byWeek"]["server"], "week", SERVER_COLUMNS),
-        ("APP (BROWSER) BY WEEK", report["byWeek"]["client"], "week", CLIENT_COLUMNS),
+        ("SERVER BY VERSION", "byVersion", "server", "version", SERVER_COLUMNS),
+        ("APP (BROWSER) BY VERSION", "byVersion", "client", "version", VERSION_LIFE_COLUMNS + CLIENT_COLUMNS),
+        ("SERVER BY WEEK", "byWeek", "server", "week", SERVER_COLUMNS),
+        ("APP (BROWSER) BY WEEK", "byWeek", "client", "week", CLIENT_COLUMNS),
+        ("SERVER BY HOUR (PT)", "byHour", "server", "hour", SERVER_COLUMNS),
+        ("APP (BROWSER) BY HOUR (PT)", "byHour", "client", "hour", CLIENT_COLUMNS),
     ]
-    for title, rows, scope, columns in sections:
-        out += ["", "", title, ""] + _text_table(rows, scope, columns)
+    for title, key, side, scope, columns in sections:
+        if key in report:
+            out += ["", "", title, ""] + _text_table(report[key].get(side, []), scope, columns)
     out += ["",
             "",
             "NOTES",
             "  - Percentages: matched = % of logins; errors, lost, timed out and reconnect failed = % of",
             "    that version's or week's requests; users w/ failure = % of active users.",
             "  - Weeks start Sunday (UTC). * = week still in progress: shown, but not compared.",
+            "  - By hour: hour of day in Pacific time across the whole window. Traffic varies a lot by",
+            "    hour, so compare the percentages, not the counts; Per day = average for that hour.",
+            "  - App failures are placed by when they happened on the device, not when the report reached",
+            "    the server (offline failures are relayed later, often hours or days).",
             "  - A 0 for a version that predates a metric means it was not measured, not that it was healthy.",
+            "  - App versions: First = first day seen in the stored history (<= : history starts there).",
+            "    Mostly gone = day after its last day at 5%+ of that day's requests; in use = still there.",
             "  - --format json adds the raw numbers and a query for each finding, for follow-up analysis."]
     return "\n".join(out) + "\n"
 
@@ -864,6 +1176,8 @@ def _rate_cell(row, num, key, den=None):
 
 
 def _md_row_label(scope, r):
+    if scope == "hour":
+        return _hour_label(r["period"])
     return (f"wk {r['period'][:10]}" if scope == "week" else r["period"]) + \
         (" (partial)" if r.get("partial") else "")
 
@@ -884,12 +1198,15 @@ def _server_md(rows, scope):
 
 
 def _client_md(rows, scope):
-    head = ("| Period | POSTs | Errors | Lost responses | Lost (timeout) | Reconnect gave up "
-            "| Active users | Users hit a failure |")
-    lines = [head, "|" + "---|" * 8]
+    life = scope == "version"
+    head = ("| Period " + ("| First | Mostly gone " if life else "") + "| POSTs | Errors | Lost responses "
+            "| Lost (timeout) | Reconnect gave up | Active users | Users hit a failure |")
+    lines = [head, "|" + "---|" * (10 if life else 8)]
     for r in rows:
         lines.append(
-            f"| {_md_row_label(scope, r)} | {r.get('posts') or 0} "
+            f"| {_md_row_label(scope, r)} "
+            + (f"| {_first_cell(r)} | {_gone_cell(r)} " if life else "")
+            + f"| {r.get('posts') or 0} "
             f"| {_rate_cell(r, 'err', 'errPct')} | {_rate_cell(r, 'lost', 'lostPct')} "
             f"| {_rate_cell(r, 'lostTimeout', 'lostTimeoutPct')} "
             f"| {_rate_cell(r, 'reconnectFailed', 'reconnectFailedPct')} | {r.get('users') or 0} "
@@ -899,46 +1216,38 @@ def _client_md(rows, scope):
 
 def render_markdown(report) -> str:
     m = report["meta"]
+    flags = report.get("flags")
     out = [f"# {m['env'].upper()} health — {m['start'][:10]} → {m['end'][:10]}",
            "",
-           f"Generated {m['generated']} · current server version **{m['currentVersion']}** · "
-           f"{len(report['flags'])} finding(s)",
+           f"Generated {m['generated']} · current server version **{m['currentVersion']}**"
+           + (f" · {len(flags)} finding(s)" if flags is not None else ""),
            "",
            "Rates show `count (percent, change vs previous row in pp)`. Client failure rates are per "
            "POST from that client version/week; users-hit is per active user. A 0 on a metric older "
-           "versions never emitted means not instrumented, not healthy.",
-           "",
-           "## Needs attention",
-           ""]
-    if not report["flags"]:
-        out.append("No flags raised.")
-    for i, f in enumerate(report["flags"], 1):
-        if "items" not in f:
-            out.append(f"{i}. {f['summary']}" + (f" — {f['note']}" if f.get("note") else ""))
-            continue
-        title = GROUP_TITLES.get(f["kind"], f["kind"]).format(current=m["currentVersion"])
-        out.append(f"{i}. {title} ({len(f['items'])})")
-        out += [f"   - `{item.get('key', '')}` — {item['summary']}" for item in f["items"]]
-    out += ["",
-            "## By version",
-            "",
-            "### Server (by server `version`)",
-            "",
-            _server_md(report["byVersion"]["server"], "version"),
-            "",
-            "### Client (by browser `clientVersion`)",
-            "",
-            _client_md(report["byVersion"]["client"], "version"),
-            "",
-            "## By week (Sunday start, UTC; partial weeks are shown but excluded from flags)",
-            "",
-            "### Server",
-            "",
-            _server_md(report["byWeek"]["server"], "week"),
-            "",
-            "### Client",
-            "",
-            _client_md(report["byWeek"]["client"], "week")]
+           "versions never emitted means not instrumented, not healthy."]
+    if flags is not None:
+        out += ["", "## Needs attention", ""]
+        if not flags:
+            out.append("No flags raised.")
+        for i, f in enumerate(flags, 1):
+            if "items" not in f:
+                out.append(f"{i}. {f['summary']}" + (f" — {f['note']}" if f.get("note") else ""))
+                continue
+            title = GROUP_TITLES.get(f["kind"], f["kind"]).format(current=m["currentVersion"])
+            out.append(f"{i}. {title} ({len(f['items'])})")
+            out += [f"   - `{item.get('key', '')}` — {item['summary']}" for item in f["items"]]
+    sections = [
+        ("byVersion", "version", "## By version", "### Server (by server `version`)",
+         "### Client (by browser `clientVersion`)"),
+        ("byWeek", "week", "## By week (Sunday start, UTC; partial weeks are shown but excluded from flags)",
+         "### Server", "### Client"),
+        ("byHour", "hour", "## By hour of day (Pacific; change is vs the whole window's rate, not the previous hour)",
+         "### Server", "### Client"),
+    ]
+    for key, scope, title, server_title, client_title in sections:
+        if key in report:
+            out += ["", title, "", server_title, "", _server_md(report[key].get("server", []), scope),
+                    "", client_title, "", _client_md(report[key].get("client", []), scope)]
     return "\n".join(out) + "\n"
 
 

@@ -216,6 +216,8 @@ class BuildReport(unittest.TestCase):
             "clientByWeek": [_client(w1), _client(w2), _client(w3)],
             "eventsByWeek": [], "eventsRecent": [], "clientErrorsRecent": [],
             "serverErrors": [], "repeatFailures": [], "recentStart": "2026-09-27T12:00:00Z",
+            "serverByHour": [_server(5), _server(17)], "latencyByHour": [_latency(5), _latency(17)],
+            "clientByHour": [_client(17), _client(5)], "latencyAll": [_latency("all")],
         }
 
     def test_partial_week_is_shown_but_never_flagged(self):
@@ -226,6 +228,176 @@ class BuildReport(unittest.TestCase):
         self.assertFalse(weeks[0]["partial"])
         self.assertNotIn("volume-drop", [f["kind"] for f in report["flags"]])
         self.assertIn("(partial)", ah.render_markdown(report))
+
+    def test_by_hour_tables_are_in_hour_order(self):
+        report = ah.build_report(self._raw(), "prod", "2026-09-13T00:00:00Z",
+                                 "2026-10-04T12:00:00Z", "2026-10-04T12:00:00Z")
+        self.assertEqual([r["period"] for r in report["byHour"]["client"]], [5, 17])
+        self.assertEqual([r["period"] for r in report["byHour"]["server"]], [5, 17])
+        self.assertIn("SERVER BY HOUR (PT)", ah.render_text(report))
+        self.assertIn("05:00", ah.render_text(report))
+        self.assertIn("By hour of day", ah.render_markdown(report))
+
+
+class VersionLifespan(unittest.TestCase):
+    """First day a client version shows up, and the day it is mostly gone (< 5% of a day's requests)."""
+
+    @staticmethod
+    def _days(spec):
+        # spec: {version: [count per day from 2026-09-01]}
+        return [{"period": v, "day": f"2026-09-{i + 1:02d}", "posts": n}
+                for v, counts in spec.items() for i, n in enumerate(counts) if n]
+
+    def test_first_and_mostly_gone(self):
+        rows = self._days({"2.6.2": [100, 100, 60, 4, 1, 1, 0],
+                           "2.6.3": [0, 0, 40, 96, 99, 99, 100]})
+        life = ah.version_lifespans(rows)
+        self.assertEqual(life["2.6.2"], {"firstDay": "2026-09-01", "goneDay": "2026-09-04",
+                                         "inUse": False, "firstClipped": True})
+        self.assertEqual(life["2.6.3"], {"firstDay": "2026-09-03", "goneDay": None,
+                                         "inUse": True, "firstClipped": False})
+
+    def test_build_numbers_fold_and_a_never_significant_version_has_no_gone_day(self):
+        rows = self._days({"2.6.7.11": [0, 50, 50, 50], "2.6.7.12": [0, 0, 50, 50],
+                           "2.4.10": [0, 2, 0, 0], "2.6.5": [100, 100, 100, 100]})
+        life = ah.version_lifespans(rows)
+        self.assertEqual(life["2.6.7"]["firstDay"], "2026-09-02")
+        self.assertTrue(life["2.6.7"]["inUse"])
+        self.assertEqual((life["2.4.10"]["goneDay"], life["2.4.10"]["inUse"]), (None, False))
+
+    def test_shown_in_the_app_by_version_table(self):
+        raw = BuildReport._raw(self)
+        raw["clientVersionDays"] = self._days({"2.6.7": [10, 50, 50]})
+        report = ah.build_report(raw, "prod", "2026-09-13T00:00:00Z", "2026-10-04T12:00:00Z",
+                                 "2026-10-04T12:00:00Z")
+        row = report["byVersion"]["client"][0]
+        self.assertEqual((row["firstDay"], row["inUse"]), ("2026-09-01", True))
+        text = ah.render_text(report)
+        self.assertIn("Mostly gone", text)
+        self.assertIn("<=09/01", text)
+        self.assertIn("in use", text)
+        self.assertIn("Mostly gone", ah.render_markdown(report))
+
+
+class ViewSelection(unittest.TestCase):
+    def test_version_view_is_only_the_by_version_tables(self):
+        raw = BuildReport._raw(self)
+        report = ah.build_report(raw, "prod", "2026-09-13T00:00:00Z", "2026-10-04T12:00:00Z",
+                                 "2026-10-04T12:00:00Z")
+        v = ah.select_view(report, "version")
+        self.assertEqual(set(v), {"meta", "byVersion"})
+        text = ah.render_text(v)
+        self.assertIn("APP (BROWSER) BY VERSION", text)
+        self.assertIn("HEALTH REPORT", text)
+        for absent in ("BY WEEK", "BY HOUR", "NEEDS ATTENTION"):
+            self.assertNotIn(absent, text)
+        md = ah.render_markdown(v)
+        self.assertIn("## By version", md)
+        self.assertNotIn("By week", md)
+        self.assertNotIn("Needs attention", md)
+        self.assertIs(ah.select_view(report, "all"), report)
+
+
+class VersionUsers(unittest.TestCase):
+    """--version-users: who is on a client version, how recently, and whether they've moved on."""
+
+    @staticmethod
+    def _r(pax, version, src, n, first, last):
+        return {"pax": pax, "version": version, "src": src, "n": n,
+                "first": f"2026-10-{first}Z", "last": f"2026-10-{last}Z"}
+
+    def test_masked_names_merge_and_latest_version_is_reported(self):
+        r = self._r
+        rows = [r("Celtic", "2.6.5", "req", 100, "01T10:00:00", "08T21:51:00"),
+                r("C...c", "2.6.5", "tel", 238, "01T10:00:00", "08T18:10:00"),
+                r("G...\ufffd", "2.6.5", "tel", 11, "03T21:54:00", "03T21:54:00"),
+                r("Güéŕó 🌮", "2.6.5", "req", 2, "03T21:54:00", "03T21:54:00"),
+                r("Güéŕó 🌮", "2.6.8", "req", 9, "08T12:00:00", "09T12:00:00"),
+                r(None, "2.6.5", "req", 18, "03T01:00:00", "08T04:38:00"),
+                r("Needles", "2.6.7", "req", 5, "02T00:00:00", "02T00:00:00")]
+        users = ah.version_users(rows, "2.6.5", now_iso="2026-10-10T00:00:00Z")
+        self.assertEqual([u["pax"] for u in users], ["Celtic", "(unknown)", "Güéŕó 🌮"])
+        celtic = users[0]
+        self.assertEqual((celtic["requests"], celtic["telemetry"], celtic["latestVersion"]), (100, 238, "2.6.5"))
+        self.assertEqual(celtic["daysAgo"], 1)
+        self.assertEqual((users[2]["latestVersion"], users[2]["latestSeen"]), ("2.6.8", "2026-10-09T12:00:00Z"))
+        self.assertIsNone(users[1]["latestVersion"])
+
+    def test_names_differing_only_in_case_are_one_pax_shown_by_the_commoner_spelling(self):
+        r = self._r
+        rows = [r("Credo", "2.6.5", "req", 295, "01T00:00:00", "02T00:00:00"),
+                r("credo", "2.6.5", "req", 17, "03T00:00:00", "03T00:00:00")]
+        users = ah.version_users(rows, "2.6.5", now_iso="2026-10-10T00:00:00Z")
+        self.assertEqual([(u["pax"], u["requests"], u["last"]) for u in users],
+                         [("Credo", 312, "2026-10-03T00:00:00Z")])
+
+    def test_ambiguous_mask_is_left_as_is(self):
+        r = self._r
+        rows = [r("Celtic", "2.6.5", "req", 1, "01T00:00:00", "01T00:00:00"),
+                r("Comic", "2.6.5", "req", 1, "01T00:00:00", "01T00:00:00"),
+                r("C...c", "2.6.5", "tel", 3, "01T00:00:00", "02T00:00:00")]
+        self.assertIn("C...c", [u["pax"] for u in ah.version_users(rows, "2.6.5", now_iso="2026-10-10T00:00:00Z")])
+
+    def test_render_text_lists_users(self):
+        rows = [self._r("Celtic", "2.6.5", "req", 100, "01T10:00:00", "08T21:51:00")]
+        text = ah.render_version_users(ah.version_users(rows, "2.6.5", now_iso="2026-10-10T00:00:00Z"),
+                                       "2.6.5", "prod", "2026-09-06T00:00:00Z", "2026-10-10T00:00:00Z")
+        self.assertIn("Celtic", text)
+        self.assertIn("10/08 14:51", text)   # PT
+        self.assertIn("v2.6.5", text)
+
+
+class HourOfDay(unittest.TestCase):
+    """byHour: rates per hour, compared with the whole window, so uneven traffic doesn't skew it."""
+
+    def _tables(self, server, client, latency=None):
+        return ah.build_hour_tables(server, latency or [], client)
+
+    def test_delta_is_against_the_whole_window_not_the_previous_hour(self):
+        t = self._tables([_server(3, posts=100, srv_err=1), _server(4, posts=100, srv_err=9)],
+                         [_client(3, posts=900, err=9), _client(4, posts=100, err=1)])
+        s3, s4 = t["server"]
+        self.assertEqual((s3["srvErrPct"], s4["srvErrPct"]), (1.0, 9.0))
+        self.assertEqual((s3["delta"]["srvErrPct"], s4["delta"]["srvErrPct"]), (-4.0, 4.0))  # overall 5%
+        c3, c4 = t["client"]
+        self.assertEqual((c3["errPct"], c4["errPct"]), (1.0, 1.0))  # 10x the traffic, same rate
+        self.assertEqual((c3["delta"]["errPct"], c4["delta"]["errPct"]), (0.0, 0.0))
+
+    def _hotspots(self, t, p95_all=None):
+        return ah.hour_hotspots(t, p95_all, env="prod", start="2026-09-01T00:00:00Z",
+                                end="2026-10-01T00:00:00Z")
+
+    def test_hour_with_a_much_higher_rate_is_a_hotspot(self):
+        t = self._tables([_server(h) for h in range(6)],
+                         [_client(h, posts=1000, lost=10) for h in range(5)]
+                         + [_client(5, posts=200, lost=20)])
+        flags = self._hotspots(t)
+        self.assertEqual([(f["kind"], f["key"], f["detail"]["metric"]) for f in flags],
+                         [("hour-hotspot", "05:00 PT", "lostPct")])
+        self.assertIn("hourofday", flags[0]["drill"])
+
+    def test_busy_hour_with_the_same_rate_is_not_a_hotspot(self):
+        t = self._tables([_server(h) for h in range(3)],
+                         [_client(0, posts=5000, lost=50), _client(1, posts=100, lost=1),
+                          _client(2, posts=100, lost=1)])
+        self.assertEqual(self._hotspots(t), [])
+
+    def test_hotspot_needs_count_and_denominator(self):
+        t = self._tables([_server(0), _server(1)],
+                         [_client(0, posts=1000, lost=0), _client(1, posts=10, lost=3)])
+        self.assertEqual(self._hotspots(t), [])  # 30% but only 10 requests
+
+    def test_apl_local_hour_follows_dst_inside_the_window(self):
+        self.assertEqual(ah.apl_local_hour("2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z"),
+                         "((hourofday(_time) + 24 + -7) % 24)")
+        self.assertEqual(ah.apl_local_hour("2026-10-20T00:00:00Z", "2026-11-10T00:00:00Z"),
+                         "((hourofday(_time) + 24 + iff(_time >= datetime(2026-11-01T09:00:00Z), -8, -7)) % 24)")
+
+    def test_slow_hour_p95_is_a_hotspot(self):
+        t = self._tables([_server(h) for h in range(3)], [],
+                         [_latency(0, p95=5000), _latency(1, p95=5000), _latency(2, p95=9000)])
+        flags = self._hotspots(t, p95_all=5500)
+        self.assertEqual([(f["key"], f["detail"]["metric"]) for f in flags], [("02:00 PT", "p95")])
 
 
 class Render(unittest.TestCase):
@@ -282,8 +454,8 @@ class FetchFromStore(unittest.TestCase):
     START = datetime(2026, 8, 1, tzinfo=timezone.utc)
 
     @staticmethod
-    def ev(ts, name, **f):
-        return {"_time": ts, "name": name, "target": "TEMPLATE", "side": "gas", **f}
+    def ev(at, name, **f):
+        return {"_time": at, "name": name, "target": "TEMPLATE", "side": "gas", **f}
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -303,6 +475,13 @@ class FetchFromStore(unittest.TestCase):
                f3Name="B", errorText="boom " * 40),
             ev("2026-10-04T12:00:00.000Z", "clientTelemetry", kind="reconnectPoll", outcome="failed",
                clientVersion="2.6.8", f3Name="B"),
+            # relayed a day late: counted when it happened (ts, 01:00 PDT Oct 3), not when it arrived
+            ev("2026-10-04T15:00:00.000Z", "clientTelemetry", kind="lostResponse", clientVersion="2.6.8",
+               f3Name="C", ts="2026-10-03T08:00:00.000Z"),
+            # --version-users attribution: a doPost has no f3Name, another event in its execId does
+            ev("2026-10-04T16:00:00.000Z", "doPost", version="legacy", clientVersion="2.6.5.1", execId="e1"),
+            ev("2026-10-04T16:00:01.000Z", "checkinWebapp.checkin", version="legacy", f3Name="Celtic", execId="e1"),
+            ev("2026-10-04T17:00:00.000Z", "doPost", version="legacy", clientVersion="2.6.5.1", execId="e2"),
             ev("2026-10-03T13:00:00.000Z", "handleCheckinPost_.error", version="2.6.7.11", message="bad", execId="x1"),
             ev("2026-10-03T13:00:01.000Z", "handleCheckinPost_.error", version="2.6.7.11", message="bad", execId="x2"),
             ev("2026-10-04T09:00:00.000Z", "gasLogger.ingestRejected", version="2.6.7.12", count=7),
@@ -325,7 +504,30 @@ class FetchFromStore(unittest.TestCase):
         self.assertEqual(set(self.raw), {
             "serverByVersion", "serverByWeek", "latencyByVersion", "latencyByWeek", "clientByVersion",
             "clientByWeek", "eventsByWeek", "eventsRecent", "clientErrorsRecent", "serverErrors",
-            "ingestRejected", "recentStart", "repeatFailures"})
+            "ingestRejected", "recentStart", "repeatFailures",
+            "serverByHour", "latencyByHour", "clientByHour", "latencyAll", "clientVersionDays"})
+
+    def test_client_version_days_cover_the_whole_store(self):
+        got = {(r["period"], r["day"]): r["posts"] for r in self.raw["clientVersionDays"]}
+        self.assertEqual(got, {("", "2026-10-03"): 2, ("", "2026-10-04"): 1, ("2.6.5", "2026-10-04"): 2})
+
+    def test_version_usage_attributes_requests_through_exec_id(self):
+        con = store.connect(["prod"])
+        rows = ah.fetch_version_usage(con, "prod", self.START, self.END)
+        got = {(r["pax"], r["version"], r["src"]): r["n"] for r in rows}
+        self.assertEqual(got[("Celtic", "2.6.5", "req")], 1)
+        self.assertEqual(got[(None, "2.6.5", "req")], 1)
+        self.assertEqual(got[("C", "2.6.8", "tel")], 1)
+        users = ah.version_users(rows, "2.6.5", now_iso="2026-10-05T12:00:00Z")
+        self.assertEqual([u["pax"] for u in users], ["(unknown)", "Celtic"])
+
+    def test_hours_are_pacific_local(self):
+        # 10:00Z / 11:00Z / 12:00Z on Oct 3 (PDT, UTC-7) = 03 / 04 / 05 local
+        self.assertEqual(self.row("serverByHour", 3)["posts"], 3)
+        self.assertEqual(self.row("serverByHour", 4)["logins"], 4)
+        self.assertEqual(self.row("latencyByHour", 4)["n"], 4)
+        self.assertEqual(self.row("clientByHour", 5)["lost"], 1)
+        self.assertEqual(self.raw["latencyAll"][0]["n"], 4)
 
     def test_weeks_start_sunday_and_are_iso_strings(self):
         self.assertEqual(sorted(r["period"] for r in self.raw["serverByWeek"]),
@@ -334,7 +536,7 @@ class FetchFromStore(unittest.TestCase):
 
     def test_versions_fold_to_x_y_z(self):
         self.assertEqual({r["period"] for r in self.raw["serverByVersion"]}, {"2.6.7", "legacy"})
-        self.assertEqual({r["period"] for r in self.raw["clientByVersion"]}, {"2.6.7", "2.6.8", ""})  # "" = doPosts with no clientVersion
+        self.assertEqual({r["period"] for r in self.raw["clientByVersion"]}, {"2.6.5", "2.6.7", "2.6.8", ""})  # "" = doPosts with no clientVersion
         self.assertEqual(self.row("serverByVersion", "2.6.7")["posts"], 3)
 
     def test_countif_and_dcountif(self):
@@ -361,6 +563,11 @@ class FetchFromStore(unittest.TestCase):
                          ("handleCheckinPost_.error", "bad", 2, ["2.6.7.11"], ["x1", "x2"]))
         self.assertEqual(self.raw["ingestRejected"], [{"n": 1, "lost": 7, "version": "2.6.7"}])
         self.assertEqual(len(self.raw["clientErrorsRecent"][0]["key"]), 120)
+
+    def test_client_failures_count_when_they_happened_not_when_they_arrived(self):
+        self.assertEqual(self.row("clientByHour", 1)["lost"], 1)
+        self.assertNotIn(8, {r["period"] for r in self.raw["clientByHour"]})   # 15:00Z arrival = 08 PDT
+        self.assertEqual(self.row("clientByWeek", "2026-09-27T00:00:00Z")["lost"], 2)
 
     def test_build_report_runs_on_it(self):
         fmt = "%Y-%m-%dT%H:%M:%SZ"

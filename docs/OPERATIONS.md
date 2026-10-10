@@ -621,9 +621,12 @@ the loss is query-able: `python tools/query_axiom.py --name gasLogger.ingestReje
 ### Periodic health report (F3Go30-lsoj)
 
 `tools/activity_log.py --health` aggregates one environment's Axiom events into a comparison
-**by version** (server `version` / browser `clientVersion`, normalised to x.y.z) and **by week**
-(Sunday start, UTC), each count shown absolute and as a percent of its natural denominator, and
-lists rule-based findings under *Needs attention*. Read-only; safe on PROD.
+**by version** (server `version` / browser `clientVersion`, normalised to x.y.z), **by week**
+(Sunday start, UTC) and **by hour of day** (Pacific, DST-aware, the whole window folded into 24
+rows — for spotting failures tied to time-of-day server load; traffic varies widely by hour, so
+read the percentages, and in `md` each rate's change is vs the whole window, not the previous
+hour), each count shown absolute and as a percent of its natural denominator, and lists
+rule-based findings under *Needs attention*. Read-only; safe on PROD.
 
 Formats (`--format`): `text` (default — plain-text findings then aligned tables, for reading in a
 terminal or a saved file), `md` (markdown; tables also show the change vs the previous row in
@@ -634,7 +637,18 @@ hand-off for follow-up analysis).
 /mnt/c/dev/venvs/uv1/bin/python tools/activity_log.py --health --env prod                  # last 4 whole weeks + current
 /mnt/c/dev/venvs/uv1/bin/python tools/activity_log.py --health --env prod --weeks 8
 /mnt/c/dev/venvs/uv1/bin/python tools/activity_log.py --health --env prod --format json --out /tmp/prod-health.json
+/mnt/c/dev/venvs/uv1/bin/python tools/activity_log.py --health --env prod --view version   # just the by-version tables (also: week, hour)
+/mnt/c/dev/venvs/uv1/bin/python tools/activity_log.py --version-users 2.6.5 --env prod     # who is on app v2.6.5, how recently
 ```
+
+- **`--view version|week|hour`** prints only that view's server and app tables (no findings); `json`
+  keeps only `meta` and that view.
+- **`--version-users X.Y.Z`** (F3Go30-barg) lists every PAX seen on that app version in the window,
+  newest last-seen first: requests, telemetry events, first/last seen (PT), days since, and the
+  newest version that PAX has since been seen on (`same` = still on it). Requests (`doPost`) carry
+  no PAX name, so each is matched to a PAX through any other event in the same server execution;
+  masked names (`C...c`) and capitalisation variants merge into one PAX; `(unknown)` = requests
+  nothing matched. Same window/`--format`/`--out` options as `--health`; local store only.
 
 - **Flags** (thresholds are constants at the top of `tools/activity_health.py`): `log-loss`
   (`gasLogger.ingestRejected` — every other number undercounts), `rate-regression` (latest
@@ -643,9 +657,21 @@ hand-off for follow-up analysis).
   present before and after a complete week all but vanishes in it — a stopped code path or lost
   logs), `server-error`, `new-event` / `new-client-error` (only seen in the last 7 days),
   `stale-client` (older client versions still posting in the last 7 days), `repeat-failures`
-  (a PAX with ≥10 client failures in the last 7 days).
+  (a PAX with ≥10 client failures in the last 7 days), `hour-hotspot` (an hour of day whose
+  failure rate is ≥1.5× and ≥1pp above the whole window's, ≥5 occurrences over ≥20 trials, or
+  whose login p95 is ≥1.25× the window's — F3Go30-k624).
 - **Partial weeks** (the current one, or one clipped by `--since`/`--start`) are shown but never
   compared.
+- **App version lifespan** (app by-version table, F3Go30-4k27): *First* = first day the version
+  sent a request in the whole local store (`<=` when that is the store's first day, so it may be
+  older); *Mostly gone* = the day after its last day at ≥5% of that day's requests (≥5 of its
+  own) — `in use` while that is still within a day of the newest data, `–` if it never reached
+  it. Thresholds: `GONE_SHARE` / `GONE_MIN` in `tools/activity_health.py`.
+- **Client failures are placed by when they happened**, not when they reached the server: each
+  `clientTelemetry` row is timed by the browser's own capture time (`ts`) — offline failures are
+  relayed later (about half of PROD's arrive over an hour late, some days late), so arrival time
+  would smear them into the wrong hour/week. Requests (`doPost`) are server-timed, which is when
+  they happened.
 - **A 0 is not always healthy**: a metric older versions never emitted (`lostResponse` before
   2.6.6) reads 0 — a `rate-regression` whose previous period was 0 says "possibly newly
   instrumented".
