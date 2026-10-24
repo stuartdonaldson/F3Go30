@@ -319,3 +319,7 @@ Disposes any stale smoke namespace, provisions a fresh one, live-verifies signup
 dashboard/bonus flows against it, and tears itself down automatically on success (manual
 cleanup steps are printed only if a scenario fails).
 
+## Instruction Precedence
+
+- Memory ownership (`bd remember` vs MEMORY.md) is the `bd` skill §Memory Ownership
+  (`$DEVSTANDARD/dot-claude/skills/bd/SKILL.md`); it wins over any bd-generated memory line.
