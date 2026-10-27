@@ -1,9 +1,9 @@
 // F3 Go30 Tracker — version info
-const APP_VERSION      = '2.6.8';
-const APP_VERSION_DATE = '2026-10-08T04:19:41.851Z';
+const APP_VERSION      = '2.6.8.1';
+const APP_VERSION_DATE = '2026-10-27T02:38:50.890Z';
 const APP_AUTHOR       = 'Stuart Donaldson (F3 Little John)';
 const APP_CONTACT      = 'stu@asyn.com';
-const APP_DEPLOY_TARGET  = 'TEMPLATE';
+const APP_DEPLOY_TARGET  = 'TEST';
 // GitHub Pages host for the static check-in front end (F3Go30-5nfj.2), served from the
 // separate f3go30/static-pages repo (checked out locally as ../F3Static) — one subpath per
 // environment (tools/build-static-pages.js writes static-pages/dist/<sit|prod>/, then
