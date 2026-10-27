@@ -12,7 +12,7 @@ mechanics, and fixes with no user-visible symptom do not — they live in git hi
 | Change tier | Version movement | Recorded in |
 |---|---|---|
 | SIT build churn | 4th segment (`2.3.13.7`), many/day | git history only |
-| PROD patch release | 3rd segment (`2.3.13`), per release | git history + `work-log.md` |
+| PROD patch release | 3rd segment (`2.3.13`), per release | git history + `work-log.md`; any fix a PAX or Site-Q would notice also gets a bullet **here** |
 | User/admin-facing capability | rolls up to a **minor** series (`2.3`) | **this file** |
 
 Headings are **minor-series** (`v2.3`, `v2.4`), never per-patch or per-build. Accumulate
@@ -26,7 +26,11 @@ patch-range heading (e.g. `v2.6.1–v2.6.7`) so **Unreleased** holds only what i
 
 ## Unreleased
 
-_On SIT, not yet in PROD (PROD is v2.6.8). Nothing user-facing yet._
+_On SIT, not yet in PROD (PROD is v2.6.8)._
+
+- **Opening the app shows your latest check-in right away** — if you checked in and then closed the
+  app, the next time you opened it TODAY or YESTERDAY could briefly show as not checked in until the
+  sync finished, inviting a second tap. It now opens showing what you last entered.
 
 ---
 
