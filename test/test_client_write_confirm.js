@@ -45,14 +45,14 @@ function makeHarness_(opts) {
     locallyWrittenIso: {}, writeGenByIso_: {}, board: {}, pendingSelfWrites: {}, calMonthKey: '2026-09',
     monthGrid: [], lastEditedDayIso: null,
   };
-  var calls = { revert: [], apply: [], boardMonthGrid: 0 };
+  var calls = { revert: [], apply: [], boardMonthGrid: 0, snapshotPatch: [] };
   var fakeLocalStorage = makeFakeLocalStorage_();
 
   var factory = new Function(
     'WEBAPP_URL', 'CMD_', 'NS_', 'CONTEXT_DATE_', 'STATIC_BUILD_VERSION_',
     'fetch', 'setTimeout', 'clearTimeout', 'Date', 'AbortController', '$', 'window', 'localStorage', 'navigator',
     'state', 'SITE_Q_NAME', 'SITE_Q_EMAIL', 'applyOwnDayWrite_', 'revertOwnDayWrite_', 'boardMonthGrid_',
-    'loadDashboard_', 'loadCalMonth_', 'loadBonusList_', 'isoDate_',
+    'loadDashboard_', 'loadCalMonth_', 'loadBonusList_', 'isoDate_', 'patchCheckinSnapshot_', 'SAVED_IDENTITY_TOKEN',
     body +
     '\nreturn { confirmWrite_: confirmWrite_, submitCheckinWrite_: submitCheckinWrite_, checkinProbe_: checkinProbe_,' +
     '\n  hideApiError_: hideApiError_, setWriteConfirmNotice_: setWriteConfirmNotice_ };'
@@ -70,7 +70,8 @@ function makeHarness_(opts) {
     function(dateIso, value) { calls.apply.push([dateIso, value]); },
     function(dateIso) { calls.revert.push(dateIso); },
     function() { calls.boardMonthGrid++; return []; },
-    function() {}, function() {}, function() {}, String
+    function() {}, function() {}, function() {}, String,
+    function(token, dateIso, status) { calls.snapshotPatch.push([token, dateIso, status]); }, 'tok-lj'
   );
 
   return Object.assign(fns, {
@@ -240,6 +241,7 @@ async function testTransportFailedButLandedShowsNoBannerAndKeepsValue_() {
   assert.deepEqual(h.calls.revert, [], 'the optimistic value is kept');
   assert.equal(h.state.locallyWrittenIso['2026-09-14'], 'done');
   assert.deepEqual(s.landed, ['done'], 'the landed write runs the same ack + render as a normal success');
+  assert.deepEqual(h.calls.snapshotPatch, [['tok-lj', '2026-09-14', 'done']], 'F3Go30-a747: a landed write is patched into the cold-launch snapshot');
   assert.equal(h.state.lastEditedDayIso, '2026-09-14');
   assert.equal(h.state.writeGenByIso_['2026-09-14'], 0);
   assert.equal(h.el('writeConfirmNotice').hidden, true, 'the confirming notice is hidden again');
@@ -279,6 +281,7 @@ async function testTransportFailedAndNotLandedShowsTheSameBannerAndReverts_() {
   assert.equal(h.el('apiErrorHeadline').textContent, 'Couldn’t reach the server.', 'the original transport banner copy');
   assert.match(h.el('apiErrorDetail').textContent, /Error: .*/);
   assert.deepEqual(h.calls.revert, ['2026-09-14']);
+  assert.deepEqual(h.calls.snapshotPatch, [], 'F3Go30-a747 AC5: a reverted write never reaches the snapshot');
   assert.equal(h.state.locallyWrittenIso['2026-09-14'], undefined);
   assert.deepEqual(s.landed, []);
   assert.equal(h.el('writeConfirmNotice').hidden, true);

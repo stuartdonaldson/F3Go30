@@ -48,13 +48,17 @@ function makeHarness_(opts) {
 
   var factory = new Function(
     'localStorage', 'Date', 'clearTokenFromStorage_',
-    body + '\nreturn { saveCheckinSnapshot_: saveCheckinSnapshot_, loadCheckinSnapshot_: loadCheckinSnapshot_, clearCheckinSnapshot_: clearCheckinSnapshot_, readLocal_: readLocal_, writeLocal_: writeLocal_ };'
+    body + '\nreturn { saveCheckinSnapshot_: saveCheckinSnapshot_, loadCheckinSnapshot_: loadCheckinSnapshot_, patchCheckinSnapshot_: patchCheckinSnapshot_, clearCheckinSnapshot_: clearCheckinSnapshot_, readLocal_: readLocal_, writeLocal_: writeLocal_ };'
   );
   return {
     fns: factory(fakeLocalStorage, makeFakeDate_(opts.nowIso || '2026-07-15'), function() {}),
     store: store,
     reload: function(nowIso) {
       return factory(fakeLocalStorage, makeFakeDate_(nowIso), function() {}).loadCheckinSnapshot_;
+    },
+    /** Every snapshot function with the clock pinned to nowIso — for a write on a later day. */
+    at: function(nowIso) {
+      return factory(fakeLocalStorage, makeFakeDate_(nowIso), function() {});
     },
   };
 }
@@ -243,4 +247,78 @@ console.log('All checkin snapshot day-boundary tests passed');
   h.fns.clearCheckinSnapshot_();
   assert.equal(h.store['go30DashboardBoard:v1'], undefined, 'logout / not-you must clear the persisted dashboard board too');
   console.log('✓ clearCheckinSnapshot_ also clears the persisted dashboard board');
+})();
+
+// ── F3Go30-a747: an acked check-in write patches the snapshot, so the next cold launch shows it ──
+
+// AC1: the reported bug — check in TODAY, close the app, open it tomorrow: YESTERDAY must show
+// the write, not the pre-write status the snapshot was saved with.
+(function testPatchedWriteSurvivesNextDayLaunch() {
+  var h = makeHarness_({ nowIso: '2026-07-15' });
+  h.fns.saveCheckinSnapshot_('tok123', identifyResponse_());
+  h.fns.patchCheckinSnapshot_('tok123', '2026-07-15', 'done');
+
+  assert.equal(h.fns.loadCheckinSnapshot_('tok123').todayStatus, 'done', 'same-day relaunch shows the write');
+  var snap = h.reload('2026-07-16')('tok123');
+  assert.equal(snap.yesterdayStatus, 'done', 'next-day relaunch shows the write under YESTERDAY');
+  console.log('✓ an acked write is visible on the next cold launch');
+})();
+
+// AC2: the YESTERDAY scalar is patched when the write is for the snapshot's own yesterday.
+(function testPatchesYesterdayScalar() {
+  var h = makeHarness_({ nowIso: '2026-07-15' });
+  h.fns.saveCheckinSnapshot_('tok123', identifyResponse_());
+  h.fns.patchCheckinSnapshot_('tok123', '2026-07-14', 'missed');
+
+  var snap = h.fns.loadCheckinSnapshot_('tok123');
+  assert.equal(snap.yesterdayStatus, 'missed');
+  assert.equal(snap.todayStatus, 'missed', 'TODAY untouched');
+  console.log('✓ a write for the snapshot\'s yesterday patches the YESTERDAY scalar');
+})();
+
+// AC2: on the 1st, yesterday lives in the prior month's tracker and has no grid cell — the scalar
+// is its only copy, so it must still be patched.
+(function testPatchesCrossMonthYesterday() {
+  var h = makeHarness_({ nowIso: '2026-08-01' });
+  h.fns.saveCheckinSnapshot_('tok123', identifyResponse_({
+    monthGrid: monthGrid_({ '2026-08-01': 'pending', '2026-08-02': 'pending' }),
+    todayStatus: 'pending', yesterdayStatus: 'missed', yesterdayAvailable: true,
+  }));
+  h.fns.patchCheckinSnapshot_('tok123', '2026-07-31', 'done');
+
+  assert.equal(h.fns.loadCheckinSnapshot_('tok123').yesterdayStatus, 'done');
+  console.log('✓ a cross-month yesterday write patches the YESTERDAY scalar');
+})();
+
+// AC3: savedAt is kept, so a write on a later day than the snapshot cannot make that day's stale
+// scalars look current — the next-day load still re-derives from the (patched) grid.
+(function testPatchKeepsSavedAt() {
+  var h = makeHarness_({ nowIso: '2026-07-15' });
+  h.fns.saveCheckinSnapshot_('tok123', identifyResponse_());
+  var savedAt = JSON.parse(h.store['go30CheckinSnapshot:v1']).savedAt;
+
+  h.at('2026-07-16').patchCheckinSnapshot_('tok123', '2026-07-16', 'done');
+
+  assert.equal(JSON.parse(h.store['go30CheckinSnapshot:v1']).savedAt, savedAt, 'savedAt unchanged');
+  var snap = h.reload('2026-07-16')('tok123');
+  assert.equal(snap.todayStatus, 'done', 'TODAY derived from the patched grid cell');
+  assert.equal(snap.yesterdayStatus, 'missed', 'YESTERDAY derived from the grid, not the 07-15 scalar');
+  console.log('✓ patching keeps savedAt, so the day-rolled derivation still applies');
+})();
+
+// AC4: nothing to patch — never creates, never touches another owner's snapshot, never throws.
+(function testPatchNoOps() {
+  var h = makeHarness_({ nowIso: '2026-07-15' });
+  h.fns.patchCheckinSnapshot_('tok123', '2026-07-15', 'done');
+  assert.equal(h.store['go30CheckinSnapshot:v1'], undefined, 'no snapshot — none created');
+
+  h.fns.saveCheckinSnapshot_('tok123', identifyResponse_());
+  var before = h.store['go30CheckinSnapshot:v1'];
+  h.fns.patchCheckinSnapshot_('otherToken', '2026-07-15', 'done');
+  assert.equal(h.store['go30CheckinSnapshot:v1'], before, 'another token\'s snapshot is untouched');
+  h.fns.patchCheckinSnapshot_(null, '2026-07-15', 'done');
+  assert.equal(h.store['go30CheckinSnapshot:v1'], before, 'no token — untouched');
+  h.fns.patchCheckinSnapshot_('tok123', '2026-06-10', 'done');
+  assert.equal(h.store['go30CheckinSnapshot:v1'], before, 'a date outside the grid and scalars — untouched');
+  console.log('✓ patchCheckinSnapshot_ no-ops when there is nothing to patch');
 })();

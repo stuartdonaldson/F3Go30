@@ -1248,7 +1248,8 @@
    * mode, quota, disabled storage) so a caller can never be broken by storage. readLocal_ returns
    * {value, savedAt} or null (absent, corrupt, wrong owner, past ttlMs); opts.owner, when passed
    * at all, must equal the stored owner — pass null/'' only to demand an ownerless entry.
-   * writeLocal_ returns whether the write landed. Remaining localStorage keys migrate onto this in
+   * writeLocal_ returns whether the write landed; pass savedAt only to rewrite an entry in place
+   * without restarting its clock (patchCheckinSnapshot_). Remaining localStorage keys migrate onto this in
    * the follow-up bead (F3Go30-vjnw) — do not hand-roll another try/catch + JSON.parse. */
   function readLocal_(key, opts) {
     opts = opts || {};
@@ -1265,9 +1266,9 @@
     }
   }
 
-  function writeLocal_(key, value, owner) {
+  function writeLocal_(key, value, owner, savedAt) {
     try {
-      localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), owner: owner === undefined ? null : owner, value: value }));
+      localStorage.setItem(key, JSON.stringify({ savedAt: savedAt || Date.now(), owner: owner === undefined ? null : owner, value: value }));
       return true;
     } catch (e) {
       return false; // localStorage unavailable / quota — not fatal, just no persisted copy
@@ -1312,9 +1313,7 @@
       if (!todayEntry) return null;
       if (isoDate_(new Date(snap.savedAt)) === todayIso) return snap;
 
-      var yesterdayD = new Date(todayD);
-      yesterdayD.setDate(yesterdayD.getDate() - 1);
-      var yesterdayEntry = snapshotGridEntry_(snap, isoDate_(yesterdayD));
+      var yesterdayEntry = snapshotGridEntry_(snap, isoDate_(dayBefore_(todayD)));
       snap.todayStatus = todayEntry.status;
       // Loading at all means the grid holds the live today, which after a roll puts the live
       // yesterday in that same grid — so this null branch is unreachable in normal operation and
@@ -1326,6 +1325,27 @@
     } catch (e) {
       return null;
     }
+  }
+
+  // F3Go30-a747: the snapshot is only rewritten from a live identify, so without this an acked
+  // check-in followed by closing the app left the pre-write status in it — the next cold launch
+  // painted that day as not checked in until the live identify landed, and PAX re-tapped it.
+  // Patches the grid cell plus whichever scalar the date is in the snapshot's OWN frame (the day it
+  // was saved, not the live day — the scalars mean that frame until loadCheckinSnapshot_ re-derives
+  // them), which also covers the cross-month yesterday that has no grid cell. savedAt is kept so
+  // that re-derivation and the TTL behave exactly as before.
+  function patchCheckinSnapshot_(token, dateIso, status) {
+    if (!token) return;
+    var hit = readLocal_(CHECKIN_SNAPSHOT_KEY_, { owner: token });
+    if (!hit || !hit.value) return;
+    var snap = hit.value;
+    var savedD = new Date(hit.savedAt);
+    var entry = snapshotGridEntry_(snap, dateIso);
+    var patched = false;
+    if (entry) { entry.status = status; patched = true; }
+    if (dateIso === isoDate_(savedD)) { snap.todayStatus = status; patched = true; }
+    if (snap.yesterdayAvailable && dateIso === isoDate_(dayBefore_(savedD))) { snap.yesterdayStatus = status; patched = true; }
+    if (patched) writeLocal_(CHECKIN_SNAPSHOT_KEY_, snap, token, hit.savedAt);
   }
 
   function snapshotGridEntry_(snap, dateIso) {
@@ -2985,9 +3005,7 @@
     state.yesterdayStatus = res.yesterdayStatus;
     state.yesterdayAvailable = !!res.yesterdayAvailable;
     state.todayIso = isoDate_(todayD);
-    var yesterdayD = new Date(todayD);
-    yesterdayD.setDate(yesterdayD.getDate() - 1);
-    state.yesterdayIso = isoDate_(yesterdayD);
+    state.yesterdayIso = isoDate_(dayBefore_(todayD));
     // Month-to-month navigation (F3Go30-k5fn.2): always take the freshest available/registered
     // lists from the server, but only reset which month the calendar is parked on on a genuine
     // fresh identify — not on a preserveView reconciliation, which must not yank a PAX back to
@@ -3480,6 +3498,7 @@
     // calendar was parked on a different month than dateIso's (the P1 cross-month split-brain).
     state.monthGrid = boardMonthGrid_(state.calMonthKey);
     state.lastEditedDayIso = dateIso;
+    patchCheckinSnapshot_(SAVED_IDENTITY_TOKEN, dateIso, status); // F3Go30-a747 — survive the next cold launch
     onLanded(status);
   }
 
@@ -5038,6 +5057,13 @@
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
 
+  /** The calendar day before d, as a new Date — the one copy of the "yesterday" arithmetic. */
+  function dayBefore_(d) {
+    var prior = new Date(d);
+    prior.setDate(prior.getDate() - 1);
+    return prior;
+  }
+
   function monthKeyOf_(d) {
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
   }
@@ -5167,9 +5193,7 @@
     $('dTeamName').textContent = d.team || 'Unassigned';
 
     var todayIndex = findDayIndex_(d.dayDates, contextTodayIso_());
-    var yesterdayReal = new Date();
-    yesterdayReal.setDate(yesterdayReal.getDate() - 1);
-    var yesterdayIndex = findDayIndex_(d.dayDates, isoDate_(yesterdayReal));
+    var yesterdayIndex = findDayIndex_(d.dayDates, isoDate_(dayBefore_(new Date())));
 
     var myTeamList = d.myTeam || [];
     var myTeamEl = $('dMyTeam');
